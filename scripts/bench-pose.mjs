@@ -17,9 +17,11 @@
 //   dragTip      the first handle's point (hand: the index tip; arm: the tool's ball)
 //   dragContact  hand only: a drag held against contact — the wrist held (thumbLock), the
 //                index tip dragged toward where it would sit spread 15° into the middle
-//                finger, then held there: every frame solves with collision rows active
-//                and settles to contact (the spec's "a frame resting against contact
-//                runs all its iterations")
+//                finger, then held there: every frame settles to contact. With
+//                COLLIDE_IN_SOLVE off (settle only, as shipped) the solve has no rows and
+//                settle bisects back to contact each frame; on, every frame also solves
+//                with rows active (the spec's "a frame resting against contact runs all
+//                its iterations")
 //   dragPinned   hand: the thumb tip pinned, then the index tip dragged (both
 //                handles list the wrist, so the solve holds the thumb through it);
 //                arm: the elbow pinned (a click on its dot), then the tool dragged — the

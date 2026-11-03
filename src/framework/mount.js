@@ -1330,7 +1330,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     if (poseMode) {
       const pc = createPoseCollide({
         part, viewer, fastPath, getView: view, getParams: () => params,
-        isLive: () => !!poseMode.isLive?.(), createHighlight: createFeatureHighlight,
+        isLive: () => !!poseMode.isLive?.(), frameOf: (n) => cache.frameOf(n), createHighlight: createFeatureHighlight,
       });
       if (pc.enabled) {
         poseCollide = pc;

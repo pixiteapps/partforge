@@ -65,10 +65,13 @@ const PLACE_FROM = new Set(["joint", "rest"]);
 
 // Everything resolveFrames reads of a frame set, flat and in its order: each frame's name,
 // parent, `at` and rotate steps (axis, deg), raw. Two sets with equal keys (element by
-// element, Object.is) resolve to the same transforms, bit for bit.
+// element, Object.is) resolve to the same transforms, bit for bit. A typed array (an `at` or
+// axis held in a Float64Array) is copied by value like an array: kept by reference, an edit
+// to it in place would hit the memo with the old transforms.
 function frameKey(set) {
   const out = [];
-  const arr = (a) => { if (Array.isArray(a)) { out.push(a.length); for (const v of a) out.push(v); } else out.push(a); };
+  const listLike = (a) => Array.isArray(a) || (ArrayBuffer.isView(a) && typeof a.length === "number");
+  const arr = (a) => { if (listLike(a)) { out.push(a.length); for (let i = 0; i < a.length; i++) out.push(a[i]); } else out.push(a); };
   for (const name of Object.keys(set)) {
     const f = set[name];
     out.push(name);

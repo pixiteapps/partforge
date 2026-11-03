@@ -35,6 +35,13 @@
 //     before this point.
 //   - `blockedChange(pair | null)` fires when the pair a frame stopped at changes (mount
 //     tints it), and with null when the drag ends or is cancelled.
+//   - a settle that throws holds the frame at lastClear (writes nothing new), logs once and
+//     drops the guard for the rest of the drag: a guard that cannot place a pose is not
+//     consulted again, and a frame it could not check is never written.
+//   - end()'s snap is checked too: the nearest snap can round a value toward contact, so if
+//     the snapped pose is not clear (guard.isClear over lastClear) each touched key snaps
+//     toward its value at the drag's start instead, and if that is not clear either the
+//     last clear values are written unsnapped. `changed` and the commit follow what was written.
 // The guard's `release()`, if it has one, is called once the drag is over.
 //
 // One drag is one commit, so one host undo step. A ghost is lifted only when its
@@ -51,7 +58,7 @@
 // Every IK drag holds them: angles mode through solveAngles (any limb), goal mode through
 // solveGoalPinned (the goal handle's own limb) once a pin is on that limb. Joint rings and
 // a goal drag with no pin on its limb do not.
-import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, linearBlend, withBlend, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, snapValuesToward, linearBlend, withBlend, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
 import { handleKind, handleAt, locateHandle } from "./handle-source.js";
 import { resolveParams } from "../part-model.js";
 import { COLLIDE_IN_SOLVE, budgetFrame } from "../collide/guard.js";
@@ -156,6 +163,8 @@ export function createPoseSession({
   solve = defaultSolve,
   locate = defaultLocate,
   snap = (values) => snapValues(part, values),
+  // the release snap toward the drag's start, when the nearest snap is not clear (collisions)
+  snapToward = (values, toward) => snapValuesToward(part, values, toward),
   staleSubParts = () => [],
   ghost = () => {},
   unghost = () => {},
@@ -229,9 +238,10 @@ export function createPoseSession({
       const end = typeof blend === "function" ? blend(1) : { ...from, ...result.values };
       s = guard.settle(from, end, typeof blend === "function" ? { blend } : undefined);
     } catch (err) {
-      // a pose the guard cannot place: written as solved (the solve read it, the guard could not)
-      console.error("pose collisions: settle failed", err);
-      return result.values;
+      // a pose the guard cannot place: hold at the last clear values, and stop guarding
+      console.error("pose collisions: settle failed; this drag goes on unguarded", err);
+      dropGuard(drag);
+      return {};
     }
     const values = {};
     for (const k of Object.keys(result.values)) values[k] = s.params[k];
@@ -244,11 +254,18 @@ export function createPoseSession({
     return values;
   }
 
+  /** The drag stops consulting its guard: let it go now (and clear the tint). */
+  function dropGuard(d) {
+    releaseGuard(d);
+    d.guard = null;
+    d.blocked = null;
+  }
+
   /** Write one frame's values and ghost whatever just went stale. */
   function apply(result) {
     if (!result || !result.values) return null;
     const values = settled(result);
-    write(values);
+    if (Object.keys(values).length) write(values);
     Object.assign(drag.touched, values);
     if (!drag.moved) {
       const snapped = snap({ ...values });
@@ -345,7 +362,7 @@ export function createPoseSession({
     if (!drag) return null;
     const ending = drag;
     drag = null;
-    const snapped = snap({ ...ending.touched });
+    const snapped = releaseValues(ending);
     if (Object.keys(snapped).length) write(snapped);
     // A ghost whose sub-part is current again at the released values (a drag back to
     // its start, a cache hit, or a delivery that landed during this drag) gets no
@@ -357,6 +374,22 @@ export function createPoseSession({
     const changed = Object.keys(snapped).filter((k) => snapped[k] !== ending.snapshot[k]);
     if (changed.length) commit(changed);
     return { handleId: ending.handleId, changed, moved: ending.moved, held: !changed.length && !ending.moved && pinBound(ending), blocked: ending.blocked };
+  }
+
+  /**
+   * The values end() writes: the touched values snapped — checked against the drag's guard,
+   * if it has one: nearest, else toward the start, else the last clear values unsnapped.
+   */
+  function releaseValues(ending) {
+    const touched = { ...ending.touched };
+    const nearest = snap({ ...touched });
+    const guard = ending.guard;
+    if (!guard || !Object.keys(touched).length) return nearest;
+    const clear = (vals) => { try { return guard.isClear({ ...ending.lastClear, ...vals }); } catch { return false; } };
+    if (clear(nearest)) return nearest;
+    const toward = snapToward({ ...touched }, ending.snapshot);
+    if (clear(toward)) return toward;
+    return Object.fromEntries(Object.keys(touched).map((k) => [k, ending.lastClear[k]]));
   }
 
   /**

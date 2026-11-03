@@ -63,12 +63,15 @@ export function handleKeys(handle, allHandles, params) {
  * @param opts.fastPath the pose ladder (matricesAt).
  * @param opts.getView the active view; opts.getParams the live params.
  * @param opts.isLive () => whether Pose mode is live (indexing waits until it is).
+ * @param opts.frameOf (name) => the mesh's delivery frame (the mesh cache's): only a
+ *   "canonical" mesh is indexed, since matricesAt places no other (a posed one reads null).
  * @param opts.schedule (cb) => cancel: an idle callback (cb gets a deadline). Tests inject one.
  * @param opts.loadModules () => Promise of { world: collide/world.js, partGuard: collide/part-guard.js }.
  * @param opts.createHighlight (viewer) => a feature highlight (show / clear / dispose).
  */
 export function createPoseCollide({
   part, viewer, fastPath, getView, getParams = () => ({}), isLive = () => true,
+  frameOf = () => "canonical",
   schedule = idleSchedule,
   loadModules = async () => ({ world: await import("../collide/world.js"), partGuard: await import("../collide/part-guard.js") }),
   createHighlight = null,
@@ -90,6 +93,14 @@ export function createPoseCollide({
     return !!e && meshOf(name)?.positions === e.positions;
   };
   const free = (ixs) => { if (ixs.length && mods) mods.world.disposeIndexes(ixs); };
+  const indexable = (name) => frameOf(name) === "canonical";
+  /** Drop a name's index: freed now, or once no drag borrows it. */
+  function drop(name) {
+    const e = entries.get(name);
+    if (!e) return;
+    entries.delete(name);
+    if (borrowers) retired.push(e.ix); else free([e.ix]);
+  }
 
   function kick() {
     if (!enabled || disposed || cancelTick || !queue.size || !isLive()) return;
@@ -107,13 +118,12 @@ export function createPoseCollide({
     if (!isLive()) return; // a live change kicks again
     for (const name of [...queue]) {
       queue.delete(name);
-      if (fresh(name)) continue;
+      if (fresh(name)) continue; // the very mesh array already indexed: nothing to rebuild
       const mesh = meshOf(name);
-      if (!mesh?.positions?.length) continue;
-      const was = entries.get(name);
+      if (!mesh?.positions?.length || !indexable(name)) { drop(name); continue; }
       const ix = mods.world.buildIndex(mesh);
+      drop(name);
       entries.set(name, { ix, positions: mesh.positions });
-      if (was) { if (borrowers) retired.push(was.ix); else free([was.ix]); }
       if (!(deadline?.timeRemaining?.() > 2)) break;
     }
     kick();
@@ -122,7 +132,10 @@ export function createPoseCollide({
   /** Queue `names` (default: every in-view sub-part) whose index is missing or stale. */
   function want(names) {
     if (!enabled || disposed) return;
-    for (const name of names) if (!fresh(name)) queue.add(name);
+    for (const name of names) {
+      if (!indexable(name)) { drop(name); continue; } // matricesAt would place it nowhere
+      if (!fresh(name)) queue.add(name);
+    }
     kick();
   }
   const inView = () => viewSubParts(part, getView(), { ...part.defaults, ...getParams() });
@@ -213,7 +226,11 @@ export function createPoseCollide({
       want(names);
     },
     /** Mount: the view switched, or Pose mode went live — index what this view shows. */
-    refresh() { want(inView().filter((n) => viewer.hasSubMesh?.(n))); },
+    refresh() {
+      // an index whose sub-part has no mesh any more goes (freed once no drag borrows it)
+      for (const name of [...entries.keys()]) if (!meshOf(name)) drop(name);
+      want(inView().filter((n) => viewer.hasSubMesh?.(n)));
+    },
     guardFor,
     /** The session's blockedChange: tint the pair a held drag stopped at (null: none). */
     tint,

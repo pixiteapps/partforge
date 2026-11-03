@@ -27,7 +27,7 @@ export const SETTLE_BISECTIONS = 12;  // 1 mm step → ~0.25 µm of contact
 export const COLLIDE_IN_SOLVE = false;
 // The solver rows' share of one drag frame (ms), while COLLIDE_IN_SOLVE is on: past it, the
 // frame's remaining solver iterations run without rows (budgetFrame) and settle alone keeps
-// the pieces apart. 3 ms held the hand's sliding-contact drag inside its limit on the bench.
+// the pieces apart. 3 ms came closest to the hand's limits on the bench (it still missed them).
 export const COLLIDE_FRAME_BUDGET_MS = 3;
 
 const clockNow = () => globalThis.performance?.now?.() ?? Date.now();

@@ -177,6 +177,80 @@ describe("pose-session with a drag guard", () => {
   });
 });
 
+describe("the release snap and a settle that throws", () => {
+  // angle's step is 0.1: a drag settled at 59.97 snaps to 60.0 nearest, 59.9 toward the start (0).
+  /** A guard whose settle lands on `at` and whose isClear accepts `clear(angle)`. */
+  const snapGuard = (at, clear) => ({
+    ...halfGuard(),
+    settle: (from) => ({ params: { ...from, angle: at }, blocked: null }),
+    checked: [],
+    isClear(params) { this.checked.push(params.angle); return clear(params.angle); },
+  });
+  const commitsOf = (g) => {
+    const params = { ...bar.defaults }, writes = [], commits = [];
+    const s = createPoseSession({
+      part: bar, getParams: () => params, write: (v) => { writes.push({ ...v }); Object.assign(params, v); },
+      commit: (c) => commits.push(c), restore() {},
+      solve: (args) => withBlend({ values: { angle: 90 }, error: 0 }, linearBlend({ ...bar.defaults, ...args.params }, { angle: 90 })),
+      collide: () => g,
+    });
+    return { s, params, writes, commits };
+  };
+
+  it("a nearest snap into contact snaps toward the start instead", () => {
+    const g = snapGuard(59.97, (a) => a < 59.98);
+    const h = commitsOf(g);
+    h.s.begin("swing");
+    h.s.frame({ point: [90, 0, 0] });
+    const ended = h.s.end();
+    expect(g.checked.map((a) => +a.toFixed(6))).toEqual([60, 59.9]);
+    expect(h.writes.at(-1)).toEqual({ angle: 59.9 });  // not the nearest, 60
+    expect(h.params.angle).toBe(59.9);
+    expect(ended.changed).toEqual(["angle"]);
+    expect(h.commits).toEqual([["angle"]]);
+  });
+
+  it("both snaps in contact: the last clear values, unsnapped", () => {
+    const g = snapGuard(59.97, (a) => Math.abs(a - 59.97) < 1e-9);
+    const h = commitsOf(g);
+    h.s.begin("swing");
+    h.s.frame({ point: [90, 0, 0] });
+    h.s.end();
+    expect(h.writes.at(-1)).toEqual({ angle: 59.97 });
+    expect(h.commits).toEqual([["angle"]]);
+  });
+
+  it("a clear nearest snap is written as before", () => {
+    const g = snapGuard(59.97, () => true);
+    const h = commitsOf(g);
+    h.s.begin("swing");
+    h.s.frame({ point: [90, 0, 0] });
+    h.s.end();
+    expect(h.writes.at(-1)).toEqual({ angle: 60 });
+  });
+
+  it("a settle that throws holds the frame at lastClear, drops the guard and logs once", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    let settles = 0, released = 0;
+    const g = { ...halfGuard(), settle() { settles++; throw new Error("cannot place"); }, release() { released++; } };
+    const h = session({ collide: () => g });
+    h.s.begin("swing");
+    h.s.frame({ point: [40, 0, 0] });
+    expect(h.writes).toEqual([]);                    // held: nothing new written
+    expect(h.params.angle).toBe(0);
+    expect(released).toBe(1);                        // the guard is let go at once
+    h.s.frame({ point: [30, 0, 0] });
+    h.s.frame({ point: [20, 0, 0] });
+    expect(settles).toBe(1);                         // later frames run unguarded
+    expect(h.solves.at(-1).collide).toBeNull();
+    expect(h.writes).toEqual([{ angle: 30 }, { angle: 20 }]);
+    expect(err).toHaveBeenCalledTimes(1);
+    h.s.end();
+    expect(released).toBe(1);
+    err.mockRestore();
+  });
+});
+
 describe("budgetFrame", () => {
   const fakeGuard = (cost, clock) => ({
     rowCount: 2, active: true, linearised: 0,
@@ -267,7 +341,7 @@ describe("fastPath.matricesAt", () => {
 
 describe("pose-collide: mount's idle index", () => {
   /** A fake viewer over the bar's meshes, an idle queue the test runs, and a rung-1 fast path. */
-  function rig({ shown = ["palm", "bar"] } = {}) {
+  function rig({ shown = ["palm", "bar"], frames = {} } = {}) {
     const meshes = barMeshes(collideBar);
     const has = new Set(shown);
     const viewer = {
@@ -280,6 +354,7 @@ describe("pose-collide: mount's idle index", () => {
     const worldMod = { ...world, disposeIndexes: vi.fn(world.disposeIndexes) };
     const pc = createPoseCollide({
       part: bar, viewer, fastPath, getView: () => "assembly",
+      frameOf: (n) => frames[n] ?? "canonical",
       schedule: (cb) => { idle.push(cb); return () => {}; },
       loadModules: async () => ({ world: worldMod, partGuard }),
     });
@@ -341,6 +416,66 @@ describe("pose-collide: mount's idle index", () => {
     g.release();
     expect(spy).toHaveBeenCalledTimes(1);
     r.pc.dispose();
+  });
+
+  it("a mesh that is not canonical is never indexed (matricesAt places it nowhere)", async () => {
+    const frames = { bar: "posed" };
+    const r = rig({ frames });
+    r.pc.delivered(["palm", "bar"]);
+    await r.runIdle();
+    expect(r.pc.state().indexed).toEqual(["palm"]);
+    frames.bar = "canonical";
+    r.pc.delivered(["bar"]);
+    await r.runIdle();
+    expect(r.pc.state().indexed.sort()).toEqual(["bar", "palm"]);
+    frames.bar = "posed";                     // delivered posed again: its index goes
+    r.pc.delivered(["bar"]);
+    expect(r.pc.state().indexed).toEqual(["palm"]);
+    expect(r.worldMod.disposeIndexes).toHaveBeenCalledTimes(1);
+    r.pc.dispose();
+  });
+
+  it("the same mesh array delivered again is not re-indexed", async () => {
+    const r = rig();
+    r.pc.delivered(["palm", "bar"]);
+    await r.runIdle();
+    const build = vi.spyOn(r.worldMod, "buildIndex");
+    r.pc.delivered(["palm", "bar"]);
+    await r.runIdle();
+    expect(build).not.toHaveBeenCalled();
+    r.pc.dispose();
+  });
+
+  it("refresh prunes an index whose sub-part has no mesh any more; a borrowed one waits for release", async () => {
+    const r = rig();
+    r.pc.delivered(["palm", "bar"]);
+    await r.runIdle();
+    const g = r.pc.guardFor({ handle: bar.handles.swing, snapshot: {} });
+    r.has.delete("bar");
+    r.pc.refresh();
+    expect(r.pc.state().indexed).toEqual(["palm"]);
+    expect(r.worldMod.disposeIndexes).not.toHaveBeenCalled(); // the drag borrows it
+    g.release();
+    expect(r.worldMod.disposeIndexes).toHaveBeenCalledTimes(1);
+    r.has.add("bar");
+    r.pc.refresh();
+    await r.runIdle();
+    expect(r.pc.state().indexed.sort()).toEqual(["bar", "palm"]);
+    r.pc.dispose();
+  });
+
+  it("dispose during a drag leaves release() safe, and frees each index once", async () => {
+    const r = rig();
+    r.pc.delivered(["palm", "bar"]);
+    await r.runIdle();
+    const g = r.pc.guardFor({ handle: bar.handles.swing, snapshot: {} });
+    r.pc.dispose();
+    const freed = r.worldMod.disposeIndexes.mock.calls.flatMap((c) => [...c[0]]);
+    expect(freed).toHaveLength(2);
+    expect(() => g.release()).not.toThrow();
+    expect(() => g.release()).not.toThrow();
+    expect(r.worldMod.disposeIndexes.mock.calls.flatMap((c) => [...c[0]])).toHaveLength(2);
+    expect(r.pc.guardFor({ handle: bar.handles.swing, snapshot: {} })).toBeNull();
   });
 
   it("a part without collisions, or with pose: false, indexes nothing", () => {

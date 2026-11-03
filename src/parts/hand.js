@@ -357,8 +357,9 @@ export default {
     assembly: { label: "Assembly" },
     print: { label: "Print" },
   },
-  // Pieces stay solid while posing: a finger dragged into its neighbour stops at it (and
-  // slides along it) rather than passing through. Pin neighbours sit at their running
+  // Pieces stay solid while posing: a finger dragged into its neighbour stops at its surface
+  // rather than passing through (and will slide along it once collide/guard.js's
+  // COLLIDE_IN_SOLVE is on). Pin neighbours sit at their running
   // clearance from the start, so they are never blocked; nothing is allowed to touch.
   collisions: {},
   // `joints` gives a joint a rotate ring in Pose mode (hover its dot): the parameter that

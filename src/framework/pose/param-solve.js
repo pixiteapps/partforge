@@ -847,6 +847,26 @@ const decimals = (n) => {
  * step's and min's decimal places, so an integer step (with an integer min) yields an
  * integer. Keys without a schema entry pass through.
  */
+/**
+ * snapValues, but each key snapped to the grid point on `toward`'s side of its value (floor
+ * or ceil toward `toward[k]`; the nearest where they are equal or `toward` has no number):
+ * Pose mode's release snap when the nearest one would move a piece into contact.
+ */
+export function snapValuesToward(part, values, toward = {}) {
+  const ranges = rangesOf(part);
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    const r = ranges.get(k);
+    if (!r || !isNum(v) || !(isNum(r.step) && r.step > 0)) { out[k] = snapValues(part, { [k]: v })[k]; continue; }
+    const from = isNum(r.min) ? r.min : 0;
+    const q = (v - from) / r.step, t = toward[k];
+    const n = !isNum(t) || t === v ? Math.round(q) : t < v ? Math.floor(q) : Math.ceil(q);
+    const places = Math.max(decimals(r.step), decimals(from));
+    out[k] = clamp(Number((from + n * r.step).toFixed(Math.min(places, 15))), r);
+  }
+  return out;
+}
+
 export function snapValues(part, values) {
   const ranges = rangesOf(part);
   const out = {};
