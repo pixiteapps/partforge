@@ -383,8 +383,16 @@ export default {
   // No two pieces interpenetrate, and every pin joint keeps its running clearance (GAP)
   // between the pieces it joins: those near misses are intended. The assembled hand
   // stands under 250 mm, so even the assembly view fits the bed it is never printed on.
+  // The sweeps are REPORTED, never gated (no sweepContacts in expect): a joint may leave
+  // its range wide and let collision be its limit, and then a sweep that meets is expected,
+  // and its freeRange (the contact-free span around the current value) is the reading that
+  // matters. Each digit's knuckle and curl sweep on their own, the others held at the
+  // defaults; at today's ranges all ten read clear. The whole open → fist path is not
+  // declared: at ~17 s it is a CLI run, not an every-measure check (docs/AUTHORING-PARTS.md
+  // "Collisions and sweeps" has it, `fist: { from: "open", to: "fist", clearance: 0.3 }`).
   verify: {
     process: "fdm-pla",
+    sweeps: Object.fromEntries(DIGITS.flatMap((id) => [[`${id}Knuckle`, { param: `${id}Knuckle` }], [`${id}Curl`, { param: `${id}Curl` }]])),
     expect: { _view: { overlaps: 0, clearance: Object.fromEntries(JOINT_PAIRS.map((pair) => [pair, ">=0.3"])) } },
   },
   // The agent's read-out: each digit's joint values, clamps and fingertip.

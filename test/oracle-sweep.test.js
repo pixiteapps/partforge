@@ -274,8 +274,8 @@ describe("sweep engine", () => {
 
   it("animation sweep", () => {
     // The meshing pairs (and the crank keyed to its gear) allowed: the spin still finds the
-    // crank's real touches — its hub sits on gear1's axle top, flush (distance 0), and its
-    // knob arm passes flush over gear2's tooth tips (both faces at z = 15).
+    // crank's resting touch — its hub bears on gear1's axle top, flush (distance 0), the
+    // whole turn. Its arm rides ARM_LIFT clear of gear2's tooth tips, so that pair is clear.
     const meshing = ["gear1×gear2", "gear2×gear3", "crank×gear1"];
     const part = withSweeps(gearbox, { spin: { animation: "spin" } }, { collisions: { allow: meshing } });
     const [row] = runSweeps(k, part, "gearbox", gearbox.defaults);
@@ -283,14 +283,14 @@ describe("sweep engine", () => {
     expect(row.rebuilds).toBe(false);
     expect(row.steps).toBeGreaterThan(1);
     expect(row.clear).toBe(false);
-    expect([...new Set(row.contacts.map((c) => `${c.a}×${c.b}`))].sort()).toEqual(["gear2×crank", "plate×crank"]);
-    const pass = row.contacts.find((c) => c.b === "crank" && c.a === "gear2" && c.from > 0);
-    expect(pass.driver).toBe("driveAngle");
+    expect([...new Set(row.contacts.map((c) => `${c.a}×${c.b}`))].sort()).toEqual(["plate×crank"]);
+    expect(row.contacts[0].from).toBe(0);
 
-    // With the crank's resting touches allowed too, the spin is clear.
-    const allowAll = withSweeps(gearbox, { spin: { animation: "spin" } }, { collisions: { allow: [...meshing, "plate×crank", "gear2×crank"] } });
-    const [clear] = runSweeps(k, allowAll, "gearbox", gearbox.defaults);
+    // The part's own declaration allows that bearing contact too: the spin is clear.
+    expect(gearbox.collisions.allow).toEqual([...meshing, "plate×crank"]);
+    const [clear] = runSweeps(k, gearbox, "gearbox", gearbox.defaults);
     expect(clear.clear).toBe(true);
+    expect(clear.minClearance.distance).toBeGreaterThan(0.29);
   }, SLOW);
 
   it("no row where nothing moves", () => {

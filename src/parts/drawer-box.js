@@ -97,6 +97,14 @@ export default {
       drag: "axis", direction: [0, -1, 0], label: `Drawer ${i}`, showOn: `drawer${i}`,
     }])),
   },
-  // Closed or open, every drawer runs on its clearance: nothing interpenetrates.
-  verify: { expect: { _view: { overlaps: 0 } } },
+  // Pieces stay solid while posing, and nothing is allowed to touch: each drawer keeps its
+  // 1 mm running clearance (GAP) to the cabinet all along its travel.
+  collisions: {},
+  // Closed or open, every drawer runs on its clearance: nothing interpenetrates, and each
+  // drawer's handle sweep (its whole travel, 0 to 100%) stays clear of the cabinet and of
+  // the other drawers.
+  verify: {
+    sweeps: Object.fromEntries(DRAWERS.map((i) => [`drawer${i}`, { handle: `drawer${i}` }])),
+    expect: { _view: { overlaps: 0, sweepContacts: 0 } },
+  },
 };

@@ -285,6 +285,7 @@ export const VIEW_METRICS = {
     withheldHint: "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names",
     hint: "a declared motion comes closer than its clearance to another sub-part — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
     skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
+    pattern: "sweep-contacts",
     locate: (r) => {
       const row = r.sweeps?.find(sweepHit);
       return row ? row.contacts[0]?.at ?? row.minClearance?.at ?? null : null;

@@ -34,7 +34,13 @@ import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype
 // many sweeps cannot fit — a hand's open-to-fist path alone is ~17 s and each knuckle
 // or curl sweep 0.5–1.4 s — and the CLI is where an agent is told to run them in full.
 // A minute fits every shipped part's sweeps with room, and still ends a runaway one.
-const CLI_SWEEP_BUDGET_MS = 60_000;
+// PARTFORGE_SWEEP_BUDGET_MS overrides it, in ms or "Infinity" (no deadline): the verify
+// golden (test/verify-golden.test.js) runs every sweep to its end, so what it records
+// never depends on how fast the machine is.
+const CLI_SWEEP_BUDGET_MS = (() => {
+  const env = Number(process.env.PARTFORGE_SWEEP_BUDGET_MS);
+  return env > 0 ? env : 60_000;
+})();
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 

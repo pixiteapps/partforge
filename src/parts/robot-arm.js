@@ -192,6 +192,8 @@ export default {
   // turns the wrist yaw, and the hand's slab swings into the forearm's (16 mm³ of overlap at
   // toolY 50, ~570 mm³ at toolY 150). Kept solid, every sideways drag would stop dead at
   // the first degree of yaw; the wrist's clearance is the part's to fix, then this goes.
+  // Every other pair stays solid, upperArm×fingerR among them: from a folded pose the
+  // right finger can be brought onto the upper arm, and that drag stops there, as it should.
   collisions: { allow: ["forearm×hand"] },
   handles: {
     tool: {

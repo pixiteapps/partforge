@@ -32,7 +32,9 @@ const withPreset = (part) => ({
 
 describe("measure and sweeps", () => {
   it("measure without sweeps has no sweeps key", () => {
-    const r = measure(k, drawerBox, "cabinet");
+    // drawer-box.js declares its own sweeps: take them off to measure a part with none
+    const { sweeps: _sweeps, ...verify } = drawerBox.verify;
+    const r = measure(k, { ...drawerBox, verify }, "cabinet");
     expect("sweeps" in r).toBe(false);
   }, SLOW);
 
