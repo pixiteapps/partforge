@@ -13,10 +13,10 @@ import { pairKey, CONTACT_EPS } from "./pairs.js";
 import { invertRigid } from "../geometry/pose.js";
 
 export const COLLIDE_BAND_MM = 2;     // rows start this far out, so the solver turns away early
-export const COLLIDE_WEIGHT = 10;     // a row's weight: param-solve.js's HOLD_WEIGHT scale
+export const COLLIDE_WEIGHT = 100;    // a row's weight: param-solve.js's HOLD_WEIGHTS scale
 export const MAX_ROWS = 8;            // rows per frame, nearest first
 export const MAX_SUBSTEPS = 32;       // settle's sub-steps per frame; a flick past it lags
-export const SETTLE_BISECTIONS = 8;   // 1 mm step → ~4 µm of contact
+export const SETTLE_BISECTIONS = 12;  // 1 mm step → ~0.25 µm of contact
 export const COLLIDE_IN_SOLVE = true; // false: settle alone, no solver rows (the fallback)
 
 const apply = (m, [x, y, z]) => (m ? [
@@ -53,6 +53,10 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
   // pairKey → "near" (inside clearance: exempt until it opens past clearance once) or
   // "inside" (wholly inside, where distance reads clear: exempt until it reaches the
   // surface, then "near"). guardOnly: pairs below the band at start, never rows.
+  // A "near" pair is free to move, deeper in included, until it opens past clearance
+  // once: "never further in" would need penetration depth, which distance alone does not
+  // give. An "inside" pair relies on sub-stepping to see it reach the surface, which
+  // assumes pieces thicker than BAND / 2.
   const exempt = new Map();
   const guardOnly = new Set();
 
@@ -158,11 +162,14 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       for (let steps = 0; t0 < 1 && steps < MAX_SUBSTEPS; steps++) {
         // A step no longer than BAND / 2 of travel: shrink by the secant until it fits
         // (a chord underestimates an arc, so the first guess can be long).
+        // A blend that jumps (a goal blend re-solves) may never fit: then lag at the last
+        // clear step rather than check a step long enough to tunnel.
         let t1, p1, m1, trv;
         for (let tries = 0; ; tries++) {
           t1 = Math.min(1, t0 + dt); p1 = blend(t1); m1 = matsAt(p1);
           trv = world.travel(m0, m1, moving);
-          if (trv <= half || tries === 8) break;
+          if (trv <= half) break;
+          if (tries === 8) return { params: p0, blocked: null };
           dt = (t1 - t0) * Math.max(0.1, (0.9 * half) / trv);
         }
         const c = check(m1);

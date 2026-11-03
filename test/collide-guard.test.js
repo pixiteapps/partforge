@@ -26,10 +26,10 @@ const margin = CONTACT_EPS + COLLIDE_BAND_MM;
 describe("drag guard constants", () => {
   it("exports the tuning values", () => {
     expect(COLLIDE_BAND_MM).toBe(2);
-    expect(COLLIDE_WEIGHT).toBe(10);
+    expect(COLLIDE_WEIGHT).toBe(100);
     expect(MAX_ROWS).toBe(8);
     expect(MAX_SUBSTEPS).toBe(32);
-    expect(SETTLE_BISECTIONS).toBeGreaterThan(0);
+    expect(SETTLE_BISECTIONS).toBe(12);
     expect(COLLIDE_IN_SOLVE).toBe(true);
   });
 });
@@ -142,6 +142,27 @@ describe("drag guard settle", () => {
     }
     expect(params.angle).toBeGreaterThanOrEqual(59.5);
     expect(params.angle).toBeLessThanOrEqual(60);
+    world.dispose();
+  });
+  it("a non-linear blend decides the path and never passes contact", () => {
+    const { guard, world } = setup(collideBar, { angle: 0 });
+    const blend = vi.fn((t) => ({ angle: 90 * t * t }));
+    const { params, blocked } = guard.settle({ angle: 0 }, { angle: 90 }, { blend });
+    expect(params.angle).toBeGreaterThanOrEqual(59.5);
+    expect(params.angle).toBeLessThanOrEqual(60);
+    expect(blocked).not.toBeNull();
+    // the returned params are the blend's own output: t² of 90, not a linear t
+    const t = Math.sqrt(params.angle / 90);
+    expect(blend.mock.results.some((r) => r.value === params)).toBe(true);
+    expect(t).toBeGreaterThan(0.8);
+    world.dispose();
+  });
+
+  it("a blend that jumps lags rather than tunnels", () => {
+    const { guard, world } = setup(collideBarThrough, { angle: 0 });
+    // any t > 0 lands wholly inside the slab at 90°: no step of it fits in BAND / 2
+    const jump = (t) => ({ angle: t > 0 ? 90 : 0 });
+    expect(guard.settle({ angle: 0 }, { angle: 90 }, { blend: jump })).toEqual({ params: { angle: 0 }, blocked: null });
     world.dispose();
   });
 });
