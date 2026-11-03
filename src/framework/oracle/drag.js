@@ -4,7 +4,8 @@
 // answer from derive alone — no kernel, no viewer.
 //
 // It plays the drag the way Pose mode would with no pins: from the handle's point at the
-// starting params to the target in `steps` evenly spaced frames, each solved warm from the
+// starting params to the target in `steps` evenly spaced frames (a rotary drag at least one
+// per 30°, its turn tracked unwrapped so a miss of whole turns still reads), each solved warm from the
 // last frame's values through pose-session's defaultSolve (which routes generic, goal and
 // angles handles, a goal limb grabbed mid-chain included), then snapped as a release
 // snaps them (snapValues). The grab point is read again at the snapped values.
@@ -19,6 +20,8 @@ import { handleKind, handleAt, locateHandle, handleAxis } from "../pose/handle-s
 import { handlesShownInView } from "../pose/handle-views.js";
 import { angleAbout, wrapTo180 } from "../solve/axis-angle.js";
 
+const ROTARY_STEP_DEG = 30; // a rotary drag's largest frame
+const ROTARY_LEAD_DEG = 90; // the most a rotary frame asks for past where the point is
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isVec = (v) => Array.isArray(v) && v.length === 3 && v.every(isNum);
 const isObj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
@@ -56,7 +59,7 @@ function rotateAbout(p, axis, deg) {
  * @param req.grab goal / angles only: a joint name or "tip" (default: the goal's `at`, an angles limb's tip)
  * @param req.params starting param overrides (merged over the part's defaults)
  * @param req.view the view the drag happens in (default the part's first); it must show the handle
- * @param req.steps frames from start to target (default 12)
+ * @param req.steps frames from start to target (default 12; a rotary drag takes one per 30° at least)
  * @returns `{ handle, drag, grab, from, target, reached, missMm, values }` or `{ handle, error }`
  */
 export function dragHandle(part, { handle: id, to, turn, grab, params = {}, view, steps = 12 } = {}) {
@@ -96,7 +99,7 @@ function play(part, { id, to, turn, grab, params, view, steps }, fail) {
   const drag = kind === "limb" ? handle.drag : handle.drag ?? "point";
 
   // ---- the start point, the grab and the per-frame targets --------------------------
-  let from, grabName, frameTarget, target, missOf;
+  let from, grabName, frameTarget, target, missOf, rotary = null;
   if (kind === "limb") {
     if (to === undefined || !isVec(to)) return fail(`a ${drag} drag needs to: [x, y, z]`);
     if (turn !== undefined) return fail(`a ${drag} drag takes to, not turn`);
@@ -134,8 +137,18 @@ function play(part, { id, to, turn, grab, params, view, steps }, fail) {
       const r = Math.hypot(...sub(rel, scale(axis.direction, dot(rel, axis.direction))));
       const radius = r > 1e-9 ? r : 1;
       target = rotateAbout(from, axis, turn);
-      frameTarget = (t) => ({ angleDeg: a0 + turn * t, axis, radius });
-      missOf = (p) => (radius * Math.abs(wrapTo180(angleAbout(p, axis) - (a0 + turn))) * Math.PI) / 180;
+      // The solve's angle residual is wrapped (-180..180), so a frame asking for more
+      // than half a turn past where the point is would go the short way round. The grab
+      // point's UNWRAPPED angle since the start is tracked frame by frame (`spun`), and
+      // each frame asks for at most ROTARY_LEAD_DEG past it: a point held by its param's
+      // range stays held, never pulled back, and the miss is the turn left undone.
+      rotary = { a0, spun: 0, axis };
+      frameTarget = (t) => {
+        const want = turn * t - rotary.spun;
+        const lead = Math.max(-ROTARY_LEAD_DEG, Math.min(ROTARY_LEAD_DEG, want));
+        return { angleDeg: a0 + rotary.spun + lead, axis, radius };
+      };
+      missOf = () => (radius * Math.abs(turn - rotary.spun) * Math.PI) / 180;
     } else {
       if (to === undefined || !isVec(to)) return fail(`a ${drag} drag needs to: [x, y, z]`);
       if (turn !== undefined) return fail(`a ${drag} drag takes to, not turn`);
@@ -149,13 +162,26 @@ function play(part, { id, to, turn, grab, params, view, steps }, fail) {
   }
 
   // ---- play it: each frame solved warm from the last ---------------------------------
+  // A rotary drag takes a frame per ROTARY_STEP_DEG at least, so each stays well inside
+  // the solve's half-turn residual.
+  const frames = rotary ? Math.max(steps, Math.ceil(Math.abs(turn) / ROTARY_STEP_DEG)) : steps;
+  /** Add the point's turn since the last read to the unwrapped total (rotary only). */
+  const spin = (p) => {
+    if (!isVec(p)) return;
+    rotary.spun += wrapTo180(angleAbout(p, rotary.axis) - (rotary.a0 + rotary.spun));
+  };
   const current = { ...base };
   const touched = {};
-  for (let i = 1; i <= steps; i++) {
-    const result = defaultSolve({ part, params: current, handle, grab: grabName, target: frameTarget(i / steps), holds: [], allHandles });
-    if (!result?.values) return fail(`the solve failed at frame ${i} of ${steps}: the handle's point could not be read there`);
+  for (let i = 1; i <= frames; i++) {
+    const result = defaultSolve({ part, params: current, handle, grab: grabName, target: frameTarget(i / frames), holds: [], allHandles });
+    if (!result?.values) return fail(`the solve failed at frame ${i} of ${frames}: the handle's point could not be read there`);
     Object.assign(current, result.values);
     Object.assign(touched, result.values);
+    if (rotary) {
+      let p;
+      try { const r = resolveParams(part, current); p = locateHandle(part, r.p, r.d, handle); } catch { p = null; }
+      spin(p);
+    }
   }
 
   // ---- release: snap, re-derive, read the grab point ---------------------------------
@@ -167,6 +193,7 @@ function play(part, { id, to, turn, grab, params, view, steps }, fail) {
     else { const { p, d } = resolveParams(part, final); reached = locateHandle(part, p, d, handle); }
   } catch { reached = null; }
   if (!isVec(reached)) return fail(`handle "${id}": no readable point after the release`);
+  if (rotary) spin(reached); // the snap may nudge it
   const values = {};
   for (const [k, val] of Object.entries(snapped)) if (!Object.is(val, base[k])) values[k] = val;
   return {

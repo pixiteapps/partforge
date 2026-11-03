@@ -165,3 +165,47 @@ describe("dragHandle: bad requests return error, never throw", () => {
     expect(dragHandle(gearbox).error).toMatch(/handle/);
   });
 });
+
+describe("dragHandle: rotary turns past half a turn per frame, and stops short honestly", () => {
+  const spinner = (wrap) => ({
+    parameters: [{ id: "s", title: "Spin", controls: [{ key: "a", min: 0, max: 360, step: 0.1, ...(wrap ? { wrap: true } : {}) }] }],
+    defaults: { a: 0 },
+    derive: () => ({}),
+    parts: { body: { build: () => null } },
+    views: { main: { body: {} } },
+    handles: {
+      rim: {
+        point: (p) => [20 * Math.cos((p.a * Math.PI) / 180), 20 * Math.sin((p.a * Math.PI) / 180), 0],
+        params: ["a"], drag: "rotary", axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, views: ["main"],
+      },
+    },
+  });
+
+  it("an unwrapped param stopped at its max a whole turn short reports the miss", () => {
+    const r = dragHandle(spinner(false), { handle: "rim", turn: 720 });
+    expect(r.error).toBeUndefined();
+    expect(r.values.a).toBeCloseTo(360, 0);
+    expect(r.missMm).toBeCloseTo(20 * 2 * Math.PI, 0); // one whole turn at radius 20
+  });
+
+  it("a wrapped param turned many turns accumulates them", () => {
+    const r = dragHandle(spinner(true), { handle: "rim", turn: 3000 });
+    expect(r.error).toBeUndefined();
+    expect(r.values.a).toBeCloseTo(3000, 0);
+    expect(r.missMm).toBeLessThan(0.5);
+  });
+
+  it("one frame of 300 degrees turns forward, not -60", () => {
+    const r = dragHandle(spinner(true), { handle: "rim", turn: 300, steps: 1 });
+    expect(r.error).toBeUndefined();
+    expect(r.values.a).toBeCloseTo(300, 0);
+    expect(r.missMm).toBeLessThan(0.5);
+  });
+
+  it("an unwrapped param turned 3000 stops at its max and reports the rest as missed", () => {
+    const r = dragHandle(spinner(false), { handle: "rim", turn: 3000 });
+    expect(r.error).toBeUndefined();
+    expect(r.values.a).toBeCloseTo(360, 0);
+    expect(r.missMm).toBeCloseTo((20 * (3000 - 360) * Math.PI) / 180, 0);
+  });
+});
