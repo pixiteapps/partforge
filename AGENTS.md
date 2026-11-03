@@ -661,7 +661,11 @@ the installed package, so let the publish finish before bumping the dep there.
   `ikInfo()` only - never `instanceof`, the cloud's worker holds two copies) and
   `pose-session.js` (the drag state machine and pins, effects injected) are pure;
   `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
-  `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar's Release pins
+  `pose-mode.js` the orchestrator, `pose-collide.js` mount's collision half (idle-time
+  indexes over the viewer's delivery-frame meshes, each drag's guard placed by the pose
+  ladder's `matricesAt`, the blocked pair's tint; the world module loads lazily, and
+  `collide/guard.js`'s `COLLIDE_IN_SOLVE` is off: settle alone stops a piece at contact),
+  `pose-controls.js` the viewbar's Release pins
   action, `aim-gizmo.js` the ball-and-rings widget on a goal handle with `aim` and the
   joint rings (`createJointGizmo`: one ring per rotation of a hovered joint whose
   parameter a goal handle's `seed` or an angles handle's `joints` names — a ring drag is

@@ -398,11 +398,11 @@ describe("createPoseSession - generic handles", () => {
     pinned.session.setPins(["gear2:gear2.rim"]);
     pinned.session.begin("gear3", "x");
     pinned.frame(gear3Target(45));
-    expect(pinned.session.end()).toEqual({ handleId: "gear3", changed: [], moved: false, held: true });
+    expect(pinned.session.end()).toEqual({ handleId: "gear3", changed: [], moved: false, held: true, blocked: null });
     const free = harness({ part: train, real: true });
     free.session.begin("gear3", "x");
     free.frame(gear3Target(45));
-    expect(free.session.end()).toEqual({ handleId: "gear3", changed: ["driveAngle"], moved: true, held: false });
+    expect(free.session.end()).toEqual({ handleId: "gear3", changed: ["driveAngle"], moved: true, held: false, blocked: null });
     // dragged out and back to the start, with a pin elsewhere: it moved, so no pin held it
     const back = harness({ part: drawer, real: true });
     back.session.begin("pull", "x");

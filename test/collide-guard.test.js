@@ -30,7 +30,7 @@ describe("drag guard constants", () => {
     expect(MAX_ROWS).toBe(8);
     expect(MAX_SUBSTEPS).toBe(32);
     expect(SETTLE_BISECTIONS).toBe(12);
-    expect(COLLIDE_IN_SOLVE).toBe(true);
+    expect(COLLIDE_IN_SOLVE).toBe(false); // Task 6's gate shipped settle alone
   });
 });
 

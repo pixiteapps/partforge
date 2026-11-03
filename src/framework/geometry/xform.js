@@ -83,7 +83,9 @@ export function resolveFrames(frames = {}) {
     const parent = def.parent == null ? IDENTITY : get(def.parent, `frames.${name}.parent`);
     const world = compose(parent, localOf(def));
     visiting.delete(name);
-    out.set(name, { world, inv: invert(world) });
+    // the inverse on first read: most callers want only the world transform
+    let inv = null;
+    out.set(name, { world, get inv() { return (inv ??= invert(world)); } });
     return world;
   };
   for (const name of Object.keys(frames)) get(name, `frames.${name}`);

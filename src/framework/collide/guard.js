@@ -20,7 +20,46 @@ export const COLLIDE_WEIGHT = 100;    // a row's weight: param-solve.js's HOLD_W
 export const MAX_ROWS = 8;            // rows per frame, nearest first
 export const MAX_SUBSTEPS = 32;       // settle's sub-steps per frame; a flick past it lags
 export const SETTLE_BISECTIONS = 12;  // 1 mm step → ~0.25 µm of contact
-export const COLLIDE_IN_SOLVE = true; // false: settle alone, no solver rows (the fallback)
+// false: settle alone, no solver rows (the fallback: stop at contact). Off since Task 6's
+// gate (docs/research/collisions-pose-after.json): with rows, the hand's open-air drag ran
+// at 23-25 ms p95 against its 24.6 ms limit whatever the row budget (2, 3, 4 or 8 ms); with
+// settle alone, 17-18 ms. Turn it on once the rows' open-air cost comes down.
+export const COLLIDE_IN_SOLVE = false;
+// The solver rows' share of one drag frame (ms), while COLLIDE_IN_SOLVE is on: past it, the
+// frame's remaining solver iterations run without rows (budgetFrame) and settle alone keeps
+// the pieces apart. 3 ms held the hand's sliding-contact drag inside its limit on the bench.
+export const COLLIDE_FRAME_BUDGET_MS = 3;
+
+const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
+
+/**
+ * The guard as one frame's solve sees it, with a time budget on its rows: every call the
+ * solve makes (beginFrame, linearise, rows) is timed, and once they have spent `budgetMs`
+ * between them, the next linearise — a solver iteration's start, so no Jacobian mixes the
+ * two — drops the rows: that iteration and every later one in the frame read zeros. A
+ * sliding contact can need an exact query per row per iteration; this keeps such a frame
+ * inside the budget, and settle (on the guard itself, never this wrapper) still stops it at
+ * contact. Make one per frame. `dropped` says whether this frame's budget ran out.
+ */
+export function budgetFrame(guard, { budgetMs = COLLIDE_FRAME_BUDGET_MS, now = clockNow } = {}) {
+  let spent = 0, dropped = false;
+  const timed = (fn) => { const t = now(); try { return fn(); } finally { spent += now() - t; } };
+  return {
+    get rowCount() { return guard.rowCount; },
+    get active() { return guard.active; },
+    get dropped() { return dropped; },
+    beginFrame: (params) => timed(() => guard.beginFrame(params)),
+    linearise(params) {
+      if (!dropped && spent >= budgetMs) dropped = true;
+      if (dropped) return;
+      timed(() => guard.linearise(params));
+    },
+    rows(params) {
+      if (dropped) return new Float64Array(guard.rowCount);
+      return timed(() => guard.rows(params));
+    },
+  };
+}
 
 const apply = applyMat; // undefined = identity (the mats contract)
 

@@ -105,14 +105,38 @@ const BOUND_PAD_MIN_MM = 1e-6; // still past a still pair's rounding drift (~1e-
 // Past any rounding in a relative placement and its corner motion (mm).
 const BOUND_SLACK_MM = 1e-9;
 
-export function createCollisionWorld({ meshes, decl = null }) {
-  const names = [...meshes.keys()];
+/**
+ * One sub-part's index, built once in its own mesh frame: `{ bvh, box }`. What a caller
+ * that builds indexes ahead of a world (Pose mode, in idle time) keeps, and hands to
+ * createCollisionWorld as `indexes`. Free it with disposeIndexes.
+ */
+export function buildIndex(mesh) {
+  return { bvh: buildBVH(mesh), box: boxOf(mesh.positions) };
+}
+
+/** Free indexes buildIndex made (an iterable of them). */
+export function disposeIndexes(indexes) {
+  disposeBVHs([...indexes].map((ix) => ix?.bvh));
+}
+
+/**
+ * `meshes` (name → mesh) are indexed here, and freed by dispose. `indexes` (name →
+ * buildIndex's `{ bvh, box }`) are borrowed: the world reads them and dispose leaves them
+ * to their owner. A name in both takes the borrowed index.
+ */
+export function createCollisionWorld({ meshes = new Map(), indexes = null, decl = null }) {
   const bvhs = new Map();
   const boxes = new Map();
+  const owned = [];
+  for (const [name, ix] of indexes ?? []) { bvhs.set(name, ix.bvh); boxes.set(name, ix.box); }
   for (const [name, mesh] of meshes) {
-    bvhs.set(name, buildBVH(mesh));
-    boxes.set(name, boxOf(mesh.positions));
+    if (bvhs.has(name)) continue;
+    const ix = buildIndex(mesh);
+    owned.push(ix.bvh);
+    bvhs.set(name, ix.bvh);
+    boxes.set(name, ix.box);
   }
+  const names = [...bvhs.keys()];
   const matOf = (mats, name) => mats.get(name); // undefined = identity, null = excluded
 
   // The pairs distances() would measure, in its order: every live pair (a before b in
@@ -244,6 +268,6 @@ export function createCollisionWorld({ meshes, decl = null }) {
       return worst;
     },
 
-    dispose() { disposeBVHs(bvhs.values()); bvhs.clear(); },
+    dispose() { disposeBVHs(owned); owned.length = 0; bvhs.clear(); },
   };
 }

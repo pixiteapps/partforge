@@ -183,8 +183,10 @@ export function aimAxes(toward, angles) {
  * @param opts.cueBlocked () => true while the resting cue must wait (mount: the opening
  *   view's autoplay is pending or playing). Default: never.
  * Session effects, passed through to createPoseSession: getParams, write, commit,
- * restore, staleSubParts, ghost, unghost, hold. Optional: schedule (rAF), createScene,
- * createGizmo (the aim gizmo), createJointRings (the joint gizmo).
+ * restore, staleSubParts, ghost, unghost, hold. Optional: collide (the drag guard factory)
+ * and onBlocked (the pair a held drag stopped at, or null), passed through as the session's
+ * collide and blockedChange; schedule (rAF), createScene, createGizmo (the aim gizmo),
+ * createJointRings (the joint gizmo).
  */
 export function createPoseMode(viewer, {
   part,
@@ -197,6 +199,8 @@ export function createPoseMode(viewer, {
   ghost,
   unghost,
   hold,
+  collide = () => null,
+  onBlocked = () => {},
   visibleHandles = () => Object.keys(part?.handles ?? {}),
   hoveredSubPart = () => null,
   schedule = (cb) => requestAnimationFrame(cb),
@@ -263,6 +267,7 @@ export function createPoseMode(viewer, {
 
   const session = createPoseSession({
     part, getParams, write, commit, restore, staleSubParts, ghost, unghost, hold,
+    collide, blockedChange: onBlocked,
     onCancel: () => finishPress(),
     onPinsChange: () => { if (!syncPins()) notify(pinListeners); },
     pinActive: (id) => !!pinPoint(id),
@@ -1307,6 +1312,8 @@ export function createPoseMode(viewer, {
         changed: ended.changed,
         // nothing written, no frame moved anything, and a pin was holding: the pin did it
         pinHeld: ended.changed.length === 0 && !ended.moved && ended.held,
+        // the pair the last frame stopped at ({ a, b }, b the piece it stopped against), or null
+        blocked: ended.blocked ?? null,
       });
     }
   }
@@ -1602,9 +1609,10 @@ export function createPoseMode(viewer, {
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     /**
-     * Fires when a drag is released (not cancelled): `{ handleId, generic, changed, pinHeld }`
-     * — `changed` the keys it committed; `pinHeld` when it wrote nothing because a pin held it
-     * (no frame moved a value and a pin was holding). The readout chip listens.
+     * Fires when a drag is released (not cancelled): `{ handleId, generic, changed, pinHeld,
+     * blocked }` — `changed` the keys it committed; `pinHeld` when it wrote nothing because a
+     * pin held it (no frame moved a value and a pin was holding); `blocked` the sub-part pair
+     * `{ a, b }` its last frame stopped at (collisions), or null. The readout chip listens.
      */
     onDragEnd: (cb) => { dragEndListeners.add(cb); return () => dragEndListeners.delete(cb); },
     /**

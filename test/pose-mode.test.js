@@ -992,7 +992,7 @@ describe("generic handles: rotary and touch", () => {
       t.fire("pointerup", c.x + r * Math.cos(rad(a0 + by)), c.y - r * Math.sin(rad(a0 + by)));
     };
     turn(() => rim(t), 40);
-    expect(ends).toEqual([{ handleId: "drive", generic: true, changed: ["driveAngle"], pinHeld: false }]);
+    expect(ends).toEqual([{ handleId: "drive", generic: true, changed: ["driveAngle"], pinHeld: false, blocked: null }]);
     const knob = () => t.screenOf([30 * Math.cos(rad(t.params.driveAngle + 90)), 0, 80 + 30 * Math.sin(rad(t.params.driveAngle + 90))]);
     // pin the knob, then turn the drive: nothing moves
     const k = knob();
@@ -1003,7 +1003,7 @@ describe("generic handles: rotary and touch", () => {
     const before = t.params.driveAngle;
     turn(() => rim(t), 40);
     expect(t.params.driveAngle).toBe(before);
-    expect(ends.at(-1)).toEqual({ handleId: "drive", generic: true, changed: [], pinHeld: true });
+    expect(ends.at(-1)).toEqual({ handleId: "drive", generic: true, changed: [], pinHeld: true, blocked: null });
     // a click is no drag: nothing
     expect(ends).toHaveLength(2);
   });

@@ -186,6 +186,13 @@ export default {
     },
   },
   views: { assembly: { label: "Assembly" } },
+  // Pieces stay solid while posing: a link dragged into another stops at it. In open air
+  // the goal drag writes the goal as before, so an out-of-reach goal still reads "missed by".
+  // forearm×hand is allowed, for now: for any goal off the arm's own plane the goal solve
+  // turns the wrist yaw, and the hand's slab swings into the forearm's (16 mm³ of overlap at
+  // toolY 50, ~570 mm³ at toolY 150). Kept solid, every sideways drag would stop dead at
+  // the first degree of yaw; the wrist's clearance is the part's to fix, then this goes.
+  collisions: { allow: ["forearm×hand"] },
   handles: {
     tool: {
       on: "arm", at: "tip", drag: "goal",

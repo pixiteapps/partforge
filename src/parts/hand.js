@@ -357,6 +357,10 @@ export default {
     assembly: { label: "Assembly" },
     print: { label: "Print" },
   },
+  // Pieces stay solid while posing: a finger dragged into its neighbour stops at it (and
+  // slides along it) rather than passing through. Pin neighbours sit at their running
+  // clearance from the start, so they are never blocked; nothing is allowed to touch.
+  collisions: {},
   // `joints` gives a joint a rotate ring in Pose mode (hover its dot): the parameter that
   // turns it directly. The wrist (on the palm limb) is named by every digit's handle, so a
   // locked digit hides the wrist rings, as it holds the wrist out of every drag. A ring and

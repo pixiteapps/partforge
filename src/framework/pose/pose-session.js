@@ -9,15 +9,33 @@
 //                          drag began (clamped to its range) — forward kinematics; a goal
 //                          handle's goal follows the turned pose (param-solve's jointRingValues)
 //   end()                  write the snapped values, hold(false), commit(changed) once;
-//                          returns { handleId, changed, moved, held } (null with no drag):
+//                          returns { handleId, changed, moved, held, blocked } (null with no drag):
 //                          moved — some frame wrote a value that, snapped, left the start;
 //                          held — a pin held the drag still: it wrote nothing, and the
 //                          last target solved WITHOUT the pins would have moved a value
-//                          (a pin on an unrelated point, or a range end, holds nothing)
+//                          (a pin on an unrelated point, or a range end, holds nothing);
+//                          blocked — the pair `{ a, b }` the last frame stopped at, or null
 //   cancel()               restore(snapshot), hold(false), unghost what is current, no commit
 //   externalWrite()        the same as cancel — something else wrote params mid-drag
 //   delivered(name)        a ghosted sub-part's new mesh landed: unghost it (mid-drag only
 //                          when the drag has not made it stale again)
+//
+// COLLISIONS (spec "Pose mode: collision in the solver"). `collide({ handle, snapshot })`
+// is called once at begin and returns a drag guard (collide/guard.js) or null (the part
+// declares no collisions, or nothing is indexed yet). With one, every frame — IK, ring
+// and joint ring alike — goes through it before anything is written:
+//   - the solve gets the guard's rows (budgetFrame: a per-frame time budget on them), or
+//     none when COLLIDE_IN_SOLVE is off;
+//   - then guard.settle(lastClear, end, { blend }) walks from the last clear params (the
+//     snapshot at first) toward the solve's answer and stops at contact; its params are
+//     what `write` gets, and they become the next frame's lastClear. `blend` is read
+//     straight off the solve's result: it is NON-enumerable (param-solve's withBlend), so a
+//     spread or copy of the result silently drops it, and settle would then walk a linear
+//     blend — wrong for a goal drag, whose path is the joint-space one. Never copy a result
+//     before this point.
+//   - `blockedChange(pair | null)` fires when the pair a frame stopped at changes (mount
+//     tints it), and with null when the drag ends or is cancelled.
+// The guard's `release()`, if it has one, is called once the drag is over.
 //
 // One drag is one commit, so one host undo step. A ghost is lifted only when its
 // sub-part is current (staleSubParts() no longer lists it) — at its delivery, or at
@@ -36,6 +54,7 @@
 import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, linearBlend, withBlend, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
 import { handleKind, handleAt, locateHandle } from "./handle-source.js";
 import { resolveParams } from "../part-model.js";
+import { COLLIDE_IN_SOLVE, budgetFrame } from "../collide/guard.js";
 
 const AIM_AXES = ["pitch", "yaw", "roll"];
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -146,6 +165,13 @@ export function createPoseSession({
   // Whether a pin acts right now: pose mode passes "its point is badged in this view", so a
   // pin on a handle the view does not show never holds anything unseen.
   pinActive = () => true,
+  // The drag guard factory (see COLLISIONS above): ({ handle, handleId, snapshot }) → guard | null.
+  collide = () => null,
+  blockedChange = () => {},
+  // the solver rows' frame budget (budgetFrame's options: tests inject a clock)
+  collideBudget = {},
+  // whether the solve gets the guard's rows (COLLIDE_IN_SOLVE; tests turn it off)
+  collideInSolve = COLLIDE_IN_SOLVE,
 }) {
   const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
   const allHandles = Object.values(handles);
@@ -177,18 +203,55 @@ export function createPoseSession({
       const point = locate({ part, params: snapshot, handle: { ...pin.handle, on: pin.limb }, at: pin.at });
       if (point) holds.push({ limb: pin.limb, at: pin.at, point });
     }
-    drag = { handleId, handle, grab, snapshot, holds, touched: {}, moved: false };
+    let guard = null;
+    try { guard = collide({ handle, handleId, snapshot }) ?? null; } catch (err) { console.error("pose collisions: no guard for this drag", err); }
+    const lastClear = { ...part?.defaults, ...snapshot };
+    drag = { handleId, handle, grab, snapshot, holds, touched: {}, moved: false, guard, lastClear, blocked: null };
     hold(true);
     return true;
+  }
+
+  /** This frame's collision rows for the solve: the guard under a fresh frame budget, or null. */
+  const solveGuard = () => (drag.guard && collideInSolve ? budgetFrame(drag.guard, collideBudget) : null);
+
+  /**
+   * The values a frame writes: the solve's own, or — with a guard — settle's, from the last
+   * clear params toward the solve's answer, stopped at contact. Keys: the solve's, plus any
+   * settle's path moved (a goal drag's joint-space blend sets its seeds and goal together).
+   */
+  function settled(result) {
+    const guard = drag.guard;
+    if (!guard) return result.values;
+    const blend = result.blend; // straight off the result: non-enumerable (see COLLISIONS)
+    const from = drag.lastClear;
+    let s;
+    try {
+      const end = typeof blend === "function" ? blend(1) : { ...from, ...result.values };
+      s = guard.settle(from, end, typeof blend === "function" ? { blend } : undefined);
+    } catch (err) {
+      // a pose the guard cannot place: written as solved (the solve read it, the guard could not)
+      console.error("pose collisions: settle failed", err);
+      return result.values;
+    }
+    const values = {};
+    for (const k of Object.keys(result.values)) values[k] = s.params[k];
+    for (const k of Object.keys(s.params)) if (!(k in values) && !Object.is(s.params[k], from[k])) values[k] = s.params[k];
+    drag.lastClear = { ...s.params };
+    const blocked = s.blocked ? { a: s.blocked.a, b: s.blocked.b } : null;
+    const was = drag.blocked;
+    drag.blocked = blocked;
+    if ((was?.a ?? null) !== (blocked?.a ?? null) || (was?.b ?? null) !== (blocked?.b ?? null)) blockedChange(blocked);
+    return values;
   }
 
   /** Write one frame's values and ghost whatever just went stale. */
   function apply(result) {
     if (!result || !result.values) return null;
-    write(result.values);
-    Object.assign(drag.touched, result.values);
+    const values = settled(result);
+    write(values);
+    Object.assign(drag.touched, values);
     if (!drag.moved) {
-      const snapped = snap({ ...result.values });
+      const snapped = snap({ ...values });
       drag.moved = Object.keys(snapped).some((k) => !Object.is(snapped[k], drag.snapshot[k]));
     }
     const fresh = [];
@@ -198,7 +261,13 @@ export function createPoseSession({
       fresh.push(name);
     }
     if (fresh.length) ghost(fresh);
-    return result;
+    return values === result.values ? result : withBlend({ ...result, values }, result.blend);
+  }
+
+  /** The drag's guard is done with: let it go, and clear the blocked tint. */
+  function releaseGuard(ending) {
+    if (ending.blocked) blockedChange(null);
+    try { ending.guard?.release?.(); } catch { /* the owner's problem */ }
   }
 
   function frame(target) {
@@ -213,14 +282,14 @@ export function createPoseSession({
       drag.lastTarget = t;
       return apply(solve({
         part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
-        grab: drag.grab, target: t, holds: drag.holds, allHandles,
+        grab: drag.grab, target: t, holds: drag.holds, allHandles, collide: solveGuard(),
       }));
     }
     const point = Array.isArray(target) ? target : target?.point;
     if (!Array.isArray(point) || !point.every(isNum)) return null;
     const result = solve({
       part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
-      grab: drag.grab, target: point, holds: drag.holds, allHandles,
+      grab: drag.grab, target: point, holds: drag.holds, allHandles, collide: solveGuard(),
     });
     return apply(result);
   }
@@ -284,9 +353,10 @@ export function createPoseSession({
     // params, so nothing stale appears at full opacity.
     reconcile();
     hold(false);
+    releaseGuard(ending);
     const changed = Object.keys(snapped).filter((k) => snapped[k] !== ending.snapshot[k]);
     if (changed.length) commit(changed);
-    return { handleId: ending.handleId, changed, moved: ending.moved, held: !changed.length && !ending.moved && pinBound(ending) };
+    return { handleId: ending.handleId, changed, moved: ending.moved, held: !changed.length && !ending.moved && pinBound(ending), blocked: ending.blocked };
   }
 
   /**
@@ -313,6 +383,7 @@ export function createPoseSession({
     drag = null;
     restore({ ...ending.snapshot });
     hold(false);
+    releaseGuard(ending);
     // Only the ghosts the restore made current again: one still waiting on an earlier
     // drag's release regen would flash its stale mesh at full opacity.
     reconcile();
