@@ -65,12 +65,19 @@ test("matches pre-transformed meshes", () => {
   }
 });
 
-test("at agrees with the pre-transformed query on a unique closest pair", () => {
-  const A = boxMesh(10, 10, 10), B = boxMesh(4, 4, 4);
-  const mA = randPose(5), mB = mulMat4([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], composePose([{ t: "translate", v: [40, 0, 0] }]));
-  const want = buildBVH(moved(A, mA)).distanceTo(buildBVH(moved(B, mB)));
-  const got = buildBVH(A).distanceToPosed(buildBVH(B), mA, mB);
-  expect(Math.abs(got.distance - want.distance)).toBeLessThan(1e-6);
+test("at, pointA and pointB agree with the pre-transformed query on a unique closest pair", () => {
+  // corner-to-corner gap along the diagonal: one closest pair, so the points are comparable
+  const A = boxMesh(10, 10, 10), B = boxMesh(4, 4, 4, [30, 30, 30]);
+  const a = buildBVH(A), b = buildBVH(B);
+  for (let n = 0; n < 5; n++) {
+    const mA = randPose(20), mB = randPose(20);
+    const want = buildBVH(moved(A, mA)).distanceTo(buildBVH(moved(B, mB)));
+    const got = a.distanceToPosed(b, mA, mB);
+    expect(Math.abs(got.distance - want.distance)).toBeLessThan(1e-6);
+    for (const key of ["at", "pointA", "pointB"]) for (let k = 0; k < 3; k++) {
+      expect(Math.abs(got[key][k] - want[key][k])).toBeLessThan(1e-6);
+    }
+  }
 });
 
 test("touching reads 0", () => {
