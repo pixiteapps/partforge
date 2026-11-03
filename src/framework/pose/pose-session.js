@@ -74,8 +74,9 @@ export function pinTarget(id, handles) {
  * from `params` to the result.
  *
  * `collide` (a drag guard, or null) adds its collision rows to the solve. A goal drag
- * with one starts the guard's frame first: in open air (no rows) it writes the goal
- * directly, as without one, so a goal can still be dragged out of reach; near an
+ * with one starts the guard's frame first: in open air (no row active: no pair's gap
+ * inside the guard's margin, whatever the travel slack pulled into its window) it writes
+ * the goal directly, as without one, so a goal can still be dragged out of reach; near an
  * obstacle it solves the seeded joints instead (solveGoalPinned, holding the current aim
  * unless a ring gives one), so the arm slides along it, and writes that pose back as goal
  * params. A solve that cannot read the limb falls back to the direct write.
@@ -87,7 +88,7 @@ export function defaultSolve({ part, params, handle, grab, target, aimAngles, ho
     const pinnedHold = holds.some((h) => h.limb === handle.on);
     // a start pose whose derive throws gets no rows: the frame then runs as without a guard
     if (collide) try { collide.beginFrame({ ...part.defaults, ...params }); } catch { collide = null; }
-    if (collide && collide.rowCount > 0) {
+    if (collide && collide.rowCount > 0 && collide.active) {
       const aim = aimAngles ?? currentAim(part, params, handle);
       const slid = solveGoalPinned({ part, params, handle, target, holds, aimAngles: aim, collide, collideFramed: true });
       if (slid) return slid;

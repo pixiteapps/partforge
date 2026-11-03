@@ -173,8 +173,9 @@ export function linearBlend(base, values) {
  * `hook(paramsOf)`, a fresh per-iteration linearisation hook for one DLS run (null with no
  * rows). With no guard, none of them, and the solve is exactly today's.
  *
- * The hook skips its first call: a run starts at the frame's start pose, where beginFrame
- * has just linearised every row (an exact BVH query per row, the costly part of a frame).
+ * A run starts at the frame's start pose, so the first run's hook skips its first call:
+ * beginFrame has just linearised every row there (an exact BVH query per row, the costly
+ * part of a frame). A later run (solveHandle's firmer holds) re-linearises at the start.
  */
 function collisionRows(collide, base, { framed = false } = {}) {
   const none = { count: 0, rows: null, hook: () => null };
@@ -182,13 +183,20 @@ function collisionRows(collide, base, { framed = false } = {}) {
   // a start pose whose derive throws: no rows (the solve then fails as it always has)
   if (!framed) try { collide.beginFrame(base); } catch { return none; }
   const count = collide.rowCount;
+  // whether the guard's linearisation is at the start pose: true after beginFrame, false
+  // once an iteration moves it — a re-run from the start (solveHandle's firmer holds)
+  // must then re-linearise there before its first step
+  let atStart = true;
   const hook = (paramsOf) => {
     if (!count) return null;
     let first = true;
     return (u) => {
-      if (first) { first = false; return; }
+      const skip = first && atStart;
+      first = false;
+      if (skip) return;
       // an unreadable pose keeps the last linearisation (its evaluations score FAILED)
       try { const at = paramsOf(u); if (at) collide.linearise(at); } catch { /* keep */ }
+      atStart = false;
     };
   };
   return { count, rows: (params) => collide.rows(params), hook };

@@ -69,6 +69,19 @@ describe("drag guard rows", () => {
     world.dispose();
   });
 
+  it("active: a row inside margin is active; one the travel slack windowed is not", () => {
+    const { guard, world } = setup(collideBar, { angle: 0 });
+    guard.beginFrame({ angle: 0 });
+    guard.beginFrame({ angle: 40 });   // 40° of swing: the slack windows the slab
+    expect(guard.rowCount).toBe(1);
+    expect(guard.active).toBe(false);
+    guard.beginFrame({ angle: 58 });
+    expect(guard.active).toBe(true);
+    guard.linearise({ angle: 30 });    // linearise re-reads it
+    expect(guard.active).toBe(false);
+    world.dispose();
+  });
+
   it("rowCount is fixed until the next beginFrame", () => {
     const { guard, world } = setup(collideBar, { angle: 0 });
     guard.beginFrame({ angle: 58 });

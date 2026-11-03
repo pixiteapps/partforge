@@ -98,6 +98,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
   const accept = ({ next }) => { exempt.clear(); for (const [k, v] of next) exempt.set(k, v); };
 
   let rows = [];
+  let active = false; // some row's exact gap, at the last linearisation, is inside margin
   let lastParams = null;
   let lastTravel = 0;
   const windowMm = () => margin + lastTravel;
@@ -107,6 +108,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
     const ma = mats.get(row.a), mb = mats.get(row.b);
     if (!r || ma === null || mb === null) { row.active = false; return; }
     row.active = true;
+    row.gap = r.distance;
     row.pa = apply(ma ? invertRigid(ma) : undefined, row.a === r.a ? r.pointA : r.pointB);
     row.pb = apply(mb ? invertRigid(mb) : undefined, row.a === r.a ? r.pointB : r.pointA);
     row.normal = r.normal && (row.a === r.a ? r.normal : r.normal.map((x) => -x));
@@ -114,6 +116,12 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
 
   return {
     get rowCount() { return rows.length; },
+    /**
+     * Whether some row is in play: its exact gap at the last linearisation (beginFrame's,
+     * or linearise's since) is below margin (clearance + band). rowCount alone also counts
+     * pairs the travel slack pulled into the window, which may sit 10-20 mm apart.
+     */
+    get active() { return active; },
 
     beginFrame(params) {
       const mats = matsAt(params);
@@ -129,6 +137,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
         rows.push(row);
         if (rows.length === MAX_ROWS) break;
       }
+      active = rows.some((row) => row.active && row.gap < margin);
     },
 
     linearise(params) {
@@ -138,6 +147,7 @@ export function createDragGuard({ world, matsAt, start, moving, clearance = CONT
       const pairs = new Set(rows.map((r) => r.key)); // the rows' own pairs, never a neighbour's
       const byKey = new Map(world.distances(mats, { names, within: windowMm(), pairs }).map((r) => [pairKey(r.a, r.b), r]));
       for (const row of rows) store(row, byKey.get(row.key), mats);
+      active = rows.some((row) => row.active && row.gap < margin);
     },
 
     rows(params) {

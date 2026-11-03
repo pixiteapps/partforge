@@ -16,7 +16,7 @@ import { withDeriveMemo } from "../src/framework/derive-memo.js";
 import { createCollisionWorld } from "../src/framework/collide/world.js";
 import { normalizeCollisions } from "../src/framework/collide/declaration.js";
 import { createPartGuard, movingSubParts } from "../src/framework/collide/part-guard.js";
-import { solveAngles, dofsOf, goalValues, seedValues } from "../src/framework/pose/param-solve.js";
+import { solveAngles, solveHandle, dofsOf, goalValues, seedValues } from "../src/framework/pose/param-solve.js";
 import { defaultSolve } from "../src/framework/pose/pose-session.js";
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -44,6 +44,49 @@ describe("dofsOf", () => {
   });
 });
 
+describe("re-runs re-linearise", () => {
+  // A plane handle on a box's corner, with a pin on its edge point that moves with width:
+  // the pin leaks at HOLD_WEIGHT, so solveHandle re-runs from the start with firmer holds.
+  const box = {
+    parameters: [{ id: "b", title: "Box", controls: [
+      { key: "width", min: 10, max: 400, step: 1 },
+      { key: "depth", min: 10, max: 200, step: 1 },
+    ] }],
+    defaults: { width: 80, depth: 40 },
+    derive: () => ({}),
+    handles: {
+      corner: { point: (p) => [p.width / 2, p.depth / 2, 10], params: ["width", "depth"], drag: "plane", normal: [0, 0, 1] },
+      edge: { point: (p) => [p.width / 2, 0, 10], params: ["width"], drag: "axis", direction: [1, 0, 0] },
+    },
+  };
+  /** A spy guard: one zero row; records each linearise and each run's start. */
+  function spyGuard() {
+    const calls = [];
+    return {
+      calls,
+      rowCount: 1,
+      active: true,
+      beginFrame: (params) => calls.push(["begin", params.width, params.depth]),
+      linearise: (params) => calls.push(["lin", params.width, params.depth]),
+      rows: () => new Float64Array(1),
+    };
+  }
+
+  it("each firmer-hold re-run linearises at the start pose before its first step", () => {
+    const pin = { ref: { handleId: "edge", handle: box.handles.edge }, point: [40, 0, 10] };
+    const args = { part: box, params: {}, handle: box.handles.corner, target: { point: [60, 30, 10] }, holds: [pin], allHandles: Object.values(box.handles) };
+    const guard = spyGuard();
+    const r = solveHandle({ ...args, collide: guard });
+    expect(r.values).toEqual(solveHandle(args).values); // zero rows: the same answer
+    const lin = guard.calls.filter((c) => c[0] === "lin");
+    const atStart = lin.filter((c) => c[1] === 80 && c[2] === 40);
+    // the first run starts on beginFrame's linearisation; every re-run linearises at the start
+    expect(guard.calls[0]).toEqual(["begin", 80, 40]);
+    expect(lin[0]).not.toEqual(["lin", 80, 40]);
+    expect(atStart.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("hand: angles drags", () => {
   const handle = hand.handles.index;
   const allHandles = Object.values(hand.handles);
@@ -61,6 +104,11 @@ describe("hand: angles drags", () => {
       withDeriveMemo(() => {
         const a = solveAngles({ part: hand, params: plain, handle, grab: "tip", target, allHandles });
         const b = solveAngles({ part: hand, params: guarded, handle, grab: "tip", target, allHandles, collide: guard });
+        // Rows do come in (the wrist moves every piece, so the travel slack windows the
+        // fingers' 3 mm neighbours), but none is active, and each reads exactly 0 at the
+        // solved pose: an identity test, not a tolerance one.
+        expect(guard.active, `${i}`).toBe(false);
+        expect([...guard.rows({ ...guarded, ...b.values })].every((v) => v === 0), `${i}`).toBe(true);
         for (const key of Object.keys(a.values)) expect(Math.abs(b.values[key] - a.values[key]), `${i} ${key}`).toBeLessThan(1e-9);
         plain = { ...plain, ...a.values };
         guarded = { ...guarded, ...b.values };
@@ -111,27 +159,56 @@ describe("robot arm: goal drags", () => {
   const movingOf = (start) => movingSubParts(arm, "assembly", start, goalKeys);
 
   it("goal drags slide on the arm", () => {
-    // From the default pose, the tool is dragged toward a point inside the turret post.
-    const start = { ...arm.defaults };
-    const guard = guardFor(arm, start, movingOf(start));
-    const from = tipOf(start), goal = [-26, 0, 80];
-    let params = { ...start }, last = null, rows = 0;
+    // The arm's own links never come within the band of anything but their pin
+    // neighbours (its joint limits stop a goal pushed into the turret or pedestal well
+    // short), so the test adds a block on the table under the default tool, top at
+    // z = 40, and drags the tool down and back into it: the fingers land on its top and
+    // slide along it toward the goal's x.
+    const blocked = { ...arm, parts: { ...arm.parts, block: { label: "Block", build: (kk) => kk.box({ min: [150, -40, 0], max: [260, 40, 40] }), views: { assembly: (sol) => sol } } } };
+    const start = { ...blocked.defaults };
+    const moving = movingSubParts(blocked, "assembly", start, goalKeys);
+    const guard = guardFor(blocked, start, moving);
+    const tip = (q) => resolveParams(blocked, { ...blocked.defaults, ...q }).d.arm.world("tip").origin;
+    const from = tip(start), goal = [170, 0, 20];
+    let params = { ...start }, last = null;
     const N = 12;
     for (let i = 1; i <= N; i++) {
       const target = from.map((v, c) => v + ((goal[c] - v) * i) / N);
       withDeriveMemo(() => {
-        last = defaultSolve({ part: arm, params, handle, grab: "tip", target, collide: guard });
-        rows = guard.rowCount;
+        last = defaultSolve({ part: blocked, params, handle, grab: "tip", target, collide: guard });
         params = guard.settle(params, last.blend(1), { blend: last.blend }).params;
       });
     }
-    expect(rows).toBeGreaterThan(0);              // the last frame took the joint-space path
     expect(guard.isClear(params)).toBe(true);
+    // the last frame took the joint-space path: seeds and every goal param, aim included
     for (const key of [...handle.seed, ...goalKeys]) expect(Object.keys(last.values)).toContain(key);
     // the goal written is the pose on screen: derive reproduces it
-    const tool = tipOf(params);
+    const tool = tip(params);
     expect(dist(tool, [params.toolX, params.toolY, params.toolZ])).toBeLessThan(0.5);
-    expect(dist(tool, goal)).toBeGreaterThan(5);  // it stayed out of the turret
+    expect(tool[2]).toBeGreaterThan(40);           // on the block, not in it
+    expect(tool[0]).toBeLessThan(180);             // and slid along it toward the goal
+  }, SLOW);
+
+  it("a fast open-air drag whose travel slack windows a pair still writes the goal directly", () => {
+    // Frame 1's long travel widens frame 2's window: rows come in, but no gap is inside
+    // the margin, so frame 2 stays a direct write and reads its miss.
+    const start = { ...arm.defaults };
+    const guard = guardFor(arm, start, movingOf(start));
+    let params = { ...start }, r = null;
+    for (const target of [[300, 0, 150], [400, 0, 300]]) {
+      withDeriveMemo(() => {
+        r = defaultSolve({ part: arm, params, handle, grab: "tip", target, collide: guard });
+        if (target[2] === 300) return;
+        params = guard.settle(params, r.blend(1), { blend: r.blend }).params;
+      });
+    }
+    expect(guard.rowCount).toBeGreaterThan(0);
+    expect(guard.active).toBe(false);
+    const target = [400, 0, 300];
+    const values = goalValues({ handle, point: target, part: arm });
+    expect(r.values).toEqual({ ...values, ...seedValues({ part: arm, params: { ...params, ...values }, handle }) });
+    const { p, d } = resolveParams(arm, { ...params, ...r.values });
+    expect(arm.probes.tool(null, p, d).status).not.toBe("reached");
   }, SLOW);
 
   it("open-air goal drag writes the goal directly", () => {
