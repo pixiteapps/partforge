@@ -591,12 +591,13 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 #viewbar .pf-measure-actions, #viewbar .pf-pose-actions { display: flex; gap: 4px; }
 #viewbar .pf-measure-actions[hidden], #viewbar .pf-pose-actions[hidden] { display: none; }
 #viewbar .pf-measure-actions button, #viewbar .pf-pose-actions button { width: auto; min-width: 56px; padding: 0 8px; }
-/* A distance's X/Y/Z parts: a readout pill of its own, floated just off the
-   bar (above a bottom-anchored bar, below the legacy top-right one) so the
-   bar keeps its width on a phone. The bar is always positioned. It carries
-   data-pf-viewbar-float, so viewbar-clear.js counts it in --pf-viewbar-clear
-   and the view cube rises above it rather than covering it. */
-#viewbar .pf-measure-parts {
+/* The viewbar's READOUT SLOT (viewbar-clear.js's createViewbarReadout): a pill of its own,
+   floated just off the bar (above a bottom-anchored bar, below the legacy top-right one) so
+   the bar keeps its width on a phone. Measure mode's X/Y/Z parts and pose mode's live drag
+   values (pose/drag-readout.js) both show here; the modes are never live at once. The bar
+   is always positioned. It carries data-pf-viewbar-float, so viewbar-clear.js counts it in
+   --pf-viewbar-clear and the view cube rises above it rather than covering it. */
+#viewbar .pf-viewbar-readout {
   position: absolute; right: -1px; bottom: calc(100% + 6px);
   /* the bar's own gap and padding, so the buttons' 7px corners sit as
      evenly inside the 12px edge as the bar's do */
@@ -604,12 +605,19 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius-pill); box-shadow: var(--pf-shadow-float);
 }
-#viewbar:not(.pf-float-viewbar) .pf-measure-parts { bottom: auto; top: calc(100% + 6px); }
-#viewbar .pf-measure-parts[hidden] { display: none; }
+#viewbar:not(.pf-float-viewbar) .pf-viewbar-readout { bottom: auto; top: calc(100% + 6px); }
+#viewbar .pf-viewbar-readout[hidden] { display: none; }
 #viewbar .pf-measure-actions .pf-measure-parts button {
   min-width: auto; height: 28px; padding: 0 8px; white-space: nowrap;
   font-size: 13px; font-variant-numeric: tabular-nums;
 }
+/* pose mode's drag values: the measure parts' text, not buttons (display only) */
+#viewbar .pf-pose-readout { pointer-events: none; }
+#viewbar .pf-pose-readout-item {
+  display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; white-space: nowrap;
+  font-size: 13px; font-variant-numeric: tabular-nums; color: var(--pf-text);
+}
+#viewbar .pf-pose-readout-label { color: var(--pf-muted-2); }
 #viewbar .pf-measure-parts button.on { background: var(--pf-surface-2, rgba(127, 127, 127, .14)); color: var(--pf-text, inherit); }
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }

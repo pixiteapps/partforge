@@ -58,7 +58,7 @@ function fakeViewer() {
 }
 
 function fakeScene() {
-  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setReadout: [], setCue: [], setCueOpacity: [] };
+  const calls = { setLimbs: [], setHover: [], setActive: [], setPins: [], setAimGizmo: [], setGuides: [], setCue: [], setCueOpacity: [] };
   return {
     calls,
     setLimbs: (x) => calls.setLimbs.push(x),
@@ -68,7 +68,6 @@ function fakeScene() {
     setPins: (x) => calls.setPins.push(x),
     setAimGizmo: (x) => calls.setAimGizmo.push(x),
     setGuides: (x) => calls.setGuides.push(x),
-    setReadout: (x) => calls.setReadout.push(x),
     setCue: (x) => calls.setCue.push(x),
     setCueOpacity: (x) => calls.setCueOpacity.push(x),
     setTheme() {}, tick() {}, dispose() {},
@@ -100,6 +99,8 @@ function setup(part = hand, extra = {}) {
     ...extra,
   });
   live.push(mode);
+  const readouts = [];
+  mode.onReadout?.((r) => readouts.push(r));
   const screenOf = (p) => {
     const w = new THREE.Vector3(...p).applyMatrix4(viewer.partsGroup.matrixWorld);
     return viewer.projectPoint(w.toArray());
@@ -110,7 +111,7 @@ function setup(part = hand, extra = {}) {
   const fire = (type, x, y, extra = {}) => viewer.domElement.dispatchEvent(new PointerEvent(type, {
     clientX: x, clientY: y, pointerId: 1, button: 0, pointerType: "mouse", bubbles: true, ...extra,
   }));
-  return { viewer, scene, orbit, params, log, mode, fire, tipScreen, pointScreen, screenOf, info, gizmo: () => gizmo };
+  return { viewer, scene, orbit, params, log, mode, readouts, fire, tipScreen, pointScreen, screenOf, info, gizmo: () => gizmo };
 }
 
 afterEach(() => { for (const m of live.splice(0)) m.detach(); document.body.innerHTML = ""; });
@@ -812,16 +813,19 @@ describe("generic handles", () => {
     expect(t.mode.isDragging()).toBe(true);
     expect(t.log.write.length).toBeGreaterThanOrEqual(5);
     expect(t.log.write.at(-1).slide).toBeGreaterThan(10);
-    const r = t.scene.calls.setReadout.at(-1);
+    const r = t.readouts.at(-1);
+    expect(r.handleId).toBe("drawer");
     expect(r.text).toMatch(/^slide \d+$/);
-    expect(r.at[2]).toBeCloseTo(80 + t.params.slide, 6);
+    expect(r.items).toEqual([expect.objectContaining({ key: "slide", value: t.params.slide })]);
+    expect(t.mode.getReadout()).toEqual(r);
     expect(t.scene.calls.setActive.at(-1)).toMatchObject({ limb: "handle:drawer", grab: "tip" });
     expect(t.scene.calls.setActive.at(-1).residual).toBeUndefined(); // no miss line on a generic handle
     expect(kinds(t)).toEqual(["axis", "path"]);
     t.fire("pointerup", s.x, s.y - 36);
     expect(t.log.commit).toEqual([["slide"]]);
     expect(Number.isInteger(t.params.slide)).toBe(true);
-    expect(t.scene.calls.setReadout.at(-1)).toBeNull();
+    expect(t.readouts.at(-1)).toBeNull(); // the drag's end takes the readout away
+    expect(t.mode.getReadout()).toBeNull();
     expect(at(t, "drawer").y).toBeLessThan(s.y - 20); // the dot followed the pointer up
   });
 
@@ -843,7 +847,7 @@ describe("generic handles", () => {
     t.fire("pointermove", s.x, s.y);
     t.fire("pointerdown", s.x, s.y);
     for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x + i * 5, s.y);
-    expect(t.scene.calls.setReadout.at(-1).text).toMatch(/^width \d+\.\d · depth \d+\.\d$/);
+    expect(t.readouts.at(-1).text).toMatch(/^width \d+\.\d · depth \d+\.\d$/);
     t.fire("pointerup", s.x + 20, s.y);
     expect(t.params.width).toBeGreaterThan(80);
   });

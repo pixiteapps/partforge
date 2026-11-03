@@ -186,7 +186,7 @@ describe("createPoseScene", () => {
     scene.dispose();
   });
 
-  it("guides and the readout draw in their own group, apart from the limbs, and clear", () => {
+  it("guides draw in their own group, apart from the limbs, and clear (no readout label)", () => {
     const viewer = fakeViewer();
     const scene = createPoseScene(viewer, { paintLabel: fakePaint });
     scene.setLimbs([HANDLE]);
@@ -200,14 +200,11 @@ describe("createPoseScene", () => {
     expect(viewer.registerCanonicalCaptureHidden).toHaveBeenCalledWith(scene.guideGroup);
     const segs = scene.guideGroup.children.map((c) => c.geometry.attributes.instanceStart.count);
     expect(segs).toEqual([4, 2]); // the square closes; the path does not
-    scene.setReadout({ at: [5, 5, 0], text: "width 84.0 · depth 60.5" });
-    expect(scene.guideState().readout).toEqual({ at: [5, 5, 0], text: "width 84.0 · depth 60.5" });
-    const label = scene.guideGroup.children.find((c) => c.geometry?.type === "PlaneGeometry");
-    expect(label.material.map.image.width).toBe(40 * "width 84.0 · depth 60.5".length);
-    scene.tick();
-    expect(label.position.y).toBeGreaterThan(5); // lifted above the point, on screen
+    // the drag values read out in the DOM (drag-readout.js), never as a label in the scene
+    expect(scene.setReadout).toBeUndefined();
+    expect(scene.guideGroup.children.some((c) => c.geometry?.type === "PlaneGeometry")).toBe(false);
+    expect(scene.guideState()).toEqual({ guides: [expect.objectContaining({ kind: "plane" }), expect.objectContaining({ kind: "path" })] });
     viewer.requestRender.mockClear();
-    scene.setReadout(null);
     scene.setGuides([]);
     expect(scene.guideGroup.children.length).toBe(0);
     expect(viewer.requestRender).toHaveBeenCalled();

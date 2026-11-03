@@ -853,6 +853,7 @@ async function checkGearbox(page, url, errors) {
  * The drawer box (parts/drawer-box.js): a MOTION drag, then a SHAPE drag, on one part.
  *   - drawer1's pull, along its rail (an axis handle): no `generate` job (a drawer slides
  *     by matrix), one commit opening drawer1 to about 60% of its travel, the other drawers where they were;
+ *   - while it slides, its value in the viewbar's readout slot (measure's spot), gone on release;
  *   - the readout chip that drag leaves by the pull: typed into, it commits the snapped value once;
  *   - the top corner, across the top plane (a plane handle): the part is cheap (its last
  *     build under LIVE_REBUILD_MS), so it rebuilds LIVE — `generate` jobs during the drag —
@@ -884,8 +885,21 @@ async function checkDrawerBox(page, url, errors) {
   let t0 = await page.evaluate(() => performance.now());
   await drag(canvas(d0), canvas(d1), "drawer1's pull");
   const drawerJobs = generates(await page.evaluate(() => window.__pfWorkerLog), t0);
+  // The live readout: in the viewbar's readout slot (measure's X/Y/Z spot), floated just
+  // above the bar with right edges flush, the view cube stepped up over it.
+  const liveReadout = await page.evaluate(() => {
+    const rect = (sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return r && { top: r.top, bottom: r.bottom, right: r.right }; };
+    return { text: window.__pfRuntime.pose.__dragReadout(), slot: rect("#viewbar .pf-pose-readout"), bar: rect("#viewbar"), cube: rect(".pf-viewcube-stack") };
+  });
+  if (!/Drawer 1/i.test(liveReadout.text ?? "")) errors.push(`no live readout in the viewbar slot while sliding drawer1 (${JSON.stringify(liveReadout.text)})`);
+  else if (!liveReadout.slot || !liveReadout.bar || Math.abs(liveReadout.slot.right - liveReadout.bar.right) > 2 || liveReadout.slot.bottom > liveReadout.bar.top) {
+    errors.push(`the live readout is not floated above the viewbar, right edges flush (${JSON.stringify(liveReadout)})`);
+  } else if (liveReadout.cube && liveReadout.cube.bottom > liveReadout.slot.top + 0.5) {
+    errors.push(`the view cube overlaps the live readout (${JSON.stringify(liveReadout)})`);
+  }
   await page.mouse.up();
   await settle(page);
+  if (await page.evaluate(() => window.__pfRuntime.pose.__dragReadout())) errors.push("the live readout stayed up after the drag ended");
   if (drawerJobs.length) errors.push(`${drawerJobs.length} generate job(s) posted while sliding drawer1 (a drawer slides by matrix)`);
   const slide = await oneCommit(page, commits0, "sliding drawer1", errors);
   const open = slide?.params?.drawer1Open;

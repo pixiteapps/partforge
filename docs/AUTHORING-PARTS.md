@@ -3492,13 +3492,15 @@ A shown handle is a dot. Hover or drag it and its guide draws: an axis handle a 
 double arrow, a plane handle a small square, a rotary handle a ring about its axis. The
 cursor becomes a grab hand, and for a handle with one ranged param its **path** draws,
 the curve its point travels as that param sweeps its range (32 samples; a wrapped param
-one turn). Drag the dot to move it; a small readout
-by the handle shows the `readout` params' values ("width 184 · depth 132"). Every other
+one turn). Drag the dot to move it; while it moves, the `readout` params' values show at
+the bottom of the stage, in the same readout pill measure mode's X/Y/Z parts use (floated
+just above `#viewbar`, right edges flush; the view cube steps up to clear it), each named
+by its control's `label` and `unit` ("Width 184 mm  Depth 132 mm"). Every other
 press orbits and picks as usual. On touch, a press within 24 px of a handle's point drags
 it. Escape, or a host `setParams` mid-drag, restores the values from before the drag.
 
-After a drag that wrote a param, the readout stays by the handle for 4 s as a small
-**chip**, each value named by its control's `label` and `unit` (else its key). Click or tap
+After a drag that wrote a param, the bottom readout goes and the values show by the handle
+for 4 s as a small **chip**, each value named by its control's `label` and `unit` (else its key). Click or tap
 it to type exact values: it becomes one number input per `readout` param. Enter, or moving
 the focus out of the chip, writes the inputs you changed the way the panel's slider would
 (snapped to the step and clamped to the range; a `wrap: true` param keeps its turn, so 45
@@ -3612,8 +3614,9 @@ sketch, cutaway or cached preview on), `pinCount()`, `releasePins()` and
 `handlePoints()`, each shown handle's grab point on the canvas in CSS px (drawn or not;
 empty while posing is not live). One drag is one `onParamsCommit` listing every param
 that changed; a drag that changed nothing commits nothing, and a value typed into the
-readout chip commits once too. The chip is a `.pf-pose-chip` element in the stage, styled
-by partforge's `app.css`. Pose mode is a pointer tool:
+readout chip commits once too. The chip is a `.pf-pose-chip` element in the stage, and the
+live drag readout a `.pf-viewbar-readout.pf-pose-readout` inside `#viewbar` (a page with no
+`#viewbar` gets no live readout, only the chip), both styled by partforge's `app.css`. Pose mode is a pointer tool:
 the panel sliders drive the same parameters, so keyboard users lose nothing.
 
 ## Probes: measuring geometry into the report

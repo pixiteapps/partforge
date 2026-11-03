@@ -82,7 +82,7 @@ import { dragPlaneNormal, dragPlanePoint, hitHandle } from "./pose-geom.js";
 import { limbInfo, jointRings } from "./param-solve.js";
 import { handleKind, handleAt, handleRecord } from "./handle-source.js";
 import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
-import { axisGuide, planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText } from "./handle-guides.js";
+import { axisGuide, planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutItems } from "./handle-guides.js";
 import { resolveParams } from "../part-model.js";
 import { aimTurn } from "../solve/aim.js";
 import { withDeriveMemo } from "../derive-memo.js";
@@ -200,6 +200,7 @@ export function createPoseMode(viewer, {
   const modeListeners = new Set();
   const pinListeners = new Set();
   const dragEndListeners = new Set();
+  const readoutListeners = new Set();
   const notify = (set, ...args) => {
     for (const cb of [...set]) {
       try { cb(...args); } catch (err) { console.error("pose mode listener failed", err); }
@@ -907,7 +908,7 @@ export function createPoseMode(viewer, {
     safeRelease(ending.pointerId);
     window.removeEventListener("keydown", onKeyDown, true);
     scene?.setActive(null);
-    if (ending.drag) scene?.setReadout?.(null);
+    if (ending.drag) setReadout(null);
     refresh();
     if (ending.touch) {
       // Touch has no hover: the limb its press showed goes away with the finger — unless
@@ -1058,8 +1059,18 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.generic && e.handleId === press.hit.handleId);
     if (!s) return;
     scene?.setActive({ limb: s.info.name, grab: "tip", clamped: [] });
-    scene?.setReadout?.({ at: s.info.points.tip, text: readoutText(part, { ...part.defaults, ...getParams() }, s.handle) });
+    const params = { ...part.defaults, ...getParams() };
+    setReadout({ handleId: s.handleId, text: readoutText(part, params, s.handle), items: readoutItems(part, params, s.handle) });
     viewer.requestRender?.();
+  }
+
+  // The live drag readout: the dragged generic handle's values, or null. Not drawn in the
+  // scene: the bottom readout slot (drag-readout.js) shows it, as measure shows its X/Y/Z.
+  let readout = null;
+  function setReadout(r) {
+    if (!r && !readout) return;
+    readout = r;
+    notify(readoutListeners, r ? { ...r, items: r.items.map((i) => ({ ...i })) } : null);
   }
 
   function flushMove() {
@@ -1503,6 +1514,14 @@ export function createPoseMode(viewer, {
      * (no frame moved a value and a pin was holding). The readout chip listens.
      */
     onDragEnd: (cb) => { dragEndListeners.add(cb); return () => dragEndListeners.delete(cb); },
+    /**
+     * Fires on every frame of a generic handle's drag with `{ handleId, text, items }`
+     * (handle-guides' readoutText / readoutItems), and with null when the drag ends.
+     * The bottom readout (drag-readout.js) listens.
+     */
+    onReadout: (cb) => { readoutListeners.add(cb); return () => readoutListeners.delete(cb); },
+    /** The live drag readout now, as onReadout last gave it, or null. */
+    getReadout: () => (readout ? { ...readout, items: readout.items.map((i) => ({ ...i })) } : null),
     session,
     detach() {
       if (detached) return;
@@ -1523,6 +1542,7 @@ export function createPoseMode(viewer, {
       modeListeners.clear();
       pinListeners.clear();
       dragEndListeners.clear();
+      readoutListeners.clear();
       hoverListeners.clear();
     },
   };

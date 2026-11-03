@@ -45,6 +45,7 @@ import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
 import { createPoseMode } from "./pose/pose-mode.js";
 import { attachPoseControls } from "./pose/pose-controls.js";
 import { attachReadoutChip } from "./pose/readout-chip.js";
+import { attachDragReadout } from "./pose/drag-readout.js";
 import { parsePinId } from "./pose/pose-session.js";
 import { handleParamKeys } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
@@ -905,6 +906,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const poseChrome = poseMode
       ? attachPoseControls(viewer, poseMode, { viewbar: els.viewer.querySelector("#viewbar") }, { tooltip })
       : null;
+    // A generic handle's drag values, live, in the viewbar's readout slot (measure's spot).
+    const poseReadout = poseMode ? attachDragReadout(poseMode, { viewbar: els.viewer.querySelector("#viewbar") }) : null;
+    if (poseReadout) cleanup.defer(() => poseReadout.detach());
     // There is no Pose toggle any more: a host page that still carries a #pose button
     // (written for the toggle) gets it hidden; dispose hands it back as it was.
     if (els.chrome.pose) {
@@ -2275,6 +2279,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         __isDragging: () => poseMode.isDragging(),
         // Test hook only (scripts/check-pose.mjs): what the readout chip shows, or null.
         __chip: () => poseChip?.state() ?? null,
+        // Test hook only (scripts/check-pose.mjs): what the live drag readout shows, or null.
+        __dragReadout: () => poseReadout?.text() ?? null,
         // Test hook only (scripts/check-pose.mjs): what the pose overlay draws now and whether
         // it claims the hover (a grab cursor, the model's tooltip held off).
         __drawn: () => ({ objects: poseMode.drawnObjects(), claims: poseMode.claimsHover() }),

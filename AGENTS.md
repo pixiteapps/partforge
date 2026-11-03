@@ -712,7 +712,12 @@ the installed package, so let the publish finish before bumping the dep there.
   pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
   drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
   `held` - a pin held it only when the last target, re-solved with no holds, would have
-  moved a value); `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
+  moved a value). While a generic handle drags, pose-mode's `onReadout` feeds `drag-readout.js`,
+  which shows its values in the viewbar's readout slot (`viewbar-clear.js`'s
+  `createViewbarReadout`, the `.pf-viewbar-readout` pill measure's X/Y/Z parts also use — the
+  view cube clears it through `--pf-viewbar-clear`, and on a narrow stage the transport bar
+  sits at that clearance + 8px); the scene draws no readout label. On release
+  `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
   handle's readout by it for `CHIP_MS` — click to type, written through mount's
   `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps
   and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.

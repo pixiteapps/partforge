@@ -236,6 +236,7 @@ test("a distance's X/Y/Z parts are listed; hover previews, click keeps", () => {
   button.click();
   const box = document.querySelector(".pf-measure-parts");
   expect(box.hasAttribute("data-pf-viewbar-float")).toBe(true);
+  expect(box.classList.contains("pf-viewbar-readout")).toBe(true); // the slot pose's drag values share
   expect(box.hidden).toBe(true);
   parts = [{ axis: "X", value: 20, shown: false }, { axis: "Y", value: 10, shown: false }];
   mode.__setPins(2);
