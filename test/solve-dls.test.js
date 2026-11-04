@@ -86,4 +86,11 @@ describe("solveDLS", () => {
       expect(r.error).toBeCloseTo(Math.SQRT2 * Math.abs(at + best - 2), 5);
     }
   });
+  it("is bit-identical to its recorded answer", () => {
+    const opts = { x0: [0.3, 0.5], lo: [-Math.PI, -Math.PI], hi: [Math.PI, 1.2], residuals: reach([60, 140]), iterations: 6 };
+    const want = [0.6704508462827152, 1.131834441185641];
+    const r = solveDLS(opts);
+    want.forEach((v, i) => expect(Object.is(r.x[i], v)).toBe(true));
+    expect(Object.is(r.error, 2.4189717564098627e-11)).toBe(true);
+  });
 });

@@ -1,28 +1,11 @@
 // Enumerate the parameter configurations verify() checks: the default config plus
 // every declared preset (or an explicit part.verify.cases list).
 
-import { desugar } from "../panel/legacy.js";
+import { presetMap } from "../collide/sweep-targets.js";
 
-// Preset name -> overrides, discovered from the desugared node tree so both the
-// legacy `presets:` field and authored `{ type: "preset" }` nodes count. The
-// duplicate-name guard predates the duplicate-preset-name lint rule and stays:
-// verify must fail loudly even on an unlinted part.
-function presetMap(part) {
-  const map = {};
-  const walk = (nodes) => {
-    for (const node of nodes ?? []) {
-      if (node.kind === "preset") {
-        for (const [name, overrides] of Object.entries(node.presets ?? {})) {
-          if (name in map) throw new Error(`duplicate preset name across sections: "${name}"`);
-          map[name] = overrides;
-        }
-      }
-      if (node.kind === "group") walk(node.children);
-    }
-  };
-  walk(desugar(part.parameters ?? []));
-  return map;
-}
+// Preset name -> overrides. It lives in collide/sweep-targets.js, a BVH-free leaf that
+// lint and the sweep engine share; re-exported here for verify's case expansion.
+export { presetMap };
 
 export function expandCases(part) {
   const presets = presetMap(part);

@@ -46,6 +46,8 @@ import { createPoseMode } from "./pose/pose-mode.js";
 import { attachPoseControls } from "./pose/pose-controls.js";
 import { attachReadoutChip } from "./pose/readout-chip.js";
 import { attachDragReadout } from "./pose/drag-readout.js";
+import { createPoseCollide } from "./pose/pose-collide.js";
+import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { parsePinId } from "./pose/pose-session.js";
 import { handleParamKeys } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
@@ -724,6 +726,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // handles are read (syncPoseVisible above re-read only if the shown SET changed).
         // The readout chip goes too: its handle may not be in this view.
         poseMode?.viewChanged();
+        poseCollide?.refresh();
         poseChipHide?.();
         for (const cb of [...viewChangeListeners]) { try { cb(name); } catch { /* listener's problem */ } }
         onViewChange?.(name);
@@ -820,6 +823,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // per view and set of shown sub-parts — never per drag frame.
     const poseSourceReads = new Map();
     let poseMode = null;
+    // Collisions while posing (pose/pose-collide.js): idle-time indexes and each drag's
+    // guard, for a part whose `collisions` block leaves Pose mode on. Created with the
+    // fast path below; the session reaches it through these late-bound effects.
+    let poseCollide = null;
+    let lastDragEnd = null; // the last onDragEnd payload (a test hook)
     const handleIds = part.handles && typeof part.handles === "object" && !Array.isArray(part.handles)
       ? Object.keys(part.handles) : [];
     if (handleIds.length) {
@@ -850,6 +858,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             if (now === undefined || now === GHOST_OPACITY) viewer.setSubPartOpacity(n, was);
           }
         }),
+        collide: (args) => poseCollide?.guardFor(args) ?? null,
+        onBlocked: live((pair) => poseCollide?.tint(pair)),
         hold: live((on) => {
           poseHold = !!on;
           // A drag is the user's own edit: it pauses playback the way a slider does,
@@ -1317,6 +1327,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const fastPath = createPoseFastPath(part, viewer, cache, {
       params, getView: view, getParamsVersion: () => loop.version(),
     });
+    if (poseMode) {
+      const pc = createPoseCollide({
+        part, viewer, fastPath, getView: view, getParams: () => params,
+        isLive: () => !!poseMode.isLive?.(), frameOf: (n) => cache.frameOf(n), createHighlight: createFeatureHighlight,
+      });
+      if (pc.enabled) {
+        poseCollide = pc;
+        cleanup.defer(() => pc.dispose());
+        cleanup.defer(poseMode.onModeChange?.(() => { if (poseMode.isLive?.()) pc.refresh(); }) ?? (() => {}));
+      }
+      cleanup.defer(poseMode.onDragEnd?.((e) => { lastDragEnd = e; }) ?? (() => {}));
+    }
 
     // ?debug: how the in-view meshes were delivered, e.g. "3 canonical / 1 posed".
     const frameSummary = () => {
@@ -1613,6 +1635,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // forgetting on a disagreement would rebuild at the same params forever).
       fastPath.apply(meshes.map((m) => m.name), undefined, { fresh: true });
       recordFrames(meshes);
+      poseCollide?.delivered(meshes.map((m) => m.name));
     }
 
     // Show a delivery built at params the live ones have left (playback's best effort, a
@@ -1637,6 +1660,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       fastPath.apply(meshes.map((m) => m.name),
         Object.fromEntries(meshes.map((m) => [m.name, m.frame ?? "posed"])));
       recordFrames(meshes);
+      poseCollide?.delivered(meshes.map((m) => m.name));
     }
 
     // Progressive delivery (feedback #212). A view with many sub-parts posts what it has
@@ -2293,6 +2317,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         },
         // Test hook only (scripts/check-pose.mjs): the realistic floor as placed, or null.
         __ground: () => viewer.__ground?.() ?? null,
+        // Test hooks only (scripts/check-pose.mjs): the collision index (indexed sub-parts,
+        // queue size, the pair tinted) or null without collisions; the last onDragEnd payload.
+        __collide: () => poseCollide?.state() ?? null,
+        __lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
       } : null,
       poseState: () => (poseMode && poseMode.pinCount() > 0 ? { pins: poseMode.getPins() } : null),
       annotate: annotateMode ? {

@@ -31,10 +31,8 @@
 // Imports only the pure framework leaves below, so the partforge/oracle entry's
 // closure stays DOM-, three- and node:-free (test/oracle-entry.test.js).
 import { viewAnimations, evaluate } from "./animation.js";
-import { probePoses } from "./pose-probe.js";
-import { CANONICAL } from "./pose-probe-core.js";
-import { viewSubParts } from "./part-model.js";
-import { composePose, isRigid } from "./geometry/pose.js";
+import { viewSubParts, resolveParams } from "./part-model.js";
+import { placeMatrix } from "./collide/place.js";
 
 export const PREVIEW_SAMPLE_HZ = 30;
 export const PREVIEW_SAMPLE_CAP = 600;
@@ -76,13 +74,11 @@ function dedupe(times) {
 
 // Place matrices for every shown sub-part, or null if any is not place-only.
 function placePoses(part, view, p, shown) {
-  const probes = probePoses(part, view, p, { scope: "place" });
+  const { p: rp, d } = resolveParams(part, p);
   const poses = {};
   for (const name of shown) {
-    const entry = probes.get(name);
-    if (!entry?.trusted || entry.baseHash !== CANONICAL) return null;
-    const m = Array.from(composePose(entry.pose));
-    if (!isRigid(m)) return null; // e.g. a rotate about a zero-length axis
+    const m = placeMatrix(part.parts[name], view, rp, d); // null: untrusted, reshaping or not rigid
+    if (!m) return null;
     poses[name] = m;
   }
   return poses;

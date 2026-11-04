@@ -26,6 +26,10 @@ const AXLE_R = 4;
 const BORE_R = AXLE_R + 0.3;
 const CRANK_R = 15;      // the crank knob's distance from the input axis
 const KNOB_H = 14;
+// The crank's arm rides this far above the gears' top faces. Flush (as it once was), the
+// arm passed over the idler's tooth tips at zero clearance once a turn, which the spin
+// sweep reads as contact; the hub grows by the same amount, so it still sits on the axle.
+const ARM_LIFT = 0.5;
 
 const pitchR = (teeth) => (MODULE * teeth) / 2;
 const polar = (c, r, deg) => [c[0] + r * Math.cos((deg * Math.PI) / 180), c[1] + r * Math.sin((deg * Math.PI) / 180)];
@@ -77,14 +81,17 @@ function gear(k, teeth, phase) {
   return k.extrude({ profile: { outer: gearOutline(teeth, phase), holes }, h: T }).translate([0, 0, -T / 2]);
 }
 
-/** The crank, in the input gear's frame: a hub, an arm along +X and a knob standing on its end. */
+/**
+ * The crank, in the input gear's frame: a hub on the gear's top face, an arm along +X lifted
+ * ARM_LIFT clear of the gears, and a knob standing on its end.
+ */
 function crank(k) {
-  const z0 = T / 2, arm = 5;
+  const z0 = T / 2, arm = 5, za = z0 + ARM_LIFT;
   return k.union([
-    k.cylinder({ r: 7, h: arm }).translate([0, 0, z0]),
-    k.box({ min: [0, -4, z0], max: [CRANK_R, 4, z0 + arm] }),
-    k.cylinder({ r: 5, h: arm }).translate([CRANK_R, 0, z0]),
-    k.cylinder({ r: 3.5, h: KNOB_H }).translate([CRANK_R, 0, z0 + arm]),
+    k.cylinder({ r: 7, h: arm + ARM_LIFT }).translate([0, 0, z0]),
+    k.box({ min: [0, -4, za], max: [CRANK_R, 4, za + arm] }),
+    k.cylinder({ r: 5, h: arm }).translate([CRANK_R, 0, za]),
+    k.cylinder({ r: 3.5, h: KNOB_H }).translate([CRANK_R, 0, za + arm]),
   ]);
 }
 
@@ -119,7 +126,7 @@ export default {
     const knob = polar(C1, CRANK_R, a);
     return {
       train,
-      crankKnob: [knob[0], knob[1], GEAR_Z + T / 2 + 5 + KNOB_H],
+      crankKnob: [knob[0], knob[1], GEAR_Z + T / 2 + ARM_LIFT + 5 + KNOB_H],
       outputAngle: `${(Math.round(train.angleOf("gear3") * 10) / 10).toFixed(1)}°`,
     };
   },
@@ -143,10 +150,19 @@ export default {
       },
     },
   },
+  // What may touch while it turns. The meshing gears: faceted teeth at ~0.1 mm of backlash
+  // can touch at some angles. The crank and the input gear: the crank is keyed to it, its
+  // hub sitting on the gear's top face, so the two turn as one. The plate and the crank: the
+  // hub bears on the input axle's top, flush, for the whole turn, by design. Every other
+  // pair (each gear against the plate and its axle, the crank against the idler and output)
+  // must stay clear, and the spin sweep holds them to it over a full turn.
+  collisions: { allow: ["gear1×gear2", "gear2×gear3", "crank×gear1", "plate×crank"] },
   // At driveAngle 0 the teeth mesh with a little backlash and each gear runs free on
-  // its axle: no sub-parts interpenetrate, and those near misses are intended.
+  // its axle: no sub-parts interpenetrate, and those near misses are intended. Over the
+  // spin (one turn of the input, by matrix) nothing that is not allowed meets.
   verify: {
-    expect: { _view: { overlaps: 0, clearance: {
+    sweeps: { spin: { animation: "spin" } },
+    expect: { _view: { overlaps: 0, sweepContacts: 0, clearance: {
       "plate×gear1": ">=0.29", "plate×gear2": ">=0.29", "plate×gear3": ">=0.29",
       "gear1×gear2": ">=0.1", "gear2×gear3": ">=0.1",
     } } },

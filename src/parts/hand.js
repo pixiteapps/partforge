@@ -217,6 +217,8 @@ function stand(k) {
 // ----- the pieces and the print kit ------------------------------------------------
 
 const DIGITS = ["thumb", ...FINGERS.map((f) => f.id)];
+// The digits `verify.sweeps` declares (see verify below): the others sweep from the CLI.
+const SWEPT_DIGITS = ["index", "thumb"];
 const SEGMENTS = [["Knuckle", "spread"], ["Proximal", "mcp"], ["Middle", "pip"], ["Distal", "dip"]];
 
 // Each digit's pieces, base first: { name, joint, len, w, kind }. A swivel turns on a Z
@@ -357,6 +359,10 @@ export default {
     assembly: { label: "Assembly" },
     print: { label: "Print" },
   },
+  // Pieces stay solid while posing: a finger dragged into its neighbour stops at its surface
+  // rather than passing through, and slides along it (collide/guard.js's settle). Pin neighbours sit at their running
+  // clearance from the start, so they are never blocked; nothing is allowed to touch.
+  collisions: {},
   // `joints` gives a joint a rotate ring in Pose mode (hover its dot): the parameter that
   // turns it directly. The wrist (on the palm limb) is named by every digit's handle, so a
   // locked digit hides the wrist rings, as it holds the wrist out of every drag. A ring and
@@ -378,8 +384,20 @@ export default {
   // No two pieces interpenetrate, and every pin joint keeps its running clearance (GAP)
   // between the pieces it joins: those near misses are intended. The assembled hand
   // stands under 250 mm, so even the assembly view fits the bed it is never printed on.
+  // The sweeps are REPORTED, never gated (no sweepContacts in expect): a joint may leave
+  // its range wide and let collision be its limit, and then a sweep that meets is expected,
+  // and its freeRange (the contact-free span around the current value) is the reading that
+  // matters. The index and thumb knuckle and curl sweep on their own, the others held at
+  // the defaults; at today's ranges all four read clear. Only those two digits are declared
+  // so the sweeps fit inside the inspect's report share beside change tracking: the middle,
+  // ring and little fingers sweep the same way from the CLI (add `middleKnuckle: { param:
+  // "middleKnuckle" }` and so on, then `npx partforge measure src/parts/hand.js`). The whole
+  // open → fist path is not declared either: at ~17 s it is a CLI run, not an every-measure
+  // check (docs/AUTHORING-PARTS.md "Collisions and sweeps" has it, `fist: { from: "open",
+  // to: "fist", clearance: 0.3 }`).
   verify: {
     process: "fdm-pla",
+    sweeps: Object.fromEntries(SWEPT_DIGITS.flatMap((id) => [[`${id}Knuckle`, { param: `${id}Knuckle` }], [`${id}Curl`, { param: `${id}Curl` }]])),
     expect: { _view: { overlaps: 0, clearance: Object.fromEntries(JOINT_PAIRS.map((pair) => [pair, ">=0.3"])) } },
   },
   // The agent's read-out: each digit's joint values, clamps and fingertip.

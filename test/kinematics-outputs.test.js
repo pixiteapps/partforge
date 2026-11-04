@@ -35,6 +35,36 @@ describe("world and place", () => {
     const a = posed.place(box(), "pip").boundingBox(), b = posed.place(box(), "index.pip").boundingBox();
     expect(a).toEqual(b);
   });
+  it("world and place resolve the frame set once while its values hold, and again when they change", () => {
+    // outputs.js keeps the last resolve per limb, keyed by the set's values: exact, so a
+    // parent frame changed in place (never done by a well-behaved derive) still moves it.
+    const parent = { palm: { at: [0, 0, 0] } };
+    const posed = finger().pose({ bend: [30, 50, 20] }, parent);
+    const fresh = () => resolveFrames({ ...parent, ...posed.frames }).get("index.tip").world;
+    const at = () => posed.world("tip").origin;
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    expect(at()).toEqual([0, 1, 2].map((i) => r3(fresh()[9 + i])));
+    const before = at();
+    expect(at()).toEqual(before);
+    parent.palm.at = [5, 0, 0];
+    expect(at()).toEqual([0, 1, 2].map((i) => r3(fresh()[9 + i])));
+    expect(at()[0]).toBeCloseTo(before[0] + 5, 6);
+    parent.palm.rotate = [{ axis: "z", deg: 30 }];
+    expect(at()).toEqual([0, 1, 2].map((i) => r3(fresh()[9 + i])));
+  });
+  it("the resolve memo copies a typed-array `at` and axis by value", () => {
+    const parent = { palm: { at: Float64Array.of(0, 0, 0), rotate: [{ axis: Float64Array.of(0, 0, 1), deg: 0 }] } };
+    const posed = finger().pose({ bend: [30, 50, 20] }, parent);
+    const fresh = () => resolveFrames({ ...parent, ...posed.frames }).get("index.tip").world;
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    const at = () => posed.world("tip").origin;
+    const before = at();
+    parent.palm.at[0] = 7;                      // edited in place: the same object
+    expect(at()[0]).toBeCloseTo(before[0] + 7, 6);
+    parent.palm.rotate[0].axis[2] = -1;         // the axis flipped in place
+    parent.palm.rotate[0].deg = 40;
+    expect(at()).toEqual([0, 1, 2].map((i) => r3(fresh()[9 + i])));
+  });
   it("a mirrored limb's place is rigid and matches the frames", () => {
     const posed = finger({ mirror: "YZ" }).pose({ curl: 0.6, spread: 5 }, palm);
     const W = resolveFrames({ ...palm, ...posed.frames });

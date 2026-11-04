@@ -32,6 +32,7 @@
 import { viewSubParts } from "./part-model.js";
 import { probePoses } from "./pose-probe.js";
 import { composePose, poseDelta, mulMat4 } from "./geometry/pose.js";
+import { placeMatrix } from "./collide/place.js";
 
 export function createPoseFastPath(part, viewer, cache, { params, getView, getParamsVersion }) {
   // name -> { frame, entry, delta }: the delivery frame; at the delivered params,
@@ -115,6 +116,25 @@ export function createPoseFastPath(part, viewer, cache, { params, getView, getPa
 
     // Pose names right after a delivery or a view switch. See the header.
     apply,
+
+    // Rung 1's matrices at an already-resolved (p, d) — not the live params — for the
+    // collision guard: name → place(p, d) · delta (the mesh's delivery frame to the
+    // pose at p) for every in-view, meshed, current canonical sub-part; null for a
+    // posed, stale or unmeshed one and for an untrusted place(). Never derives and
+    // never touches the viewer. `only` (an iterable of names): just those.
+    matricesAt(p, d, only = null) {
+      const out = new Map();
+      const want = only ? new Set(only) : null;
+      const view = getView();
+      for (const name of viewSubParts(part, view, p)) {
+        if (want && !want.has(name)) continue;
+        if (!viewer.hasSubMesh(name) || !cache.isCurrent(name) || cache.frameOf(name) !== "canonical") { out.set(name, null); continue; }
+        const m = placeMatrix(part.parts[name], view, p, d);
+        const delta = stamps[name]?.delta ?? null;
+        out.set(name, m && delta ? mulMat4(m, delta) : m);
+      }
+      return out;
+    },
 
     // One call per param change. Re-poses every visible current canonical
     // subpart from place() (rung 1) and every visible stale subpart whose base

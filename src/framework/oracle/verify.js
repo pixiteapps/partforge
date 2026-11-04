@@ -155,7 +155,12 @@ function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
       if (note) out.note = note;
       return out;
     }
-    return { ...base, actual, status: "skip", pass: null, message: "unavailable" };
+    // `reg.withheld` marks a "no reading" that must withhold ok rather than skip past it
+    // (sweepContacts when every declared sweep stopped short): unevaluated, as a quick
+    // lap's gates are.
+    const withheld = reg.withheld?.(factsObj);
+    if (withheld) return { ...base, actual, status: "skip", pass: null, unevaluated: true, message: withheld, hint: partHint ?? reg.withheldHint };
+    return { ...base, actual, status: "skip", pass: null, message: reg.skipMessage ?? "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
   const status = pass ? "pass" : reg.kind === "warn" ? "warn" : reg.kind === "cost" ? "cost" : "fail";
@@ -269,6 +274,28 @@ function sheetRowChecks(s, declaredExp) {
     const why = unread(c, metric);
     out.push({ ...(why ? readFailure({ ...c, status: "warn", pass: null }, why) : c), volunteered: true });
   }
+  return out;
+}
+
+// ── sweeps ───────────────────────────────────────────────────────────────────
+// A declared sweep that stopped short is a VOLUNTEERED warning (the sheet checks' rule:
+// it never counts toward declared/evaluated, so it never moves ok): the sweepContacts
+// gate counts only the rows that ran, and without this a sweep the report deadline
+// stopped would vanish from the verdict. One warning per reason, naming every sweep.
+const SWEEP_TIMEOUT_HINT = "these sweeps did not fit the report's time budget, so nothing checked their motion for contact; run them on their own — `npx partforge measure <part>` gives sweeps a longer budget, or declare fewer at a time in verify.sweeps (one sweep per run when each is long)";
+const SWEEP_UNREADABLE_HINT = "these sweeps could not run (the error follows each name), so nothing checked their motion for contact; `npx partforge lint` names an unknown param, handle, preset or animation — fix the sweep's target or remove it";
+function sweepNotices(rows) {
+  const out = [];
+  const note = (expr, message, hint) => out.push({ scope: "view", subpart: null, metric: "sweeps", kind: "warn", expr,
+    actual: null, status: "warn", pass: null, message, hint, volunteered: true });
+  // A row stopped after it found a contact names it: that contact is real, and the gate counts it.
+  const timedOut = rows.filter((r) => r.skipped === "timeout").map((r) => {
+    const c = r.contacts?.[0];
+    return c ? `${r.name} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : r.name;
+  });
+  if (timedOut.length) note("ran", `${timedOut.length} sweep(s) stopped at the time budget: ${timedOut.join(", ")}`, SWEEP_TIMEOUT_HINT);
+  const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${r.name} (${r.error})` : r.name));
+  if (unreadable.length) note("readable", `${unreadable.length} sweep(s) could not run: ${unreadable.join(", ")}`, SWEEP_UNREADABLE_HINT);
   return out;
 }
 
@@ -438,7 +465,7 @@ function flexChecks(facts, flex) {
 // supports and MEASURE NOTHING. What that leaves unchecked is reported as
 // `unevaluated` rather than quietly downgraded, and one unevaluated gate withholds
 // `ok` — a fast lap yields facts, never a verdict.
-export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false } = {}) {
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline } = {}) {
   view = view ?? Object.keys(part.views)[0];
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
@@ -535,21 +562,42 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const printBboxesMatch = !needPrintBboxes || seed?.result?.measuredPrintBboxes !== false;
   // The flex half: a seed that read every declared member (a superset is free).
   const flexMatches = flex.every(({ labels }) => (seed?.result?.measuredFlex ?? []).some((m) => sameGroup(m, labels)));
-  if (seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && (quick || flexMatches) && printBboxesMatch
-    && seed.result.view === view) {
-    entries.push({ params: full(seed.params), result: seed.result });
-  }
+  // The sweeps' half: a seed measured with `sweeps: false` cannot answer a part that
+  // declares them (a quick lap never sweeps, and withholds the gate instead).
+  const sweepsMatch = quick || !part.verify?.sweeps || Array.isArray(seed?.result?.sweeps);
+  const seedAdmitted = !!(seed?.result && (quick || seed.result.measuredMinWall || !needMinWall) && (quick || overhangMatches) && (quick || bedContactMatches) && (quick || flexMatches) && printBboxesMatch
+    && sweepsMatch && seed.result.view === view);
+  if (seedAdmitted) entries.push({ params: full(seed.params), result: seed.result });
 
-  const measureCase = (params) => {
+  // SWEEPS (verify.sweeps, sweep.js) run once per verify, on ONE case: an admitted seed
+  // already carries them; else the SWEEP CASE is measured first, with sweeps, and every
+  // other case passes `sweeps: false`, as it passes `probes: false`. The sweep case is the
+  // one at a not-admitted seed's exact params (a seed that skipped a pass this run needs
+  // still answers for its sweeps: they read the motion and the part, never min wall or
+  // overhang — so the CLI, which seeds verify with a measurement taken without min wall,
+  // never sweeps twice, whatever the case order), else "defaults", else the first case.
+  // `deadline` (the caller's, e.g. the CLI's longer budget) reaches that one measure.
+  const seedSweeps = !seedAdmitted && seed?.result?.view === view && Array.isArray(seed.result.sweeps)
+    ? { params: full(seed.params), rows: seed.result.sweeps } : null;
+  const sameParams = (a, b) => {
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && JSON.stringify(a[k]) === JSON.stringify(b[k]));
+  };
+
+  const measureCase = (params, swept = false) => {
     const fp = full(params);
     const hit = findEntry(fp);
     if (hit) return hit.result;
     if (quick) return null;   // a case the seed does not cover — reported, never built
+    const graft = swept && seedSweeps && sameParams(fp, seedSweeps.params) ? seedSweeps.rows : null;
+    const sweeps = swept && !graft;
     // `probes: false` — no gate reads probe values, so re-running their booleans
     // for every case buys nothing. (A seed measured WITH probes is a superset in
     // the same way a min-wall seed is: the extra key is simply never read here.)
-    const result = measureFn(kernel, part, view, params,
-      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex });
+    const measured = measureFn(kernel, part, view, params,
+      { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps,
+        ...(sweeps && deadline !== undefined ? { deadline } : {}) });
+    const result = graft ? { ...measured, sweeps: graft } : measured;
     entries.push({ params: fp, result });
     return result;
   };
@@ -568,9 +616,27 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     message: "not measured (quick check)",
     hint: "re-run this check without `quick` to evaluate this case",
   }];
+  if (part.verify?.sweeps && !seedAdmitted && !quick && expanded.length) {
+    let i = seedSweeps ? expanded.findIndex((c) => sameParams(full(c.params), seedSweeps.params)) : -1;
+    if (i < 0) i = expanded.findIndex((c) => c.name === "defaults");
+    measureCase(expanded[Math.max(i, 0)].params, true);
+  }
+  // The sweep rows reach one case only (the one that ran them, or the reused seed), so
+  // their stopped-short notices are raised once, on the first case whose facts carry them.
+  let sweepsNoticed = false;
   const caseResults = expanded.map(({ name, params, expect }) => {
     const facts = measureCase(params);
-    return { name, params, checks: facts ? evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept, flex, rootFillet, strain: strainLimit, flexTilt }) : notMeasured(name) };
+    if (!facts) return { name, params, checks: notMeasured(name) };
+    let checks = evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept, flex, rootFillet, strain: strainLimit, flexTilt });
+    // A quick lap never sweeps (jobs.js): a declared sweep gate it could not read is
+    // withheld, as its min-wall gate is, never a skip that lets ok stand.
+    if (quick && !facts.sweeps && part.verify?.sweeps) {
+      checks = checks.map((c) => (c.metric === "sweepContacts" && c.status === "skip"
+        ? { ...c, unevaluated: true, message: "not measured (quick check)", hint: "sweeps do not run on a quick lap — re-run this check without `quick` to evaluate the declared sweeps" }
+        : c));
+    }
+    if (facts.sweeps && !sweepsNoticed) { sweepsNoticed = true; checks = [...checks, ...sweepNotices(facts.sweeps)]; }
+    return { name, params, checks };
   });
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
