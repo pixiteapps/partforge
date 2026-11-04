@@ -79,6 +79,13 @@ const RAY_REACH = 10, RAY_MIN = 2;
 const LIFT = 0.05, LIFT_MIN = 0.02;
 // Hits closer than this (mm) are the ray's own edge.
 const HIT_EPS = 1e-4;
+// Vertices this close (mm) are one vertex, and a triangle thinner than this has no
+// readable normal. A boolean or a fillet leaves needles behind on a face that does not
+// run along an axis, narrower than float32 can place, so their normals point anywhere
+// (a "179° corner") and a needle pinched to a line stacks a third and fourth triangle on
+// its long edge. Which arm of a rotated set gets them is rounding, so congruent arms read
+// differently unless the needles are read as what they are: no surface at all.
+const WELD = 1e-3;
 
 // Möller–Trumbore: the distance along the ray (o, d) to triangle (a, b, c), or null.
 function rayTri(P, o, d, a, b, c) {
@@ -129,18 +136,32 @@ function eigen3(m) {
   return { w: [a[0][0], a[1][1], a[2][2]], v };
 }
 
-// The member's size along its own axes: the principal axes of its vertices, and the
-// extent of the vertices along each — `length` the largest, `thickness` the smallest
-// (the direction a cantilever bends in), `axis` the unit direction of the largest.
-function extents(P, verts) {
+// The member's size along its own axes: the principal axes of its SURFACE, and the
+// extent of its vertices along each — `length` the largest, `thickness` the smallest
+// (the direction a cantilever bends in), `axis` the unit direction of the largest. The
+// axes are weighted by area, not by vertex: a boolean crowds vertices around a root and
+// leaves a long face with a handful, and an arm's axes taken from those tilt by a degree
+// or two, which over its length reads as a third more thickness (feedback #223).
+function extents(P, verts, tris) {
   const n = verts.length;
   if (n < 3) return { length: 0, thickness: 0, axis: null };
-  const c = [0, 0, 0];
-  for (const i of verts) for (let k = 0; k < 3; k++) c[k] += P[i * 3 + k] / n;
+  // Each triangle by its three edge midpoints, which integrate a quadratic exactly.
+  const c = [0, 0, 0], samples = [];
+  let total = 0;
+  for (const [a, b, d, area] of tris) {
+    for (const [i, j] of [[a, b], [b, d], [d, a]]) {
+      const m = [(P[i * 3] + P[j * 3]) / 2, (P[i * 3 + 1] + P[j * 3 + 1]) / 2, (P[i * 3 + 2] + P[j * 3 + 2]) / 2];
+      samples.push([m, area]);
+      for (let k = 0; k < 3; k++) c[k] += m[k] * area;
+      total += area;
+    }
+  }
+  if (!(total > 0)) return { length: 0, thickness: 0, axis: null };
+  for (let k = 0; k < 3; k++) c[k] /= total;
   const cov = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  for (const i of verts) {
-    const d = [P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]];
-    for (let r = 0; r < 3; r++) for (let s = 0; s < 3; s++) cov[r][s] += d[r] * d[s];
+  for (const [m, area] of samples) {
+    const d = [m[0] - c[0], m[1] - c[1], m[2] - c[2]];
+    for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) cov[r][q] += area * d[r] * d[q];
   }
   const { w, v } = eigen3(cov);
   const order = [0, 1, 2].sort((i, j) => w[j] - w[i]);
@@ -184,11 +205,12 @@ export function flexRoot(mesh, group, { printMatrix = null } = {}) {
   if (!ids.size) return none;
   const nTri = I ? I.length / 3 : P.length / 9;
   const vi = (t, j) => (I ? I[t * 3 + j] : t * 3 + j);
-  const key = (i) => `${Math.round(P[i * 3] * 1e4)},${Math.round(P[i * 3 + 1] * 1e4)},${Math.round(P[i * 3 + 2] * 1e4)}`;
+  const key = (i) => `${Math.round(P[i * 3] / WELD)},${Math.round(P[i * 3 + 1] / WELD)},${Math.round(P[i * 3 + 2] / WELD)}`;
 
   // Normals, areas and centroids, and every edge of a member triangle, keyed by welded endpoints.
   const inMember = (t) => ids.has(featureIds[t]);
   const normal = new Float64Array(nTri * 3), cent = new Float64Array(nTri * 3), area2 = new Float64Array(nTri);
+  const needle = new Uint8Array(nTri);                            // thinner than WELD: an edge, not a surface
   const edges = new Map(); // key -> { a, b, tris: [] }
   const tri = (t) => [vi(t, 0), vi(t, 1), vi(t, 2)];
   for (let t = 0; t < nTri; t++) {
@@ -198,6 +220,9 @@ export function flexRoot(mesh, group, { printMatrix = null } = {}) {
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const len = Math.hypot(nx, ny, nz) || 1;
     area2[t] = len;                                               // twice the area
+    const wx = P[c * 3] - P[b * 3], wy = P[c * 3 + 1] - P[b * 3 + 1], wz = P[c * 3 + 2] - P[b * 3 + 2];
+    const longest = Math.sqrt(Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz, wx * wx + wy * wy + wz * wz));
+    needle[t] = !(longest > 0) || len / longest < WELD ? 1 : 0;   // height = 2·area / base
     normal[t * 3] = nx / len; normal[t * 3 + 1] = ny / len; normal[t * 3 + 2] = nz / len;
     for (let k = 0; k < 3; k++) cent[t * 3 + k] = (P[a * 3 + k] + P[b * 3 + k] + P[c * 3 + k]) / 3;
   }
@@ -205,18 +230,22 @@ export function flexRoot(mesh, group, { printMatrix = null } = {}) {
   // triangle sharing such an edge join it. The member's welded vertices feed its extents.
   const keys = [];
   const memberVerts = new Map();                                  // welded key -> index
+  // A triangle pinched to a line by the weld is not on any edge: its two long sides are
+  // one welded edge, which would otherwise count it twice.
+  const pinched = (k) => k[0] === k[1] || k[1] === k[2] || k[2] === k[0];
   for (let t = 0; t < nTri; t++) {
     const v = tri(t);
     keys.push(v.map(key));
-    if (!inMember(t)) continue;
+    if (!inMember(t) || pinched(keys[t])) continue;
     for (let j = 0; j < 3; j++) {
-      if (!memberVerts.has(keys[t][j])) memberVerts.set(keys[t][j], v[j]);
+      if (!needle[t] && !memberVerts.has(keys[t][j])) memberVerts.set(keys[t][j], v[j]);
       const ka = keys[t][j], kb = keys[t][(j + 1) % 3];
       const ek = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
       if (!edges.has(ek)) edges.set(ek, { a: v[j], b: v[(j + 1) % 3], tris: [] });
     }
   }
   for (let t = 0; t < nTri; t++) {
+    if (pinched(keys[t])) continue;
     for (let j = 0; j < 3; j++) {
       const ka = keys[t][j], kb = keys[t][(j + 1) % 3];
       const e = edges.get(ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`);
@@ -227,10 +256,12 @@ export function flexRoot(mesh, group, { printMatrix = null } = {}) {
   let sharpLength = 0, maxTurn = null, longest = 0, at = null, attached = false;
   const starts = [];                                              // rounded boundary edges: a root ray each
   for (const e of edges.values()) {
-    if (e.tris.length !== 2) continue;
-    const [t1, t2] = e.tris;
-    if (inMember(t1) === inMember(t2)) continue;                  // inside the member, or not on it
+    const held = e.tris.reduce((n, t) => n + (inMember(t) ? 1 : 0), 0);
+    if (held === 0 || held === e.tris.length) continue;           // inside the member, or not on it
     attached = true;                                              // a boundary, at any turn
+    if (e.tris.length !== 2) continue;                            // a real non-manifold edge: no turn to read
+    const [t1, t2] = e.tris;
+    if (needle[t1] || needle[t2]) continue;                       // a needle's normal says nothing
     const d = normal[t1 * 3] * normal[t2 * 3] + normal[t1 * 3 + 1] * normal[t2 * 3 + 1] + normal[t1 * 3 + 2] * normal[t2 * 3 + 2];
     const mx = (P[e.a * 3] + P[e.b * 3]) / 2, my = (P[e.a * 3 + 1] + P[e.b * 3 + 1]) / 2, mz = (P[e.a * 3 + 2] + P[e.b * 3 + 2]) / 2;
     // Concave: the second triangle lies in front of the first one's face. Flush (the
@@ -256,7 +287,9 @@ export function flexRoot(mesh, group, { printMatrix = null } = {}) {
     if (maxTurn == null || turn > maxTurn) maxTurn = turn;
     if (len > longest) { longest = len; at = [mx, my, mz]; }
   }
-  const size = extents(P, [...memberVerts.values()]);
+  const memberTris = [];
+  for (let t = 0; t < nTri; t++) if (inMember(t) && !needle[t] && !pinched(keys[t])) memberTris.push([...tri(t), area2[t]]);
+  const size = extents(P, [...memberVerts.values()], memberTris);
   let tilt = null;
   if (size.axis) {
     const [x, y, z] = size.axis, m = printMatrix;
