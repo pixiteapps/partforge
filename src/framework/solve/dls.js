@@ -85,12 +85,8 @@ function activeSetStep(J, r, x, lo, hi, lam, m, n) {
  * central-difference Jacobian. Returns the result and its residual norm.
  * `tol` (default 0: off) stops before an iteration once the residual norm is at most
  * tol — a solved point needs no more Jacobians (each costs 2n residual evaluations).
- * `onIteration(x)` (optional) runs before each iteration's Jacobian: a caller whose
- * residual function depends on state it refreshes there (the drag guard's contact
- * linearisation) gets the residual at x re-read after it, so a step is judged against
- * the same residual function it was taken on. With no hook nothing extra runs.
  */
-export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e-4, tol = 0, onIteration = null }) {
+export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e-4, tol = 0 }) {
   const n = x0.length;
   let x = clampTo(Float64Array.from(x0), lo, hi);
   let r = residuals(x);
@@ -99,11 +95,6 @@ export function solveDLS({ x0, lo, hi, residuals, iterations, lambda = 1, h = 1e
   let lam = lambda;
   for (let it = 0; it < iterations; it++) {
     if (tol > 0 && err <= tol) break;
-    if (onIteration) {
-      onIteration(x);
-      r = residuals(x);
-      err = norm(r);
-    }
     const J = Array.from({ length: m }, () => new Float64Array(n));
     for (let j = 0; j < n; j++) {
       const xp = Float64Array.from(x);

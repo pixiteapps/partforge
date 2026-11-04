@@ -4,6 +4,17 @@ Status: design, 2026-11-02. Builds on the inverse-kinematics design
 (`2026-10-30-inverse-kinematics-design.md`) and generic handles
 (`2026-11-02-generic-handles-design.md`).
 
+**What shipped (2026-11-03).** Not the solver-rows design below. The rows were built, gated
+off by the bench (docs/research/collisions-pose-after.json), then deleted: dragged through the
+real session with an unlimited row budget, they added nothing over settle's slide on the arm
+and lost to it on the hand (9.07 mm from the target at 21.3 ms a frame, against 7.45 mm at
+7.0 ms). What ships is the fallback, "stop at contact", plus two layers this spec does not
+describe. `settle` slides the rest of a blocked move along the contact by projecting it off
+each contact's linearised gap (`COLLIDE_SLIDE`). Pose mode slides a limb drag's next target
+along the stop's surface normals (`tangentTarget` in `pose/pose-session.js`). AGENTS.md's
+collisions paragraph and the guide's "Collisions and sweeps" describe it. Read those before
+building the rows again.
+
 ## Why
 
 Posing the hand, a finger curled straight through the palm. Nothing stopped it:

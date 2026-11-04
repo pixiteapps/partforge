@@ -1,7 +1,6 @@
-// Collision rows in Pose mode's parameter solves (spec "Pose mode: collision in the
-// solver"): the drag guard's rows ride beside the target's, so a dragged piece that meets
-// another slides along it instead of stopping dead; goal drags (the robot arm) switch to
-// the joint-space solve near an obstacle and write the goal directly in open air.
+// Pose mode's solves settled through the drag guard: a dragged piece that meets another
+// slides along it instead of stopping dead, and a goal drag (the robot arm) writes the
+// goal directly and slides the same way.
 //
 // Real meshes: hand.js and robot-arm.js built by Manifold at their defaults (buildView),
 // placed per params by relativeMatsAt (createPartGuard). Every solve runs inside
@@ -16,8 +15,8 @@ import { withDeriveMemo } from "../src/framework/derive-memo.js";
 import { createCollisionWorld } from "../src/framework/collide/world.js";
 import { normalizeCollisions } from "../src/framework/collide/declaration.js";
 import { createPartGuard, movingSubParts } from "../src/framework/collide/part-guard.js";
-import { solveAngles, solveHandle, dofsOf, goalValues, seedValues } from "../src/framework/pose/param-solve.js";
-import { defaultSolve } from "../src/framework/pose/pose-session.js";
+import { solveAngles, dofsOf, goalValues, seedValues } from "../src/framework/pose/param-solve.js";
+import { createPoseSession, defaultSolve } from "../src/framework/pose/pose-session.js";
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const SLOW = 120_000;
@@ -44,74 +43,28 @@ describe("dofsOf", () => {
   });
 });
 
-describe("re-runs re-linearise", () => {
-  // A plane handle on a box's corner, with a pin on its edge point that moves with width:
-  // the pin leaks at HOLD_WEIGHT, so solveHandle re-runs from the start with firmer holds.
-  const box = {
-    parameters: [{ id: "b", title: "Box", controls: [
-      { key: "width", min: 10, max: 400, step: 1 },
-      { key: "depth", min: 10, max: 200, step: 1 },
-    ] }],
-    defaults: { width: 80, depth: 40 },
-    derive: () => ({}),
-    handles: {
-      corner: { point: (p) => [p.width / 2, p.depth / 2, 10], params: ["width", "depth"], drag: "plane", normal: [0, 0, 1] },
-      edge: { point: (p) => [p.width / 2, 0, 10], params: ["width"], drag: "axis", direction: [1, 0, 0] },
-    },
-  };
-  /** A spy guard: one zero row; records each linearise and each run's start. */
-  function spyGuard() {
-    const calls = [];
-    return {
-      calls,
-      rowCount: 1,
-      active: true,
-      beginFrame: (params) => calls.push(["begin", params.width, params.depth]),
-      linearise: (params) => calls.push(["lin", params.width, params.depth]),
-      rows: () => new Float64Array(1),
-    };
-  }
-
-  it("each firmer-hold re-run linearises at the start pose before its first step", () => {
-    const pin = { ref: { handleId: "edge", handle: box.handles.edge }, point: [40, 0, 10] };
-    const args = { part: box, params: {}, handle: box.handles.corner, target: { point: [60, 30, 10] }, holds: [pin], allHandles: Object.values(box.handles) };
-    const guard = spyGuard();
-    const r = solveHandle({ ...args, collide: guard });
-    expect(r.values).toEqual(solveHandle(args).values); // zero rows: the same answer
-    const lin = guard.calls.filter((c) => c[0] === "lin");
-    const atStart = lin.filter((c) => c[1] === 80 && c[2] === 40);
-    // the first run starts on beginFrame's linearisation; every re-run linearises at the start
-    expect(guard.calls[0]).toEqual(["begin", 80, 40]);
-    expect(lin[0]).not.toEqual(["lin", 80, 40]);
-    expect(atStart.length).toBeGreaterThanOrEqual(1);
-  });
-});
-
 describe("hand: angles drags", () => {
   const handle = hand.handles.index;
   const allHandles = Object.values(hand.handles);
   const tipAt = (q) => resolveParams(hand, { ...hand.defaults, ...q }).d.index.world("tip").origin;
 
-  it("hand pin pairs leave an open-air solve unchanged", () => {
-    // Every pin pair sits at ~0.4 mm, inside the band, from the start: guard-only, no rows.
+  it("hand pin pairs leave an open-air drag unchanged", () => {
+    // Every pin pair sits at ~0.4 mm from the start, clear of contact: settle takes the
+    // solve's whole answer.
     const start = { ...hand.defaults };
     const moving = movingSubParts(hand, "assembly", start, dofsOf(handle, allHandles, start));
     expect(moving).toContain("palm");          // the wrist is a DOF: the pin pairs all move
     const guard = guardFor(hand, start, moving);
-    let plain = { ...start }, guarded = { ...start };
+    let params = { ...start };
     for (let i = 0; i < 10; i++) {
-      const target = tipAt({ indexKnuckle: 10 * i, indexCurl: 0.1 * i });
+      // a few mm a frame: a flick past MAX_SUBSTEPS' travel lags by design
+      const target = tipAt({ indexKnuckle: start.indexKnuckle + i + 1, indexCurl: start.indexCurl + 0.01 * (i + 1) });
       withDeriveMemo(() => {
-        const a = solveAngles({ part: hand, params: plain, handle, grab: "tip", target, allHandles });
-        const b = solveAngles({ part: hand, params: guarded, handle, grab: "tip", target, allHandles, collide: guard });
-        // Rows do come in (the wrist moves every piece, so the travel slack windows the
-        // fingers' 3 mm neighbours), but none is active, and each reads exactly 0 at the
-        // solved pose: an identity test, not a tolerance one.
-        expect(guard.active, `${i}`).toBe(false);
-        expect([...guard.rows({ ...guarded, ...b.values })].every((v) => v === 0), `${i}`).toBe(true);
-        for (const key of Object.keys(a.values)) expect(Math.abs(b.values[key] - a.values[key]), `${i} ${key}`).toBeLessThan(1e-9);
-        plain = { ...plain, ...a.values };
-        guarded = { ...guarded, ...b.values };
+        const r = solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles });
+        const s = guard.settle(params, r.blend(1), { blend: r.blend });
+        expect(s.blocked, `${i}`).toBeNull();
+        for (const key of Object.keys(r.values)) expect(s.params[key], `${i} ${key}`).toBe(r.values[key]);
+        params = s.params;
       });
     }
   }, SLOW);
@@ -121,33 +74,61 @@ describe("hand: angles drags", () => {
     // no collision), so the obstacle is the middle finger: the index is dragged toward
     // the tip of a pose that spreads it 15° into the middle finger while bending it.
     // The wrist is held (a locked thumb freezes every param it lists), so the index's
-    // knuckle, curl and spread are the DOFs. Stop-dead: the plain solve, settled.
+    // knuckle, curl and spread are the DOFs.
     const start = { ...hand.defaults, thumbLock: true };
     const keys = dofsOf(handle, allHandles, start);
     const moving = movingSubParts(hand, "assembly", start, keys);
     const from = tipAt(start);
     const goal = tipAt({ ...start, indexKnuckle: 50, indexCurl: 0.4, indexSpread: -15 });
-    const drag = (collided) => {
+    const drag = (opts) => {
       const guard = guardFor(hand, start, moving);
       let params = { ...start }, blocked = null;
       const N = 8;
       for (let i = 1; i <= N; i++) {
         const target = from.map((v, c) => v + ((goal[c] - v) * i) / N);
         withDeriveMemo(() => {
-          const r = solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles, collide: collided ? guard : null });
-          const s = guard.settle(params, r.blend(1), { blend: r.blend });
+          const r = solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles });
+          const s = guard.settle(params, r.blend(1), { blend: r.blend, ...opts });
           params = s.params;
           blocked = s.blocked ?? blocked;
         });
       }
       return { params, guard, blocked };
     };
-    const dead = drag(false);
-    const slid = drag(true);
-    expect(dead.blocked).not.toBeNull();       // the plain drag met the middle finger
+    // a pinDrift that reads every slide as moving a pin: stop-dead
+    const dead = drag({ pinDrift: () => Infinity });
+    const slid = drag({});
+    expect(dead.blocked).not.toBeNull();       // the drag met the middle finger
     expect(slid.guard.isClear(slid.params)).toBe(true);
-    const deadMiss = dist(tipAt(dead.params), goal), slidMiss = dist(tipAt(slid.params), goal);
-    expect(slidMiss).toBeLessThan(deadMiss - 5);
+    expect(dist(tipAt(slid.params), goal)).toBeLessThan(dist(tipAt(dead.params), goal) - 5);
+  }, SLOW);
+
+  it("a tip held against the next finger, pulled mostly along it, slides instead of sticking", () => {
+    // The index spread into the middle finger until it stops, then curled toward a point
+    // half a degree of spread away from it: nearly tangent. The old per-param retry kept
+    // nothing of such a move (a curl alone grazes the rounded neighbour within a sub-step),
+    // so the finger stuck. The projected slide lifts it a skin off and moves along it.
+    const start = { ...hand.defaults, thumbLock: true };
+    const moving = movingSubParts(hand, "assembly", start, dofsOf(handle, allHandles, start));
+    const guard = guardFor(hand, start, moving);
+    const from = tipAt(start), into = tipAt({ ...start, indexSpread: -15 });
+    const frame = (params, target) => {
+      let s;
+      withDeriveMemo(() => {
+        const r = solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles });
+        s = guard.settle(params, r.blend(1), { blend: r.blend });
+      });
+      return s;
+    };
+    let params = { ...start }, blocked = null;
+    for (let i = 1; i <= 10; i++) ({ params, blocked = blocked } = frame(params, from.map((v, c) => v + ((into[c] - v) * i) / 10)));
+    expect(blocked).not.toBeNull();
+    const held = tipAt(params);
+    const away = tipAt({ ...params, indexSpread: params.indexSpread + 0.5, indexKnuckle: 60 });
+    for (let i = 1; i <= 15; i++) params = frame(params, held.map((v, c) => v + ((away[c] - v) * i) / 15)).params;
+    expect(guard.isClear(params)).toBe(true);
+    expect(dist(tipAt(params), away)).toBeLessThan(2);
+    expect(dist(tipAt(params), held)).toBeGreaterThan(30);
   }, SLOW);
 });
 
@@ -158,30 +139,29 @@ describe("robot arm: goal drags", () => {
   const tipOf = (q) => resolveParams(arm, { ...arm.defaults, ...q }).d.arm.world("tip").origin;
   const movingOf = (start) => movingSubParts(arm, "assembly", start, goalKeys);
 
+  /** Drag `handleId` by `grab` through the real session: settle and the slid target together. */
+  function sessionDrag(part, start, moving, grab, targets) {
+    const guard = guardFor(part, start, moving);
+    const params = { ...start };
+    const s = createPoseSession({ part, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore() {}, collide: () => guard });
+    s.begin("tool", grab);
+    for (const t of targets) withDeriveMemo(() => s.frame(t));
+    s.end();
+    return { params, guard };
+  }
+  const line = (from, goal, n) => Array.from({ length: n }, (_, i) => from.map((v, c) => v + ((goal[c] - v) * (i + 1)) / n));
+  const withBlock = (box) => ({ ...arm, parts: { ...arm.parts, block: { label: "Block", build: (kk) => kk.box(box), views: { assembly: (sol) => sol } } } });
+
   it("goal drags slide on the arm", () => {
-    // The arm's own links never come within the band of anything but their pin
-    // neighbours (its joint limits stop a goal pushed into the turret or pedestal well
-    // short), so the test adds a block on the table under the default tool, top at
-    // z = 40, and drags the tool down and back into it: the fingers land on its top and
-    // slide along it toward the goal's x.
-    const blocked = { ...arm, parts: { ...arm.parts, block: { label: "Block", build: (kk) => kk.box({ min: [150, -40, 0], max: [260, 40, 40] }), views: { assembly: (sol) => sol } } } };
+    // The arm's own links never come near anything but their pin neighbours (its joint
+    // limits stop a goal pushed into the turret or pedestal well short), so the test adds
+    // a block on the table under the default tool, top at z = 40, and drags the tool down
+    // and back into it: the fingers land on its top and slide along it toward the goal's x.
+    const blocked = withBlock({ min: [150, -40, 0], max: [260, 40, 40] });
     const start = { ...blocked.defaults };
-    const moving = movingSubParts(blocked, "assembly", start, goalKeys);
-    const guard = guardFor(blocked, start, moving);
     const tip = (q) => resolveParams(blocked, { ...blocked.defaults, ...q }).d.arm.world("tip").origin;
-    const from = tip(start), goal = [170, 0, 20];
-    let params = { ...start }, last = null;
-    const N = 12;
-    for (let i = 1; i <= N; i++) {
-      const target = from.map((v, c) => v + ((goal[c] - v) * i) / N);
-      withDeriveMemo(() => {
-        last = defaultSolve({ part: blocked, params, handle, grab: "tip", target, collide: guard });
-        params = guard.settle(params, last.blend(1), { blend: last.blend }).params;
-      });
-    }
+    const { params, guard } = sessionDrag(blocked, start, movingSubParts(blocked, "assembly", start, goalKeys), "tip", line(tip(start), [170, 0, 20], 40));
     expect(guard.isClear(params)).toBe(true);
-    // the last frame took the joint-space path: seeds and every goal param, aim included
-    for (const key of [...handle.seed, ...goalKeys]) expect(Object.keys(last.values)).toContain(key);
     // the goal written is the pose on screen: derive reproduces it
     const tool = tip(params);
     expect(dist(tool, [params.toolX, params.toolY, params.toolZ])).toBeLessThan(0.5);
@@ -190,71 +170,31 @@ describe("robot arm: goal drags", () => {
   }, SLOW);
 
   it("a mid-joint grab is guarded too: the elbow stops under a block", () => {
-    // A goal limb grabbed by a middle joint solves the seeded joints for the elbow; the
-    // guard's rows ride in that solve and its settle stops the frame, so the upper arm
-    // stops short of a block above it while the unguarded grab lifts it into the block.
-    const blocked = { ...arm, parts: { ...arm.parts, block: { label: "Block", build: (kk) => kk.box({ min: [-20, -40, 275], max: [140, 40, 320] }), views: { assembly: (sol) => sol } } } };
+    // A goal limb grabbed by a middle joint solves the seeded joints for the elbow, and
+    // settle stops the frame, so the upper arm stops short of a block above it while the
+    // unguarded grab lifts it into the block.
+    const blocked = withBlock({ min: [-20, -40, 275], max: [140, 40, 320] });
     const start = { ...blocked.defaults };
-    const guard = guardFor(blocked, start, movingSubParts(blocked, "assembly", start, [...goalKeys, ...handle.seed]));
-    expect(guard.isClear(start)).toBe(true);
+    const moving = movingSubParts(blocked, "assembly", start, [...goalKeys, ...handle.seed]);
     const elbow = (q) => resolveParams(blocked, { ...blocked.defaults, ...q }).d.arm.world("elbow").origin;
-    const from = elbow(start), goal = [40, 0, 330];
-    const drag = (collide) => {
-      let params = { ...start };
-      const N = 12;
-      for (let i = 1; i <= N; i++) {
-        const target = from.map((v, c) => v + ((goal[c] - v) * i) / N);
-        withDeriveMemo(() => {
-          const r = defaultSolve({ part: blocked, params, handle, grab: "elbow", target, collide });
-          params = collide ? collide.settle(params, r.blend(1), { blend: r.blend }).params : { ...params, ...r.values };
-        });
-      }
-      return params;
-    };
-    const free = drag(null);
-    const guarded = drag(guard);
+    const from = elbow(start), targets = line(from, [40, 0, 330], 12);
+    let free = { ...start };
+    for (const target of targets) withDeriveMemo(() => { free = { ...free, ...defaultSolve({ part: blocked, params: free, handle, grab: "elbow", target }).values }; });
+    const { params: guarded, guard } = sessionDrag(blocked, start, moving, "elbow", targets);
     expect(guard.isClear(free)).toBe(false);
     expect(guard.isClear(guarded)).toBe(true);
     expect(elbow(guarded)[2]).toBeGreaterThan(from[2] + 5);       // it still rose toward the pointer
     expect(elbow(guarded)[2]).toBeLessThan(elbow(free)[2] - 1);  // but short of the free grab
-    // and the rows reach the mid-joint solve itself (not only the settle after it): at the
-    // pose against the block, a fresh guard's frame starts inside defaultSolve, with rows
-    const fresh = guardFor(blocked, start, movingSubParts(blocked, "assembly", start, [...goalKeys, ...handle.seed]));
-    withDeriveMemo(() => defaultSolve({ part: blocked, params: guarded, handle, grab: "elbow", target: goal, collide: fresh }));
-    expect(fresh.rowCount).toBeGreaterThan(0);
-  }, SLOW);
-
-  it("a fast open-air drag whose travel slack windows a pair still writes the goal directly", () => {
-    // Frame 1's long travel widens frame 2's window: rows come in, but no gap is inside
-    // the margin, so frame 2 stays a direct write and reads its miss.
-    const start = { ...arm.defaults };
-    const guard = guardFor(arm, start, movingOf(start));
-    let params = { ...start }, r = null;
-    for (const target of [[300, 0, 150], [400, 0, 300]]) {
-      withDeriveMemo(() => {
-        r = defaultSolve({ part: arm, params, handle, grab: "tip", target, collide: guard });
-        if (target[2] === 300) return;
-        params = guard.settle(params, r.blend(1), { blend: r.blend }).params;
-      });
-    }
-    expect(guard.rowCount).toBeGreaterThan(0);
-    expect(guard.active).toBe(false);
-    const target = [400, 0, 300];
-    const values = goalValues({ handle, point: target, part: arm });
-    expect(r.values).toEqual({ ...values, ...seedValues({ part: arm, params: { ...params, ...values }, handle }) });
-    const { p, d } = resolveParams(arm, { ...params, ...r.values });
-    expect(arm.probes.tool(null, p, d).status).not.toBe("reached");
   }, SLOW);
 
   it("open-air goal drag writes the goal directly", () => {
     const start = { ...arm.defaults };
     const guard = guardFor(arm, start, movingOf(start));
     const target = [400, 0, 300];   // past the arm's reach
-    const r = withDeriveMemo(() => defaultSolve({ part: arm, params: start, handle, grab: "tip", target, collide: guard }));
-    expect(guard.rowCount).toBe(0);
+    const r = withDeriveMemo(() => defaultSolve({ part: arm, params: start, handle, grab: "tip", target }));
     const values = goalValues({ handle, point: target, part: arm });
     expect(r.values).toEqual({ ...values, ...seedValues({ part: arm, params: { ...start, ...values }, handle }) });
-    expect(r.values).toEqual(defaultSolve({ part: arm, params: start, handle, grab: "tip", target }).values);
+    expect(withDeriveMemo(() => guard.settle(start, r.blend(1), { blend: r.blend })).blocked).toBeNull();
     const { p, d } = resolveParams(arm, { ...start, ...r.values });
     expect(arm.probes.tool(null, p, d).status).not.toBe("reached");
   }, SLOW);

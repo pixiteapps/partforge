@@ -3700,7 +3700,7 @@ the panel sliders drive the same parameters, so keyboard users lose nothing.
 ## Collisions and sweeps
 
 Two things, opt-in per part. **Pose mode keeps pieces solid**: with a `collisions` block, a
-drag that would push one sub-part into another stops at its surface. **Sweeps check a whole
+drag that would push one sub-part into another stops at its surface and slides along it. **Sweeps check a whole
 motion**: `verify.sweeps` declares motions that `measure` steps end to end, reporting whether
 they stay clear, the tightest clearance along them, where first contact happens and which
 param drives it. A part with neither behaves exactly as before. The reference parts are
@@ -3724,27 +3724,34 @@ is not `true` or `false`), `collisions-bad-pair` (an
 name that is not a key of `parts`). `collisions: {}` is the whole opt-in: every pair
 blocked, default clearance.
 
-**In Pose mode** a drag stops at contact. After each frame's solve, the guard walks from the
-last clear values to the solved ones and stops at the first contact (bisecting back to it).
-Sliding along a surface while the rest of the chain keeps solving is built and tested, but
-ships off: `COLLIDE_IN_SOLVE = false` in `src/framework/collide/guard.js`, pending its frame
-budget. So today a finger dragged into the palm comes to rest against it, and stays there
-until the drag turns away. Other rules:
+**In Pose mode** a drag stops at contact and slides. After each frame's solve, the guard
+walks from the last clear values to the solved ones and stops at the first contact
+(bisecting back to it). It then slides the rest of the move along the contact
+(`COLLIDE_SLIDE` in `src/framework/collide/guard.js`): it reads each pair in contact once,
+projects the remaining step off every contact it would close, and walks that, lifting the
+piece a 0.05 mm skin off the surface (`SLIDE_SKIN_MM`) so a rounded neighbour does not
+catch it again on the next step. So a finger dragged into its neighbour comes to rest
+against it, moves along it, and comes away freely when pulled mostly sideways. The stop also reports each contact's surface normal, and later frames of the same limb drag
+(an angles or goal handle) slide the pointer's target along it before solving: the part of the move that pushes into
+the surface is dropped, so the solve aims along the surface and the piece follows the
+pointer around its neighbour. A normal is dropped once the pointer pulls away from it. A drag with pins set slides the same way, with one check: the slide works outside the
+solver, where pins are not held, so a frame whose slide moves a pinned point more than
+0.5 mm (`PIN_SLIDE_MM` in `collide/guard.js`) is undone and stops at contact instead, in the
+same settle; its normals still slide the next target, which the solver moves with the pins held. Other rules:
 
 - A pair that starts a drag inside clearance (a preset, a saved pose) can move out, never
   further in. A piece wholly inside another at the start is found and exempted the same way.
 - A goal drag (the robot arm's `tool`) writes the goal as before, and the guard stops the
-  arm where it meets a piece; in open air nothing changes, so an out-of-reach goal still
-  reads "Out of reach". (With `COLLIDE_IN_SOLVE` on, a goal drag within 2 mm of contact,
-  `COLLIDE_BAND_MM`, solves the arm's joints itself so it slides, and writes the goal back.)
-- While a drag is held at contact, the live readout shows **Stopped at <piece>** in place
+  arm where it meets a piece and slides it the same way; in open air nothing changes, so an
+  out-of-reach goal still reads "Out of reach".
+- While a drag is held at contact (the slide could not take the whole move), the live readout shows **Stopped at <piece>** in place
   of "Out of reach" (and no miss line), and the release chip shows the same for `CHIP_MS`.
   `onDragEnd` carries `blocked: { a, b }`.
 - Only rigid motion is checked: pieces the viewer moves by matrix. A shape-changing drag (the
   drawer box's corner resizing the cabinet), a posed delivery, and panel sliders are never
   blocked. Sweeps check those.
-- **Pieces are assumed thicker than the band.** A frame is sub-stepped so no point of a
-  moving piece travels more than 1 mm (half of `COLLIDE_BAND_MM`) between checks, at most 32
+- **Pieces are assumed thicker than a step.** A frame is sub-stepped so no point of a
+  moving piece travels more than 1 mm (`SETTLE_STEP_MM`) between checks, at most 32
   sub-steps a frame (`MAX_SUBSTEPS`); a flick that needs more lags the cursor rather than
   passing through. A piece thinner than 1 mm can still slip through another between checks.
 

@@ -52,12 +52,12 @@
 //     drag. Back in the assembly view the handles and the pin return.
 //   hand.html and robot-arm.html — COLLISIONS (both declare `collisions: {}`; spec 2026-11-02
 //     collisions). hand (checkHandContact): the wrist held (thumbLock), the index tip dragged
-//     past where it would sit spread 15° into the middle finger. The drag stops at the middle
-//     finger: onDragEnd's `blocked` (runtime.pose.__lastDragEnd(), a test hook) names a middle-
-//     finger piece, the pair is tinted while held (runtime.pose.__collide()), the chip reads
-//     "Stopped at <its label>", the tip moved, and the committed pose has no overlap
-//     (assemblyOverlaps, run here in Node on Manifold). With COLLIDE_IN_SOLVE on it must also
-//     slide most of the way to its target; off (stop at contact), that is skipped.
+//     past where it would sit spread 15° into the middle finger. The drag meets the middle
+//     finger and slides along it. If it ends held there, onDragEnd's `blocked`
+//     (runtime.pose.__lastDragEnd(), a test hook) names a middle-finger piece, the pair is
+//     tinted while held (runtime.pose.__collide()) and the chip reads "Stopped at <its
+//     label>". Either way the tip moved and the committed pose has no overlap
+//     (assemblyOverlaps, run here in Node on Manifold), and it slid most of the way to its target.
 //     robot-arm (checkArmCollisions): the tool dragged far out of reach in open air writes the
 //     goal it was dragged to: nothing blocks, and the tool probe reads "too-far" (the goal is
 //     not pulled back to the arm). The arm has no contact case: its joint limits keep the tool
@@ -94,7 +94,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { COLLIDE_IN_SOLVE } from "../src/framework/collide/guard.js";
 
 const PORT = Number(process.env.CHECK_PORT) || 5191;
 const keepServer = process.argv.includes("--keep");
@@ -823,9 +822,11 @@ async function checkHandContact(page, box, errors) {
   const commit = await oneCommit(page, commits0, "the hand contact drag", errors);
   const end = await handlePoint(page, "index");
   const out = { blocked: ended?.blocked ?? null, tinted: held?.tinted ?? null, chip: chip?.text ?? null };
+  // The drag slides along the middle finger (the slide, and the target slid along the
+  // contact's normal), so it may end clear of it; held against it, it names that piece.
   const b = ended?.blocked?.b;
-  if (!b || !b.startsWith("middle")) errors.push(`the index drag into the middle finger ended blocked by ${JSON.stringify(ended?.blocked ?? null)}, not a middle-finger piece`);
-  if (!held?.tinted || held.tinted.b !== ended?.blocked?.b) errors.push(`the pair held at contact was not tinted (${JSON.stringify(held?.tinted ?? null)})`);
+  if (b && !b.startsWith("middle")) errors.push(`the index drag into the middle finger ended blocked by ${JSON.stringify(ended.blocked)}, not a middle-finger piece`);
+  if (b && (!held?.tinted || held.tinted.b !== b)) errors.push(`the pair held at contact was not tinted (${JSON.stringify(held?.tinted ?? null)})`);
   const label = b ? await page.evaluate((n) => window.__pfPart.parts[n]?.label ?? n, b) : null;
   if (b && (chip?.kind !== "blocked" || chip.text !== `Stopped at ${label}`)) errors.push(`after the contact drag the chip shows ${JSON.stringify(chip)}, not "Stopped at ${label}"`);
   const moved = end ? Math.hypot(end.x - start.x, end.y - start.y) : 0;
@@ -836,8 +837,8 @@ async function checkHandContact(page, box, errors) {
     out.overlaps = overlaps.length;
     if (overlaps.length) errors.push(`the committed contact pose overlaps: ${overlaps.join(", ")}`);
   }
-  if (COLLIDE_IN_SOLVE && end) {
-    // in the solver, the tip slides along the middle finger toward its target
+  if (end) {
+    // the tip slides along the middle finger toward its target
     const left = Math.hypot(end.x - goal.x, end.y - goal.y), all = Math.hypot(start.x - goal.x, start.y - goal.y);
     out.slidLeftPx = Number(left.toFixed(1));
     if (left > 0.5 * all) errors.push(`the index tip stopped ${left.toFixed(0)} of ${all.toFixed(0)} px short: it did not slide`);

@@ -1104,8 +1104,6 @@ describe("a drag stopped at contact", () => {
   // A guard that lets every frame through (settle lands on the solve's answer) and reports
   // `blocked` while blocked() says so: what the collision guard hands back at contact.
   const passGuard = (blocked) => () => ({
-    rowCount: 0, active: false,
-    beginFrame() {}, linearise() {}, rows: () => new Float64Array(0),
     settle: (from, to, opts) => ({ params: opts?.blend ? opts.blend(1) : { ...to }, blocked: blocked() }),
     release() {},
   });

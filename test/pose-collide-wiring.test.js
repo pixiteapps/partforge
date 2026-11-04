@@ -1,19 +1,18 @@
 // Pose mode's collision wiring (spec "Pose mode: collision in the solver"): the session
-// settles every frame through the drag's guard before it writes, the solve gets the
-// guard's rows under a frame budget, the drag's end names the pair it stopped at, the
+// settles every frame through the drag's guard before it writes, the drag's end names the pair it stopped at, the
 // pose ladder hands out rung-1 matrices, and mount's index (pose/pose-collide.js) builds
 // in idle time and guards a drag over what it has indexed. No DOM: fakes throughout.
 import { describe, it, expect, vi } from "vitest";
 import { createPoseSession } from "../src/framework/pose/pose-session.js";
 import { createPoseFastPath } from "../src/framework/pose-fast-path.js";
 import { createPoseCollide, handleKeys } from "../src/framework/pose/pose-collide.js";
-import { budgetFrame, COLLIDE_FRAME_BUDGET_MS, COLLIDE_IN_SOLVE } from "../src/framework/collide/guard.js";
 import { placeMatrix } from "../src/framework/collide/place.js";
 import { withBlend, linearBlend } from "../src/framework/pose/param-solve.js";
 import { withDeriveMemo } from "../src/framework/derive-memo.js";
 import * as world from "../src/framework/collide/world.js";
 import * as partGuard from "../src/framework/collide/part-guard.js";
 import hand from "../src/parts/hand.js";
+import { resolveParams } from "../src/framework/part-model.js";
 import { collideBar, barMeshes } from "./fixtures/collide-bar.js";
 
 // The bar fixture with a rotary handle on its swing: the handle writes `angle`.
@@ -24,7 +23,7 @@ const bar = {
 };
 
 /** A session over a plain params store; solve answers `{ angle: target[0] }` with a linear blend. */
-function session({ collide = () => null, solve, blockedChange, collideBudget, collideInSolve = true } = {}) {
+function session({ collide = () => null, solve, blockedChange } = {}) {
   const params = { ...bar.defaults };
   const writes = [];
   const solves = [];
@@ -40,9 +39,7 @@ function session({ collide = () => null, solve, blockedChange, collideBudget, co
       return withBlend({ values, error: 0 }, linearBlend({ ...bar.defaults, ...args.params }, values));
     }),
     collide,
-    collideInSolve,
     ...(blockedChange ? { blockedChange } : {}),
-    ...(collideBudget ? { collideBudget } : {}),
   });
   return { s, params, writes, solves };
 }
@@ -52,11 +49,8 @@ function halfGuard({ blocked = null } = {}) {
   const calls = [];
   return {
     calls,
-    rowCount: 0,
-    active: false,
-    beginFrame() {}, linearise() {}, rows: () => new Float64Array(0),
     settle(from, to, opts) {
-      calls.push({ from: { ...from }, to: { ...to }, blend: opts?.blend });
+      calls.push({ from: { ...from }, to: { ...to }, blend: opts?.blend, pinDrift: opts?.pinDrift });
       const t = 0.5;
       const params = opts?.blend ? opts.blend(t) : { ...to, angle: from.angle + t * (to.angle - from.angle) };
       return { params, blocked };
@@ -82,49 +76,64 @@ describe("pose-session with a drag guard", () => {
     expect(h.writes[1]).toEqual({ angle: 30 });
   });
 
-  it("the solve gets the guard's rows under a frame budget; COLLIDE_IN_SOLVE off gets none", () => {
-    const guard = halfGuard();
-    const on = session({ collide: () => guard });
-    on.s.begin("swing");
-    on.s.frame({ point: [10, 0, 0] });
-    const passed = on.solves[0].collide;
-    expect(passed).not.toBeNull();
-    expect(passed).not.toBe(guard);                   // the budget wrapper, fresh per frame
-    expect(passed.rowCount).toBe(0);
-    on.s.frame({ point: [12, 0, 0] });
-    expect(on.solves[1].collide).not.toBe(passed);
-
-    const params = { ...bar.defaults };
-    const solves = [];
-    const off = createPoseSession({
-      part: bar, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore() {},
-      solve: (args) => { solves.push(args); return withBlend({ values: { angle: 5 }, error: 0 }, linearBlend(params, { angle: 5 })); },
-      collide: () => guard, collideInSolve: false,
-    });
-    off.begin("swing");
-    off.frame({ point: [5, 0, 0] });
-    expect(solves[0].collide).toBeNull();
-    expect(guard.calls.at(-1).to.angle).toBe(5);       // settle still runs
-  });
-
-  it("by default the solve gets rows exactly when COLLIDE_IN_SOLVE is on (the shipped mode)", () => {
-    const params = { ...bar.defaults };
-    const solves = [];
+  it("a limb drag's target slides along the normal the last stop reported, until the pointer pulls away", () => {
+    const params = { ...hand.defaults, thumbLock: true };
+    const grab = () => resolveParams(hand, params).d.index.world("tip").origin;
+    const targets = [];
+    let report = true;
+    const guard = {
+      release() {},
+      settle(from, to) {
+        const out = { params: { ...to }, blocked: report ? { a: "indexDistal", b: "middleDistal" } : null };
+        if (report) out.contacts = [{ a: "indexDistal", b: "middleDistal", normal: [1, 0, 0] }];
+        report = false;
+        return out;
+      },
+    };
     const s = createPoseSession({
-      part: bar, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore() {},
-      solve: (args) => { solves.push(args); return withBlend({ values: { angle: 5 }, error: 0 }, linearBlend(params, { angle: 5 })); },
-      collide: () => halfGuard(),
+      part: hand, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore() {},
+      solve: (args) => { targets.push(args.target); return withBlend({ values: {}, error: 0 }, (t) => ({ ...args.params })); },
+      collide: () => guard,
     });
-    s.begin("swing");
-    s.frame({ point: [5, 0, 0] });
-    expect(solves[0].collide !== null).toBe(COLLIDE_IN_SOLVE);
+    s.begin("index", "tip");
+    const g = grab();
+    const plus = (d) => g.map((v, i) => v + d[i]);
+    s.frame({ point: plus([-5, 3, 0]) });               // the stop: reported after this solve
+    expect(targets[0]).toEqual(plus([-5, 3, 0]));
+    s.frame({ point: plus([-5, 3, 0]) });               // into the normal: only the sideways part
+    targets[1].forEach((v, i) => expect(v).toBeCloseTo(plus([0, 3, 0])[i], 9));
+    s.frame({ point: plus([5, 0, 0]) });                // pulled away: as given, the normal dropped
+    expect(targets[2]).toEqual(plus([5, 0, 0]));
+    s.frame({ point: plus([-5, 0, 0]) });
+    expect(targets[3]).toEqual(plus([-5, 0, 0]));
+    s.end();
   });
 
-  it("no collisions block, no guard: the solve gets collide null and its values are written as they are", () => {
+  it("a pinned drag hands settle a pinDrift that reads how far the pins moved; an unpinned one none", () => {
+    // `other` is pinned where the bar's angle puts it, so any change of angle moves it
+    const pinnedPart = { ...bar, handles: { ...bar.handles, other: { point: (p) => [p.angle, 0, 30], params: ["angle"], drag: "point" } } };
+    const drive = (pin) => {
+      const params = { ...bar.defaults };
+      const guard = halfGuard({ blocked: { a: "bar", b: "palm" } });
+      const s = createPoseSession({
+        part: pinnedPart, getParams: () => params, write: (v) => Object.assign(params, v), commit() {}, restore() {},
+        solve: (args) => withBlend({ values: { angle: args.target.point[0] }, error: 0 }, linearBlend({ ...bar.defaults, ...args.params }, { angle: args.target.point[0] })),
+        collide: () => guard,
+      });
+      if (pin) expect(s.togglePin("other:point")).toBe(true);
+      s.begin("swing");
+      s.frame({ point: [40, 0, 0] });
+      const [call] = guard.calls;
+      return call.pinDrift && [call.pinDrift({ ...bar.defaults }), call.pinDrift({ ...bar.defaults, angle: bar.defaults.angle + 20 })];
+    };
+    expect(drive(false)).toBeUndefined();
+    expect(drive(true)).toEqual([0, 20]); // the pin, read where the drag began, and 20 mm along
+  });
+
+  it("no collisions block, no guard: the solve's values are written as they are", () => {
     const h = session();
     h.s.begin("swing");
     h.s.frame({ point: [33, 0, 0] });
-    expect(h.solves[0].collide).toBeNull();
     expect(h.writes).toEqual([{ angle: 33 }]);
     expect(h.s.end().blocked).toBeNull();
   });
@@ -284,63 +293,6 @@ describe("the release snap and a settle that throws", () => {
     expect(h.writes.at(-1)).toEqual({ angle: 20.02 }); // isClear threw on both snaps: lastClear, unsnapped
     expect(err).toHaveBeenCalledTimes(1);
     err.mockRestore();
-  });
-});
-
-describe("budgetFrame", () => {
-  const fakeGuard = (cost, clock) => ({
-    rowCount: 2, active: true, linearised: 0,
-    beginFrame() { clock.t += cost; },
-    linearise() { this.linearised++; clock.t += cost; },
-    rows() { clock.t += cost / 10; return Float64Array.of(1, 2); },
-  });
-
-  it("drops the rows at the first iteration start past the budget; zeros from then on", () => {
-    const clock = { t: 0 };
-    const g = fakeGuard(5, clock);
-    const b = budgetFrame(g, { budgetMs: 8, now: () => clock.t });
-    b.beginFrame({});                           // 5 ms
-    expect([...b.rows({})]).toEqual([1, 2]);
-    b.linearise({});                            // 5.5 < 8: runs (10.5 ms)
-    expect(g.linearised).toBe(1);
-    expect(b.dropped).toBe(false);
-    expect([...b.rows({})]).toEqual([1, 2]);    // mid-iteration: still the rows
-    b.linearise({});                            // past 8: dropped, not run
-    expect(g.linearised).toBe(1);
-    expect(b.dropped).toBe(true);
-    expect([...b.rows({})]).toEqual([0, 0]);
-    expect(b.rowCount).toBe(2);                 // the residual keeps its length
-    expect(b.active).toBe(true);
-  });
-
-  it("a cheap frame never drops; the default budget is the named constant", () => {
-    const clock = { t: 0 };
-    const g = fakeGuard(0.1, clock);
-    const b = budgetFrame(g, { now: () => clock.t });
-    b.beginFrame({});
-    for (let i = 0; i < 20; i++) { b.linearise({}); b.rows({}); }
-    expect(b.dropped).toBe(false);
-    expect(COLLIDE_FRAME_BUDGET_MS).toBeGreaterThan(0);
-  });
-
-  it("a session frame gets a fresh budget: one frame's overrun does not drop the next", () => {
-    const clock = { t: 0 };
-    const g = fakeGuard(6, clock);
-    const seen = [];
-    const h = session({
-      collide: () => ({ ...halfGuard(), get rowCount() { return g.rowCount; }, beginFrame: g.beginFrame.bind(g), linearise: g.linearise.bind(g), rows: g.rows.bind(g) }),
-      collideBudget: { budgetMs: 8, now: () => clock.t },
-      solve: (args) => {
-        args.collide.beginFrame({}); args.collide.linearise({}); args.collide.linearise({});
-        seen.push(args.collide.dropped);
-        return withBlend({ values: { angle: 1 }, error: 0 }, linearBlend(args.params, { angle: 1 }));
-      },
-    });
-    h.s.begin("swing");
-    h.s.frame({ point: [1, 0, 0] });
-    h.s.frame({ point: [1, 0, 0] });
-    expect(seen).toEqual([true, true]);
-    expect(g.linearised).toBe(2); // one per frame ran before each budget ran out
   });
 });
 

@@ -160,12 +160,11 @@ export function createPoseCollide({
     kick();
     if (indexes.size < 2) return null;
     const names = [...indexes.keys()];
-    const matsAt = (params, only) => {
+    const matsAt = (params) => {
       const { p: pp, d } = resolveParams(part, { ...part.defaults, ...params });
-      const want = only ? [...only].filter((n) => indexes.has(n)) : names;
-      const m = fastPath.matricesAt(pp, d, want);
+      const m = fastPath.matricesAt(pp, d, names);
       const out = new Map();
-      for (const n of want) out.set(n, m.get(n) ?? null);
+      for (const n of names) out.set(n, m.get(n) ?? null);
       return out;
     };
     const allHandles = Object.values(part.handles ?? {});
@@ -184,11 +183,6 @@ export function createPoseCollide({
     const movingSet = new Set(moving);
     let released = false;
     return {
-      get rowCount() { return guard.rowCount; },
-      get active() { return guard.active; },
-      beginFrame: guard.beginFrame,
-      linearise: guard.linearise,
-      rows: guard.rows,
       isClear: guard.isClear,
       moving,
       settle(from, to, opts) {

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  createDragGuard, COLLIDE_BAND_MM, COLLIDE_WEIGHT, MAX_ROWS, MAX_SUBSTEPS, SETTLE_BISECTIONS, COLLIDE_IN_SOLVE,
+  createDragGuard, SETTLE_STEP_MM, MAX_SUBSTEPS, SETTLE_BISECTIONS,
+  COLLIDE_SLIDE, SLIDE_BISECTIONS, SLIDE_SKIN_MM, SLIDE_ROUNDS, PIN_SLIDE_MM,
 } from "../src/framework/collide/guard.js";
 import { createCollisionWorld, poseMatrices } from "../src/framework/collide/world.js";
 import { CONTACT_EPS } from "../src/framework/collide/pairs.js";
 import { resolveParams } from "../src/framework/part-model.js";
-import { collideBar, collideBarThrough, barMeshes } from "./fixtures/collide-bar.js";
+import { collideBar, collideBarThrough, collideBarTwo, barMeshes } from "./fixtures/collide-bar.js";
 
 // Meshes are hand-built in each sub-part's own frame (barMeshes), placed per params by
 // poseMatrices: no kernel boots.
@@ -21,85 +22,18 @@ function setup(part, start, { meshes = barMeshes(part), clearance = CONTACT_EPS 
   return { world, matsAt, guard };
 }
 
-const margin = CONTACT_EPS + COLLIDE_BAND_MM;
+// settle's pinDrift option, reading every slide as moving a pin: the stop-dead walk
+const stopDead = () => Infinity;
 
 describe("drag guard constants", () => {
   it("exports the tuning values", () => {
-    expect(COLLIDE_BAND_MM).toBe(2);
-    expect(COLLIDE_WEIGHT).toBe(100);
-    expect(MAX_ROWS).toBe(8);
+    expect(SETTLE_STEP_MM).toBe(1);
     expect(MAX_SUBSTEPS).toBe(32);
     expect(SETTLE_BISECTIONS).toBe(12);
-    expect(COLLIDE_IN_SOLVE).toBe(false); // Task 6's gate shipped settle alone
-  });
-});
-
-describe("drag guard rows", () => {
-  it("rows are zero far from contact", () => {
-    const { guard, world } = setup(collideBar, { angle: 0 });
-    guard.beginFrame({ angle: 0 });
-    expect(guard.rowCount).toBe(0);
-    expect(guard.rows({ angle: 0 }).length).toBe(0);
-    // a row chosen near contact reads zero once the bar swings back up
-    guard.beginFrame({ angle: 58 });
-    guard.linearise({ angle: 58 });
-    expect(guard.rowCount).toBe(1);
-    expect([...guard.rows({ angle: 0 })]).toEqual([0]);
-    world.dispose();
-  });
-
-  it("rows rise inside the band", () => {
-    const { guard, world } = setup(collideBar, { angle: 0 });
-    guard.beginFrame({ angle: 58 });
-    guard.linearise({ angle: 58 });
-    const [r] = guard.rows({ angle: 58 });
-    expect(r).toBeGreaterThan(0);
-    expect(guard.rows({ angle: 59 })[0]).toBeGreaterThan(r);
-    world.dispose();
-  });
-
-  it("rows match exact distances near the linearisation point", () => {
-    const { guard, world, matsAt } = setup(collideBar, { angle: 0 });
-    guard.beginFrame({ angle: 58 });
-    guard.linearise({ angle: 58 });
-    const [exact] = world.distances(matsAt({ angle: 58.5 }));
-    const want = COLLIDE_WEIGHT * (margin - exact.distance);
-    const [got] = guard.rows({ angle: 58.5 });
-    expect(Math.abs(got - want) / want).toBeLessThan(0.02);
-    world.dispose();
-  });
-
-  it("active: a row inside margin is active; one the travel slack windowed is not", () => {
-    const { guard, world } = setup(collideBar, { angle: 0 });
-    guard.beginFrame({ angle: 0 });
-    guard.beginFrame({ angle: 40 });   // 40° of swing: the slack windows the slab
-    expect(guard.rowCount).toBe(1);
-    expect(guard.active).toBe(false);
-    guard.beginFrame({ angle: 58 });
-    expect(guard.active).toBe(true);
-    guard.linearise({ angle: 30 });    // linearise re-reads it
-    expect(guard.active).toBe(false);
-    world.dispose();
-  });
-
-  it("rowCount is fixed until the next beginFrame", () => {
-    const { guard, world } = setup(collideBar, { angle: 0 });
-    guard.beginFrame({ angle: 58 });
-    expect(guard.rowCount).toBe(1);
-    guard.linearise({ angle: 20 });
-    expect(guard.rowCount).toBe(1);
-    expect(guard.rows({ angle: 20 }).length).toBe(1);
-    world.dispose();
-  });
-
-  it("rows read matrices only, never the BVH", () => {
-    const { guard, world } = setup(collideBar, { angle: 0 });
-    guard.beginFrame({ angle: 58 });
-    guard.linearise({ angle: 58 });
-    const spy = vi.spyOn(world, "distances");
-    guard.rows({ angle: 58.3 });
-    expect(spy).not.toHaveBeenCalled();
-    world.dispose();
+    expect(COLLIDE_SLIDE).toBe(true);
+    expect(SLIDE_BISECTIONS).toBe(6);
+    expect(SLIDE_SKIN_MM).toBe(0.05);
+    expect(SLIDE_ROUNDS).toBe(2);
   });
 });
 
@@ -160,7 +94,7 @@ describe("drag guard settle", () => {
   it("a non-linear blend decides the path and never passes contact", () => {
     const { guard, world } = setup(collideBar, { angle: 0 });
     const blend = vi.fn((t) => ({ angle: 90 * t * t }));
-    const { params, blocked } = guard.settle({ angle: 0 }, { angle: 90 }, { blend });
+    const { params, blocked } = guard.settle({ angle: 0 }, { angle: 90 }, { blend, pinDrift: stopDead });
     expect(params.angle).toBeGreaterThanOrEqual(59.5);
     expect(params.angle).toBeLessThanOrEqual(60);
     expect(blocked).not.toBeNull();
@@ -206,20 +140,15 @@ describe("drag guard exemptions", () => {
     expect(guard.isClear({ z: -1 })).toBe(true);
     expect(guard.settle({ z: -7 }, { z: 8 })).toEqual({ params: { z: 8 }, blocked: null });
     // out now, and not exempt any more: coming back down stops at the top face
-    const back = guard.settle({ z: 8 }, { z: -7 });
+    const back = guard.settle({ z: 8 }, { z: -7 }, { pinDrift: stopDead });
     expect(back.blocked).not.toBeNull();
     expect(back.params.z).toBeGreaterThan(0);
     expect(back.params.z).toBeLessThan(0.05);
     world.dispose();
   });
 
-  it("a pair below the band at start gets no rows", () => {
+  it("a pair close at start, but clear of it, is not exempt: settle stops it at contact", () => {
     const { guard, world } = setup(collideBar, { angle: 59 });
-    guard.beginFrame({ angle: 59 });
-    expect(guard.rowCount).toBe(0);
-    guard.beginFrame({ angle: 59.5 });
-    expect(guard.rowCount).toBe(0);
-    // but settle still stops it at contact
     const { params, blocked } = guard.settle({ angle: 59 }, { angle: 90 });
     expect(params.angle).toBeGreaterThanOrEqual(59.5);
     expect(params.angle).toBeLessThanOrEqual(60);
@@ -231,6 +160,82 @@ describe("drag guard exemptions", () => {
     const { guard, world } = setup(collideBar, { angle: 0 });
     expect(guard.isClear({ angle: 40 })).toBe(true);
     expect(guard.isClear({ angle: 65 })).toBe(false);
+    world.dispose();
+  });
+});
+
+describe("drag guard slide", () => {
+  const two = (start) => {
+    const world = createCollisionWorld({ meshes: barMeshes(collideBarTwo) });
+    const guard = createDragGuard({ world, matsAt: matsAtFor(collideBarTwo), start, moving: ["bar"] });
+    return { world, guard, matsAt: matsAtFor(collideBarTwo) };
+  };
+
+  it("keeps the part of the move that does not close the pair", () => {
+    const { world, guard, matsAt } = two({ a: 0, b: 50 });
+    // a straight walk to (10, 80) meets the slab at b = 60, a third of the way: a ≈ 3.3
+    const { params, blocked } = guard.settle({ a: 0, b: 50 }, { a: 10, b: 80 });
+    expect(params.a).toBeCloseTo(10, 6);
+    expect(params.b).toBeGreaterThan(59.5);
+    expect(params.b).toBeLessThan(60);
+    expect([blocked.a, blocked.b].sort()).toEqual(["bar", "palm"]);
+    expect(world.distances(matsAt(params), { within: CONTACT_EPS }).length).toBe(0);
+    world.dispose();
+  });
+
+  it("reports no block when the slide reaches the target", () => {
+    const { world, guard } = two({ a: 0, b: 59.9 });
+    // the walk's first sub-step meets the slab, the slide in a alone then finishes the move
+    const r = guard.settle({ a: 0, b: 59.9 }, { a: 10, b: 59.95 });
+    expect(r.params.a).toBeCloseTo(10, 6);
+    world.dispose();
+  });
+
+  it("a slide that moves a pin past PIN_SLIDE_MM stops dead, and still reports the normal", () => {
+    const { world, guard } = two({ a: 0, b: 50 });
+    const pinDrift = vi.fn((p) => Math.abs(p.a)); // a pin that only `a` moves
+    const { params, blocked, contacts } = guard.settle({ a: 0, b: 50 }, { a: 10, b: 80 }, { pinDrift });
+    expect(pinDrift).toHaveBeenCalledTimes(1);
+    expect(params.a).toBeLessThan(4);
+    expect(blocked).not.toBeNull();
+    expect(contacts.length).toBe(1);
+    world.dispose();
+  });
+
+  it("a slide that keeps the pins within PIN_SLIDE_MM stands", () => {
+    const { world, guard } = two({ a: 0, b: 50 });
+    const { params } = guard.settle({ a: 0, b: 50 }, { a: 10, b: 80 }, { pinDrift: () => PIN_SLIDE_MM / 2 });
+    expect(params.a).toBeCloseTo(10, 6);
+    world.dispose();
+  });
+
+  it("an undone slide rolls back its exemptions: the re-walk starts from the ones `from` had", () => {
+    // inside clearance at start (exempt "near"); the blend swings out, opening the pair
+    // past clearance (which drops the exemption), then back in, where it stops at contact
+    const clearance = 0.5;
+    const world = createCollisionWorld({ meshes: barMeshes(collideBarTwo) });
+    const start = { a: 0, b: 59.9 };
+    const guard = createDragGuard({ world, matsAt: matsAtFor(collideBarTwo), start, moving: ["bar"], clearance });
+    const blend = (t) => ({ a: 10 * t, b: 59.9 - 30 * Math.sin(Math.PI * t) });
+    const { params, blocked } = guard.settle(start, blend(1), { blend, pinDrift: stopDead });
+    expect(blocked).not.toBeNull();
+    // with the slide's dropped exemption kept, the re-walk would stop at once, at a = 0
+    expect(params.a).toBeGreaterThan(5);
+    world.dispose();
+  });
+
+  it("a piece resting on a surface is lifted a skin off it, never more", () => {
+    const { world, guard, matsAt } = two({ a: 0, b: 50 });
+    const { params } = guard.settle({ a: 0, b: 50 }, { a: 10, b: 80 });
+    const [r] = world.distances(matsAt(params), { within: 1 });
+    expect(r.distance).toBeGreaterThan(CONTACT_EPS);
+    expect(r.distance).toBeLessThan(CONTACT_EPS + SLIDE_SKIN_MM + 0.01);
+    world.dispose();
+  });
+
+  it("open air never slides", () => {
+    const { world, guard } = two({ a: 0, b: 0 });
+    expect(guard.settle({ a: 0, b: 0 }, { a: 10, b: 30 })).toEqual({ params: { a: 10, b: 30 }, blocked: null });
     world.dispose();
   });
 });

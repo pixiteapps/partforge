@@ -225,42 +225,6 @@ export function linearBlend(base, values) {
   };
 }
 
-/**
- * A solve's collision rows (spec "Pose mode: collision in the solver"): `collide` is the
- * drag guard (collide/guard.js) or null. Starts the frame at `base` (unless `framed`: the
- * caller already did) and returns the row count, the rows at an evaluation's params, and
- * `hook(paramsOf)`, a fresh per-iteration linearisation hook for one DLS run (null with no
- * rows). With no guard, none of them, and the solve is exactly today's.
- *
- * A run starts at the frame's start pose, so the first run's hook skips its first call:
- * beginFrame has just linearised every row there (an exact BVH query per row, the costly
- * part of a frame). A later run (solveHandle's firmer holds) re-linearises at the start.
- */
-function collisionRows(collide, base, { framed = false } = {}) {
-  const none = { count: 0, rows: null, hook: () => null };
-  if (!collide) return none;
-  // a start pose whose derive throws: no rows (the solve then fails as it always has)
-  if (!framed) try { collide.beginFrame(base); } catch { return none; }
-  const count = collide.rowCount;
-  // whether the guard's linearisation is at the start pose: true after beginFrame, false
-  // once an iteration moves it — a re-run from the start (solveHandle's firmer holds)
-  // must then re-linearise there before its first step
-  let atStart = true;
-  const hook = (paramsOf) => {
-    if (!count) return null;
-    let first = true;
-    return (u) => {
-      const skip = first && atStart;
-      first = false;
-      if (skip) return;
-      // an unreadable pose keeps the last linearisation (its evaluations score FAILED)
-      try { const at = paramsOf(u); if (at) collide.linearise(at); } catch { /* keep */ }
-      atStart = false;
-    };
-  };
-  return { count, rows: (params) => collide.rows(params), hook };
-}
-
 /** A hold's point reference: `{ ref, point }`, or the older `{ limb, at, point }`. */
 const refOf = (hold) => hold.ref ?? { limb: hold.limb, at: hold.at };
 
@@ -280,7 +244,7 @@ function locate(part, p, d, ref) {
  * whole column, so a probe is clamped back in: the derivative at a bound is one-sided
  * (half its size), never garbage.
  */
-function runSolve(space, evaluate, m, { iterations, lambda, tol, onIteration = null }) {
+function runSolve(space, evaluate, m, { iterations, lambda, tol }) {
   const { lo, hi, u0 } = space;
   const residuals = (u) => {
     const inside = Float64Array.from(u, (v, i) => Math.min(hi[i], Math.max(lo[i], v)));
@@ -290,8 +254,7 @@ function runSolve(space, evaluate, m, { iterations, lambda, tol, onIteration = n
     const r = residuals(u0);
     return { x: u0, error: Math.hypot(...r) };
   }
-  const hook = onIteration && ((u) => onIteration(Float64Array.from(u, (v, i) => Math.min(hi[i], Math.max(lo[i], v)))));
-  return solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda, tol, onIteration: hook });
+  return solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda, tol });
 }
 
 /**
@@ -303,30 +266,24 @@ function runSolve(space, evaluate, m, { iterations, lambda, tol, onIteration = n
  * pose itself fails. Never throws for a derive that throws: that evaluation just scores
  * FAILED. It stops early once the residual is at most `tol` (default TOL_MM).
  *
- * `collide` (a drag guard, or null): its rows for this frame sit after the points', each
- * evaluated at the params that evaluation resolves, and it is re-linearised once per DLS
- * iteration. The result's `blend(t)` is the linear path from these params to the solved
- * ones, for the guard's settle.
+ * The result's `blend(t)` is the linear path from these params to the solved ones, for the
+ * guard's settle.
  */
-export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM, collide = null }) {
+export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
   const keys = dofsOf(handle, allHandles, base);
   const limits = jointLimits(part, base, handle);
   const space = dofSpace(rangesOf(part), base, keys, limits.bounds);
   const points = [{ ref: { limb: handle.on, at: grab }, point: target }, ...holds.map((h) => ({ ref: refOf(h), point: h.point }))];
-  const col = collisionRows(collide, base);
-  const m = points.length * 3 + col.count;
-  const paramsAt = (u) => ({ ...base, ...space.valuesOf(u) });
+  const m = points.length * 3;
   const evaluate = (u) => {
-    const at = paramsAt(u);
-    const { p, d } = resolveParams(part, at);
+    const { p, d } = resolveParams(part, { ...base, ...space.valuesOf(u) });
     const r = new Float64Array(m);
     points.forEach(({ ref, point }, i) => {
       const o = locate(part, p, d, ref);
       const w = i === 0 ? 1 : HOLD_WEIGHT;
       for (let c = 0; c < 3; c++) r[3 * i + c] = w * (o[c] - point[c]);
     });
-    if (col.count) r.set(col.rows(at), points.length * 3);
     return r;
   };
   let lambda;
@@ -336,7 +293,7 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
   } catch {
     return null;
   }
-  const { x, error } = runSolve(space, evaluate, m, { iterations, lambda, tol, onIteration: col.hook(paramsAt) });
+  const { x, error } = runSolve(space, evaluate, m, { iterations, lambda, tol });
   const values = keys.length ? onCones(keepStill(space, keys, x), limits.cones, base) : {};
   return withBlend({ values, error }, linearBlend(base, values));
 }
@@ -394,9 +351,9 @@ function handleSpan(part, base, handle, keys, ranges, target) {
  * Returns `{ values, error }` (error: the weighted residual norm, mm) or null when the
  * start pose cannot be read. A frame whose derive or `point` throws scores FAILED, so the
  * drag holds the last readable values. Holds are firmed up as HOLD_WEIGHTS says.
- * `collide` and the result's `blend` are as solveAngles'.
+ * The result's `blend` is as solveAngles'.
  */
-export function solveHandle({ part, params, handle, target, holds = [], allHandles = [handle], iterations = 8, tol = TOL_MM, collide = null }) {
+export function solveHandle({ part, params, handle, target, holds = [], allHandles = [handle], iterations = 8, tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
   const keys = dofsOf(handle, allHandles, base);
   const ranges = rangesOf(part);
@@ -404,13 +361,10 @@ export function solveHandle({ part, params, handle, target, holds = [], allHandl
   const rotary = isNum(target?.angleDeg) && target.axis;
   const pins = holds.map((h) => ({ ref: refOf(h), point: h.point }));
   const lead = rotary ? 2 : 3;
-  const col = collisionRows(collide, base);
-  const m = lead + pins.length * 3 + col.count;
-  const paramsAt = (u) => ({ ...base, ...space.valuesOf(u) });
+  const m = lead + pins.length * 3;
   const at = (u) => {
-    const params = paramsAt(u);
-    const { p, d } = resolveParams(part, params);
-    return { p, d, o: locateHandle(part, p, d, handle), params };
+    const { p, d } = resolveParams(part, { ...base, ...space.valuesOf(u) });
+    return { p, d, o: locateHandle(part, p, d, handle) };
   };
   let start;
   try { start = at(space.u0).o; } catch { return null; }
@@ -422,7 +376,7 @@ export function solveHandle({ part, params, handle, target, holds = [], allHandl
     radius = isNum(target.radius) && target.radius > 0 ? target.radius : 1;
   }
   const evaluate = (u, w) => {
-    const { p, d, o, params: atU } = at(u);
+    const { p, d, o } = at(u);
     const r = new Float64Array(m);
     if (rotary) {
       r[0] = radius * ((wrapTo180(angleAbout(o, target.axis) - target.angleDeg) * Math.PI) / 180);
@@ -434,7 +388,6 @@ export function solveHandle({ part, params, handle, target, holds = [], allHandl
       const q = locate(part, p, d, ref);
       for (let c = 0; c < 3; c++) r[lead + 3 * i + c] = w * (q[c] - point[c]);
     });
-    if (col.count) r.set(col.rows(atU), lead + pins.length * 3);
     return r;
   };
   try { evaluate(space.u0, HOLD_WEIGHT); } catch { return null; }
@@ -449,7 +402,7 @@ export function solveHandle({ part, params, handle, target, holds = [], allHandl
   };
   let out;
   for (const w of pins.length ? HOLD_WEIGHTS : [HOLD_WEIGHT]) {
-    out = runSolve(space, (u) => evaluate(u, w), m, { iterations, lambda, tol, onIteration: col.hook(paramsAt) });
+    out = runSolve(space, (u) => evaluate(u, w), m, { iterations, lambda, tol });
     if (!pins.length || slip(out.x) <= TOL_MM) break;
   }
   const values = keys.length ? space.valuesOf(out.x) : {};
@@ -816,16 +769,12 @@ export function goalGrabJoints(info, handle) {
  * (bisected, as jointRingValues). Returns `{ values, error }` + `blend` (error: the weighted
  * residual norm, mm) or null when the limb cannot be read.
  *
- * `collide` (a drag guard, or null): its rows sit after the target's, aim's and holds',
- * each evaluated at the params the evaluation's pose writes (`params` with
- * goalFromForward's values over them, so derive reproduces the pose the rows measure), and
- * it is re-linearised once per DLS iteration. `blend(t)` is the joint-space path: the
+ * `blend(t)` is the joint-space path: the
  * goalFromForward write of the pose a fraction t of the way from the start pose to the
  * solved one (to the bisected stop, when the goal clipped), so every point the guard's
- * settle checks is a pose derive reproduces. `collideFramed` (internal): the caller has
- * already started the guard's frame at `params` (defaultSolve, which reads its row count).
+ * settle checks is a pose derive reproduces.
  */
-export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, grab = null, iterations = 8, tol = TOL_MM, collide = null, collideFramed = false }) {
+export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, grab = null, iterations = 8, tol = TOL_MM }) {
   const posed = posedLimb(part, params, handle?.on);
   if (!posed || typeof posed.ikForward !== "function" || !Array.isArray(handle.seed)) return null;
   let info;
@@ -877,9 +826,6 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
   // a hold on the grabbed point itself is no hold (as pose-session's begin skips that pin)
   const own = holds.filter((h) => h?.limb === handle.on && Array.isArray(h.point) && h.at !== at);
   const lead = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
-  const col = collisionRows(collide, { ...part.defaults, ...params }, { framed: collideFramed });
-  const rowCount = col.count;
-  const m = lead + rowCount;
   const args = { part, params, handle, posed, info, ranges };
   /** The params a pose writes (null when its forward kinematics throws). */
   const paramsOf = (o) => {
@@ -887,7 +833,7 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
     return w ? { ...params, ...w.values } : null;
   };
   const residuals = (u) => {
-    const r = new Float64Array(m);
+    const r = new Float64Array(lead);
     try {
       const o = overridesOf(u);
       const F = posed.ikForward(o, at);
@@ -901,18 +847,12 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
         const p = posed.ikForward(o, h.at).origin;
         for (let c = 0; c < 3; c++) r[n++] = GOAL_HOLD_WEIGHT * (p[c] - h.point[c]);
       }
-      if (rowCount) {
-        const written = paramsOf(o);
-        if (!written) throw new Error("forward kinematics failed");
-        r.set(col.rows(written), lead);
-      }
     } catch {
       r.fill(FAILED);
     }
     return r;
   };
-  const onIteration = col.hook((u) => paramsOf(overridesOf(u)));
-  const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda: limbLength(posed), tol, onIteration });
+  const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda: limbLength(posed), tol });
   const solved = overridesOf(x);
   const write = goalFromForward({ ...args, overrides: solved });
   if (!write) return null;

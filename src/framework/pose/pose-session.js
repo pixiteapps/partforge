@@ -24,11 +24,14 @@
 // is called once at begin and returns a drag guard (collide/guard.js) or null (the part
 // declares no collisions, or nothing is indexed yet). With one, every frame — IK, ring
 // and joint ring alike — goes through it before anything is written:
-//   - the solve gets the guard's rows (budgetFrame: a per-frame time budget on them), or
-//     none when COLLIDE_IN_SOLVE is off;
-//   - then guard.settle(lastClear, end, { blend }) walks from the last clear params (the
-//     snapshot at first) toward the solve's answer and stops at contact; its params are
-//     what `write` gets, and they become the next frame's lastClear. `blend` is read
+//   - guard.settle(lastClear, end, { blend, pinDrift }) walks from the last clear
+//     params (the snapshot at first) toward the solve's answer, stops at contact and slides
+//     the rest of the move along it; its params are what `write` gets, and they become the
+//     next frame's lastClear. While pins are set, `pinDrift` lets settle undo a slide that
+//     moves a pinned point (the slide works outside the solver, where pins are not held).
+//   - the stop's contact normals are kept (drag.normals), and a limb drag's next target
+//     is slid along them before it is solved (tangentTarget), so the solve aims along the
+//     surface rather than into it. A normal is dropped once the pointer pulls away from it. `blend` is read
 //     straight off the solve's result: it is NON-enumerable (param-solve's withBlend), so a
 //     spread or copy of the result silently drops it, and settle would then walk a linear
 //     blend — wrong for a goal drag, whose path is the joint-space one. Never copy a result
@@ -62,7 +65,6 @@
 import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, snapValuesToward, linearBlend, withBlend, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
 import { handleKind, handleAt, locateHandle } from "./handle-source.js";
 import { resolveParams } from "../part-model.js";
-import { COLLIDE_IN_SOLVE, budgetFrame } from "../collide/guard.js";
 
 const AIM_AXES = ["pitch", "yaw", "roll"];
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
@@ -108,27 +110,19 @@ export function pinTarget(id, handles) {
  * unless a ring gives one), so the arm slides along it, and writes that pose back as goal
  * params. A solve that cannot read the limb falls back to the direct write.
  */
-export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles, collide = null }) {
+export function defaultSolve({ part, params, handle, grab, target, aimAngles, holds = [], allHandles }) {
   const kind = handleKind(handle);
-  if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles, collide });
+  if (kind === "on" || kind === "point") return solveHandle({ part, params, handle, target, holds, allHandles });
   if (handle.drag === "goal") {
     // grabbed by a middle joint: the seeded joints carry that joint to the target and the
-    // tool rides along, against the guard's rows when there is one (solveGoalPinned starts
-    // its frame). A failed solve holds still — never the goal write below, which would put
+    // tool rides along. A failed solve holds still — never the goal write below, which would put
     // the tool on the cursor.
     if (typeof grab === "string" && grab !== (typeof handle.at === "string" ? handle.at : "tip")) {
-      return solveGoalPinned({ part, params, handle, target, holds, grab, collide });
+      return solveGoalPinned({ part, params, handle, target, holds, grab });
     }
-    const pinnedHold = holds.some((h) => h.limb === handle.on);
-    // a start pose whose derive throws gets no rows: the frame then runs as without a guard
-    if (collide) try { collide.beginFrame({ ...part.defaults, ...params }); } catch { collide = null; }
-    if (collide && collide.rowCount > 0 && collide.active) {
-      const aim = aimAngles ?? currentAim(part, params, handle);
-      const slid = solveGoalPinned({ part, params, handle, target, holds, aimAngles: aim, collide, collideFramed: true });
-      if (slid) return slid;
-    } else if (pinnedHold) {
+    if (holds.some((h) => h.limb === handle.on)) {
       // a pin on the goal's own limb: solve the seeded joints around it (solveGoalPinned)
-      const pinned = solveGoalPinned({ part, params, handle, target, holds, collide, collideFramed: true });
+      const pinned = solveGoalPinned({ part, params, handle, target, holds });
       if (pinned) return pinned;
     }
     const values = goalValues({ handle, point: target, aimAngles, part });
@@ -138,15 +132,7 @@ export function defaultSolve({ part, params, handle, grab, target, aimAngles, ho
     const written = { ...values, ...(seed ?? {}) };
     return withBlend({ values: written, error: 0 }, linearBlend({ ...part.defaults, ...params }, written));
   }
-  return solveAngles({ part, params, handle, grab, target, holds, allHandles, collide });
-}
-
-/** A goal handle's aim params as they stand ([pitch, yaw, roll]), or null when it has none. */
-function currentAim(part, params, handle) {
-  const aim = handle.params?.aim;
-  if (!Array.isArray(aim) || aim.length < 2) return null;
-  const at = (k) => (isNum(params[k]) ? params[k] : part.defaults?.[k] ?? 0);
-  return aim.map(at);
+  return solveAngles({ part, params, handle, grab, target, holds, allHandles });
 }
 
 /** Where a pinned point sits at these params (part coordinates), or null. */
@@ -185,10 +171,6 @@ export function createPoseSession({
   // The drag guard factory (see COLLISIONS above): ({ handle, handleId, snapshot }) → guard | null.
   collide = () => null,
   blockedChange = () => {},
-  // the solver rows' frame budget (budgetFrame's options: tests inject a clock)
-  collideBudget = {},
-  // whether the solve gets the guard's rows (COLLIDE_IN_SOLVE; tests turn it off)
-  collideInSolve = COLLIDE_IN_SOLVE,
 }) {
   const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
   const allHandles = Object.values(handles);
@@ -213,12 +195,12 @@ export function createPoseSession({
       if (pin.ref) {
         if (pin.handleId === handleId) continue;
         const point = locate({ part, params: snapshot, handle: pin.handle, at: handleAt(pin.handle) });
-        if (point) holds.push({ ref: pin.ref, point });
+        if (point) holds.push({ ref: pin.ref, point, where: { handle: pin.handle, at: handleAt(pin.handle) } });
         continue;
       }
       if (pin.handleId === handleId && pin.limb === handle.on && pin.at === grab) continue;
       const point = locate({ part, params: snapshot, handle: { ...pin.handle, on: pin.limb }, at: pin.at });
-      if (point) holds.push({ limb: pin.limb, at: pin.at, point });
+      if (point) holds.push({ limb: pin.limb, at: pin.at, point, where: { handle: { ...pin.handle, on: pin.limb }, at: pin.at } });
     }
     let guard = null;
     try { guard = collide({ handle, handleId, snapshot }) ?? null; } catch (err) { console.error("pose collisions: no guard for this drag", err); }
@@ -227,9 +209,6 @@ export function createPoseSession({
     hold(true);
     return true;
   }
-
-  /** This frame's collision rows for the solve: the guard under a fresh frame budget, or null. */
-  const solveGuard = () => (drag.guard && collideInSolve ? budgetFrame(drag.guard, collideBudget) : null);
 
   /**
    * The values a frame writes: the solve's own, or — with a guard — settle's, from the last
@@ -244,7 +223,14 @@ export function createPoseSession({
     let s;
     try {
       const end = typeof blend === "function" ? blend(1) : { ...from, ...result.values };
-      s = guard.settle(from, end, typeof blend === "function" ? { blend } : undefined);
+      // The slide works outside the solver, where a pin is not held (a goal param alone
+      // re-solves the whole arm): with pins, settle undoes a slide that moves one (pinDrift)
+      // and stops at contact instead. The stop still reports the contact normals, and
+      // tangentTarget slides the next solve's target along them, where pins are held.
+      s = guard.settle(from, end, {
+        ...(typeof blend === "function" ? { blend } : {}),
+        ...(drag.holds.length ? { pinDrift } : {}),
+      });
     } catch (err) {
       // a pose the guard cannot place: hold this frame at the last clear values, keep the
       // guard (the next frame tries again), and log the drag's first such throw only
@@ -258,6 +244,7 @@ export function createPoseSession({
     for (const k of Object.keys(result.values)) values[k] = s.params[k];
     for (const k of Object.keys(s.params)) if (!(k in values) && !Object.is(s.params[k], from[k])) values[k] = s.params[k];
     drag.lastClear = { ...s.params };
+    if (s.contacts?.length) drag.normals = s.contacts.map((c) => c.normal);
     const blocked = s.blocked ? { a: s.blocked.a, b: s.blocked.b } : null;
     const was = drag.blocked;
     drag.blocked = blocked;
@@ -291,6 +278,41 @@ export function createPoseSession({
     try { ending.guard?.release?.(); } catch { /* the owner's problem */ }
   }
 
+  /** How far, at most, the drag's pinned points sit from where they were pinned (mm). */
+  function pinDrift(params) {
+    let worst = 0;
+    for (const h of drag.holds) {
+      const p = h.where && locate({ part, params, handle: h.where.handle, at: h.where.at });
+      if (!p) return Infinity;
+      worst = Math.max(worst, Math.hypot(p[0] - h.point[0], p[1] - h.point[1], p[2] - h.point[2]));
+    }
+    return worst;
+  }
+
+  /**
+   * The drag target slid along the surfaces the piece last stopped at (COLLISIONS): the
+   * grab point's move toward `point` less its part into any contact's normal, so the solve
+   * aims along the surface instead of into it, and the piece follows the pointer around it.
+   * A normal is dropped once the pointer pulls away from it; the next contact brings a fresh
+   * one. Pose mode's target is a point on its drag plane, so this keeps the pointer's
+   * sideways travel and drops only the push.
+   */
+  function tangentTarget(params, point) {
+    if (!drag.normals?.length) return point;
+    const at = locate({ part, params, handle: drag.handle, at: drag.grab });
+    if (!at) return point;
+    const d = [point[0] - at[0], point[1] - at[1], point[2] - at[2]];
+    const dot = (n) => n[0] * d[0] + n[1] * d[1] + n[2] * d[2];
+    drag.normals = drag.normals.filter((n) => dot(n) <= 0);
+    for (let pass = 0; pass < 3; pass++) {
+      for (const n of drag.normals) {
+        const k = dot(n);
+        if (k < 0) for (let i = 0; i < 3; i++) d[i] -= k * n[i];
+      }
+    }
+    return [at[0] + d[0], at[1] + d[1], at[2] + d[2]];
+  }
+
   function frame(target) {
     if (!drag) return null;
     const kind = handleKind(drag.handle);
@@ -303,14 +325,15 @@ export function createPoseSession({
       drag.lastTarget = t;
       return apply(solve({
         part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
-        grab: drag.grab, target: t, holds: drag.holds, allHandles, collide: solveGuard(),
+        grab: drag.grab, target: t, holds: drag.holds, allHandles,
       }));
     }
     const point = Array.isArray(target) ? target : target?.point;
     if (!Array.isArray(point) || !point.every(isNum)) return null;
+    const params = { ...getParams() };
     const result = solve({
-      part, params: { ...getParams() }, handleId: drag.handleId, handle: drag.handle,
-      grab: drag.grab, target: point, holds: drag.holds, allHandles, collide: solveGuard(),
+      part, params, handleId: drag.handleId, handle: drag.handle,
+      grab: drag.grab, target: tangentTarget(params, point), holds: drag.holds, allHandles,
     });
     return apply(result);
   }

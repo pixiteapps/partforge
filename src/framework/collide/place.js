@@ -62,14 +62,10 @@ export function placeMatrix(sp, view, p, d) {
 
 /**
  * placeMatrix for every in-view sub-part at an already-resolved (p, d); never derives.
- * `only` (an iterable of names): just those of them — a map that leaves the others out,
- * which the mats contract reads as identity, so it is for callers that read no other.
  */
-export function poseMatrices(part, view, p, d, { deltas, only = null } = {}) {
+export function poseMatrices(part, view, p, d, { deltas } = {}) {
   const out = new Map();
-  const want = only ? new Set(only) : null;
   for (const name of viewSubParts(part, view, p)) {
-    if (want && !want.has(name)) continue;
     const m = placeMatrix(part.parts[name], view, p, d);
     const delta = deltas?.get(name);
     out.set(name, m && delta ? mulMat4(delta, m) : m);

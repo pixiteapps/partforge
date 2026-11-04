@@ -57,24 +57,13 @@ describe("collision world", () => {
     expect(w.distances(mats, { pairs: new Set(["a×c"]) })[0]).toEqual(w.distances(mats)[2]);
     w.dispose();
   });
-  it("limit keeps the nearest", () => {
-    const w = createCollisionWorld({ meshes: meshes() });
-    const r = w.distances(new Map([["a", T(0)], ["b", T(12)], ["c", T(40)]]), { limit: 1 });
-    expect(r.length).toBe(1);
-    expect(r[0].distance).toBeCloseTo(2);
-    w.dispose();
-  });
-  it("limit, upper and a small cutoff read exactly what the plain query reads", () => {
-    // five cubes at assorted gaps, two tied: the nearest-k pruning, the upper bounds and
-    // the boolean prefilter (a cutoff under 0.5 mm) change the work, never the answer
+  it("a small cutoff reads exactly what the plain query reads", () => {
+    // five cubes at assorted gaps, two tied: the boolean prefilter (a cutoff under 0.5 mm)
+    // changes the work, never the answer
     const names = ["a", "b", "c", "d", "e"];
     const w = createCollisionWorld({ meshes: new Map(names.map((n) => [n, cube()])) });
     const mats = new Map([["a", T(0)], ["b", T(10.3)], ["c", T(20.6, 0.2)], ["d", T(0, 10.3)], ["e", T(31, 1, 0.1)]]);
     const all = w.distances(mats);
-    for (const limit of [1, 2, 3, 4, 10]) expect(w.distances(mats, { limit })).toEqual(all.slice(0, limit));
-    const upper = new Map(all.map((r) => [[r.a, r.b].sort().join("×"), r.distance]));
-    expect(w.distances(mats, { upper })).toEqual(all);
-    expect(w.distances(mats, { upper, limit: 2 })).toEqual(all.slice(0, 2));
     for (const within of [0.29, 0.3, 0.31, 0.4]) expect(w.distances(mats, { within })).toEqual(all.filter((r) => r.distance <= within));
     w.dispose();
   });

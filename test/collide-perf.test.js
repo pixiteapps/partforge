@@ -1,5 +1,4 @@
-// Frame-time pins for Pose mode's collision layer (Task 5b's targets): a drag frame's
-// collided solve and its settle, on the hand's and the robot arm's real Manifold meshes.
+// Frame-time pins for Pose mode's collision layer: a drag frame's solve and its settle, on the hand's and the robot arm's real Manifold meshes.
 //
 // Timed in CPU milliseconds of the calibration machine (test/helpers/cpu-pace.js: a slower
 // runner's time is divided by its measured pace), median over a drag in fine steps —
@@ -8,12 +7,9 @@
 // V8 tiers the code up). Each limit is twice its target: the pins catch a lever lost, not
 // a noisy runner. PF_PERF_LOG=1 prints the medians.
 //
-// Targets (vitest wall clock, desktop) and what this desktop reads: collided hand solve
-// 12 ms (open air 10); settle 4 ms for a frame that moves a few mm in open air (4.5-4.7),
-// 8 ms for one that bisects to contact (10); arm goal frame, solve + settle, 15 ms (14).
-// A frame in sliding contact solves in about 22 ms — each in-contact row needs an exact
-// query per solver iteration, and two finger sides sliding past each other are thousands
-// of near-tied triangle pairs — so its pin is twice that figure, not the target's.
+// Targets (vitest wall clock, desktop) and what this desktop reads: hand solve 12 ms (open
+// air 10); settle 4 ms for a frame that moves a few mm in open air (4.5-4.7), 10 ms for one
+// that bisects to contact and slides; arm goal frame, solve + settle, 15 ms (14).
 import { beforeAll, describe, expect, it } from "vitest";
 import hand from "../src/parts/hand.js";
 import robotArm from "../src/parts/robot-arm.js";
@@ -45,7 +41,7 @@ beforeAll(async () => {
 }, SLOW);
 
 /**
- * One drag: `targets` frame by frame, each solved (`solve(params, target, guard)`) and
+ * One drag: `targets` frame by frame, each solved (`solve(params, target)`) and
  * settled, twice over — the first pass warms up, the second is timed. Returns the timed
  * pass's per-frame solve and settle CPU times, and what each frame settled on.
  */
@@ -58,7 +54,7 @@ function drag({ part, world, start, moving, targets, solve }) {
     for (const target of targets) {
       withDeriveMemo(() => {
         let t = cpuMs();
-        const r = solve(params, target, guard);
+        const r = solve(params, target);
         solveMs.push(cpuMs() - t);
         t = cpuMs();
         const s = guard.settle(params, r.blend(1), { blend: r.blend });
@@ -74,7 +70,7 @@ function drag({ part, world, start, moving, targets, solve }) {
 }
 
 describe("collision frame times", () => {
-  it("hand, open air: a collided solve and its settle", () => {
+  it("hand, open air: a solve and its settle", () => {
     // the wrist is free, so every piece moves: the hand's 21 pins all ride along
     const start = { ...hand.defaults };
     const handle = hand.handles.index;
@@ -82,30 +78,15 @@ describe("collision frame times", () => {
     const targets = Array.from({ length: 30 }, (_, i) => tipAt({ indexKnuckle: (30 * (i + 1)) / 30, indexCurl: (0.3 * (i + 1)) / 30 }));
     const r = drag({
       part: hand, world: handWorld, start, moving, targets,
-      solve: (params, target, guard) => solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles, collide: guard }),
+      solve: (params, target) => solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles }),
     });
     expect(r.blocked.every((b) => b === null)).toBe(true);
     expect(median(r.solveMs)).toBeLessThan(24);  // target 12
     expect(median(r.settleMs)).toBeLessThan(8);  // target 4
   }, SLOW);
 
-  it("hand, a tip slid along the next finger: a collided solve and its settle", () => {
-    const start = { ...hand.defaults, thumbLock: true };
-    const handle = hand.handles.index;
-    const moving = movingSubParts(hand, "assembly", start, dofsOf(handle, allHandles, start));
-    const from = tipAt(start), goal = tipAt({ ...start, indexKnuckle: 50, indexCurl: 0.4, indexSpread: -15 });
-    const targets = Array.from({ length: 30 }, (_, i) => from.map((v, c) => v + ((goal[c] - v) * (i + 1)) / 30));
-    const r = drag({
-      part: hand, world: handWorld, start, moving, targets,
-      solve: (params, target, guard) => solveAngles({ part: hand, params, handle, grab: "tip", target, allHandles, collide: guard }),
-    });
-    expect(r.guard.isClear(r.params)).toBe(true);
-    expect(median(r.solveMs)).toBeLessThan(48);  // target 12, not met in contact: see the header
-    expect(median(r.settleMs)).toBeLessThan(8);  // target 4
-  }, SLOW);
-
-  it("hand, the same push without rows: settle bisects to contact", () => {
-    // the plain solve walks the tip into the middle finger; settle stops it at contact
+  it("hand, pushed into the next finger: settle bisects to contact and slides", () => {
+    // the solve walks the tip into the middle finger; settle stops it at contact
     const start = { ...hand.defaults, thumbLock: true };
     const handle = hand.handles.index;
     const moving = movingSubParts(hand, "assembly", start, dofsOf(handle, allHandles, start));
@@ -117,7 +98,8 @@ describe("collision frame times", () => {
     });
     const bisected = r.settleMs.filter((_, i) => r.blocked[i]);
     expect(bisected.length).toBeGreaterThan(5);
-    expect(median(bisected)).toBeLessThan(16);   // target 8
+    // target 10: the bisection to contact, then the slide's contact read and projected walk
+    expect(median(bisected)).toBeLessThan(20);
   }, SLOW);
 
   it("robot arm: a goal frame onto a block", () => {
@@ -130,7 +112,7 @@ describe("collision frame times", () => {
     const targets = Array.from({ length: 12 }, (_, i) => from.map((v, c) => v + ((goal[c] - v) * (i + 1)) / 12));
     const r = drag({
       part: blocked, world: armWorld, start, moving, targets,
-      solve: (params, target, guard) => defaultSolve({ part: blocked, params, handle, grab: "tip", target, collide: guard }),
+      solve: (params, target) => defaultSolve({ part: blocked, params, handle, grab: "tip", target }),
     });
     expect(r.guard.isClear(r.params)).toBe(true);
     expect(median(r.solveMs.map((v, i) => v + r.settleMs[i]))).toBeLessThan(30); // target 15

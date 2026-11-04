@@ -5,7 +5,7 @@
 // its turn) through `apply` — mount's slider path, one commit. Escape cancels. A drag that
 // wrote nothing because a pin held it (pose-mode's onDragEnd `pinHeld`) shows PIN_HINT for
 // HINT_MS instead, not editable. A drag of any handle whose last frame stopped at contact
-// (onDragEnd `blocked`, collisions) shows `Stopped at <label>` — the label of the piece it
+// (onDragEnd `blocked`, collisions: its slide could not take the whole move) shows `Stopped at <label>` — the label of the piece it
 // stopped against, b — for CHIP_MS instead, not editable. A press on the canvas, posing standing down or detach puts
 // the chip away. Where it sits is pose-mode's handlePoints() (canvas px, through `toStage`),
 // re-read every frame while it shows. An edit in progress outlives its handle going off

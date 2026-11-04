@@ -6,7 +6,7 @@
 //
 // Two paths. RIGID (only place() changes along the motion): each in-view sub-part is built
 // once, posed at the start, and moved by relative matrices (relativeMatsAt), with steps
-// halved until no moving point travels more than (clearance + COLLIDE_BAND_MM) / 2 between
+// halved until no moving point travels more than clearance / 2 + SETTLE_STEP_MM between
 // checks. Between two checks every pair is held by conservative advancement: with T a bound
 // on how far b's points near a move relative to a over the step, a pair is proven clear
 // all the way along it when d_k + d_{k+1} > 2·clearance + T; when that fails the pair's
@@ -34,7 +34,7 @@
 import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
 import { createCollisionWorld, relativeMatsAt, buildIndex, disposeIndexes, IDENTITY } from "../collide/world.js";
 import { normalizeCollisions } from "../collide/declaration.js";
-import { COLLIDE_BAND_MM } from "../collide/guard.js";
+import { SETTLE_STEP_MM } from "../collide/guard.js";
 import { CONTACT_EPS, pairKey } from "../collide/pairs.js";
 import { applyMat, cornerTravel } from "../collide/motion.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
@@ -372,7 +372,7 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
 
     let last = null;
     if (rigid) {
-      const maxTravel = (clearance + COLLIDE_BAND_MM) / 2;
+      const maxTravel = clearance / 2 + SETTLE_STEP_MM;
       const minH = (hi - lo) / (Math.max(2, maxSteps) - 1);
       let v = lo, h = minH;
       last = measure(lo, poseAt(lo));

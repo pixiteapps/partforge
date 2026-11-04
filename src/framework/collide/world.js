@@ -17,15 +17,15 @@ import { IDENTITY, cornerTravel } from "./motion.js";
 export { IDENTITY, cornerTravel };
 
 /**
- * For meshes built posed at (startP, startD): returns (p, d, only?) → Map of the matrices
- * that carry each mesh from its start pose to the pose at (p, d) (`only`: as poseMatrices').
+ * For meshes built posed at (startP, startD): returns (p, d) → Map of the matrices
+ * that carry each mesh from its start pose to the pose at (p, d).
  */
 export function relativeMatsAt(part, view, startP, startD) {
   const inverses = new Map();
   for (const [name, m] of poseMatrices(part, view, startP, startD)) inverses.set(name, m ? invertRigid(m) : null);
-  return (p, d, only = null) => {
+  return (p, d) => {
     const out = new Map();
-    for (const [name, m] of poseMatrices(part, view, p, d, { only })) {
+    for (const [name, m] of poseMatrices(part, view, p, d)) {
       const inv = inverses.get(name);
       out.set(name, m && inv ? mulMat4(m, inv) : null);
     }
@@ -162,14 +162,6 @@ export function createCollisionWorld({ meshes = new Map(), indexes = null, decl 
 
     // `pairs` (a Set of pairKeys): only those pairs; `skip`: never those. Both filter
     // before any BVH query, so a caller that knows which pairs it wants pays for no other.
-    // `upper` (a Map of pairKey → mm): a distance each pair is known to be within (the
-    // gap between two of its surface points, say); it only tightens that pair's cutoff,
-    // so a pair still reads exactly what it would without it. A value that is not a true
-    // upper bound would lose the pair: only pass ones that are.
-    // `limit` keeps the nearest `limit`; pairs are measured in order of box gap with the
-    // cutoff shrunk to the limit-th nearest so far, which cannot change which pairs are
-    // kept or what they read (a pair past the limit-th nearest is never among them).
-    //
     // `bounds` (a Map the caller keeps across calls, pairKey → { R, lb }): lower bounds on
     // pair distances, in RELATIVE terms — R carries b's mesh into a's — so they hold
     // wherever the two are placed, as long as their relative placement is R. A pair whose
@@ -180,37 +172,29 @@ export function createCollisionWorld({ meshes = new Map(), indexes = null, decl 
     // its neighbour (a finger riding a turning wrist) or has moved less than the pad (a
     // bisection's late steps) costs no query at all. Exact: a pair is skipped only when it
     // is provably past the cutoff.
-    distances(mats, { names: only, within = Infinity, limit = Infinity, pairs = null, skip = null, upper = null, bounds = null } = {}) {
+    distances(mats, { names: only, within = Infinity, pairs = null, skip = null, bounds = null } = {}) {
       const cands = candidates(mats, { names: only, within, pairs, skip });
-      const bounded = limit < cands.length;
-      if (bounded) cands.sort((x, y) => x.gap - y.gap || x.order - y.order);
       const found = [];
-      let kth = Infinity; // the limit-th nearest distance so far (bounded only)
-      const nearest = [];
       for (const c of cands) {
         const { a, b } = c;
-        let cut = within;
-        const u = c.key !== null ? upper?.get(c.key) : undefined;
-        if (u !== undefined && u < cut) cut = u * (1 + 1e-9) + 1e-9; // slack past rounding
-        if (bounded && kth < cut) cut = kth;
-        if (c.gap > cut) continue;
+        if (c.gap > within) continue;
         const ma = matOf(mats, a) ?? IDENTITY, mb = matOf(mats, b) ?? IDENTITY;
         if (bounds) {
           const R = mulMat4(invertRigid(ma), mb);
           const e = bounds.get(c.key);
           const drift = e ? cornerTravel(boxes.get(b), e.R, R) : Infinity;
-          if (e && e.lb - drift > cut + BOUND_SLACK_MM) continue;
-          if (cut < WITHIN_FIRST_MM) {
+          if (e && e.lb - drift > within + BOUND_SLACK_MM) continue;
+          if (within < WITHIN_FIRST_MM) {
             // a pair that outran the pad since its last bound (a joint turning) gets only
             // the room rounding needs: the pad would cost a wider search for nothing
             const pad = e && drift > BOUND_PAD_MM ? BOUND_PAD_MIN_MM : BOUND_PAD_MM;
             const o = {};
-            if (!bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, cut + pad, o)) { bounds.set(c.key, { R, lb: o.bound }); continue; }
+            if (!bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, within + pad, o)) { bounds.set(c.key, { R, lb: o.bound }); continue; }
           }
         }
         // a small cutoff is mostly a clear answer: the boolean query says so far sooner
-        if (cut < WITHIN_FIRST_MM && !bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, cut)) continue;
-        const r = bvhs.get(a).distanceToPosed(bvhs.get(b), ma, mb, cut);
+        if (within < WITHIN_FIRST_MM && !bvhs.get(a).withinDistancePosed(bvhs.get(b), ma, mb, within)) continue;
+        const r = bvhs.get(a).distanceToPosed(bvhs.get(b), ma, mb, within);
         // not found (Infinity, no points) reads as clear even when `within` is Infinity
         if (!(r.distance < Infinity) || !(r.distance <= within)) continue;
         let normal = null;
@@ -220,19 +204,10 @@ export function createCollisionWorld({ meshes = new Map(), indexes = null, decl 
           if (len > 0) normal = v.map((x) => x / len);
         }
         found.push({ order: c.order, r: { a, b, distance: r.distance, at: r.at, pointA: r.pointA, pointB: r.pointB, normal } });
-        if (bounded) {
-          // the `limit` nearest so far, kept sorted: their last is the cutoff
-          let i = nearest.length;
-          while (i > 0 && nearest[i - 1] > r.distance) i--;
-          nearest.splice(i, 0, r.distance);
-          if (nearest.length > limit) nearest.length = limit;
-          if (nearest.length === limit) kth = nearest[limit - 1];
-        }
       }
       // nearest first; ties keep pair order, as one stable sort over every pair would
       found.sort((x, y) => x.r.distance - y.r.distance || x.order - y.order);
-      const out = found.map((f) => f.r);
-      return out.length > limit ? out.slice(0, limit) : out;
+      return found.map((f) => f.r);
     },
 
     inside(mats, a, b) {
