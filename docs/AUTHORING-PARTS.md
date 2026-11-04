@@ -323,7 +323,9 @@ Rules (all lint-enforced):
 - `loop` and `autoplay` must be literal booleans. Anything else is reported by
   lint and treated as `false` at runtime, so `loop: "false"` never means "loop".
 - Couple motions through `derive` (animate one master param; derive the rest),
-  not by tracking dependent params separately.
+  not by tracking dependent params separately. Compute them in their own `derive`
+  group: with one `derive` function, a `build()` that reads any `d.*` and also
+  queries the solid rebuilds every frame, and the cached preview stands still.
 - `camera` cues use the seven canonical angles (`iso front back top bottom
   left right`) or any view-cube orientation — an edge or corner named
   vertical, then depth, then side (`top-front-left`, `top-back-right`,
@@ -1533,7 +1535,7 @@ coherently:
   ```
 
   Builds see the same merged `d` either way. The point is the **control panel's
-  relevance dimming** (and the rebuild cache): with a single function, a sub-part that
+  relevance dimming** (and the rebuild cache, and frame-rate animation): with a single function, a sub-part that
   reads *any* derived value is assumed to depend on *every* param `derive` touches, so
   e.g. stand-only controls stay lit in a drum-only view. With groups, each derived key
   is attributed to just its own group's inputs (plus, transitively, those of the groups
@@ -4905,7 +4907,8 @@ more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
 each track's endpoint values and emits a **note** when the animated param feeds
 real geometry, or when its pose can't be read (it queries the solid or
 passes a function), because such a track plays best-effort rather than at frame
-rate. Notes are informational — they never
+rate. A param that reaches a querying `build()` only through `derive` earns the same
+note, with a hint to give the moving values their own group. Notes are informational — they never
 affect `ok`, `measure`, or `--strict`.
 
 **View-pose invariants**, found by running the geometry-free pose probe (the same

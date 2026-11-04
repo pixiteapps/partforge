@@ -472,12 +472,14 @@ export const ANIMATION_RULES = [
           const cls = classifyTrack(part, p, key, v0, v1, view);
           if (cls === "pose") continue;
           out.push(note("animation-track-rebuilds",
-            cls === "rebuild"
-              ? `animation "${name}" track "${key}" rebuilds geometry — playback is best-effort, not frame-rate`
-              : `animation "${name}" track "${key}" — \`place()\` cannot be probed (it queries the solid or passes a function), so playback is best-effort`,
-            cls === "rebuild"
-              ? "Frame-rate playback needs the param to be read only by `place()` (or by a trailing translate/rotate in `build`) — if geometry morphing is the intent, this note is expected."
-              : "Keep `place()` to translate/rotate of its argument, reading `p`/`d` only; `build()` may query freely.",
+            cls === "untrusted"
+              ? `animation "${name}" track "${key}" — \`place()\` cannot be probed (it queries the solid or passes a function), so playback is best-effort`
+              : `animation "${name}" track "${key}" rebuilds geometry — playback is best-effort, not frame-rate`,
+            cls === "untrusted"
+              ? "Keep `place()` to translate/rotate of its argument, reading `p`/`d` only; `build()` may query freely."
+              : cls === "derive"
+                ? `\`${key}\` reaches \`build()\` only through \`derive\`: a \`derive\` that computes it beside values \`build()\` reads makes that sub-part depend on it. Give the moving values their own group, \`derive: { size: (p) => ({ … }), pose: (p) => ({ … }) }\`.`
+                : "Frame-rate playback needs the param to be read only by `place()` (or by a trailing translate/rotate in `build`) — if geometry morphing is the intent, this note is expected.",
             base));
         }
       }
@@ -519,7 +521,8 @@ export const ANIMATION_RULES = [
 //   3. build-scope probe untrusted (build() queries) → "rebuild" when the build
 //      READ the key, recorded by the probe run itself and derive-expanded as
 //      subPartReadKeys does. A prediction: a read behind a dummy query branch is
-//      missed, which costs a missing note, never a wrong behaviour.
+//      missed, which costs a missing note, never a wrong behaviour. A read that
+//      only derive's attribution adds is "derive": same note, a hint that fixes it.
 //   4. otherwise → "pose".
 // A place() that is readable but RESHAPES (scale/mirror/boolean, so its baseHash
 // is not CANONICAL) is delivered posed and played by the full-scope delta fast
@@ -548,7 +551,7 @@ function classifyTrack(part, p, key, v0, v1, view) {
       const reads = new Set();
       const dSeen = new Set();
       const build = probeSubPartPose(sp, { ...ctx, p: recorder(pv, reads), d: recorder(dv, dSeen) }, { scope: "build" });
-      ends.push({ build, reads: expandDerivedReads(reads, dSeen, attributed) });
+      ends.push({ build, raw: reads, reads: expandDerivedReads(reads, dSeen, attributed) });
     }
     const [a, b] = ends;
     if (!a || !b) continue;
@@ -556,8 +559,10 @@ function classifyTrack(part, p, key, v0, v1, view) {
       if (!a.full?.trusted || !b.full?.trusted || a.full.baseHash !== b.full.baseHash) result = "rebuild";
     } else if (a.build.trusted && b.build.trusted) {
       if (a.build.baseHash !== b.build.baseHash) result = "rebuild";
-    } else if (a.reads.has(key) || b.reads.has(key)) {
+    } else if (a.raw.has(key) || b.raw.has(key)) {
       result = "rebuild";
+    } else if ((a.reads.has(key) || b.reads.has(key)) && result === "pose") {
+      result = "derive";
     }
   }
   return result;
