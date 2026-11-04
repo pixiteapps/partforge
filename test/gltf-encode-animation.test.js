@@ -2,7 +2,7 @@
 // sub-parts that move, rest transforms for every sampled sub-part, and the
 // partforgeAnimation extra a kernel-free viewer drives the timeline from.
 import { expect, test } from "vitest";
-import { encodePreviewGlb } from "../src/framework/gltf/encode-preview.js";
+import { encodePreviewGlb, PREVIEW_ENCODER_VERSION } from "../src/framework/gltf/encode-preview.js";
 import { readGlb } from "./helpers/preview-glb.js";
 import { box, input, R, readJson, T } from "./helpers/preview-animation-fixture.js";
 
@@ -20,7 +20,7 @@ test("a moving sub-part gets translation + rotation channels; a still one gets n
     cues: [{ t: 0, view: "front", sweep: null }],
     steps: [{ label: null, start: 0, duration: 2 }],
   });
-  expect(json.extras.partforgeEncoder).toBe(4);
+  expect(json.extras.partforgeEncoder).toBe(PREVIEW_ENCODER_VERSION);
 });
 
 test("input times are seconds spanning the whole duration", async () => {
@@ -151,7 +151,7 @@ test("without an animation the file carries no animations and no partforgeAnimat
   const json = readJson(await encodePreviewGlb({ meshes: [box("base")], view: "box" }));
   expect(json.animations).toBeUndefined();
   expect(json.extras.partforgeAnimation).toBeUndefined();
-  expect(json.extras.partforgeEncoder).toBe(4);
+  expect(json.extras.partforgeEncoder).toBe(PREVIEW_ENCODER_VERSION);
 });
 
 test("an animated view with an EMPTY sub-part encodes: the empty one gets no node, the others animate", async () => {

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import hingedBox from "../src/parts/hinged-box.js";
 import { samplePreviewAnimation, PREVIEW_SAMPLE_CAP } from "../src/framework/preview-animation.js";
 import { composePose, isRigid } from "../src/framework/geometry/pose.js";
@@ -36,9 +36,61 @@ test("a view with no autoplay animation returns null", () => {
   expect(samplePreviewAnimation(part, "box", {}, { buildReads: allReads(part) })).toBeNull();
 });
 
-test("a tracked key the build read makes the animation unbakeable", () => {
-  const reads = (name) => (name === "lid" ? new Set(["width", "lidAngle"]) : new Set(["width"]));
-  expect(samplePreviewAnimation(hingedBox, "box", {}, { buildReads: reads })).toBeNull();
+test("a tracked key that changes the build's geometry makes the animation unbakeable", () => {
+  const part = withLid({ build: (k, p) => k.box({ min: [0, 0, 0], max: [p.width, p.depth, p.wall + p.lidAngle / 10] }) });
+  const reads = (name) => (name === "lid" ? new Set(["width", "depth", "wall", "lidAngle"]) : new Set(["width"]));
+  expect(samplePreviewAnimation(part, "box", {}, { buildReads: reads })).toBeNull();
+});
+
+// Reads over-report: with a one-function derive, a build reading any d.* is
+// recorded as reading every param derive read. The geometry is the deciding test.
+describe("a tracked key in the reads whose geometry never changes", () => {
+  const readsLidAngle = () => new Set(["width", "lidAngle"]);
+  const oneFunction = {
+    ...hingedBox,
+    derive: (p) => ({ w: p.width, angle: p.lidAngle }),
+    parts: {
+      ...hingedBox.parts,
+      lid: {
+        ...hingedBox.parts.lid,
+        build: (k, p, d) => k.box({ min: [0, 0, 0], max: [d.w, p.depth, p.wall] }),
+        views: { box: (s, p, d) => s.translate([0, 0, p.height]).rotate(-d.angle, [0, p.depth, p.height], [1, 0, 0]) },
+      },
+    },
+  };
+
+  test("bakes, with the same poses as reads that leave the key out", () => {
+    const out = samplePreviewAnimation(oneFunction, "box", {}, { buildReads: readsLidAngle });
+    const clean = samplePreviewAnimation(oneFunction, "box", {}, { buildReads: allReads(oneFunction) });
+    expect(out.anim.name).toBe("cycle");
+    expect(out.samples).toEqual(clean.samples);
+  });
+
+  test("a build that queries the solid cannot be shown unchanged, so it stays still", () => {
+    const part = { ...oneFunction, parts: { ...oneFunction.parts, lid: {
+      ...oneFunction.parts.lid,
+      build: (k, p, d) => { const s = k.box({ min: [0, 0, 0], max: [d.w, p.depth, p.wall] }); return s.isEmpty() ? s : s; },
+    } } };
+    expect(samplePreviewAnimation(part, "box", {}, { buildReads: readsLidAngle })).toBeNull();
+  });
+
+  test("a trailing transform inside build that follows the key stays still", () => {
+    // The file's mesh holds the build's own pose at the defaults; a matrix over
+    // place() alone could not reproduce one that moves.
+    const part = { ...oneFunction, parts: { ...oneFunction.parts, lid: {
+      ...oneFunction.parts.lid,
+      build: (k, p, d) => k.box({ min: [0, 0, 0], max: [d.w, p.depth, p.wall] }).translate([d.angle, 0, 0]),
+    } } };
+    expect(samplePreviewAnimation(part, "box", {}, { buildReads: readsLidAngle })).toBeNull();
+  });
+
+  test("a geometry change only part-way through the timeline is caught", () => {
+    const part = { ...oneFunction, parts: { ...oneFunction.parts, lid: {
+      ...oneFunction.parts.lid,
+      build: (k, p, d) => k.box({ min: [0, 0, 0], max: [d.w, p.depth, d.angle > 100 ? 9 : p.wall] }),
+    } } };
+    expect(samplePreviewAnimation(part, "box", {}, { buildReads: readsLidAngle })).toBeNull();
+  });
 });
 
 test("unknown build reads (null) are not bakeable", () => {

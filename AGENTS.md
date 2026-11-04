@@ -340,7 +340,10 @@ the installed package, so let the publish finish before bumping the dep there.
   glTF channels plus a `partforgeAnimation` extra: `mountPreview` plays it through
   `preview-player.js` unless `animate: false`, `mount({ preview })` draws its
   opening pose and never plays it, and `exportPreview` bakes it only when every
-  track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
+  track is place-only. A tracked key in a sub-part's build reads is not a refusal
+  by itself, since a one-function `derive` over-reports reads: since encoder 5 /
+  0.183.0 the build probe decides, and only a build whose geometry changes, or that
+  it cannot trust, keeps the file still. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
   and `handle.animation` gains `replay()`. Since 0.168.0 `mountPreview` takes

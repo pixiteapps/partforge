@@ -563,8 +563,8 @@ Variant literal for a curve-adjacent corner: `filletProfile: corner <i> at (<x>,
 ## animation-plays-choppy
 
 - **Symptom:** An animation stutters or updates a few times a second instead of smoothly; `?debug` shows `rebuilt` counts climbing during playback.
-- **Cause:** A track drives a param `build()` reads (that rebuilds at worker cadence — except through a trailing translate/rotate, which the viewer still re-poses by delta), or a `place()` the probe cannot read (it queries the solid or passes a function), so every frame is a worker rebuild instead of a matrix pose.
-- **Fix:** Run `npx partforge lint <part>` — the `animation-track-rebuilds` note names the track and says which case it is. Restructure so the param is read only by `place()` (a rigid translate/rotate of its argument, reading `p`/`d`), or accept best-effort playback if geometry morphing is the intent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Animations".
+- **Cause:** A track drives a param `build()` reads (that rebuilds at worker cadence — except through a trailing translate/rotate, which the viewer still re-poses by delta), a param a querying `build()` reaches only through `derive`, or a `place()` the probe cannot read (it queries the solid or passes a function), so every frame is a worker rebuild instead of a matrix pose.
+- **Fix:** Run `npx partforge lint <part>` — the `animation-track-rebuilds` note names the track and says which case it is. Restructure so the param is read only by `place()` (a rigid translate/rotate of its argument, reading `p`/`d`), give values computed in `derive` from the param their own `derive` group, or accept best-effort playback if geometry morphing is the intent. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Animations".
 
 ## phantom-edges-on-curved-surface
 

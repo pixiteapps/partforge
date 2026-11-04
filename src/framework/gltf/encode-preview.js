@@ -88,8 +88,9 @@ import { cadAppearance, DISPLAY_KEYS } from "../materials/resolve.js";
 import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
 
 // 2: feature edges as a LINES primitive; 3: sharing the surface's vertices;
-// 4: animation channels + partforgeAnimation extras
-export const PREVIEW_ENCODER_VERSION = 4;
+// 4: animation channels + partforgeAnimation extras; 5: same format, but a forge
+// whose tracked param reaches build() only through derive now bakes its animation
+export const PREVIEW_ENCODER_VERSION = 5;
 
 // −90° about X as [x, y, z, w]: model (x, y, z) → glTF (x, z, −y), the viewer's pivot.
 const Z_UP_TO_Y_UP = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
