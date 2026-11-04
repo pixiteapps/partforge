@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "vitest";
 import { buildBVH, cachedBVH, coreBVHCache, disposeBVHs } from "../src/framework/oracle/bvh.js";
-import { composePose, invertRigid, mulMat4, transformPositions } from "../src/framework/geometry/pose.js";
+import { composePose, mulMat4, transformPositions } from "../src/framework/geometry/pose.js";
 import { setCoreEnabled } from "../src/testing.js";
 
 afterAll(() => setCoreEnabled(true));

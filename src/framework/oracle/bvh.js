@@ -461,7 +461,6 @@ function boxUnder(B, nb, R, out, o) {
 
 // The posed queries' scratch, shared: a query runs to completion before the next
 // starts (nothing in them yields or re-enters), so one set serves every index.
-const POSED_NBOX = new Float64Array(18);
 const POSED_BEST = new Float64Array(6), POSED_PTS = new Float64Array(6), POSED_TMP = new Float64Array(6);
 let POSED_STACK = new Uint32Array(256);
 
@@ -1105,7 +1104,6 @@ export function buildBVH(mesh) {
     if (other?.jsIndex) other = other.jsIndex();
     const oB = other._bounds, oM = other._meta, oO = other._order;
     const R = mulMat4(invertRigid(mSelf), mOther);
-    const nbox = POSED_NBOX; // [0..5] other's node, [6..11] its left child, [12..17] its right child
     const SA = selfSlabs(), SB = other._slabs();
     // a hair past the cutoff, so a pair exactly at it is kept (and a cutoff of 0 still
     // visits touching boxes)
@@ -1183,7 +1181,7 @@ export function buildBVH(mesh) {
     A[0] = Math.abs(R[0]); A[1] = Math.abs(R[1]); A[2] = Math.abs(R[2]);
     A[3] = Math.abs(R[4]); A[4] = Math.abs(R[5]); A[5] = Math.abs(R[6]);
     A[6] = Math.abs(R[8]); A[7] = Math.abs(R[9]); A[8] = Math.abs(R[10]);
-    const nbox = POSED_NBOX, pts = POSED_PTS, tmp = POSED_TMP;
+    const pts = POSED_PTS, tmp = POSED_TMP;
     const SA = selfSlabs(), SB = other._slabs();
     const e2 = Math.max(Number.MIN_VALUE, eps * eps * (1 + 1e-12)), thr = pastSq(e2); // distanceToPosed's cut
     const AP = selfPlanes(), q = beginMoved(other), MV = MOVED, MP = MOVED_PLANE, MS = MOVED_SPHERE;

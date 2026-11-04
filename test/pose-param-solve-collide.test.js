@@ -136,7 +136,6 @@ describe("robot arm: goal drags", () => {
   const arm = { ...robotArm, collisions: {} };
   const handle = arm.handles.tool;
   const goalKeys = [...handle.params.position, ...handle.params.aim];
-  const tipOf = (q) => resolveParams(arm, { ...arm.defaults, ...q }).d.arm.world("tip").origin;
   const movingOf = (start) => movingSubParts(arm, "assembly", start, goalKeys);
 
   /** Drag `handleId` by `grab` through the real session: settle and the slid target together. */

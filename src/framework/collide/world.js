@@ -11,7 +11,6 @@ import { isAllowed } from "./declaration.js";
 import { pairKey } from "./pairs.js";
 import { placeMatrix, poseMatrices } from "./place.js";
 export { placeMatrix, poseMatrices };
-import { viewSubParts, resolveParams } from "../part-model.js";
 import { mulMat4, invertRigid } from "../geometry/pose.js";
 import { IDENTITY, cornerTravel } from "./motion.js";
 export { IDENTITY, cornerTravel };
