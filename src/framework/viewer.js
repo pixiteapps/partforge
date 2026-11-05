@@ -2011,6 +2011,17 @@ export function createViewer(container, part, {
     };
   }
 
+  // The geometry drawn for one sub-part in its DELIVERY frame — no fast-path pose
+  // (setSubPose) applied — as `{ positions, indices }` (indices null for a triangle
+  // soup), or null when nothing has been delivered under that name. The arrays are the
+  // drawn geometry's own, not copies: read them, never write them (the collision index
+  // copies what it keeps). For Pose mode's collision index, built once per delivery.
+  function getSubMeshLocal(name) {
+    const geo = subCache[name];
+    if (!geo) return null;
+    return { positions: geo.getAttribute("position").array, indices: geo.index ? geo.index.array : null };
+  }
+
   // --- show / hide assembly -------------------------------------------------
   const _box = new THREE.Box3();
   const _origin = new THREE.Vector3();
@@ -3555,6 +3566,7 @@ export function createViewer(container, part, {
     hasSubMesh,
     subTriangles,
     getSubMeshPayload,
+    getSubMeshLocal,
     frame,
     captureCanonicalViews,
     captureCurrent,

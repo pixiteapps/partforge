@@ -40,12 +40,12 @@ export function buildFrames(tree, steps) {
  * bend joint), each present only when the pose asked for one. `goals` is one
  * `{ at, residual, aimResidual?, status }` per goal, `aimResidual` only for a goal with an aim or up.
  */
-export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null, goals = null) {
+export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null, goals = null, via = resolveFrames) {
   const report = { bend: values.map(roundValue), clamped: [...clamped] };
   if (tree.parent == null || frames != null) {
     const all = frames == null ? posedFrames : { ...frames, ...posedFrames };
     if (tree.parent != null && !Object.hasOwn(frames, tree.parent)) fail("parent", `unknown frame "${tree.parent}"`);
-    const W = resolveFrames(all).get(`${tree.name}.tip`).world;
+    const W = via(all).get(`${tree.name}.tip`).world;
     report.tip = [r3(W[9]), r3(W[10]), r3(W[11])];
   }
   if (reach) report.reach = { target: reach.target.map(r3), residual: r3(reach.residual), status: reach.status };
@@ -64,12 +64,55 @@ export function buildReport(tree, values, clamped, posedFrames, frames, fail, re
 
 const PLACE_FROM = new Set(["joint", "rest"]);
 
+// Everything resolveFrames reads of a frame set, flat and in its order: each frame's name,
+// parent, `at` and rotate steps (axis, deg), raw. Two sets with equal keys (element by
+// element, Object.is) resolve to the same transforms, bit for bit. A typed array (an `at` or
+// axis held in a Float64Array) is copied by value like an array: kept by reference, an edit
+// to it in place would hit the memo with the old transforms.
+function frameKey(set) {
+  const out = [];
+  const listLike = (a) => Array.isArray(a) || (ArrayBuffer.isView(a) && typeof a.length === "number");
+  const arr = (a) => { if (listLike(a)) { out.push(a.length); for (let i = 0; i < a.length; i++) out.push(a[i]); } else out.push(a); };
+  for (const name of Object.keys(set)) {
+    const f = set[name];
+    out.push(name);
+    if (f == null || typeof f !== "object") { out.push(f, "\0frame"); continue; }
+    out.push(f.parent);
+    arr(f.at);
+    const steps = f.rotate == null ? [] : Array.isArray(f.rotate) ? f.rotate : [f.rotate];
+    out.push(steps.length);
+    for (const r of steps) { if (r == null || typeof r !== "object") { out.push(r); continue; } arr(r.axis); out.push(r.deg); }
+  }
+  return out;
+}
+const sameKey = (a, b) => a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+
+/**
+ * resolveFrames with its last answer kept, keyed by the set's values (frameKey): one posed
+ * limb places each of its pieces through the same frame set, and each place() resolved
+ * the whole set afresh. Exact — a set whose values changed resolves again — and a throw is
+ * never kept (each call throws afresh), so it is invisible but for time.
+ */
+export function resolveMemo() {
+  let key = null, resolved = null;
+  return (set) => {
+    const k = frameKey(set);
+    if (resolved && sameKey(k, key)) return resolved;
+    const r = resolveFrames(set);
+    key = k;
+    resolved = r;
+    return r;
+  };
+}
+
 /**
  * The adapters of one posed limb: flesh and attach for k.implicit (implicit.js), world and
  * place for solids. `frames` are the parent frames passed to `pose`; `restFrames` every
  * frame of the chain at rest (`place`'s `from: "rest"`).
+ * `resolvePosed` (a resolveMemo) resolves the posed chain among its parent's frames; pose()
+ * shares one with buildReport, so the report's tip and every place() read one resolve.
  */
-export function buildAdapters(tree, posedFrames, frames, restFrames, fail, values) {
+export function buildAdapters(tree, posedFrames, frames, restFrames, fail, values, resolvePosed = resolveMemo()) {
   const { name, joints } = tree;
   const base = joints[0].frame, tip = `${name}.tip`;
   const known = new Set([...joints.map((j) => j.frame), tip]);
@@ -80,11 +123,13 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
     if (tree.parent != null && frames == null) fail("", `${op} needs the parent frames — pass them as pose(…, frames)`);
     return frame;
   };
-  const resolve = (set, frame) => {
+  const resolve = (set, frame, via = resolveFrames) => {
     if (tree.parent != null && !Object.hasOwn(set, tree.parent)) fail("parent", `unknown frame "${tree.parent}"`);
-    return resolveFrames(set).get(frame).world;
+    return via(set).get(frame).world;
   };
-  const worldOf = (op, joint) => resolve(frames == null ? posedFrames : { ...frames, ...posedFrames }, frameOf(op, joint));
+  // the chain's posed frames among its parent's, and at rest: every place() and world() reads one
+  const resolveRest = resolveMemo();
+  const worldOf = (op, joint) => resolve(frames == null ? posedFrames : { ...frames, ...posedFrames }, frameOf(op, joint), resolvePosed);
 
   function world(joint = base) {
     const M = worldOf("world", joint);
@@ -100,7 +145,7 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
     let M = worldOf("place", joint);
     // from: "rest" — the solid was built in part coordinates with the whole chain at rest, so it
     // moves by the joint's rest-to-posed motion: posed ∘ rest⁻¹.
-    if (from === "rest") M = compose(M, invert(resolve(restFrames, frameOf("place", joint))));
+    if (from === "rest") M = compose(M, invert(resolve(restFrames, frameOf("place", joint), resolveRest)));
     const a = axisAngle(M);
     const rotated = a ? x.rotate(a.deg, [0, 0, 0], a.axis) : x;
     return rotated.translate([M[9], M[10], M[11]]);

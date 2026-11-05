@@ -4,7 +4,7 @@
 // readout param), Enter or blur writes as a slider would, Escape cancels. A drag a pin held
 // shows the pin hint for 3 s instead.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { attachReadoutChip, CHIP_MS, HINT_MS, PIN_HINT } from "../src/framework/pose/readout-chip.js";
+import { attachReadoutChip, CHIP_MS, HINT_MS, PIN_HINT, stoppedAt } from "../src/framework/pose/readout-chip.js";
 
 const part = {
   parameters: [{ id: "b", title: "Box", controls: [
@@ -18,6 +18,7 @@ const part = {
     gear: { point: () => [0, 0, 0], params: ["driveAngle"], drag: "rotary", axis: { origin: [0, 0, 0], direction: [0, 0, 1] } },
     arm: { on: "arm", drag: "goal", params: { position: ["x", "y", "z"] } },
   },
+  parts: { link: { label: "Upper link" }, slab: {} },
 };
 
 function fakeMode() {
@@ -26,7 +27,7 @@ function fakeMode() {
   return {
     isLive: () => live,
     setLive: (v) => { live = !!v; for (const cb of modeCbs) cb(); },
-    handlePoints: () => [{ handleId: "corner", at: "point", x: 100, y: 120 }, { handleId: "gear", at: "point", x: 200, y: 50 }],
+    handlePoints: () => [{ handleId: "corner", at: "point", x: 100, y: 120 }, { handleId: "gear", at: "point", x: 200, y: 50 }, { handleId: "arm", at: "tip", x: 300, y: 90 }],
     onModeChange: (cb) => { modeCbs.add(cb); return () => modeCbs.delete(cb); },
     onDragEnd: (cb) => { endCbs.add(cb); return () => endCbs.delete(cb); },
     end: (e) => { for (const cb of endCbs) cb({ generic: true, changed: [], pinHeld: false, ...e }); },
@@ -266,6 +267,24 @@ describe("attachReadoutChip", () => {
     expect(t.el().querySelector("button")).toBeNull();
     vi.advanceTimersByTime(HINT_MS);
     expect(t.el().hidden).toBe(true);
+  });
+
+  it("a drag stopped at contact shows Stopped at <the piece it stopped against> for 4 s, on any handle", () => {
+    const t = setup();
+    t.mode.end({ handleId: "arm", generic: false, changed: ["x"], blocked: { a: "slab", b: "link" } });
+    expect(t.el().hidden).toBe(false);
+    expect(t.el().textContent).toBe("Stopped at Upper link");
+    expect(t.el().textContent).toBe(stoppedAt("Upper link"));
+    expect(t.chip.state()).toMatchObject({ handleId: "arm", kind: "blocked", editing: false, text: "Stopped at Upper link" });
+    expect(t.el().querySelector("button")).toBeNull();     // not editable
+    expect(t.el().style.left).toBe("312px");               // by the handle
+    vi.advanceTimersByTime(CHIP_MS - 1);
+    expect(t.el().hidden).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(t.el().hidden).toBe(true);
+    // a generic handle's blocked drag shows it too, in place of its values; no label: the name
+    t.mode.end({ handleId: "corner", changed: ["width"], blocked: { a: "link", b: "slab" } });
+    expect(t.el().textContent).toBe("Stopped at slab");
   });
 
   it("goes when posing stands down, and detach removes it", () => {

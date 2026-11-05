@@ -50,6 +50,19 @@
 //     badges, overlay objects (runtime.pose.__drawn(), a test hook), gizmo, chip, grab cursor
 //     or hover claim, over a sweep of the canvas too, and a press where the dot was does not
 //     drag. Back in the assembly view the handles and the pin return.
+//   hand.html and robot-arm.html — COLLISIONS (both declare `collisions: {}`; spec 2026-11-02
+//     collisions). hand (checkHandContact): the wrist held (thumbLock), the index tip dragged
+//     past where it would sit spread 15° into the middle finger. The drag meets the middle
+//     finger and slides along it. If it ends held there, onDragEnd's `blocked`
+//     (runtime.pose.__lastDragEnd(), a test hook) names a middle-finger piece, the pair is
+//     tinted while held (runtime.pose.__collide()) and the chip reads "Stopped at <its
+//     label>". Either way the tip moved and the committed pose has no overlap
+//     (assemblyOverlaps, run here in Node on Manifold), and it slid most of the way to its target.
+//     robot-arm (checkArmCollisions): the tool dragged far out of reach in open air writes the
+//     goal it was dragged to: nothing blocks, and the tool probe reads "too-far" (the goal is
+//     not pulled back to the arm). The arm has no contact case: its joint limits keep the tool
+//     off the turret and pedestal, and its one self-contact (the wrist yaw turning the hand
+//     into the forearm) is allowed in the part for now (see robot-arm.js).
 //   gearbox.html (required) — generic rotary handles (spec 2026-11-02 generic handles):
 //     the output gear's rim dot dragged one full turn round its rim writes the wrapped
 //     driveAngle 0 -> ~720, past 360 with no backwards frame and no `generate` job, one
@@ -506,8 +519,9 @@ async function checkRobotArm(page, url, errors) {
   const pin = await checkJointPin(page, box, errors);
   const midJoint = await checkMidJointGrab(page, box, errors);
   const floor = await checkRealisticFloor(page, box, errors);
+  const collisions = await checkArmCollisions(page, box, errors);
   const outOfReach = await checkOutOfReach(page, box, errors);
-  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, midJoint, floor, outOfReach };
+  return { ...summary, ring: name, ringCommit: added[0]?.changed ?? null, ringValue: aimParam ? added[0]?.params?.[aimParam] : null, joint, pin, midJoint, floor, collisions, outOfReach };
 }
 
 /**
@@ -515,8 +529,12 @@ async function checkRobotArm(page, url, errors) {
  * the tool far sideways — the ground's x/z and scale (so its texture) stay put during the
  * drag and after the release's delivery; its height may only go down. With
  * CHECK_POSE_SHOTS=<dir>, screenshots before, mid-drag and after land there.
+ * It starts from the defaults: the poses the checks before it leave (the mid-joint grab's
+ * fold, its gripper near the upper arm) can put a sideways drag into contact, which the
+ * collision guard rightly stops short.
  */
 async function checkRealisticFloor(page, box, errors) {
+  await resetParams(page);
   const shots = process.env.CHECK_POSE_SHOTS;
   const shot = async (name) => { if (shots) await page.screenshot({ path: join(shots, `robot-arm-floor-${name}.png`) }); };
   await page.evaluate(() => window.__pfRuntime.renderMode.set("realistic"));
@@ -745,8 +763,118 @@ async function checkHand(page, url, errors) {
   const summary = await checkReference(page, url, errors);
   const box = await page.locator(VIEWER_CANVAS).boundingBox();
   const joint = await checkJointRing(page, box, { limb: "palm", joint: "wristPitch", param: "wristPitch" }, errors);
+  const contact = await checkHandContact(page, box, errors);
   const viewSwitch = await checkViewSwitch(page, box, errors);
-  return { ...summary, joint, viewSwitch };
+  return { ...summary, joint, contact, viewSwitch };
+}
+
+// ---- collisions --------------------------------------------------------------
+
+let kernelBoot = null;
+/** The committed pose's overlaps, in Node: assemblyOverlaps on a Manifold kernel booted once. */
+async function overlapsAt(partFile, params) {
+  const { bootManifoldKernel, assemblyOverlaps } = await import("../src/testing.js");
+  const part = (await import(`../src/parts/${partFile}`)).default;
+  kernelBoot ??= bootManifoldKernel();
+  const k = await kernelBoot;
+  return assemblyOverlaps(k, part, "assembly", { ...part.defaults, ...params }).map((o) => `${o.a}×${o.b} ${o.volume.toFixed(1)} mm³`);
+}
+
+/** Every param back to the part's defaults (runtime.setParams), and the page settled. */
+async function resetParams(page, extra = {}) {
+  await page.evaluate((x) => window.__pfRuntime.setParams({ ...window.__pfPart.defaults, ...x }), extra);
+  await settle(page);
+}
+
+/** Press on canvas point `from`, move in `n` steps to `to`, `onHeld` before the release. */
+async function dragPath(page, from, to, n, onHeld) {
+  await hoverHandle(page, from, "the handle");
+  await page.mouse.down();
+  for (let i = 1; i <= n; i++) {
+    await page.mouse.move(from.x + ((to.x - from.x) * i) / n, from.y + ((to.y - from.y) * i) / n);
+    await sleep(20);
+  }
+  await sleep(80);
+  const held = await onHeld?.();
+  await page.mouse.up();
+  await sleep(600);
+  return held;
+}
+
+const handlePoint = async (page, id) => (await page.evaluate(() => window.__pfRuntime.pose.handlePoints())).find((p) => p.handleId === id) ?? null;
+
+// The hand's contact pose: the index spread 15° into the middle finger while it bends (the
+// drag test/pose-param-solve-collide.test.js makes, and bench-pose's dragContact).
+const CONTACT_POSE = { indexKnuckle: 50, indexCurl: 0.4, indexSpread: -15 };
+
+async function checkHandContact(page, box, errors) {
+  await resetParams(page, { thumbLock: true }); // the wrist held: the index's own joints move
+  const canvas = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  const rest = await page.evaluate((keys) => Object.fromEntries(keys.map((k) => [k, window.__pfPart.defaults[k]])), Object.keys(CONTACT_POSE));
+  const [goal] = await handleAt(page, "index", [CONTACT_POSE], rest);
+  const start = await handlePoint(page, "index");
+  if (!goal || !start) { errors.push("hand contact: no index handle point"); return null; }
+  const from = canvas(start), past = canvas({ x: start.x + (goal.x - start.x) * 1.15, y: start.y + (goal.y - start.y) * 1.15 });
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  const held = await dragPath(page, from, past, 20, () => page.evaluate(() => window.__pfRuntime.pose.__collide()));
+  const ended = await page.evaluate(() => window.__pfRuntime.pose.__lastDragEnd());
+  const chip = await page.evaluate(() => window.__pfRuntime.pose.__chip());
+  const commit = await oneCommit(page, commits0, "the hand contact drag", errors);
+  const end = await handlePoint(page, "index");
+  const out = { blocked: ended?.blocked ?? null, tinted: held?.tinted ?? null, chip: chip?.text ?? null };
+  // The drag slides along the middle finger (the slide, and the target slid along the
+  // contact's normal), so it may end clear of it; held against it, it names that piece.
+  const b = ended?.blocked?.b;
+  if (b && !b.startsWith("middle")) errors.push(`the index drag into the middle finger ended blocked by ${JSON.stringify(ended.blocked)}, not a middle-finger piece`);
+  if (b && (!held?.tinted || held.tinted.b !== b)) errors.push(`the pair held at contact was not tinted (${JSON.stringify(held?.tinted ?? null)})`);
+  const label = b ? await page.evaluate((n) => window.__pfPart.parts[n]?.label ?? n, b) : null;
+  if (b && (chip?.kind !== "blocked" || chip.text !== `Stopped at ${label}`)) errors.push(`after the contact drag the chip shows ${JSON.stringify(chip)}, not "Stopped at ${label}"`);
+  const moved = end ? Math.hypot(end.x - start.x, end.y - start.y) : 0;
+  out.tipMovedPx = Number(moved.toFixed(1));
+  if (moved < 5) errors.push(`the index tip moved ${moved.toFixed(1)} px on the contact drag`);
+  if (commit) {
+    const overlaps = await overlapsAt("hand.js", commit.params);
+    out.overlaps = overlaps.length;
+    if (overlaps.length) errors.push(`the committed contact pose overlaps: ${overlaps.join(", ")}`);
+  }
+  if (end) {
+    // the tip slides along the middle finger toward its target
+    const left = Math.hypot(end.x - goal.x, end.y - goal.y), all = Math.hypot(start.x - goal.x, start.y - goal.y);
+    out.slidLeftPx = Number(left.toFixed(1));
+    if (left > 0.5 * all) errors.push(`the index tip stopped ${left.toFixed(0)} of ${all.toFixed(0)} px short: it did not slide`);
+  }
+  await resetParams(page, { thumbLock: false });
+  return out;
+}
+
+async function checkArmCollisions(page, box, errors) {
+  const canvas = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  await page.evaluate(() => window.__pfRuntime.renderMode.set("cad"));
+  await resetParams(page);
+  // Out of reach in open air: up and out along the arm's own plane, far past its reach.
+  const start = await handlePoint(page, "tool");
+  const [out1] = await handleAt(page, "tool", [{ toolX: 300, toolZ: 200 }], { toolX: 220, toolZ: 60 });
+  if (!start || !out1) { errors.push("arm collisions: no tool point for the out-of-reach drag"); return null; }
+  const far = { x: start.x + (out1.x - start.x) * 3, y: start.y + (out1.y - start.y) * 3 };
+  const commits0 = await page.evaluate(() => window.__pfCommits.length);
+  await dragPath(page, canvas(start), canvas(far), 30);
+  const open = await page.evaluate(() => window.__pfRuntime.pose.__lastDragEnd());
+  const commit = await oneCommit(page, commits0, "the arm out-of-reach drag", errors);
+  const out = { openBlocked: open?.blocked ?? null };
+  if (open?.blocked) errors.push(`the out-of-reach drag in open air was blocked by ${JSON.stringify(open.blocked)}`);
+  if (commit) {
+    const arm = (await import("../src/parts/robot-arm.js")).default;
+    const { resolveParams } = await import("../src/framework/part-model.js");
+    const goal = resolveParams(arm, { ...arm.defaults, ...commit.params }).d.arm.report.goals[0];
+    out.goal = [commit.params.toolX, commit.params.toolY, commit.params.toolZ].map((v) => Number(v.toFixed(1)));
+    out.status = goal.status;
+    out.missedMm = goal.residual;
+    if (goal.status !== "too-far") errors.push(`the out-of-reach goal reads ${goal.status} (residual ${goal.residual} mm), not too-far: the goal written is not the one dragged to`);
+    const overlaps = await overlapsAt("robot-arm.js", commit.params);
+    if (overlaps.length) errors.push(`the committed out-of-reach pose overlaps: ${overlaps.join(", ")}`);
+  }
+  await resetParams(page);
+  return out;
 }
 
 /** The pose overlay's state, read in the page: what a view switch must leave empty. */

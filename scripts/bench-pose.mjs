@@ -15,6 +15,11 @@
 // move and, while dragging, one solve:
 //   hover        no press: back and forth across the first limb (its dots shown)
 //   dragTip      the first handle's point (hand: the index tip; arm: the tool's ball)
+//   dragContact  hand only: a drag held against contact — the wrist held (thumbLock), the
+//                index tip dragged toward where it would sit spread 15° into the middle
+//                finger, then held there. It meets the finger and slides, so a frame can
+//                end clear, and the label's "against nothing" means the LAST frame did. A
+//                frame that meets contact bisects back to it, then slides.
 //   dragPinned   hand: the thumb tip pinned, then the index tip dragged (both
 //                handles list the wrist, so the solve holds the thumb through it);
 //                arm: the elbow pinned (a click on its dot), then the tool dragged — the
@@ -205,6 +210,43 @@ async function dragMeasure(page, cdp, from, points) {
   return r;
 }
 
+/** Where handle `id` sits on the canvas with `patch` applied (runtime.setParams), restored after. */
+async function handleAtParams(page, id, patch, restore) {
+  await page.evaluate((p) => window.__pfRuntime.setParams(p), patch);
+  await sleep(100);
+  const p = (await handlePoints(page)).find((h) => h.handleId === id) ?? null;
+  await page.evaluate((r) => window.__pfRuntime.setParams(r), restore);
+  await sleep(300);
+  return p;
+}
+
+// The hand's contact pose: the index spread into the middle finger while it bends (the pose
+// test/pose-param-solve-collide.test.js drags toward), with the wrist held.
+const CONTACT_POSE = { indexKnuckle: 50, indexCurl: 0.4, indexSpread: -15 };
+
+/** dragContact (see the header): 20 frames toward the contact pose's tip, 40 held there. */
+async function dragContact(page, cdp, box, at) {
+  const defaults = await page.evaluate(() => ({ ...window.__pfPart.defaults }));
+  const restore = Object.fromEntries(Object.keys(CONTACT_POSE).map((k) => [k, defaults[k]]));
+  await page.evaluate(() => window.__pfRuntime.setParams({ thumbLock: true }));
+  await sleep(300);
+  const goal = await handleAtParams(page, "index", CONTACT_POSE, restore);
+  const from = (await handlePoints(page)).find((h) => h.handleId === "index");
+  if (!goal || !from) throw new Error("hand.html: no index handle point for the contact drag");
+  const a = at(from), b = at(goal);
+  const pts = Array.from({ length: FRAMES }, (_, i) => {
+    const t = Math.min(1, (i + 1) / 20) * 1.15; // a little past the contact pose's tip, then held
+    const w = i >= 20 ? 3 * Math.sin(i / 4) : 0;
+    return { x: a.x + (b.x - a.x) * t + w, y: a.y + (b.y - a.y) * t };
+  });
+  await hoverOnto(page, a);
+  const r = await dragMeasure(page, cdp, a, pts);
+  const ended = await page.evaluate(() => window.__pfRuntime.pose.__lastDragEnd?.() ?? null);
+  await page.evaluate((r) => window.__pfRuntime.setParams({ ...r, thumbLock: false }), restore);
+  await sleep(300);
+  return { handle: `index held against ${ended?.blocked?.b ?? "nothing"}`, ...r };
+}
+
 async function benchPage(browser, base, entry) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.addInitScript(instrument);
@@ -231,6 +273,7 @@ async function benchPage(browser, base, entry) {
   out.dragTip = { handle: first.handleId, ...await dragMeasure(page, cdp, at(first), dragPoints(at(first), box)) };
 
   if (entry === "hand.html") {
+    out.dragContact = await dragContact(page, cdp, box, at);
     const thumb = await find("thumb");
     if (thumb) {
       await hoverOnto(page, at(thumb));

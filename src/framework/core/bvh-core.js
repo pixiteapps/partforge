@@ -89,6 +89,10 @@ export function buildCoreBVH(c, verts, makeJsIndex) {
         return { distance: r[8], at: [r[9], r[10], r[11]], pointA: [r[12], r[13], r[14]], pointB: [r[15], r[16], r[17]] };
       }, viaJs);
     },
+    // The posed queries (collisions) have no native twin: they meet through the JS index.
+    distanceToPosed(other, mSelf, mOther, maxDistance) { return jsIndex().distanceToPosed(other, mSelf, mOther, maxDistance); },
+    withinDistancePosed(other, mSelf, mOther, eps, out) { return jsIndex().withinDistancePosed(other, mSelf, mOther, eps, out); },
+    insideOf(other, mSelf, mOther) { return jsIndex().insideOf(other, mSelf, mOther); },
     // minWall over this index, min-wall.js's result shape exactly. min-wall.js
     // dispatches here with its own resolved options; `undefined` means "the core
     // could not answer — run the JS pass" (null is a real answer: empty mesh).

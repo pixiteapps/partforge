@@ -326,7 +326,9 @@ Rules (all lint-enforced):
 - `loop` and `autoplay` must be literal booleans. Anything else is reported by
   lint and treated as `false` at runtime, so `loop: "false"` never means "loop".
 - Couple motions through `derive` (animate one master param; derive the rest),
-  not by tracking dependent params separately.
+  not by tracking dependent params separately. Compute them in their own `derive`
+  group: with one `derive` function, a `build()` that reads any `d.*` and also
+  queries the solid rebuilds every frame, and the cached preview stands still.
 - `camera` cues use the seven canonical angles (`iso front back top bottom
   left right`) or any view-cube orientation — an edge or corner named
   vertical, then depth, then side (`top-front-left`, `top-back-right`,
@@ -1536,7 +1538,7 @@ coherently:
   ```
 
   Builds see the same merged `d` either way. The point is the **control panel's
-  relevance dimming** (and the rebuild cache): with a single function, a sub-part that
+  relevance dimming** (and the rebuild cache, and frame-rate animation): with a single function, a sub-part that
   reads *any* derived value is assumed to depend on *every* param `derive` touches, so
   e.g. stand-only controls stay lit in a drum-only view. With groups, each derived key
   is attributed to just its own group's inputs (plus, transitively, those of the groups
@@ -3641,6 +3643,12 @@ below). To check where handles sit, read `measure().handles` (inspect:
 and direction. Do not return `handleInfo()` from a probe for this. A host may cut a deeply
 nested probe value: partforge-cloud drops what nests past its depth cap.
 
+### Collisions
+
+A part with a `collisions` block keeps its pieces solid while posing: a dragged piece stops
+at the piece it meets. The block, allowed pairs and the swept motion checks are in
+"Collisions and sweeps" below.
+
 ### Testing a drag
 
 `measure --drag` plays one drag the way Pose mode would, with no pins, and reports where it
@@ -3693,6 +3701,221 @@ readout chip commits once too. The chip is a `.pf-pose-chip` element in the stag
 live drag readout a `.pf-viewbar-readout.pf-pose-readout` inside `#viewbar` (a page with no
 `#viewbar` gets no live readout, only the chip), both styled by partforge's `app.css`. Pose mode is a pointer tool:
 the panel sliders drive the same parameters, so keyboard users lose nothing.
+
+## Collisions and sweeps
+
+Two things, opt-in per part. **Pose mode keeps pieces solid**: with a `collisions` block, a
+drag that would push one sub-part into another stops at its surface and slides along it. **Sweeps check a whole
+motion**: `verify.sweeps` declares motions that `measure` steps end to end, reporting whether
+they stay clear, the tightest clearance along them, where first contact happens and which
+param drives it. A part with neither behaves exactly as before. The reference parts are
+`gearbox.js` (an animation sweep, allowed meshing pairs), `drawer-box.js` (a handle sweep per
+drawer) and `hand.js` (a knuckle and a curl sweep for the index and thumb, reported only).
+
+### The `collisions` block
+
+```js
+collisions: {
+  clearance: 0.001,                 // mm under which two sub-parts touch (default 0.001)
+  allow: ["gear1×gear2"],          // pairs that may touch, "a×b" in either order
+  pose: true,                       // Pose mode keeps pieces solid (default true)
+},
+```
+
+Every pair of sub-parts in the view is a **blocked pair** unless `allow` names it. Lint
+errors: `collisions-bad-clearance` (not a number at or above 0), `collisions-bad-pose` (`pose`
+is not `true` or `false`), `collisions-bad-pair` (an
+`allow` entry without `×`, or naming one sub-part twice) and `collisions-unknown-part` (a
+name that is not a key of `parts`). `collisions: {}` is the whole opt-in: every pair
+blocked, default clearance.
+
+**In Pose mode** a drag stops at contact and slides. After each frame's solve, the guard
+walks from the last clear values to the solved ones and stops at the first contact
+(bisecting back to it). It then slides the rest of the move along the contact
+(`COLLIDE_SLIDE` in `src/framework/collide/guard.js`): it reads each pair in contact once,
+projects the remaining step off every contact it would close, and walks that, lifting the
+piece a 0.05 mm skin off the surface (`SLIDE_SKIN_MM`) so a rounded neighbour does not
+catch it again on the next step. So a finger dragged into its neighbour comes to rest
+against it, moves along it, and comes away freely when pulled mostly sideways. The stop also reports each contact's surface normal, and later frames of the same limb drag
+(an angles or goal handle) slide the pointer's target along it before solving: the part of the move that pushes into
+the surface is dropped, so the solve aims along the surface and the piece follows the
+pointer around its neighbour. A normal is dropped once the pointer pulls away from it. A drag with pins set slides the same way, with one check: the slide works outside the
+solver, where pins are not held, so a frame whose slide moves a pinned point more than
+0.5 mm (`PIN_SLIDE_MM` in `collide/guard.js`) is undone and stops at contact instead, in the
+same settle; its normals still slide the next target, which the solver moves with the pins held. Other rules:
+
+- A pair that starts a drag inside clearance (a preset, a saved pose) can move out, never
+  further in. A piece wholly inside another at the start is found and exempted the same way.
+- A goal drag (the robot arm's `tool`) writes the goal as before, and the guard stops the
+  arm where it meets a piece and slides it the same way; in open air nothing changes, so an
+  out-of-reach goal still reads "Out of reach".
+- While a drag is held at contact (the slide could not take the whole move), the live readout shows **Stopped at <piece>** in place
+  of "Out of reach" (and no miss line), and the release chip shows the same for `CHIP_MS`.
+  `onDragEnd` carries `blocked: { a, b }`.
+- Only rigid motion is checked: pieces the viewer moves by matrix. A shape-changing drag (the
+  drawer box's corner resizing the cabinet), a posed delivery, and panel sliders are never
+  blocked. Sweeps check those.
+- **Pieces are assumed thicker than a step.** A frame is sub-stepped so no point of a
+  moving piece travels more than 1 mm (`SETTLE_STEP_MM`) between checks, at most 32
+  sub-steps a frame (`MAX_SUBSTEPS`); a flick that needs more lags the cursor rather than
+  passing through. A piece thinner than 1 mm can still slip through another between checks.
+
+### Allowed pairs
+
+`allow` is for contact that is the design, never for a gap you have not fixed:
+
+- **Meshing gears.** Faceted teeth at about 0.1 mm of backlash can touch at some angles
+  (`gearbox.js`: `gear1×gear2`, `gear2×gear3`).
+- **Bearings and keyed parts.** The gearbox's crank is keyed to its input gear
+  (`crank×gear1`) and its hub bears on the input axle's top, flush, the whole turn
+  (`plate×crank`).
+- **A known defect, parked.** The robot arm allows `forearm×hand`: for a goal off the arm's
+  plane the wrist yaw swings the hand's slab into the forearm, and kept solid every sideways
+  drag would stop at the first degree of yaw. That is the part's to fix (the wrist's
+  clearance), and the allow goes when it is.
+
+A pin joint is NOT an allowed pair. Its running gap (the hand's pins sit at about 0.4 mm) is
+above the default clearance, so it reads clear, and the pair stays blocked: the finger link
+and the palm are a pin pair and also the pair a drag can drive together. An allowed pair is
+also left out of the `overlaps` gate.
+
+### Declaring sweeps: `verify.sweeps`
+
+```js
+verify: {
+  sweeps: {
+    indexCurl: { param: "indexCurl" },                 // a param, min to max
+    tilt:      { param: "lidAngle", range: [0, 95] },  // ...or a sub-range
+    drawer1:   { handle: "drawer1" },                  // a handle: one sweep per param it writes
+    fist:      { from: "open", to: "fist", clearance: 0.3 }, // a path between two presets
+    stroke:    { path: [{ crank: 10 }, { crank: 90, lid: 40 }, { crank: 170 }] }, // waypoints
+    spin:      { animation: "spin" },                  // an animation's timeline, start to end
+  },
+  expect: { _view: { overlaps: 0, sweepContacts: 0 } },
+},
+```
+
+- **`param`** sweeps one parameter over its schema `min`..`max` (it needs both), or over
+  `range: [lo, hi]`, with every other param at its current value.
+- **`handle`** sweeps each param the handle writes on its own, min to max, the others held:
+  one row per param, named `<sweep>.<param>` (`drawer1.drawer1Open`). A goal handle is never
+  swept (its params are a target, not a motion): sweep its joint params, a path or an
+  animation instead.
+- **A path** moves several params together: `{ from, to }` names two presets, `{ path }`
+  gives waypoints, blended linearly between them (t runs 0..1 over the whole path). A path is
+  a **straight-line blend of params**, not a natural motion: the hand's open → fist path
+  moves every digit at once at a constant rate, so the thumb crosses the index finger part
+  way, which no real closing hand does. Read a path's contact as "these two poses cannot be
+  blended directly", and check the `driver` before you move a piece.
+- **`animation`** steps the named animation's timeline through the player's own sampling.
+  A zero-length one is `skipped: "no-motion"`, which reads clear.
+- **`clearance`** (mm, per sweep, default `collisions.clearance`): `clear` then means "never
+  closer than this anywhere along the motion". It must be **below the start gap of every pair
+  the sweep moves**: a sweep exempts no pair, so on a pinned part a clearance above the pin
+  gap reads as a contact at t = 0 ([sweep-contact-at-start](ERROR-PATTERNS.md#sweep-contact-at-start)).
+  Lint cannot check this, because it builds no geometry. The hand's pins are about 0.4 mm,
+  so its `fist` uses 0.3.
+- **`views`**: the views the sweep runs in. By default it runs in every view where its target
+  moves something; a view where nothing moves gets no row (the hand's print kit reports no
+  sweeps).
+
+Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or animation; a
+param with no finite min and max; a `range` that is not `[lo, hi]` with lo < hi; a handle
+whose point cannot be read; a `path` of fewer than two param objects; a spec that is not an
+object, or names no motion), `sweep-goal-handle` (a warning: a goal handle is never
+swept) and `sweep-rebuilds` (a warning: a build changes along the motion, so the sweep
+rebuilds geometry at every step).
+
+### How a sweep steps
+
+- **Rigid** (only `place()` changes along the motion, the usual case): each sub-part is built
+  once and moved by matrix. Steps are halved until no moving point travels more than
+  (clearance + 2 mm) / 2 between checks, and between two checks each pair is held by
+  conservative advancement, so a graze between two clear checks is still found. The one
+  assumption: **between two samples, each pair's relative motion is close to a screw
+  motion**. A single joint between two pieces, any translation and a constant-axis spin are
+  exactly that; a coupled chain, a derive or an IK solve can bend it. A motion that would
+  need more than 2000 steps (`SWEEP_MAX_STEPS`) is stepped coarser and its row is marked
+  `capped: true`: the advancement still holds each pair across a long step, leaning on that
+  assumption harder.
+- **Rebuild** (a param the motion moves changes some build): those sub-parts are rebuilt on
+  24 evenly spaced steps (`SWEEP_REBUILD_STEPS`) and checked at the steps only, since a
+  rebuilt mesh has no placement to bound its motion by. Slower and coarser; the row says
+  `rebuilds: true`, and lint's `sweep-rebuilds` warns.
+
+### What a sweep reports
+
+`measure` returns `sweeps` (absent when none is declared, `[]` in a view where none moves
+anything), one row per sweep (per param for a handle sweep):
+
+```js
+{ name: "spin", clear: true, clearance: 0.001, steps: 252, rebuilds: false,
+  minClearance: { distance: 0.2999, a: "plate", b: "gear3", at: [110.6, 42.7, 15], value: 0 },
+  contacts: [],            // each: { a, b, from, to, at, driver, unresolved? }
+  freeRange: null,         // a param sweep: the contact-free [lo, hi] around the current value
+  ms: 1400 }               // wall time; capped / skipped / error when they apply
+```
+
+- **`contacts`**: each interval of the motion where a blocked pair is within clearance:
+  `from`..`to` in the swept value (the param's own units, or t in 0..1 for a path or an
+  animation), the pair, a point `at`, and `driver`, the param closing the gap fastest at
+  first contact (the one whose limit or placement to change).
+- **`unresolved: true`** on a contact: advancement could not prove the pair clear over that
+  interval at its finest width, so it is reported as a contact (conservatively, at most a
+  hair inside clearance) rather than dropped.
+- **`freeRange`** (a param sweep): the contact-free span around the param's current value,
+  the suggested joint limit.
+- **`skipped`**: `"timeout"` (the time budget ran out; the row keeps any contact it found),
+  `"unreadable"` (with `error`: an unknown target) or `"no-motion"`.
+
+The CLI prints one line for them all:
+
+```
+sweeps: drawer1.drawer1Open clear (min 1.00mm carcass×drawer1); drawer2.drawer2Open clear (min 1.00mm carcass×drawer2); …
+sweeps: spin clear (min 0.30mm gear3×plate)
+sweeps: … fist CONTACT at 0.78 indexDistal×thumbDistal driven by indexKnuckle
+```
+
+A contact line adds `, free [lo, hi]` on a param sweep, `(+N more)` past the first contact,
+`(unresolved)` and `(capped)` when they apply.
+
+**Long sweeps run from the CLI.** The hand's whole open → fist path takes about 17 s, too
+long for every `measure`, so `hand.js` does not declare it. To run it, add
+`fist: { from: "open", to: "fist", clearance: 0.3 }` to `verify.sweeps` and run
+`npx partforge measure src/parts/hand.js`: it reads `fist CONTACT at 0.78
+indexDistal×thumbDistal driven by indexKnuckle` (the straight-line blend's thumb crossing,
+above). For the same reason the hand declares only the index and thumb knuckle and curl
+sweeps: the middle, ring and little fingers sweep the same way from the CLI. Add
+`middleKnuckle: { param: "middleKnuckle" }`, `middleCurl: { param: "middleCurl" }` and so
+on to `verify.sweeps` and run the same command.
+
+### Reading `sweepContacts`
+
+`sweepContacts` is a view gate: `_view: { sweepContacts: 0 }` fails on a sweep that came
+closer than its clearance ([sweep-contacts](ERROR-PATTERNS.md#sweep-contacts)). Leave it out
+of `expect` to report sweeps without gating on them, as the hand does.
+
+- It counts the rows that found a contact, **including a timed-out row that had already
+  found one** (that contact is real).
+- A row stopped short with no contact found counts nothing; verify adds a volunteered
+  `sweeps` warning naming it, which points to the CLI: `npx partforge measure` gives sweeps
+  a 60 s budget, against the 6 s share an `inspect` job's report allows (counted from the
+  inspect's start, shared with change tracking).
+- It is **null (unevaluated)** when every sweep in the view stopped short, so none was
+  checked: the gate is withheld rather than read as 0. A quick lap never sweeps, so there
+  too a declared gate is unevaluated.
+- Verify runs the sweeps once, on one case (the seed's, else `defaults`, else the first);
+  presets and other cases never re-run them.
+
+### Hinge limits: a range, or collision
+
+A joint's limit is the author's choice. Write a `range` as before: a hard limit for sliders,
+presets, derive and Pose mode alike. Or leave the range wide and let the pieces stop it:
+with a `collisions` block, Pose mode stops the link at the piece it meets. Either way, sweep
+the joint's param and read its row's `freeRange`, the contact-free span around the current
+value: that is a real number to write as the range (less a print margin), instead of a
+guess. Collision does not clamp a slider, so a range is still the only limit a slider obeys.
+`docs/domains/kinematics.md` has this for limbs.
 
 ## Probes: measuring geometry into the report
 
@@ -4687,7 +4910,8 @@ more rule does execute `build`, geometry-free: `animation-track-rebuilds` probes
 each track's endpoint values and emits a **note** when the animated param feeds
 real geometry, or when its pose can't be read (it queries the solid or
 passes a function), because such a track plays best-effort rather than at frame
-rate. Notes are informational — they never
+rate. A param that reaches a querying `build()` only through `derive` earns the same
+note, with a hint to give the moving values their own group. Notes are informational — they never
 affect `ok`, `measure`, or `--strict`.
 
 **View-pose invariants**, found by running the geometry-free pose probe (the same

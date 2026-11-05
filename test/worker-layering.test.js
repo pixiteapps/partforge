@@ -158,3 +158,24 @@ test("every domain entry's closure obeys the worker's bans", () => {
     }
   }
 });
+
+// Lint reads the collisions declaration, so its rules must stay a leaf: a closure that
+// reached the BVH or the native core would drag the oracle's heaviest modules into lint.
+test("lint does not reach the BVH", () => {
+  const { files } = walk(`${ROOT}/src/framework/lint/rules-collisions.js`, "collisions lint walk");
+  for (const file of files) {
+    expect(/\/oracle\/bvh\.js$|\/core-wasm\.js$/.test(file), `rules-collisions.js reaches ${file}`).toBe(false);
+  }
+  expect(files.has(`${ROOT}/src/framework/lint/finding.js`)).toBe(true);
+});
+
+// mount.js (the main-thread bundle) imports preview-animation.js, which shares the place
+// rule with the collision world. It must take it from the leaf, not the world.
+test("preview-animation does not reach the BVH or the native core", () => {
+  const { files, importer } = walk(`${ROOT}/src/framework/preview-animation.js`, "preview-animation walk");
+  for (const file of files) {
+    expect(/\/oracle\/bvh\.js$|\/core-wasm\.js$|\/collide\/world\.js$/.test(file),
+      `preview-animation.js reaches ${file}:\n  ${chainTo(file, importer, ROOT)}`).toBe(false);
+  }
+  expect(files.has(`${ROOT}/src/framework/collide/place.js`)).toBe(true);
+});

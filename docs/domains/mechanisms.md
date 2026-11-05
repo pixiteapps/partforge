@@ -214,8 +214,49 @@ input gear:
   drag, it never rebuilds a gear.
 - `verify` pins no overlaps and the running clearances at angle 0; the test
   `test/reference-handles.test.js` also measures another angle, so the teeth stay in mesh.
+- `collisions.allow` lists the pairs that touch by design: the two meshes, the crank keyed
+  to the input gear, and the crank's hub bearing on the input axle's top. `verify.sweeps`
+  declares `spin: { animation: "spin" }` and `expect` gates it with `sweepContacts: 0`, so a
+  full turn of the train is checked against the plate, the axles and the other gears. That
+  sweep found the crank's arm passing flush over the idler's tooth tips once a turn; the
+  arm now rides `ARM_LIFT` (0.5 mm) clear of them.
 
 The demo page is `gearbox.html` (`npm run dev`, then open `/gearbox.html`).
+
+## Checking the motion: sweeps
+
+A mechanism moves by matrix, so a whole cycle is cheap to check for contact. Declare it in
+`verify.sweeps` (the full reference is `docs/AUTHORING-PARTS.md`, "Collisions and sweeps"):
+
+```js
+collisions: { allow: ["gear1×gear2", "gear2×gear3"] },   // meshing teeth may touch
+verify: {
+  sweeps: {
+    spin:   { animation: "spin" },                        // the timeline the player runs
+    stroke: { path: [{ crankAngle: 10 }, { crankAngle: 170 }] }, // waypoints, blended linearly
+    drive:  { param: "driveAngle" },                      // one param, its range end to end
+  },
+  expect: { _view: { overlaps: 0, sweepContacts: 0 } },
+},
+```
+
+- **A gear train** turns on one param, so a `param` sweep of it, or an animation sweep of
+  a turn, covers every gear. Faceted teeth at about 0.1 mm of backlash can touch at some
+  angles: allow the meshing pairs, and the sweep still holds each gear against the plate,
+  its axle and the gears it does not mesh with.
+- **A crank-slider** or a belt is one param too. A sweep is checked end to end, and
+  `rebuilds: false` on its row says the helper's `place` kept it matrix-only. Keep the
+  crank angle's sweep off the dead centres, as for its handle.
+- **A coupled path** (two params that move together, a crank and a lid on one stroke) is a
+  `path`: waypoints of params blended in a straight line, or `{ from, to }` between two
+  presets. A path is a straight-line blend of params, not a natural motion, so a contact
+  part way along it can be a pose the mechanism never reaches. Check the `driver` the row
+  names before changing the part.
+- The rigid stepping assumes that between two samples each pair's relative motion is close
+  to a screw motion. A gear on its axle or a slider on its line, against a fixed piece, is
+  exactly that. A crank-slider's rod against its slider, or any pair moved through a
+  coupled closed form, is only close to it between two small steps; a row marked `capped`
+  (its steps forced longer than the travel bound) leans on it harder.
 
 ## Errors
 

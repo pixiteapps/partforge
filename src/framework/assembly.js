@@ -1,4 +1,5 @@
 import { viewSubParts, resolveParams, buildPosed } from "./part-model.js";
+import { pairKey } from "./collide/pairs.js";
 
 // Collision check for an assembled view: build each sub-part in its display
 // (assembly) pose and return the pairs whose solid-intersection volume exceeds
@@ -6,8 +7,10 @@ import { viewSubParts, resolveParams, buildPosed } from "./part-model.js";
 // Parts meant to fit together (e.g. a block seated in a pocket void) read ~0 and
 // don't trip it. Manifold-only (needs Solid.intersect + Solid.volume); meant for
 // part tests so an author/LLM editing a part sees collisions fail.
+// `allow` is a Set of pairKey()s that may touch (`collisions.allow`, normalized by
+// collide/declaration.js): those pairs are never intersected or reported.
 //   → [{ a, b, volume, location }] for each offending pair (empty = no collisions)
-export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 1, reads } = {}) {
+export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 1, reads, allow } = {}) {
   const { p, d } = resolveParams(part, params, undefined, reads);
   // Same posed solids buildView builds, so this round is almost entirely hits off
   // that one; only the pairwise intersects below are new. Its own oracle partition,
@@ -24,6 +27,7 @@ export function assemblyOverlaps(kernel, part, view, params = {}, { tolerance = 
   const overlaps = [];
   for (let i = 0; i < posed.length; i++) {
     for (let j = i + 1; j < posed.length; j++) {
+      if (allow?.has(pairKey(posed[i].name, posed[j].name))) continue;
       const inter = posed[i].solid.intersect(posed[j].solid);
       const volume = inter.volume();
       if (volume > tolerance) {

@@ -4,7 +4,9 @@
 // as a slider would (handle-guides' chipValues: snapped and clamped, a wrapped param kept in
 // its turn) through `apply` — mount's slider path, one commit. Escape cancels. A drag that
 // wrote nothing because a pin held it (pose-mode's onDragEnd `pinHeld`) shows PIN_HINT for
-// HINT_MS instead, not editable. A press on the canvas, posing standing down or detach puts
+// HINT_MS instead, not editable. A drag of any handle whose last frame stopped at contact
+// (onDragEnd `blocked`, collisions: its slide could not take the whole move) shows `Stopped at <label>` — the label of the piece it
+// stopped against, b — for CHIP_MS instead, not editable. A press on the canvas, posing standing down or detach puts
 // the chip away. Where it sits is pose-mode's handlePoints() (canvas px, through `toStage`),
 // re-read every frame while it shows. An edit in progress outlives its handle going off
 // screen (the chip stays, held inside the stage); posing going off, the view dropping the
@@ -19,6 +21,8 @@ import { rangesOf } from "./param-solve.js";
 export const CHIP_MS = 4000;
 export const HINT_MS = 3000;
 export const PIN_HINT = "Held by a pin — Release pins to move it";
+/** The chip after a drag that stopped at contact: `b` is the label of the piece it stopped against. */
+export const stoppedAt = (label) => `Stopped at ${label}`;
 /** The chip's corner sits this far right of and above the handle's point (CSS px). */
 const OFFSET_PX = 12;
 
@@ -81,16 +85,16 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
     chip.style.left = `${Math.round(x)}px`;
     chip.style.top = `${Math.round(y)}px`;
   }
-  function show(handleId, kind, ms) {
+  function show(handleId, kind, ms, text = PIN_HINT) {
     clearTimer();
     shown = { handleId, kind, editing: false };
     chip.dataset.kind = kind;
     chip.replaceChildren();
-    if (kind === "hint") {
+    if (kind === "hint" || kind === "blocked") {
       const hint = document.createElement("span");
       hint.className = "pf-pose-chip-hint";
       hint.setAttribute("role", "status");
-      hint.textContent = PIN_HINT;
+      hint.textContent = text;
       chip.append(hint);
     } else {
       const handle = handles[handleId];
@@ -190,7 +194,13 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
   viewer.domElement?.addEventListener("pointerdown", onCanvasDown, true);
 
   const offEnd = mode.onDragEnd?.((e) => {
-    if (!e?.generic || !handles[e.handleId]) return;
+    if (!e || !handles[e.handleId]) return;
+    if (e.blocked?.b) {
+      const label = part?.parts?.[e.blocked.b]?.label ?? e.blocked.b;
+      show(e.handleId, "blocked", CHIP_MS, stoppedAt(label));
+      return;
+    }
+    if (!e.generic) return;
     if (e.changed?.length) show(e.handleId, "values", CHIP_MS);
     else if (e.pinHeld) show(e.handleId, "hint", HINT_MS);
   }) ?? noop;
@@ -199,8 +209,8 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
 
   let detached = false;
   return {
-    /** What the chip shows now, for tests and the browser check: `{ handleId, kind, editing }` or null. */
-    state: () => (shown ? { ...shown } : null),
+    /** What the chip shows now, for tests and the browser check: `{ handleId, kind, editing, text }` or null. */
+    state: () => (shown ? { ...shown, text: chip.textContent } : null),
     /** Put it away, an open edit unwritten (mount: a view switch — its handle may not be there). */
     hide: () => { if (!detached) hide(); },
     detach() {

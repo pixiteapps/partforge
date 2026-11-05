@@ -22,11 +22,24 @@ import {
 import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
+import { pairKey } from "../src/framework/collide/pairs.js";
+import { parseSweepBudget } from "./sweep-budget.js";
 import { sniffMediaType } from "../src/framework/ingest/sniff.js";
 import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
 import { installNodeDom } from "../src/framework/ingest/node-dom.js";
 import * as opentypeNamespace from "opentype.js";
 import { normalizeOpentype, parseFont } from "../src/framework/geometry/opentype-interop.js";
+
+// The sweeps' budget in `partforge measure` (pure Node, no inspect around it), counted
+// from the measure's start. The inspect job's report share is 6 s, which a part with
+// many sweeps cannot fit — a hand's open-to-fist path alone is ~17 s and each knuckle
+// or curl sweep 0.5–1.4 s — and the CLI is where an agent is told to run them in full.
+// A minute fits every shipped part's sweeps with room, and still ends a runaway one.
+// PARTFORGE_SWEEP_BUDGET_MS overrides it, in ms or "Infinity" (no deadline): the verify
+// golden (test/verify-golden.test.js) runs every sweep to its end, so what it records
+// never depends on how fast the machine is.
+// Parsed by parseSweepBudget (bin/sweep-budget.js, held by test/cli-sweep-budget.test.js).
+const CLI_SWEEP_BUDGET_MS = parseSweepBudget(process.env.PARTFORGE_SWEEP_BUDGET_MS);
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
@@ -304,7 +317,10 @@ const commands = {
       }
       const kernel = await bootKernel(part);
       const [{ measure }, { verify }] = await importOracle();
-      const report = measure(kernel, part, view);
+      // The CLI is the place to run sweeps the inspect's report share cannot fit (a
+      // hand's full set is ~17 s), so they get a budget of their own here.
+      const sweepDeadline = Date.now() + CLI_SWEEP_BUDGET_MS;
+      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline });
       if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has
       // attached report.verify. If verify throws (unknown metric, per-case build
@@ -320,7 +336,9 @@ const commands = {
       // the most vacuous case of all, and the "nothing verified" verdict below
       // exists to say so rather than let a clean exit read as verified.
       if (!flags["no-verify"]) {
-        const v = verify(kernel, part, { process: flags.process, view });
+        // Seeded with the report above, as the inspect job seeds it: verify reuses the
+        // measurement where it can and its sweep rows always, so nothing sweeps twice.
+        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline });
         if (!flags.json) printVerify(v);
         report.verify = v;
         // Tri-state: `null` is a withheld verdict (nothing declared, or a check
@@ -579,6 +597,23 @@ const commands = {
   },
 };
 
+// One sweep row (oracle/sweep.js) for the `sweeps:` line: clear with its tightest pair,
+// a contact with where it starts, its pair, the param driving it and (a param sweep)
+// the contact-free range, or why it stopped short. A row's `ms` is never printed.
+const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
+function sweepText(s) {
+  if (s.skipped) return `${s.name} skipped (${s.skipped})`;
+  const capped = s.capped ? " (capped)" : "";
+  if (s.clear) {
+    const m = s.minClearance;
+    return `${s.name} clear${m ? ` (min ${m.distance.toFixed(2)}mm ${pairKey(m.a, m.b)})` : ""}${capped}`;
+  }
+  const c = s.contacts[0];
+  const free = s.freeRange ? `, free [${s.freeRange.map(fmtV).join(", ")}]` : "";
+  const more = s.contacts.length > 1 ? ` (+${s.contacts.length - 1} more)` : "";
+  return `${s.name} CONTACT at ${fmtV(c.from)} ${pairKey(c.a, c.b)}${c.unresolved ? " (unresolved)" : ""} driven by ${c.driver ?? "?"}${free}${more}${capped}`;
+}
+
 function printMeasure(r) {
   console.log(`${r.part} / ${r.view}`);
   for (const s of r.subparts) {
@@ -607,6 +642,7 @@ function printMeasure(r) {
     console.log(`  warnings:`);
     for (const w of r.warnings) console.log(`    ${w.part}: ${w.message}`);
   }
+  if (r.sweeps) console.log(`  sweeps: ${r.sweeps.length ? r.sweeps.map(sweepText).join("; ") : "none move anything in this view"}`);
   if (r.handles) {
     console.log(`  handles:`);
     for (const h of r.handles) {

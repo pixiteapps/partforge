@@ -1,7 +1,7 @@
 // limb(name, def): forward kinematics for one jointed chain, emitting plain
 // core-shaped frames. Structure once, pose as often as needed.
 import { buildTree, jointSteps, failer, couple, farEnd, nearZero, restValue, ballValue } from "./tree.js";
-import { buildFrames, buildReport, buildAdapters, r3 } from "./outputs.js";
+import { buildFrames, buildReport, buildAdapters, resolveMemo, r3 } from "./outputs.js";
 import { solveReach, solveGrip } from "./solve.js";
 import { goalInputs, solveGoals } from "./goals.js";
 import { distanceFor } from "./shapes.js";
@@ -169,9 +169,10 @@ export function limb(name, def) {
       ({ values, clamped, goals } = solveGoals(tree, parentWorld(frames), inputs.goals, raw, inputs.pinned, { spread, twist }));
     } else ({ values, clamped } = couple(tree, raw));
     const posedFrames = buildFrames(tree, jointSteps(tree, values, { spread, twist }));
-    const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip, goals);
+    const resolvePosed = resolveMemo(); // the report's tip and every place() share one resolve
+    const report = buildReport(tree, values, clamped, posedFrames, frames, fail, reach, grip, goals, resolvePosed);
     const restFrames = context == null ? restOwn : { ...context.rest, ...restOwn };
-    const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail, values);
+    const adapters = buildAdapters(tree, posedFrames, frames, restFrames, fail, values, resolvePosed);
     /**
      * Forward kinematics from this pose for the viewer's joint rings: this pose's values with
      * `overrides` (`{ joint: value }`, a ball's partial `{ bend?, spread?, twist? }` merged

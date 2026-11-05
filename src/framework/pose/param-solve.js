@@ -97,7 +97,7 @@ export function limbInfo(part, params, handle) {
 }
 
 /** The handle's DOFs: its listed params, less every param of a handle in allHandles whose lock is on. */
-function dofsOf(handle, allHandles, p) {
+export function dofsOf(handle, allHandles, p) {
   const frozen = new Set();
   for (const h of allHandles) {
     if (h?.lock == null || !p[h.lock]) continue;
@@ -200,6 +200,31 @@ function onCones(values, cones, base) {
   return values;
 }
 
+/**
+ * `result` with `blend` attached NON-enumerably: a solve's result stays plain data to
+ * compare, spread or log (`{ values, error }`, as before), and the guard's settle still
+ * reads `result.blend`.
+ */
+export function withBlend(result, blend) {
+  return Object.defineProperty(result, "blend", { value: blend, enumerable: false, writable: true, configurable: true });
+}
+
+/**
+ * The settle path of a solve that moved `keys` linearly: blend(t) is `base` with each key
+ * at from + t·(to − from), exactly `to` at t = 1. The drag guard's settle walks it from the
+ * frame's start (t = 0) to the solved values (t = 1).
+ */
+export function linearBlend(base, values) {
+  return (t) => {
+    const out = { ...base };
+    for (const k of Object.keys(values)) {
+      const a = base[k], b = values[k];
+      out[k] = t === 1 || !isNum(a) || !isNum(b) ? b : a + t * (b - a);
+    }
+    return out;
+  };
+}
+
 /** A hold's point reference: `{ ref, point }`, or the older `{ limb, at, point }`. */
 const refOf = (hold) => hold.ref ?? { limb: hold.limb, at: hold.at };
 
@@ -240,6 +265,9 @@ function runSolve(space, evaluate, m, { iterations, lambda, tol }) {
  * residual norm in mm, each hold's share weighted by HOLD_WEIGHT) or null when the start
  * pose itself fails. Never throws for a derive that throws: that evaluation just scores
  * FAILED. It stops early once the residual is at most `tol` (default TOL_MM).
+ *
+ * The result's `blend(t)` is the linear path from these params to the solved ones, for the
+ * guard's settle.
  */
 export function solveAngles({ part, params, handle, grab, target, holds = [], iterations = 8, allHandles = [handle], tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
@@ -266,7 +294,8 @@ export function solveAngles({ part, params, handle, grab, target, holds = [], it
     return null;
   }
   const { x, error } = runSolve(space, evaluate, m, { iterations, lambda, tol });
-  return { values: keys.length ? onCones(keepStill(space, keys, x), limits.cones, base) : {}, error };
+  const values = keys.length ? onCones(keepStill(space, keys, x), limits.cones, base) : {};
+  return withBlend({ values, error }, linearBlend(base, values));
 }
 
 /**
@@ -322,6 +351,7 @@ function handleSpan(part, base, handle, keys, ranges, target) {
  * Returns `{ values, error }` (error: the weighted residual norm, mm) or null when the
  * start pose cannot be read. A frame whose derive or `point` throws scores FAILED, so the
  * drag holds the last readable values. Holds are firmed up as HOLD_WEIGHTS says.
+ * The result's `blend` is as solveAngles'.
  */
 export function solveHandle({ part, params, handle, target, holds = [], allHandles = [handle], iterations = 8, tol = TOL_MM }) {
   const base = { ...part.defaults, ...params };
@@ -375,7 +405,8 @@ export function solveHandle({ part, params, handle, target, holds = [], allHandl
     out = runSolve(space, (u) => evaluate(u, w), m, { iterations, lambda, tol });
     if (!pins.length || slip(out.x) <= TOL_MM) break;
   }
-  return { values: keys.length ? space.valuesOf(out.x) : {}, error: out.error };
+  const values = keys.length ? space.valuesOf(out.x) : {};
+  return withBlend({ values, error: out.error }, linearBlend(base, values));
 }
 
 /**
@@ -735,8 +766,13 @@ export function goalGrabJoints(info, handle) {
  * pose, and the goal parameters rewritten to the posed `at` frame — so the next derive's
  * goal solve starts at its answer and lands on this pose. A goal value the schema would clip
  * stops the pose at the last fraction of the way from the current pose whose goal fits
- * (bisected, as jointRingValues). Returns `{ values, error }` (error: the weighted residual
- * norm, mm) or null when the limb cannot be read.
+ * (bisected, as jointRingValues). Returns `{ values, error }` + `blend` (error: the weighted
+ * residual norm, mm) or null when the limb cannot be read.
+ *
+ * `blend(t)` is the joint-space path: the
+ * goalFromForward write of the pose a fraction t of the way from the start pose to the
+ * solved one (to the bisected stop, when the goal clipped), so every point the guard's
+ * settle checks is a pose derive reproduces.
  */
 export function solveGoalPinned({ part, params, handle, target, holds = [], aimAngles = null, grab = null, iterations = 8, tol = TOL_MM }) {
   const posed = posedLimb(part, params, handle?.on);
@@ -789,9 +825,15 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
   }
   // a hold on the grabbed point itself is no hold (as pose-session's begin skips that pin)
   const own = holds.filter((h) => h?.limb === handle.on && Array.isArray(h.point) && h.at !== at);
-  const m = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
+  const lead = 3 + (aim ? (aim.z ? 6 : 3) : 0) + own.length * 3;
+  const args = { part, params, handle, posed, info, ranges };
+  /** The params a pose writes (null when its forward kinematics throws). */
+  const paramsOf = (o) => {
+    const w = goalFromForward({ ...args, overrides: o });
+    return w ? { ...params, ...w.values } : null;
+  };
   const residuals = (u) => {
-    const r = new Float64Array(m);
+    const r = new Float64Array(lead);
     try {
       const o = overridesOf(u);
       const F = posed.ikForward(o, at);
@@ -811,22 +853,26 @@ export function solveGoalPinned({ part, params, handle, target, holds = [], aimA
     return r;
   };
   const { x, error } = solveDLS({ x0: u0, lo, hi, residuals, iterations, h: H, lambda: limbLength(posed), tol });
-  const args = { part, params, handle, posed, info, ranges };
   const solved = overridesOf(x);
   const write = goalFromForward({ ...args, overrides: solved });
   if (!write) return null;
-  if (!write.goalClamped) return { values: write.values, error };
-  // Stop at the last fraction of the way from the current pose whose goal fits.
   const at01 = (t) => overridesOf(u0.map((v, i) => v + (x[i] - v) * t));
+  // The joint-space settle path to the pose at fraction `end` (exactly `endValues` there).
+  const blendTo = (end, endValues) => (t) => {
+    if (t === 1) return { ...params, ...endValues };
+    return paramsOf(at01(t * end)) ?? { ...params };
+  };
+  if (!write.goalClamped) return withBlend({ values: write.values, error }, blendTo(1, write.values));
+  // Stop at the last fraction of the way from the current pose whose goal fits.
   const start = goalFromForward({ ...args, overrides: at01(0) });
-  if (!start || start.goalClamped) return { values: {}, error };
+  if (!start || start.goalClamped) return withBlend({ values: {}, error }, () => ({ ...params }));
   let a = 0, b = 1, best = start;
   for (let n = 0; n < 24; n++) {
     const mid = (a + b) / 2;
     const t = goalFromForward({ ...args, overrides: at01(mid) });
     if (t && !t.goalClamped) { a = mid; best = t; } else b = mid;
   }
-  return { values: best.values, error };
+  return withBlend({ values: best.values, error }, blendTo(a, best.values));
 }
 
 /**
@@ -907,6 +953,26 @@ const decimals = (n) => {
  * step's and min's decimal places, so an integer step (with an integer min) yields an
  * integer. Keys without a schema entry pass through.
  */
+/**
+ * snapValues, but each key snapped to the grid point on `toward`'s side of its value (floor
+ * or ceil toward `toward[k]`; the nearest where they are equal or `toward` has no number):
+ * Pose mode's release snap when the nearest one would move a piece into contact.
+ */
+export function snapValuesToward(part, values, toward = {}) {
+  const ranges = rangesOf(part);
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    const r = ranges.get(k);
+    if (!r || !isNum(v) || !(isNum(r.step) && r.step > 0)) { out[k] = snapValues(part, { [k]: v })[k]; continue; }
+    const from = isNum(r.min) ? r.min : 0;
+    const q = (v - from) / r.step, t = toward[k];
+    const n = !isNum(t) || t === v ? Math.round(q) : t < v ? Math.floor(q) : Math.ceil(q);
+    const places = Math.max(decimals(r.step), decimals(from));
+    out[k] = clamp(Number((from + n * r.step).toFixed(Math.min(places, 15))), r);
+  }
+  return out;
+}
+
 export function snapValues(part, values) {
   const ranges = rangesOf(part);
   const out = {};

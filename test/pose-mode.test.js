@@ -1039,7 +1039,7 @@ describe("generic handles: rotary and touch", () => {
       t.fire("pointerup", c.x + r * Math.cos(rad(a0 + by)), c.y - r * Math.sin(rad(a0 + by)));
     };
     turn(() => rim(t), 40);
-    expect(ends).toEqual([{ handleId: "drive", generic: true, changed: ["driveAngle"], pinHeld: false }]);
+    expect(ends).toEqual([{ handleId: "drive", generic: true, changed: ["driveAngle"], pinHeld: false, blocked: null }]);
     const knob = () => t.screenOf([30 * Math.cos(rad(t.params.driveAngle + 90)), 0, 80 + 30 * Math.sin(rad(t.params.driveAngle + 90))]);
     // pin the knob, then turn the drive: nothing moves
     const k = knob();
@@ -1050,7 +1050,7 @@ describe("generic handles: rotary and touch", () => {
     const before = t.params.driveAngle;
     turn(() => rim(t), 40);
     expect(t.params.driveAngle).toBe(before);
-    expect(ends.at(-1)).toEqual({ handleId: "drive", generic: true, changed: [], pinHeld: true });
+    expect(ends.at(-1)).toEqual({ handleId: "drive", generic: true, changed: [], pinHeld: true, blocked: null });
     // a click is no drag: nothing
     expect(ends).toHaveLength(2);
   });
@@ -1097,6 +1097,45 @@ describe("reachMissed", () => {
       if (a.residual <= REACH_MIN_MM) expect(a.missed).toBe(false);
     }
     expect(t.readouts.at(-1).items.some((x) => x.key === "reach")).toBe(t.scene.calls.setActive.at(-1).missed === true);
+  });
+});
+
+describe("a drag stopped at contact", () => {
+  // A guard that lets every frame through (settle lands on the solve's answer) and reports
+  // `blocked` while blocked() says so: what the collision guard hands back at contact.
+  const passGuard = (blocked) => () => ({
+    settle: (from, to, opts) => ({ params: opts?.blend ? opts.blend(1) : { ...to }, blocked: blocked() }),
+    release() {},
+  });
+  const farDrag = (t) => {
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - 18 - i * 80);
+    return s;
+  };
+
+  it("reads 'Stopped at <label>' instead of 'Out of reach', with no miss line, while the guard holds it", () => {
+    const t = setup(hand, { collide: passGuard(() => ({ a: "a", b: "palm" })) });
+    t.mode.setEnabled(true);
+    const s = farDrag(t);
+    const items = t.readouts.at(-1).items;
+    expect(items.map((i) => i.key)).toEqual([...hand.handles.a.params, "blocked"]);
+    expect(items.at(-1)).toMatchObject({ key: "blocked", label: "Stopped at", text: "Palm" });
+    for (const r of t.readouts.filter(Boolean)) expect(r.items.some((x) => x.key === "reach")).toBe(false);
+    for (const a of t.scene.calls.setActive.filter((x) => x?.target)) expect(a.missed).toBe(false);
+    t.fire("pointerup", s.x, s.y - 338);
+    expect(t.readouts.at(-1)).toBeNull();
+  });
+
+  it("a guarded drag that is out of reach with nothing blocked still reads 'Out of reach'", () => {
+    const t = setup(hand, { collide: passGuard(() => null) });
+    t.mode.setEnabled(true);
+    farDrag(t);
+    const items = t.readouts.at(-1).items;
+    expect(items.at(-1)).toMatchObject({ key: "reach", label: "Out of reach", unit: "mm" });
+    expect(items.some((x) => x.key === "blocked")).toBe(false);
+    expect(t.scene.calls.setActive.filter(Boolean).at(-1).missed).toBe(true);
   });
 });
 

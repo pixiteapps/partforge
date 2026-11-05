@@ -407,6 +407,17 @@
             "status": "pass",
             "pass": true,
             "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
           }
         ]
       }
@@ -415,8 +426,8 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 1,
-    "evaluated": 1
+    "declared": 2,
+    "evaluated": 2
   },
   "emblem.js#plate": {
     "ok": true,
@@ -1362,6 +1373,17 @@
           },
           {
             "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
             "subpart": "plate×gear1",
             "metric": "clearance",
             "kind": "gate",
@@ -1422,8 +1444,8 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 7,
+    "evaluated": 7
   },
   "hand.js#assembly": {
     "ok": true,

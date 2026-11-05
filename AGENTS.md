@@ -57,7 +57,7 @@ IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) 
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
 it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
 spread/oppose params and six `{ type: "preset" }` shapes, one
-lockable angles-mode handle per digit; rigid pin-jointed pieces placed by matrix, the
+lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI); rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
 is the fixture that script drags), `organic-hand.js` (the organic reference part - one contact `k.implicit` hand
@@ -69,10 +69,10 @@ editing them moves pinned mesh hashes; no demo page), `gearbox.js` (the rotary-h
 worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 `gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
-rebuilds; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
+rebuilds, swept for contact and gated, its meshing and bearing pairs in `collisions.allow`; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
 corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
 drawer, which only re-places it - each opening a percentage of its `depth - 10` travel, so
-no value of it is dead; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
+no value of it is dead, and each drawer's handle swept and gated; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -347,7 +347,10 @@ the installed package, so let the publish finish before bumping the dep there.
   glTF channels plus a `partforgeAnimation` extra: `mountPreview` plays it through
   `preview-player.js` unless `animate: false`, `mount({ preview })` draws its
   opening pose and never plays it, and `exportPreview` bakes it only when every
-  track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
+  track is place-only. A tracked key in a sub-part's build reads is not a refusal
+  by itself, since a one-function `derive` over-reports reads: since encoder 5 /
+  0.183.0 the build probe decides, and only a build whose geometry changes, or that
+  it cannot trust, keeps the file still. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
   and `handle.animation` gains `replay()`. Since 0.168.0 `mountPreview` takes
@@ -674,7 +677,11 @@ the installed package, so let the publish finish before bumping the dep there.
   `ikInfo()` only - never `instanceof`, the cloud's worker holds two copies) and
   `pose-session.js` (the drag state machine and pins, effects injected) are pure;
   `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
-  `pose-mode.js` the orchestrator, `pose-controls.js` the viewbar's Release pins
+  `pose-mode.js` the orchestrator, `pose-collide.js` mount's collision half (idle-time
+  indexes over the viewer's delivery-frame meshes, each drag's guard placed by the pose
+  ladder's `matricesAt`, the blocked pair's tint; the world module loads lazily, and
+  `collide/guard.js`'s settle stops a piece at contact and slides it, `COLLIDE_SLIDE`),
+  `pose-controls.js` the viewbar's Release pins
   action, `aim-gizmo.js` the ball-and-rings widget on a goal handle with `aim` and the
   joint rings (`createJointGizmo`: one ring per rotation of a hovered joint whose
   parameter a goal handle's `seed` or an angles handle's `joints` names — a ring drag is
@@ -768,6 +775,49 @@ the installed package, so let the publish finish before bumping the dep there.
   `derive` being pure and on every reader treating `d` as read-only (readers in a scope
   share one `d`); a derive that writes its params or throws is never stored. Internal:
   not part of `partforge/derive`.
+- **`src/framework/collide/`** + **`pose/pose-collide.js`** + **`oracle/sweep.js`** -
+  collisions (spec `docs/superpowers/specs/2026-11-02-collisions-design.md`; guide
+  "Collisions and sweeps"): a part's `collisions: { clearance, allow, pose }` keeps pieces
+  solid in Pose mode, and `verify.sweeps` steps declared motions (a param, a handle's
+  params one at a time, a preset/waypoint path, an animation) for contact, reported as
+  `measure().sweeps` (the CLI's `sweeps:` line, `CLI_SWEEP_BUDGET_MS` 60 s, overridable by
+  `PARTFORGE_SWEEP_BUDGET_MS`, which the verify golden sets to Infinity) and gated by the
+  `sweepContacts` view metric. The LEAVES are BVH-free, so lint and the worker's eager
+  closure may load them: `pairs.js` (`pairKey`, `CONTACT_EPS`; `oracle/gaps.js` re-exports
+  both), `declaration.js` (`normalizeCollisions`), `motion.js` (rigid-matrix helpers),
+  `place.js` (a sub-part's `place()` as a matrix, `poseMatrices`) and `sweep-targets.js`
+  (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
+  through it alone). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
+  frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
+  guard: `settle`, sub-stepped to `SETTLE_STEP_MM` of travel, at most `MAX_SUBSTEPS`, bisecting
+  back to contact), `exemptions.js` (the pairs a drag may leave touching: one inside clearance
+  at its start, with `snapshot`/`restore` for a walk that gets discarded) and `part-guard.js` (a guard over a part's own params). `pose-collide.js`
+  is mount's half: idle-time indexing over the viewer's meshes, a guard per drag, the
+  contact tint. `oracle/sweep.js` is the engine: rigid motion by matrix with conservative
+  advancement between samples (a screw-motion assumption), a rebuild path on
+  `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
+  comes out of the inspect's `REPORT_SHARE_MS`, after change tracking has finished with it
+  (measure's `beforeSweeps` hook). Invariants: `place.js` and `sweep-targets.js`
+  never reach the BVH (`test/worker-layering.test.js`);
+  `settle` is the hard guarantee - whatever the solve returns, a frame never moves a
+  blocked pair from clear to inside, and a pair inside at drag start can move out, never
+  in; output never depends on the native core (the world builds JS BVHs through the public
+  `buildBVH`). Pose mode ships stop-and-slide: `settle` stops at contact, then
+  (`COLLIDE_SLIDE`) reads the contacts once and projects the rest of the step off them, onto
+  gap >= `SLIDE_SKIN_MM` (0.05) in step-relative units, gradients by finite differences on
+  placements alone, and walks it (`SLIDE_ROUNDS` 2; `SLIDE_BISECTIONS` 6 on a sliding
+  settle, since a gap check is most of a blocked frame). The settle returns each contact's
+  world normal, facing the side that moved more; pose-session keeps them and slides a limb
+  drag's target along them before the next solve (`tangentTarget`), dropping a normal once the
+  pointer pulls away from it - so the solve aims along the surface, not into it. A pinned drag slides too, but settle's
+  `pinDrift` option (pose-session hands it one while pins are set) undoes a slide that moves a
+  pinned point past `PIN_SLIDE_MM` (0.5) and re-walks the frame stop-dead, still reporting the
+  normals, since the projection does not hold pins. Settle is transactional: an undone slide's
+  exemption changes are rolled back first, so the re-walk sees the ones the frame began with. There are no contact rows inside the solver: they were built, gated off by the
+  bench, and deleted once a comparison through the session showed settle's slide matching or
+  beating them (`docs/research/collisions-structure-review.md`). A drag held at contact reads "Stopped at <piece>" in the live readout (never "Out
+  of reach") and on the release chip. A sweep exempts no pair, so its `clearance` must sit
+  below every start gap it moves (a pin's) - lint, geometry-free, cannot check it.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   the oracle's BVH + min-wall, and the implicit engine's sample/mesh/cleanup/detail

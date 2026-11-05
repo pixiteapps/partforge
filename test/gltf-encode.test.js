@@ -33,8 +33,8 @@ const meshes = () => [
 const nodeNamed = (doc, name) => doc.getRoot().listNodes().find((n) => n.getName() === name);
 const materialOf = (doc, name) => nodeNamed(doc, name).getMesh().listPrimitives()[0].getMaterial();
 
-test("PREVIEW_ENCODER_VERSION is 4 (animation channels + partforgeAnimation extras)", () => {
-  expect(PREVIEW_ENCODER_VERSION).toBe(4);
+test("PREVIEW_ENCODER_VERSION is 5 (more forges bake: same format as 4)", () => {
+  expect(PREVIEW_ENCODER_VERSION).toBe(5);
 });
 
 test("one node, mesh and primitive per sub-part, named by key, under one Y-up root", async () => {
