@@ -6,7 +6,7 @@ import { err, warn } from "./finding.js";
 import { resolveDerived } from "../derive.js";
 import { rangesOf, jointBounds } from "../pose/param-solve.js";
 import { locateHandle, sourceInfo, resolveGeom, handleAxis } from "../pose/handle-source.js";
-import { handlesShownInView } from "../pose/handle-views.js";
+import { declaredViews, handleSourceKeys, handlesShownInView, viewSourceReads } from "../pose/handle-views.js";
 import { groupOf } from "../pose/handle-groups.js";
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -554,6 +554,36 @@ export const HANDLE_RULES = [
           "Too many dots crowd the model and hide each other. Give the handles a `showOn` (the sub-part whose hover reveals them), put many of one kind in a `group` (one shows at a time, and a group counts once), keep only the ones a person would reach for, or split them across views.", "handles"));
       }
       return out;
+    },
+  },
+  {
+    // handle-views' source test has nothing to go on when no view reads the handle's source,
+    // so it stands aside and relevance alone decides. The usual cause is an alias: a handle
+    // `on: "indexLimb"` over placements that read the same limb as `d.poses.index`. A
+    // one-function derive then makes the pose params relevant everywhere and the handles show,
+    // at the posed position, in views that draw the part unposed. One finding for the part.
+    id: "handle-source-unread",
+    run: ({ part, d, deriveError }) => {
+      if (deriveError || !d || !isPlainObject(part?.views)) return [];
+      const views = Object.keys(part.views);
+      if (views.length < 2) return [];
+      const p = { ...part.defaults };
+      const reads = views.map((v) => viewSourceReads(part, v, p, d));
+      if (reads.some((r) => !(r instanceof Set))) return []; // a view the probe cannot read: no verdict
+      const unread = [];
+      for (const [name, h] of handleEntries(part)) {
+        if (declaredViews(h)) continue;
+        const keys = handleSourceKeys(h, p, d);
+        if (!keys.length || reads.some((r) => keys.some((k) => r.has(k)))) continue;
+        const shownIn = views.filter((v) => handlesInView(part, v, [name]).length);
+        if (shownIn.length >= 2) unread.push({ name, keys, shownIn });
+      }
+      if (!unread.length) return [];
+      const sources = [...new Set(unread.flatMap((u) => u.keys))];
+      const shownIn = views.filter((v) => unread.some((u) => u.shownIn.includes(v)));
+      const quote = (xs) => xs.map((x) => JSON.stringify(x)).join(", ");
+      return [warn("handle-source-unread", `handle${unread.length > 1 ? "s" : ""} ${quote(unread.map((u) => u.name))} sit${unread.length > 1 ? "" : "s"} on ${quote(sources)}, which no view's sub-parts read, so ${unread.length > 1 ? "they show" : "it shows"} in views ${quote(shownIn)} whether or not those views draw that source`,
+        "Declare where each handle belongs with `views: [...]` (keys of `views`). If a placement reads the same value under another name (`d.poses.index` beside `d.indexLimb`), that alias is why this fired: read it under the name the handle uses, or list the views outright.", "handles")];
     },
   },
   {
