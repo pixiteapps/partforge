@@ -652,6 +652,11 @@ by fixed offsets does not, so the handle stays out of it. To say it outright, gi
 handle `views: ["assembly"]` (keys of `views`; lint: `handle-unknown-view`). The authoring
 guide's "When a handle shows" has the whole rule.
 
+The key must be the one the placements read. If `on: "indexLimb"` names a limb the
+placements read as `d.poses.index`, no view reads `indexLimb`, so this test cannot tell the
+views apart: the handle also shows in unposed views, floating at the posed position (lint:
+`handle-source-unread`). Keep one name for each limb, or declare `views`.
+
 A posed limb is also a point source: its `handleInfo()` gives its joints and `tip` as
 points, each hinge's axis, and the bone chain. So the geometric drags of any handle
 (`"point"`, `"axis"`, `"plane"`, `"rotary"`) work on a limb point too, for example

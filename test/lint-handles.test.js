@@ -364,3 +364,48 @@ test("handle-limb-per-joint: the limb reference parts lint clean", async () => {
     expect([...r.errors, ...r.warnings].filter((x) => x.rule === "handle-limb-per-joint")).toEqual([]);
   }
 });
+
+// Feedback #227: placements read the limb through an alias (d.poses.finger), the handle names
+// another key for it (on: "finger"), so handle-views' source test stands aside and the handle
+// shows, at the posed position, in a view that draws the part unposed.
+const aliasPart = ({ handle = {}, place = (s, p, d) => d.poses.finger.place(s, "pip", { from: "rest" }), views = { flat: { label: "Flat" }, posed: { label: "Posed", default: true } } } = {}) => ({
+  meta: { title: "T" },
+  defaults: { mcp: 10, pip: 20 },
+  parameters: [{ id: "s", title: "S", controls: [{ key: "mcp", label: "M", min: 0, max: 90, step: 1 }, { key: "pip", label: "P", min: 0, max: 90, step: 1 }] }],
+  derive: (p) => { const finger = mkLimb(p); return { finger, poses: { finger }, size: 5 }; },
+  parts: {
+    link: {
+      views: { flat: true, ...("posed" in views ? { posed: place } : {}) },
+      build: (k, p, d) => k.box({ size: [d.size, 1, 1] }),
+    },
+  },
+  views,
+  handles: { finger: { on: "finger", drag: "angles", params: ["mcp", "pip"], ...handle } },
+});
+const unreadFindings = (part) => { const r = lintPart(part); return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule === "handle-source-unread"); };
+
+test("handle-source-unread (warning): no view reads the handle's source, and it shows in two or more views", () => {
+  const fs = unreadFindings(aliasPart());
+  expect(rulesOf(fs)).toEqual(["handle-source-unread"]);
+  expect(fs[0].severity).toBe("warning");
+  expect(fs[0].path).toBe("handles");
+  expect(fs[0].message).toMatch(/"finger"/);
+  expect(fs[0].message).toMatch(/"flat", "posed"/);
+  expect(fs[0].hint).toMatch(/views: \[/);
+});
+
+test("handle-source-unread: each of its fixes clears it", () => {
+  expect(unreadFindings(aliasPart({ handle: { views: ["posed"] } }))).toEqual([]);
+  expect(unreadFindings(aliasPart({ place: (s, p, d) => d.finger.place(s, "pip", { from: "rest" }) }))).toEqual([]);
+});
+
+test("handle-source-unread: a single-view part has nowhere else to show, so it stays quiet", () => {
+  expect(unreadFindings(aliasPart({ views: { flat: { label: "Flat" } } }))).toEqual([]);
+});
+
+test("handle-source-unread: the reference parts with handles lint clean", async () => {
+  for (const name of ["hand", "robot-arm", "gearbox", "drawer-box"]) {
+    const part = (await import(`../src/parts/${name}.js`)).default;
+    expect(unreadFindings(part)).toEqual([]);
+  }
+});
