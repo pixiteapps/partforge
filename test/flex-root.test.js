@@ -103,6 +103,48 @@ describe("flexRoot: the reading", () => {
   });
 });
 
+// Agent-filed feedback #223: three congruent arms, rotated about Z and rounded by one
+// fillet call, read as a clean root, a "sharp root (179°)" and "never meets the rest of
+// the part" on the same build. Off the axes a fillet leaves needles narrower than
+// float32 can place: their normals are noise, and one pinched flat stacks extra
+// triangles on its edge. Which arm gets them is rounding, so a sweep finds them.
+describe("flexRoot: arms off the axes", () => {
+  const T = 1.8, RF = 0.9;
+  const ring = (k, angles, round) => {
+    const s = k.union([
+      k.cylinder({ r: 25, h: 3, center: false }).label("Plate"),
+      ...angles.map((a, i) => k.box({ min: [15 - T / 2, -3, 2], max: [15 + T / 2, 3, 18] }).rotateZ(a).label(`Arm${i}`)),
+    ]);
+    return round ? s.fillet({ r: RF, edges: { inPlane: "XY", at: 3 } }) : s;
+  };
+  const anglesFrom = (a) => [a, a + 120, a + 240];
+  // The rotations whose builds the old reading got wrong, among others.
+  const START = [0, 9, 10, 17, 30, 45, 57, 66, 81, 99];
+
+  it.each(START)("rotated from %d°, every filleted arm reads the fillet", (a0) => {
+    const m = mesh((k) => ring(k, anglesFrom(a0), true));
+    for (const i of [0, 1, 2]) {
+      const r = flexRoot(m, [`Arm${i}`]);
+      expect(r.attached).toBe(true);
+      expect(r.sharpLength).toBe(0);
+      expect(r.rootRadius).toBeGreaterThan(0.8 * RF);
+      expect(r.rootRadius).toBeLessThan(1.2 * RF);
+      expect(r.thickness).toBeCloseTo(T, 1);
+    }
+  });
+
+  it.each(START)("rotated from %d°, a square root still reads sharp on every arm", (a0) => {
+    const m = mesh((k) => ring(k, anglesFrom(a0), false));
+    for (const i of [0, 1, 2]) {
+      const r = flexRoot(m, [`Arm${i}`]);
+      expect(r.attached).toBe(true);
+      expect(r.rootRadius).toBe(0);
+      expect(r.sharpLength).toBeCloseTo(2 * (T + 6), 1);
+      expect(r.maxTurn).toBeCloseTo(90, 0);
+    }
+  });
+});
+
 describe("verify.flex: the gate", () => {
   test("a sharp root fails verify, under any process or none", () => {
     for (const process of [undefined, "fdm-pla", "resin"]) {
