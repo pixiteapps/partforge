@@ -1,17 +1,14 @@
 import { buildView } from "./build.js";
 import { cachedBVH, disposeBVHs } from "./bvh.js";
 
-// A measured pair distance at or below this (mm) counts as touching — absorbs
-// posing float error while staying far below any real print clearance.
-export const CONTACT_EPS = 1e-3;
+// CONTACT_EPS and pairKey live in the import-free collide/pairs.js leaf (lint and the
+// collision check share them); re-exported so every existing importer keeps working.
+export { CONTACT_EPS, pairKey } from "../collide/pairs.js";
+import { CONTACT_EPS } from "../collide/pairs.js";
 
 // Default near-miss threshold (mm): pairs closer than this without touching are
 // the "did you mean these to touch?" signal.
 export const GAP_THRESHOLD = 0.5;
-
-// Canonical order-insensitive pair identity — the one rule for "the same pair"
-// shared by measure's overlap exclusion and verify's declared-pair matching.
-export const pairKey = (a, b) => [a, b].sort().join("×");
 
 // Minimum surface-to-surface distance for every sub-part pair of pre-built posed
 // meshes ([{ name, mesh }] — buildView output). Distance 0 = touching or

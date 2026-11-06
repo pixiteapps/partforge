@@ -114,7 +114,9 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
       lights: keyLight ? [keyLight] : [],
       shadow,
       updateForCamera(camera) { bed.updateForCamera(camera); },
-      setGround({ y, centerX = 0, centerZ = 0, radius, footprintMm = radius }) {
+      // `shadowRadius` (default `radius`) sizes the contact-shadow plane alone: a
+      // held floor's shadow grows to cover a reaching pose while the bed stays put.
+      setGround({ y, centerX = 0, centerZ = 0, radius, footprintMm = radius, shadowRadius = radius }) {
         bed.place({ y, centerX, centerZ, footprintMm });
         if (keyLight) {
           const p = bed.object.position; // the fixed offset off the bed's origin
@@ -122,8 +124,8 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
         }
         shadow.group.position.set(centerX, y, centerZ);
         // The shadow plane never hangs past the plate's edge into thin air.
-        const s = Math.min(Math.max(radius * 3, 20), bed.sizeMm);
-        shadow.setSize(s, Math.max(radius * 4, 20));
+        const s = Math.min(Math.max(shadowRadius * 3, 20), bed.sizeMm);
+        shadow.setSize(s, Math.max(shadowRadius * 4, 20));
       },
       dispose() {
         envMap.dispose(); hdr.dispose(); tex.dispose(); rough?.dispose(); normal?.dispose();
@@ -136,7 +138,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
   const ground = new THREE.Mesh(discGeo, groundMaterial(tex, rough, normal, env.ground));
   ground.renderOrder = -1;
 
-  function setGround({ y, centerX = 0, centerZ = 0, radius }) {
+  function setGround({ y, centerX = 0, centerZ = 0, radius, shadowRadius = radius }) {
     const r = Math.max(radius * GROUND_RADIUS_FACTOR, env.ground.sizeMm / 2);
     ground.position.set(centerX, y - 0.01, centerZ);
     ground.scale.setScalar(r * 2);
@@ -146,7 +148,7 @@ export async function loadEnvironmentRig(renderer, requestedId, { loadHdr, loadT
     if (rough) rough.repeat.set(repeat, repeat);
     if (normal) normal.repeat.set(repeat, repeat);
     shadow.group.position.set(centerX, y, centerZ);
-    shadow.setSize(Math.max(radius * 3, 20), Math.max(radius * 4, 20));
+    shadow.setSize(Math.max(shadowRadius * 3, 20), Math.max(shadowRadius * 4, 20));
   }
 
   return {

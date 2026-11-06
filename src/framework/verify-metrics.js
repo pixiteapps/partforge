@@ -69,7 +69,7 @@ export function sidesSpecError(metric, reg, spec) {
 
 // The flexing-member readings (oracle/flex-root.js, `verify.flex`): what each failure
 // means and what fixes it.
-export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part through too small a root fillet, or none — bending concentrates the stress at that corner and the member snaps off at its root. Round the root to at least the process's share of the member's thickness (half, on every built-in profile): `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner in the 2-D profile both share, and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
+export const FLEX_ROOT_HINT = "a part that flexes (a snap arm, buckle prong, clip or cantilever tab) meets the rest of the part through too small a root fillet, or none — bending concentrates the stress at that corner and the member snaps off at its root. Round the root to at least the process's share of the member's thickness (half, on every built-in profile): `s.fillet({ r, edges: { near: [x, y, z] } })` on the joined solid, or a filleted corner drawn into a 2-D profile, split so the member is its own labelled solid (one extrude carries one label, and a member labelled with its body has no root to read), and keep that fillet clear of whatever the member slides into. A grip rib or barb on the member is part of it: list its label with the member's, `flex: [[\"Arm\", \"Arm rib\"]]`";
 export const FLEX_STRAIN_HINT = "at its declared deflection this member's root strain (1.5 × thickness × deflection / length², a straight cantilever) is over what the material takes for a one-time snap — it yields or cracks at the root. Lengthen the member, thin it, or reduce its travel (a shallower undercut, a lead-in that spreads the snap over more of the stroke); a member tapered to half its thickness at the tip bends ~60% further at the same root strain. If the mesh misreads its bending thickness, declare it: `flex: [{ feature, deflection, thickness }]`";
 export const FLEX_TILT_HINT = "this member's long axis stands up off the bed in the print pose, so its layers stack across its root — and a layer bond is a fraction of the in-plane strength, so it snaps along a layer line. Lay the member flat: pose the piece in `place(..., { purpose: \"export\" })` so the arm lies along the bed (its root corner then sits in one layer), or split the part so the arm prints flat; a standing arm the user keeps is a cost (`accept: [\"standing\"]`) — use PETG or anneal, and round the root generously";
 // The flexing member a sub-part's row answers for: the one whose root is worst (least
@@ -252,6 +252,18 @@ export const SUBPART_METRICS = withDomainMetrics({
   refBboxDelta: { kind: "gate", form: "vector", extract: (s) => s.deviation?.bboxDelta ?? null,
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
 });
+// A sweep row that found a contact: a finished one that is not clear, or one the deadline
+// stopped after it found one.
+const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && s.contacts?.length > 0);
+// A row that answered: it ran (a no-motion animation has nothing to run, so it answers
+// clear), or it stopped with a contact in hand.
+const sweepRan = (s) => !s.skipped || s.skipped === "no-motion" || sweepHit(s);
+function sweepContacts(r) {
+  if (!r.sweeps) return null;
+  if (r.sweeps.length && !r.sweeps.some(sweepRan)) return null;
+  return r.sweeps.filter(sweepHit).length;
+}
+
 export const VIEW_METRICS = {
   bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,
     hint: "the assembled view exceeds its size limit — shrink the assembly or pick a process with a larger bed" },
@@ -260,6 +272,24 @@ export const VIEW_METRICS = {
   overlaps: { kind: "gate", extract: (r) => r.overlaps.length,
     hint: "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
     locate: (r) => r.overlaps[0]?.location ?? null },
+  // The declared motions (verify.sweeps, oracle/sweep.js) that met another sub-part. A row
+  // that ran counts when it found a contact, and so does one the deadline stopped AFTER it
+  // found one (that contact is real); a stopped or unreadable row with none is verify's
+  // volunteered `sweeps` warning instead. When every row stopped short so none ran, there
+  // is no reading and the gate is withheld (`withheld`), never a 0; `[]` (no declared sweep
+  // moves anything in this view) reads 0. No `sweeps` key (none declared, or a measurement
+  // taken with `sweeps: false`, as verify's other cases are) is a plain skip.
+  sweepContacts: { kind: "gate", extract: sweepContacts,
+    withheld: (r) => (r.sweeps?.length && sweepContacts(r) === null
+      ? "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked" : null),
+    withheldHint: "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names",
+    hint: "a declared motion comes closer than its clearance to another sub-part — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
+    skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
+    pattern: "sweep-contacts",
+    locate: (r) => {
+      const row = r.sweeps?.find(sweepHit);
+      return row ? row.contacts[0]?.at ?? row.minClearance?.at ?? null : null;
+    } },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
   bounds: boundsMetric((r) => r.aggregate.bounds,

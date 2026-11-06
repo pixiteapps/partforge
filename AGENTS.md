@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-two: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-seven: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -48,7 +48,26 @@ demo page), `robot-finger.js` (the kinematics reference part - three printed
 links on pin joints, posed by one `limb` from `partforge/kinematics` in
 `derive` and placed with `d.finger.place`, a `curl` animation that never
 rebuilds; the worked example of `docs/domains/kinematics.md`, with no demo
-page), and `material-swatches.js` (not a reference part: the dev-only
+page), `robot-arm.js` (the inverse-kinematics reference part - a 6-axis arm and
+gripper posed by a tool GOAL: `toolX/Y/Z` + pitch/yaw/roll solved in `derive` by
+`limb.pose({ goals })`, warm-started from six seed joint params; a goal-mode `tool`
+handle for Pose mode and a `tool` probe reporting reached / missed by how much;
+`robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
+IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
+fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
+it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
+spread/oppose params and six `{ type: "preset" }` shapes, one
+lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI); rigid pin-jointed pieces placed by matrix, the
+print view a flat kit the pose never reaches; `hand.html`, checked by
+`scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
+is the fixture that script drags), `gearbox.js` (the rotary-handle reference part and the
+worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
+`gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
+crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
+rebuilds, swept for contact and gated, its meshing and bearing pairs in `collisions.allow`; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
+corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
+drawer, which only re-places it - each opening a percentage of its `depth - 10` travel, so
+no value of it is dead, and each drawer's handle swept and gated; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -70,6 +89,7 @@ npx vitest run test/measure.test.js          # a single test file
 npx vitest run -t "assembly has no interpenetrating"   # a single test by name
 npm run check      # headless smoke test: boots an app in real Chromium (needs Playwright)
 node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
+npm run bench:pose                           # posing frame times in real Chromium (robot-arm.html, hand.html; --preview for a production build)
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
 node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
 ```
@@ -79,6 +99,7 @@ The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
 ```bash
 npx partforge lint    src/parts/<part>.js          # static checks, no kernel boot; exits non-zero on errors
 npx partforge measure src/parts/<part>.js [view]   # bbox/volume/holes/watertight + verify gate; exits non-zero on failure
+npx partforge measure src/parts/<part>.js [view] --drag <handle> (--to x,y,z | --turn deg)  # play a handle drag (derive only, no kernel)
 npx partforge render  src/parts/<part>.js [view]   # canonical-angle PNGs -> render/
 npx partforge pick-serve                           # request-a-pick: agent asks user to click geometry
 npx partforge ingest   <file> --out <output-file>  # SVG -> partforge-vector JSON, PNG pass-through, font validation - no browser
@@ -319,7 +340,10 @@ the installed package, so let the publish finish before bumping the dep there.
   glTF channels plus a `partforgeAnimation` extra: `mountPreview` plays it through
   `preview-player.js` unless `animate: false`, `mount({ preview })` draws its
   opening pose and never plays it, and `exportPreview` bakes it only when every
-  track is place-only. Since 0.159.0 a playing preview gets a play/pause/replay
+  track is place-only. A tracked key in a sub-part's build reads is not a refusal
+  by itself, since a one-function `derive` over-reports reads: since encoder 5 /
+  0.183.0 the build probe decides, and only a build whose geometry changes, or that
+  it cannot trust, keeps the file still. Since 0.159.0 a playing preview gets a play/pause/replay
   button in `#viewbar` beside `#view-style` (`preview-play-button.js`, driven by
   the player's `onChange`; none under reduced motion or without a `#viewbar`),
   and `handle.animation` gains `replay()`. Since 0.168.0 `mountPreview` takes
@@ -619,9 +643,11 @@ the installed package, so let the publish finish before bumping the dep there.
   worker-safe; a domain never imports another domain. A manifest's `lintRules` may
   import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
   registry at module top level, so a rule reaching `rules-verify.js` would hit the
-  registry before it exists. `DOMAINS` lists one domain, kinematics
-  (`domains/kinematics/`, `partforge/kinematics`), which tags no kernel op and
-  declares no facts, so the registry's other seams are exercised by the test-only
+  registry before it exists. `DOMAINS` lists two domains, kinematics
+  (`domains/kinematics/`, `partforge/kinematics`) and mechanisms
+  (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
+  crank-sliders as derive-time point sources that also place sub-parts). Neither
+  tags a kernel op or declares facts, so the registry's other seams are exercised by the test-only
   fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
   `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
   `partforge/lint` exports the registry as names only (`DOMAINS`) and
@@ -630,6 +656,159 @@ the installed package, so let the publish finish before bumping the dep there.
   tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
   text, vector, image, import and organic are NOT domains yet; they migrate one
   design at a time.
+- **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
+  outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
+  `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics
+  goals solver (`domains/kinematics/goals.js`) and Pose mode (`pose/param-solve.js`).
+  `pose/` is Pose mode: drag handles declared in `part.handles` and the parameters
+  follow. `param-solve.js` (handle -> param values, reading a limb's plain-data
+  `ikInfo()` only - never `instanceof`, the cloud's worker holds two copies) and
+  `pose-session.js` (the drag state machine and pins, effects injected) are pure;
+  `pose-geom.js` is its pure geometry leaf, `pose-scene.js` the three.js overlay,
+  `pose-mode.js` the orchestrator, `pose-collide.js` mount's collision half (idle-time
+  indexes over the viewer's delivery-frame meshes, each drag's guard placed by the pose
+  ladder's `matricesAt`, the blocked pair's tint; the world module loads lazily, and
+  `collide/guard.js`'s settle stops a piece at contact and slides it, `COLLIDE_SLIDE`),
+  `pose-controls.js` the viewbar's Release pins
+  action, `aim-gizmo.js` the ball-and-rings widget on a goal handle with `aim` and the
+  joint rings (`createJointGizmo`: one ring per rotation of a hovered joint whose
+  parameter a goal handle's `seed` or an angles handle's `joints` names — a ring drag is
+  forward kinematics, `session.jointFrame`; in goal mode param-solve's `jointRingValues`
+  also moves the goal onto the turned pose, through the limb's `ikForward` and
+  `solve/aim.js`'s `anglesFromAim`, so the next solve keeps it). One gizmo shows at a
+  time (pose-mode's `focus`). That widget is built on **`src/framework/gizmo/`**, the cutaway control's handle code
+  shared: `gizmo-handles.js` (palette, materials, normal/hovered geometry pairs, the
+  hover rule), `gizmo-pick.js` (proxy-vs-centre picking) and `gizmo-rotate.js` (the
+  ring drag: plane route, edge-on screen fallback). Change a shared look there and both
+  widgets move. Posing has NO toggle: it is live in the normal click mode whenever measure,
+  sketch, cutaway and a cached preview are all off (mount's `setSuppressed`); a press on
+  a handle claims its click (`takeClick`, the picker's guard) and a hovered dot hides the
+  hover tooltip (`claimsHover`). **Generic handles** (spec
+  `docs/superpowers/specs/2026-11-02-generic-handles-design.md`): a `part.handles` entry
+  is `on` (+ `at`) a point source in `derive` (anything with plain-data `handleInfo()`:
+  a posed limb, a mechanisms helper) or a `point(p, d)` function, with `drag` one of
+  point / axis / plane / rotary (or goal / angles on a limb) and the `params` it writes.
+  `pose/handle-source.js` is the pure source layer (`handleKind`, `locateHandle`,
+  `handleAxis` - an axis or rotary drag with no own direction takes the source's
+  `axes[<prefix of at>]` - and `handleRecord`, the pseudo-limb Pose mode draws),
+  `pose/drag-kinds.js` the pure geometric solvers per kind, `pose/handle-guides.js` the
+  guides (square, ring, travel path) drawn while the dot is hovered or dragged. An `axis`
+  handle has no dot and no guide: pose-scene draws it as a two-sided arrow along its axis
+  (`gizmo/gizmo-handles.js`'s `arrowGeometryPairs`/`arrowMeshes`, the cutaway's arrow with a
+  head at each end, `ARROW_UNIT_PX` per unit), and pose-mode picks it through its hit proxy
+  (`arrowHitGeometry` via `gizmo-pick.js`), so a press anywhere on it starts the drag.
+  A handle shows near its point or over its `showOn` sub-part (near a limb's bones for
+  goal / angles), all hidden at rest. Handles are VIEW-SPECIFIC (`pose/handle-views.js`,
+  `handlesShownInView`, the one rule mount's `syncPoseVisible`, `oracle/handles.js` and
+  lint's `handle-crowded` share): a handle's declared `views` (lint `handle-unknown-view`),
+  else relevance AND a drawn source - some in-view sub-part's build or placement reads
+  the `d` key its point sits on (a geometry-free probe, cached per view in mount), skipped
+  when no view reads it. Relevance alone showed a hand's handles in its print kit at the
+  assembly pose: a one-function derive attributes any derived read to every input. A view
+  switch calls pose-mode's `viewChanged()` (drops hover, focus, cursor and claim) and hides
+  the readout chip. Mount applies the session's effects: it holds
+  regen jobs during a drag - except for a cheap part (last build under `LIVE_REBUILD_MS`,
+  120 ms), whose stale sub-parts keep rebuilding live as TRANSIENT cycles
+  (`cycleTransient`: drawn and un-ghosted, no `onBuild`/status/busy/export change, even
+  `progress` is ignored); what they drew goes in the `owed` set, and `isSettled` (current
+  and not owed) - not `isCurrent` - gates export, the floor and `refreshView`, so the
+  release sends exactly one real build. `oracle/handles.js` (`handlesReport`) lists the
+  handles Pose mode would show for `measure().handles` / `report.measure.handles`, which
+  the CLI prints; it never fails on a bad handle. Mount also ghosts the
+  sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
+  shows its new mesh (playback-stale deliveries included), commits once on release
+  (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
+  every effect a no-op once dispose starts (pose mode detaches late, LIFO). Once per mount, the
+  first live frame with the part on screen starts the RESTING CUE (pose-mode's `tickCue`: every
+  shown handle's dot - an axis handle's arrow - dimmed, `CUE_OPACITY` for `CUE_HOLD_MS`, faded over `CUE_FADE_MS`, drawn by
+  pose-scene's `setCue` in its capture-hidden group; on `(hover: none)` it stays until the first
+  drag). A released drag fires `onDragEnd` (`pose-session`'s `end()` reports `changed`, `moved`,
+  `held` - a pin held it only when the last target, re-solved with no holds, would have
+  moved a value). While any handle drags - a generic one, or a limb's dot, joint ring or aim
+  ring - pose-mode's `onReadout` feeds `drag-readout.js`,
+  which shows its values in the viewbar's readout slot (`viewbar-clear.js`'s
+  `createViewbarReadout`, the `.pf-viewbar-readout` pill measure's X/Y/Z parts also use — the
+  view cube clears it through `--pf-viewbar-clear`, and on a narrow stage the transport bar
+  sits at that clearance + 8px). A limb drag reads its handle's `readout`, else its params (a
+  goal's position then aim; handle-guides' `readoutKeys`), a ring only its own parameter, and
+  an out-of-reach drag adds "Out of reach" in mm last; the scene draws no text (the miss is
+  only the hollow target and dashed line). Both show exactly when pose-geom's `reachMissed`
+  says so — a miss past 0.5 mm and 4 px on screen — so a drag lagging the pointer shows neither. On release
+  `readout-chip.js` (DOM, attached by mount like `pose-controls.js`) shows a generic
+  handle's readout by it for `CHIP_MS` — click to type, written through mount's
+  `writeChipValues` (the slider path, one commit; `handle-guides`'s `chipValues` snaps, clamps
+  and keeps a wrapped param's turn) — or `PIN_HINT` for `HINT_MS` when a pin held the drag.
+  Lint requires `drag` on every handle (`handle-bad-drag`; the runtime still defaults it to
+  "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
+  `handle-crowded` warns past 5 non-`showOn` handles in a view (a `group` counting once).
+  `handle-source-unread` warns when a handle with no `views` shows in two or more views and
+  no view reads its source: the view rule's source test has stood aside, usually over an
+  alias (`on: "indexLimb"`, placements reading `d.poses.index`; feedback #227 in cloud).
+  A handle `group` (`pose/handle-groups.js`, pure) shows one member at a time: of the
+  members that would show under the pointer, only the one nearest it — by the nearest dot
+  or arrow it offers (a limb's knuckles count, not just its tip), else its bones — shows
+  and can be pressed (pose-mode's `groupSkip`); the resting cue marks each group's
+  first-declared shown handle; lint `handle-bad-group`; `measure().handles` carries `group`.
+  An angles drag is bounded by each joint its `joints` map drives (param-solve's
+  `jointBounds`: `range / scale`, a ball's cone) as well as by the slider, so it stops at
+  the joint's limit instead of sticking past it; a slider parked past its joint keeps its
+  value until the solve moves it, and a ball's bend and spread are written scaled onto the
+  cone as the limb poses them (joint limits are cached per handle object, assuming a limb's
+  ranges do not depend on params); lint `handle-joint-range` warns when a
+  slider reaches past its joint. A goal handle's non-follower joints that a driven joint above can move
+  (`goalGrabJoints`) are grabs too: `solveGoalPinned({ grab })` turns the seed joints so
+  that joint follows the pointer and rewrites the goal at the new tool frame.
+  `oracle/drag.js`'s `dragHandle` (`partforge/oracle`; `partforge measure --drag`) plays a
+  drag in Node through the same `defaultSolve`, derive only, and reports what it writes.
+  **`src/framework/derive-memo.js`** (`withDeriveMemo`) memoizes `resolveDerived` by
+  params content inside a scope (a pose drag frame, a pose overlay refresh, mount's
+  `onParamChange`), so one frame derives each distinct params once. It relies on
+  `derive` being pure and on every reader treating `d` as read-only (readers in a scope
+  share one `d`); a derive that writes its params or throws is never stored. Internal:
+  not part of `partforge/derive`.
+- **`src/framework/collide/`** + **`pose/pose-collide.js`** + **`oracle/sweep.js`** -
+  collisions (spec `docs/superpowers/specs/2026-11-02-collisions-design.md`; guide
+  "Collisions and sweeps"): a part's `collisions: { clearance, allow, pose }` keeps pieces
+  solid in Pose mode, and `verify.sweeps` steps declared motions (a param, a handle's
+  params one at a time, a preset/waypoint path, an animation) for contact, reported as
+  `measure().sweeps` (the CLI's `sweeps:` line, `CLI_SWEEP_BUDGET_MS` 60 s, overridable by
+  `PARTFORGE_SWEEP_BUDGET_MS`, which the verify golden sets to Infinity) and gated by the
+  `sweepContacts` view metric. The LEAVES are BVH-free, so lint and the worker's eager
+  closure may load them: `pairs.js` (`pairKey`, `CONTACT_EPS`; `oracle/gaps.js` re-exports
+  both), `declaration.js` (`normalizeCollisions`), `motion.js` (rigid-matrix helpers),
+  `place.js` (a sub-part's `place()` as a matrix, `poseMatrices`) and `sweep-targets.js`
+  (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
+  through it alone). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
+  frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
+  guard: `settle`, sub-stepped to `SETTLE_STEP_MM` of travel, at most `MAX_SUBSTEPS`, bisecting
+  back to contact), `exemptions.js` (the pairs a drag may leave touching: one inside clearance
+  at its start, with `snapshot`/`restore` for a walk that gets discarded) and `part-guard.js` (a guard over a part's own params). `pose-collide.js`
+  is mount's half: idle-time indexing over the viewer's meshes, a guard per drag, the
+  contact tint. `oracle/sweep.js` is the engine: rigid motion by matrix with conservative
+  advancement between samples (a screw-motion assumption), a rebuild path on
+  `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
+  comes out of the inspect's `REPORT_SHARE_MS`, after change tracking has finished with it
+  (measure's `beforeSweeps` hook). Invariants: `place.js` and `sweep-targets.js`
+  never reach the BVH (`test/worker-layering.test.js`);
+  `settle` is the hard guarantee - whatever the solve returns, a frame never moves a
+  blocked pair from clear to inside, and a pair inside at drag start can move out, never
+  in; output never depends on the native core (the world builds JS BVHs through the public
+  `buildBVH`). Pose mode ships stop-and-slide: `settle` stops at contact, then
+  (`COLLIDE_SLIDE`) reads the contacts once and projects the rest of the step off them, onto
+  gap >= `SLIDE_SKIN_MM` (0.05) in step-relative units, gradients by finite differences on
+  placements alone, and walks it (`SLIDE_ROUNDS` 2; `SLIDE_BISECTIONS` 6 on a sliding
+  settle, since a gap check is most of a blocked frame). The settle returns each contact's
+  world normal, facing the side that moved more; pose-session keeps them and slides a limb
+  drag's target along them before the next solve (`tangentTarget`), dropping a normal once the
+  pointer pulls away from it - so the solve aims along the surface, not into it. A pinned drag slides too, but settle's
+  `pinDrift` option (pose-session hands it one while pins are set) undoes a slide that moves a
+  pinned point past `PIN_SLIDE_MM` (0.5) and re-walks the frame stop-dead, still reporting the
+  normals, since the projection does not hold pins. Settle is transactional: an undone slide's
+  exemption changes are rolled back first, so the re-walk sees the ones the frame began with. There are no contact rows inside the solver: they were built, gated off by the
+  bench, and deleted once a comparison through the session showed settle's slide matching or
+  beating them (`docs/research/collisions-structure-review.md`). A drag held at contact reads "Stopped at <piece>" in the live readout (never "Out
+  of reach") and on the release chip. A sweep exempts no pair, so its `clearance` must sit
+  below every start gap it moves (a pin's) - lint, geometry-free, cannot check it.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded

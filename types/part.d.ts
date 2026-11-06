@@ -97,6 +97,12 @@ export interface PanelControlEntry {
   /** slider: [lo, hi] band drawn on the track; outside it the value box takes a warning tint. */
   recommended?: [number, number];
   /**
+   * slider / number: the value turns without end. It is stored unreduced (720 after two
+   * turns); only the slider shows it reduced into [min, max). Requires finite `min < max`;
+   * the range no longer bounds the value, a default or an animation keyframe.
+   */
+  wrap?: boolean;
+  /**
    * custom: the widget function. Called once per mount with a host object
    * (see `CustomControlHost` in index.d.ts); draws into `host.el`. The key
    * this control owns may hold a JSON value (arrays and plain objects of
@@ -658,6 +664,12 @@ export interface ViewExpectations {
   bbox?: Expectation;
   volume?: Expectation;
   overlaps?: Expectation;
+  /**
+   * Declared sweeps (`verify.sweeps`) that came closer than their clearance to another
+   * sub-part — usually `0`. A gate; only sweeps that ran count (one the time budget
+   * stopped is a warning instead).
+   */
+  sweepContacts?: Expectation;
   centerOfMass?: Expectation;
   /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
   bounds?: BoundsExpectation;
@@ -681,6 +693,26 @@ export interface ExpectMap {
   _view?: ViewExpectations;
   [subPart: string]: SubPartExpectations | ViewExpectations | undefined;
 }
+
+/** What every sweep may carry. */
+export interface SweepCommon {
+  /** mm: closer than this counts as contact (default `collisions.clearance`). */
+  clearance?: number;
+  /** The views it runs in (default: every view where its target moves something). */
+  views?: string[];
+}
+/**
+ * One declared motion: a param over its range (or `range`), a handle (one sweep per param
+ * it lists; a goal handle is never swept), a path between two presets or through
+ * waypoints, or an animation's timeline.
+ */
+export type SweepSpec = SweepCommon & (
+  | { param: string; range?: [number, number] }
+  | { handle: string; range?: [number, number] }
+  | { from: string; to: string }
+  | { path: Array<Record<string, unknown>> }
+  | { animation: string }
+);
 
 export interface VerifyBlock<P = ResolvedParams, D = Derived> {
   /** A named DFM profile or an inline one. */
@@ -709,6 +741,11 @@ export interface VerifyBlock<P = ResolvedParams, D = Derived> {
    * the body it grows from.
    */
   flex?: (string | string[] | { feature: string; labels?: string[]; deflection?: number; thickness?: number })[];
+  /**
+   * Motions to step end to end for contact, by name; `measure` reports each as a sweep
+   * row and `_view: { sweepContacts: 0 }` gates them. Each names one target.
+   */
+  sweeps?: Record<string, SweepSpec>;
   /** Which cases to check; default is `"defaults"` plus every preset name. */
   cases?: string[];
   /**
@@ -908,4 +945,148 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
    * exported. Each entry returns either a solid to measure or plain JSON.
    */
   probes?: Record<string, (k: GeometryKernel, p: P, d: D) => unknown>;
+  /**
+   * Draggable points (Pose mode). Each sits `on` a point source `derive` returned (a value
+   * with `handleInfo()`, a posed limb from `partforge/kinematics` included) or at a
+   * `point` function, and moves by its `drag`. Parameters named here must be numeric keys
+   * of `defaults`.
+   */
+  handles?: Record<string, Handle>;
+  /**
+   * Collision rules: how close counts as touching (`clearance`, mm), which sub-part pairs
+   * may touch (`allow`, entries `"a×b"` naming two sub-parts), and whether Pose mode keeps
+   * pieces solid (`pose`, default true).
+   */
+  collisions?: CollisionsBlock;
+}
+
+export interface CollisionsBlock {
+  clearance?: number;
+  allow?: string[];
+  pose?: boolean;
+}
+
+/**
+ * A draggable point, discriminated on `drag`. "goal" and "angles" pose a limb (`on` names a
+ * posed limb); "point" (the default), "axis", "plane" and "rotary" move any point source's
+ * point, a limb's joints and tip included, or a `point` function's.
+ */
+export type Handle = GoalHandle | AnglesHandle | PointHandle | AxisHandle | PlaneHandle | RotaryHandle;
+/** What every handle may carry. */
+export interface HandleCommon {
+  /** A parameter name; while truthy the handle's parameters stay out of a drag. */
+  lock?: string;
+  /** A short name for the readout and agents (default: the handle's key). */
+  label?: string;
+  /** Sub-part name(s) whose hover reveals the handle. */
+  showOn?: string | string[];
+  /** Handles sharing a group show one at a time: the one whose nearest dot (or arrow) is nearest the pointer. */
+  group?: string;
+  /**
+   * The views the handle shows in (keys of `views`). Default: every view that reads one of
+   * its parameters and draws its source (a sub-part there reads the `d` value it sits on).
+   */
+  views?: string | string[];
+  /** Parameters shown in the drag readout (default: `params`). */
+  readout?: string[];
+}
+/** Drag a point on a posed limb; the part's derive solves the limb to reach it. */
+export interface GoalHandle extends HandleCommon {
+  /** Key of the posed limb in `derive`'s output. */
+  on: string;
+  /** A joint name, or "tip" (the default). */
+  at?: string;
+  drag: "goal";
+  params: {
+    /** The three parameters (x, y, z) the handle writes. */
+    position: [string, string, string];
+    /**
+     * Optional aim: two parameters (pitch, yaw) or three (pitch, yaw, roll), all in
+     * degrees, in the `aimFromAngles` convention. Needs `toward`.
+     */
+    aim?: [string, string] | [string, string, string];
+  };
+  /**
+   * With `aim`: the direction zero pitch and yaw point — the `toward` the part passes
+   * `aimFromAngles`. Pose mode's rotate rings turn about axes built from it and the aim
+   * parameters' values, so they agree with the part at any pitch, ±90 included.
+   */
+  toward?: [number, number, number];
+  /**
+   * Parameters used to seed the solve: the driven joints' values in limb order (followers
+   * skipped, a ball joint taking three: bend, spread, twist). Each seeded joint also gets a
+   * rotate ring in Pose mode: turning it turns that joint alone and moves the goal to the
+   * pose it makes, so the solve keeps it.
+   */
+  seed?: string[];
+}
+/**
+ * One `AnglesHandle.joints` entry: the parameter that drives a hinge in degrees, `{ param,
+ * scale }` when the joint turns `scale` × the parameter, or a ball's `{ bend?, spread?, twist? }`.
+ */
+export type HandleJoint = string | { param: string; scale?: number } | { bend?: string; spread?: string; twist?: string };
+/** A geometric handle field: a value, or a pure function of the resolved params and `derive`'s result. */
+export type HandleGeom<T, P = Record<string, any>, D = any> = T | ((p: P, d: D) => T);
+/**
+ * Where a geometric handle sits: a point of a source `derive` returned (`on` + `at`; the
+ * source answers `handleInfo()`, a posed limb included), or one the part computes
+ * (`point`). Exactly one of `on` and `point`.
+ */
+export type HandleSource =
+  | {
+      /** Key of a point source in `derive`'s output. */
+      on: string;
+      /** A key of the source's `points`. */
+      at: string;
+      point?: never;
+    }
+  | {
+      /** The point, in part coordinates. */
+      point: (p: any, d: any) => [number, number, number];
+      on?: never;
+      at?: never;
+    };
+/** What a geometric (non-limb) handle carries besides its source and drag. */
+export interface GeomHandleCommon extends HandleCommon {
+  /** Numeric parameters the drag may write. */
+  params: string[];
+}
+/**
+ * Free 3D: the target moves on a plane fixed at drag start. Every handle sets `drag` (lint's
+ * `handle-bad-drag`); Pose mode still reads a missing one as `"point"`.
+ */
+export type PointHandle = HandleSource & GeomHandleCommon & { drag: "point" };
+/** The target slides along a line through the point. */
+export type AxisHandle = HandleSource & GeomHandleCommon & {
+  drag: "axis";
+  /** The direction the point slides along. */
+  direction: HandleGeom<[number, number, number]>;
+};
+/** The target moves on the plane through the point. */
+export type PlaneHandle = HandleSource & GeomHandleCommon & {
+  drag: "plane";
+  /** The plane's normal. */
+  normal: HandleGeom<[number, number, number]>;
+};
+/** The target turns about an axis. */
+export type RotaryHandle = HandleSource & GeomHandleCommon & {
+  drag: "rotary";
+  /** The axis turned about (default: the source's `axes` entry for `at`'s prefix). */
+  axis?: HandleGeom<{ origin: [number, number, number]; direction: [number, number, number] }>;
+};
+/** Drag a limb's joint values directly: the solve writes its `params`. */
+export interface AnglesHandle extends HandleCommon {
+  /** Key of the posed limb in `derive`'s output. */
+  on: string;
+  drag: "angles";
+  /** The joint-value parameters this handle drags. */
+  params: string[];
+  /**
+   * Joint rings in Pose mode: a joint (`"<joint>"` on this handle's limb, or
+   * `"<limb>.<joint>"` on another posed limb of `derive`'s result, such as a parent palm)
+   * mapped to the parameter that drives it directly. Hovering the joint's dot shows a
+   * rotate ring; dragging the ring writes that parameter. A parameter a locked handle drives
+   * gets no ring.
+   */
+  joints?: Record<string, HandleJoint>;
 }

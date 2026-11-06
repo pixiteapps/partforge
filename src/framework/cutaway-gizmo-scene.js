@@ -1,10 +1,16 @@
 import * as THREE from "three";
 import { CUTAWAY_OVERLAY_RENDER_ORDER } from "./cutaway-render.js";
+import {
+  arrowGeometryPairs,
+  arrowMeshes,
+  handleMaterial,
+  hitMaterial as createHitMaterial,
+  hoverGeometryPair,
+} from "./gizmo/gizmo-handles.js";
 
 // +10: above the caps/highlight tier AND above measure mode's dims
 // (dim3-scene renders at +2/+3) — an actively-dragged control outranks ink.
 const GIZMO_RENDER_ORDER = CUTAWAY_OVERLAY_RENDER_ORDER + 10;
-const HANDLE_HOVER_THICKNESS = 1.6;
 
 /**
  * Builds the cutaway gizmo's three.js scene graph: the ghost plane, the
@@ -58,102 +64,48 @@ export function buildGizmoScene(theme) {
   materials.add(borderMaterial);
 
   const handleRoot = new THREE.Group();
-  const translateVisualRoot = new THREE.Group();
   const arcRoot = new THREE.Group();
-  const translateMaterial = new THREE.MeshBasicMaterial({
-    color: theme.translate,
-    transparent: true,
-    depthTest: true,
-    depthWrite: true,
-  });
-  const rotateXMaterial = new THREE.MeshBasicMaterial({
-    color: theme.rotateX,
-    transparent: true,
-    depthTest: true,
-    depthWrite: true,
-  });
-  const rotateYMaterial = new THREE.MeshBasicMaterial({
-    color: theme.rotateY,
-    transparent: true,
-    depthTest: true,
-    depthWrite: true,
-  });
+  const translateMaterial = handleMaterial(theme.translate);
+  const rotateXMaterial = handleMaterial(theme.rotateX);
+  const rotateYMaterial = handleMaterial(theme.rotateY);
   materials.add(translateMaterial);
   materials.add(rotateXMaterial);
   materials.add(rotateYMaterial);
 
-  const shaftGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.58, 12);
-  const shaftHoverGeometry = new THREE.CylinderGeometry(
-    0.025 * HANDLE_HOVER_THICKNESS,
-    0.025 * HANDLE_HOVER_THICKNESS,
-    0.58,
-    12,
-  );
-  const shaft = new THREE.Mesh(shaftGeometry, translateMaterial);
-  shaft.rotation.x = Math.PI / 2;
-  shaft.position.z = 0.29;
-  const coneGeometry = new THREE.ConeGeometry(0.075, 0.2, 16);
-  const coneHoverGeometry = new THREE.ConeGeometry(
-    0.075 * HANDLE_HOVER_THICKNESS,
-    0.2,
-    16,
-  );
-  const cone = new THREE.Mesh(coneGeometry, translateMaterial);
-  cone.rotation.x = Math.PI / 2;
-  cone.position.z = 0.68;
-  geometries.add(shaftGeometry);
-  geometries.add(shaftHoverGeometry);
-  geometries.add(coneGeometry);
-  geometries.add(coneHoverGeometry);
+  // The translate arrow: the shared one-sided arrow (gizmo-handles.js), shaft then cone.
+  const arrowPairs = arrowGeometryPairs();
+  const {
+    root: translateVisualRoot,
+    geometryPairs: translateGeometryPairs,
+  } = arrowMeshes(arrowPairs, translateMaterial);
+  for (const pair of Object.values(arrowPairs)) {
+    geometries.add(pair.normal);
+    geometries.add(pair.hovered);
+  }
 
-  const ringXGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015,
-    8,
-    64,
-    Math.PI,
-  );
+  // A half ring: the arc of a rotate handle, thickened by `k` when hovered.
+  const halfRing = (k) => new THREE.TorusGeometry(0.42, 0.015 * k, 8, 64, Math.PI);
+  const ringXPair = hoverGeometryPair(halfRing);
+  const ringXGeometry = ringXPair.normal;
   const ringX = new THREE.Mesh(ringXGeometry, rotateXMaterial);
-  const ringXHoverGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015 * HANDLE_HOVER_THICKNESS,
-    8,
-    64,
-    Math.PI,
-  );
+  const ringXHoverGeometry = ringXPair.hovered;
   ringX.quaternion
     .setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
     .multiply(new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0),
       Math.PI / 2,
     ));
-  const ringYGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015,
-    8,
-    64,
-    Math.PI,
-  );
+  const ringYPair = hoverGeometryPair(halfRing);
+  const ringYGeometry = ringYPair.normal;
   const ringY = new THREE.Mesh(ringYGeometry, rotateYMaterial);
-  const ringYHoverGeometry = new THREE.TorusGeometry(
-    0.42,
-    0.015 * HANDLE_HOVER_THICKNESS,
-    8,
-    64,
-    Math.PI,
-  );
+  const ringYHoverGeometry = ringYPair.hovered;
   ringY.rotation.x = -Math.PI / 2;
   geometries.add(ringXGeometry);
   geometries.add(ringXHoverGeometry);
   geometries.add(ringYGeometry);
   geometries.add(ringYHoverGeometry);
 
-  const hitMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    opacity: 0,
-    transparent: true,
-    depthWrite: false,
-  });
+  const hitMaterial = createHitMaterial();
   materials.add(hitMaterial);
   const translateHitGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.95, 10);
   const translateHit = new THREE.Mesh(translateHitGeometry, hitMaterial);
@@ -184,7 +136,6 @@ export function buildGizmoScene(theme) {
   geometries.add(rotateXHitGeometry);
   geometries.add(rotateYHitGeometry);
 
-  translateVisualRoot.add(shaft, cone);
   arcRoot.add(ringX, ringY, rotateXHit, rotateYHit);
   handleRoot.add(translateVisualRoot, translateHit, arcRoot);
   group.add(fill, border);
@@ -203,10 +154,7 @@ export function buildGizmoScene(theme) {
     translate: {
       visual: translateVisualRoot,
       material: translateMaterial,
-      geometryPairs: [
-        { mesh: shaft, normal: shaftGeometry, hovered: shaftHoverGeometry },
-        { mesh: cone, normal: coneGeometry, hovered: coneHoverGeometry },
-      ],
+      geometryPairs: translateGeometryPairs,
     },
     "rotate-x": {
       visual: ringX,

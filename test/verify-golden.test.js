@@ -40,6 +40,11 @@ const canon = (v) => (typeof v === "number" ? (Object.is(v, -0) ? 0 : Number(v.t
   : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([key, x]) => [key, canon(x)]))
   : v);
 
+// Wall-clock readings (a sweep row's `ms`) are never part of the golden.
+const stripMs = (v) => (Array.isArray(v) ? v.map(stripMs)
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([key]) => key !== "ms").map(([key, x]) => [key, stripMs(x)]))
+  : v);
+
 // Every "<file>#<view>" pair: files sorted, views in declaration order.
 async function currentKeys() {
   const files = readdirSync(join(ROOT, "src/parts")).filter((f) => f.endsWith(".js") && !EXCLUDED.has(f)).sort();
@@ -60,10 +65,13 @@ async function currentKeys() {
 async function verifyOf(key) {
   const [file, view] = key.split("#");
   const out = join(TMP, `${file}-${view}.json`);
-  // Exit 1 is a failing gate — still a complete report, and part of the golden.
+  // Exit 1 is a failing gate — still a complete report, and part of the golden. Sweeps
+  // (verify.sweeps) run with no deadline: a row the clock stopped would make the verdict
+  // depend on the machine, so every declared sweep runs to its end here.
   await run(process.execPath, ["bin/cli.js", "measure", `src/parts/${file}`, view, "--no-lint", "--out", out],
-    { cwd: ROOT, maxBuffer: 1 << 26 }).catch((e) => { if (e.code !== 1) throw e; });
-  return canon(JSON.parse(readFileSync(out, "utf8")).verify);
+    { cwd: ROOT, maxBuffer: 1 << 26, env: { ...process.env, PARTFORGE_SWEEP_BUDGET_MS: "Infinity" } })
+    .catch((e) => { if (e.code !== 1) throw e; });
+  return canon(stripMs(JSON.parse(readFileSync(out, "utf8")).verify));
 }
 
 // Four CLI processes at a time; results keyed back in `keys` order.

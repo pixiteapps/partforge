@@ -184,7 +184,7 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
   // The t = 0 pose and opacity, with the ground held for what moves next.
   function firstFrame() {
     apply(0);
-    if (!held) { viewer.holdGround(true); held = true; }
+    if (!held) { viewer.holdGround(true, "preview"); held = true; }
   }
 
   const player = {
@@ -250,7 +250,7 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
       disposed = true;
       listeners.clear();
       if (offFrame) { offFrame(); offOrbit(); offFrame = offOrbit = null; }
-      if (held) { held = false; viewer.holdGround(false); } // primed or played
+      if (held) { held = false; viewer.holdGround(false, "preview"); } // primed or played
     },
     state: snapshotState,
   };

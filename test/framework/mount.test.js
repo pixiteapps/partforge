@@ -19,6 +19,7 @@ vi.mock("../../src/framework/viewer.js", () => ({
     const themeCbs = new Set();
     const projectionCbs = new Set();
     const flashAnchorCbs = new Set();
+    const cutawayCbs = new Set();
     let projection = "perspective";
     const v = {
       onFrame: (cb) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
@@ -83,8 +84,10 @@ vi.mock("../../src/framework/viewer.js", () => ({
       cutawayEnabled: vi.fn(() => cutawayOn),
       setCutawayEnabled: vi.fn((on) => {
         cutawayOn = on;
+        for (const cb of [...cutawayCbs]) cb();
         return true;
       }),
+      onCutawayChange: (cb) => { cutawayCbs.add(cb); return () => cutawayCbs.delete(cb); },
       // State carry-over across a remount. `cutawayOn` is shared with
       // cutawayEnabled above, so a restore here really does light the button
       // the way the real viewer would.
@@ -181,6 +184,36 @@ vi.mock("../../src/framework/animation-controls.js", async (importOriginal) => {
   };
 });
 
+// Pose mode, stubbed: mount's side of the contract (which effects it calls, and when)
+// is what these tests pin; the mode itself is covered by test/pose-*.test.js. Only a
+// part declaring `handles` creates one, so every other test is untouched.
+const poseStubs = vi.hoisted(() => []);
+vi.mock("../../src/framework/pose/pose-mode.js", () => ({
+  createPoseMode: vi.fn((viewer, opts) => {
+    const stub = {
+      opts,
+      delivered: vi.fn(), externalWrite: vi.fn(), refresh: vi.fn(), viewChanged: vi.fn(), detach: vi.fn(),
+      setPins: vi.fn(), getPins: () => [], pinCount: () => 0, releasePins: vi.fn(),
+      handlePoints: () => [], isEnabled: () => true, setEnabled: vi.fn(),
+      onModeChange: () => () => {},
+      // always-on posing: mount pushes suppression, reads hover claims and the click claim
+      suppressedLog: [],
+      setSuppressed: vi.fn((on) => { stub.suppressedLog.push(!!on); }),
+      isLive: () => stub.suppressedLog.at(-1) === false,
+      claimsHover: vi.fn(() => false),
+      hoverCbs: new Set(),
+      onHoverChange: (cb) => { stub.hoverCbs.add(cb); return () => stub.hoverCbs.delete(cb); },
+      takeClick: vi.fn(() => false),
+      isDragging: vi.fn(() => false),
+    };
+    poseStubs.push(stub);
+    return stub;
+  }),
+}));
+vi.mock("../../src/framework/pose/pose-controls.js", () => ({
+  attachPoseControls: vi.fn(() => ({ detach: () => {} })),
+}));
+
 // The preview decoder, wrapped so a test can await exactly the decodes mount
 // started. mount's own .then is chained on the same promise first, so once a
 // test has awaited the promise, mount's handler has run.
@@ -197,7 +230,7 @@ vi.mock("../../src/framework/gltf/decode-preview.js", async (importOriginal) => 
   };
 });
 
-import { mount, makeHandle } from "../../src/framework/mount.js";
+import { mount, makeHandle, LIVE_REBUILD_MS } from "../../src/framework/mount.js";
 import { boxSoup, previewGlbFor } from "../helpers/preview-glb.js";
 import { decodePreviewGlb } from "../../src/framework/gltf/decode-preview.js";
 import { attachPicker, attachPickToggle, attachHoverLabels } from "../../src/framework/selection/index.js";
@@ -246,6 +279,7 @@ function makeElements() {
       cutaway: mk("button"),
       measure: mk("button"),
       annotate: mk("button"),
+      pose: mk("button"),
       railToggle: mk("button"),
     },
   };
@@ -253,7 +287,7 @@ function makeElements() {
     els.status.status, els.status.busy, els.status.phase,
     els.exports.stl, els.exports.step, els.exports.threeMf,
     els.chrome.reframe, els.chrome.theme, els.chrome.cutaway, els.chrome.measure,
-    els.chrome.annotate, els.chrome.railToggle);
+    els.chrome.annotate, els.chrome.pose, els.chrome.railToggle);
   return els;
 }
 
@@ -1322,6 +1356,69 @@ test("a view switch re-poses canonical sub-parts (place may read view)", () => {
   handle.dispose();
 });
 
+// The camera frames to the bounds of what is on screen, so the incoming view's
+// poses must land BEFORE that framing: framed first, a sub-part whose place()
+// moves it in the new view (a park plate shown on its own) sat off-centre.
+test("a view switch poses the incoming view before framing it", () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makePlacedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliverPlaced(workers);
+  const v = fakeViewers[0];
+  v.setSubPose.mockClear();
+  v.showAssembly.mockClear();
+
+  expect(handle.setView("side")).toBe(true);
+
+  const framed = v.showAssembly.mock.calls.findIndex(([, o]) => o?.frame);
+  const posed = v.setSubPose.mock.calls.findIndex(([n, m]) => n === "a" && Array.isArray(m) && m[14] === 7);
+  expect(framed).toBeGreaterThan(-1);
+  expect(posed).toBeGreaterThan(-1);
+  expect(v.setSubPose.mock.invocationCallOrder[posed])
+    .toBeLessThan(v.showAssembly.mock.invocationCallOrder[framed]);
+  handle.dispose();
+});
+
+// A posed sub-part (the worker bakes place() in) cannot be re-posed on the main
+// thread: when its place() reads the view, the switch shows the outgoing mesh,
+// framed, until the rebuild lands. That rebuild frames again — unless the user
+// took the camera in between.
+const makeViewPlacedPart = () => {
+  const part = makePlacedPart();
+  part.parts.b.views = ["main", "side"];
+  part.parts.b.place = (s, { view }) => s.translate([0, 0, s.boundingBox().max[2] + (view === "side" ? 50 : 0)]);
+  return part;
+};
+const switchToStaleSide = () => {
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(makeViewPlacedPart(), { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  deliverPlaced(workers);
+  const v = fakeViewers[0];
+  v.showAssembly.mockClear();
+  handle.setView("side");
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: true });
+  const rebuild = () => deliverPlaced(workers);
+  return { handle, v, rebuild };
+};
+
+test("a view switch that must rebuild frames again once the rebuild lands", () => {
+  const { handle, v, rebuild } = switchToStaleSide();
+  rebuild();
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: true });
+  rebuild(); // later deliveries in the same view leave the camera alone
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: false });
+  handle.dispose();
+});
+
+test("moving the camera before a view switch's rebuild lands keeps the user's view", () => {
+  const { handle, v, rebuild } = switchToStaleSide();
+  v.emitCameraStart();
+  rebuild();
+  expect(v.showAssembly).toHaveBeenLastCalledWith(["a", "b"], { frame: false });
+  handle.dispose();
+});
+
 // Host and worker place probes agree by construction on a fresh delivery. If
 // they ever disagree (here: b's place() queries, so the host's probe is
 // untrusted, yet the reply says canonical), forgetting the stamp would rebuild
@@ -1581,6 +1678,409 @@ test("a stale-shown playback mesh carries no stamp: returning to the stamped par
   expect(jobs.some((m) => m.type === "generate" && m.subparts?.includes("body"))).toBe(true);
   handle.dispose();
   vi.useRealTimers();
+});
+
+test("a playback-stale delivery lifts the pose ghost on the mesh it replaces", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  pose.delivered.mockClear();
+
+  handle.animation.play();
+  fakeViewers[0].tickFrame(0.5); // the in-flight build is now stale only by playback
+  fakeViewers[0].tickFrame(0.5);
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+
+  expect(fakeViewers[0].setSubGeometry).toHaveBeenCalledWith("body", expect.anything());
+  expect(els.exports.stl.disabled).toBe(true); // the stale branch: shown, not recorded
+  expect(pose.delivered).toHaveBeenCalledWith("body"); // a ghost left at 0.35 would stay faded through playback
+  handle.dispose();
+});
+
+test("the pose cue is blocked while the opening autoplay is to come or playing, then freed", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  part.views.main.animations.grow.autoplay = true;
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  const pose = poseStubs.at(-1);
+  expect(pose.opts.cueBlocked()).toBe(true); // before the first whole delivery's kick
+  finishFirstBuild(workers);
+  expect(handle.animation.state().status).toBe("playing");
+  expect(pose.opts.cueBlocked()).toBe(true);
+  handle.animation.pause();
+  expect(pose.opts.cueBlocked()).toBe(false);
+  handle.dispose();
+});
+
+test("with no autoplay the pose cue is never blocked", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  expect(poseStubs.at(-1).opts.cueBlocked()).toBe(false);
+  handle.dispose();
+});
+
+test("unghost restores the opacity the ghost replaced, not full opacity", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const viewer = fakeViewers[0];
+  // The viewer's animation opacity layer, as a map: an animation track faded body to 0.6.
+  const layer = new Map([["body", 0.6]]);
+  viewer.getSubPartOpacity = (n) => layer.get(n) ?? 1;
+  viewer.setSubPartOpacity.mockImplementation((n, v) => { if (v == null || !(v < 1)) layer.delete(n); else layer.set(n, v); });
+  const pose = poseStubs.at(-1);
+  pose.opts.ghost(["body", "lid"]);
+  expect(layer.get("body")).toBe(0.35);
+  pose.opts.unghost(["body", "lid"]);
+  expect(layer.get("body")).toBe(0.6); // the track's fade survives the drag
+  expect(layer.has("lid")).toBe(false); // nothing faded it: back to full
+  // A track that wrote the layer while ghosted keeps its newer value.
+  pose.opts.ghost(["body"]);
+  layer.set("body", 0.2);
+  pose.opts.unghost(["body"]);
+  expect(layer.get("body")).toBe(0.2);
+  handle.dispose();
+});
+
+test("posing is always on, and stands down while measure, sketch or cutaway is on", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const els = makeElements();
+  const handle = mount(part, { createWorker, elements: els, onAnnotationSend: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.suppressedLog.at(-1)).toBe(false); // live from the start: no toggle
+  expect(els.chrome.pose.hidden).toBe(true); // a leftover #pose toggle is hidden
+  handle.measure.setEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  handle.measure.setEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  handle.annotate.setEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  handle.annotate.setEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  fakeViewers[0].setCutawayEnabled(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  fakeViewers[0].setCutawayEnabled(false);
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  // posing never turns the other modes off on its own account
+  expect(pose.setEnabled).not.toHaveBeenCalled();
+  handle.dispose();
+  expect(els.chrome.pose.hidden).toBe(false);
+});
+
+test("a click a pose press claimed never picks, and a hovered pose dot hides the hover tooltip", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  const suppressed = attachPicker.mock.calls.at(-1)[1].suppressed;
+  expect(suppressed()).toBe(false);
+  pose.takeClick.mockReturnValueOnce(true); // a pin click, or the end of a drag
+  expect(suppressed()).toBe(true);
+  expect(suppressed()).toBe(false); // the claim is spent: the next plain click picks
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  pose.claimsHover.mockReturnValue(true);
+  for (const cb of pose.hoverCbs) cb();
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  pose.claimsHover.mockReturnValue(false);
+  for (const cb of pose.hoverCbs) cb();
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  handle.dispose();
+});
+
+test("pose effects are no-ops once dispose starts", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const onParamsCommit = vi.fn();
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements(), onParamsCommit });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  // detach runs late in the LIFO teardown; whatever it fires must land nowhere.
+  pose.detach.mockImplementation(() => {
+    pose.opts.restore({ h: 9 });
+    pose.opts.hold(false);
+    pose.opts.commit(["h"]);
+    pose.opts.unghost(["body"]);
+  });
+  expect(() => handle.dispose()).not.toThrow();
+  expect(pose.detach).toHaveBeenCalledOnce();
+  expect(onParamsCommit).not.toHaveBeenCalled();
+});
+
+test("a view switch cancels a pose drag before the view changes", () => {
+  const part = makePart();
+  part.views = { main: { label: "Main" }, side: { label: "Side" } };
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  let viewAtCancel;
+  pose.externalWrite.mockImplementation(() => { viewAtCancel = handle.getView(); });
+  expect(handle.setView("side")).toBe(true);
+  expect(pose.externalWrite).toHaveBeenCalledOnce();
+  // the old layout's hover state goes and the incoming view's handles are read
+  expect(pose.viewChanged).toHaveBeenCalledOnce();
+  expect(pose.externalWrite.mock.invocationCallOrder[0]).toBeLessThan(pose.viewChanged.mock.invocationCallOrder[0]);
+  expect(viewAtCancel).toBeDefined();
+  handle.dispose();
+});
+
+test("handles are view-specific: a declared `views` list, else the views that draw their source", () => {
+  const part = makePart();
+  part.views = { main: { label: "Main" }, flat: { label: "Flat" } };
+  // one derive function: the flat layout's read of `gap` counts as a read of every input
+  part.derive = (p) => ({ lift: { handleInfo: () => ({ points: { top: [0, 0, p.h] } }) }, gap: 5 });
+  part.parts = {
+    body: { label: "Body", build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }),
+      views: { main: (s, p, d) => s.translate([0, 0, d.lift ? 0 : 1]), flat: (s, p, d) => s.translate([d.gap, 0, 0]) } },
+  };
+  part.handles = {
+    top: { on: "lift", at: "top", params: ["h"], drag: "axis", direction: [0, 0, 1] },
+    pinned: { point: (p) => [0, 0, p.h], params: ["h"], views: ["flat"] },
+  };
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: makeElements() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.opts.visibleHandles()).toEqual(["top"]);
+  expect(handle.setView("flat")).toBe(true);
+  expect(pose.opts.visibleHandles()).toEqual(["pinned"]);
+  expect(handle.setView("main")).toBe(true);
+  expect(pose.opts.visibleHandles()).toEqual(["top"]);
+  handle.dispose();
+});
+
+// Shape drags (spec 2026-11-02 §4): a part whose last build was cheap rebuilds live
+// while the drag holds, and those mid-drag builds are transient — drawn, never reported.
+// `h` is the geometry param, so every drag frame makes `body` stale.
+function shapeDrag(lastMs, { cache } = {}) {
+  vi.useFakeTimers(); // the release's debounce timer must not fire a second kick
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const onBuild = vi.fn();
+  const onParamsCommit = vi.fn();
+  const els = makeElements();
+  const { createWorker, workers } = makeWorkers();
+  const handle = mount(part, { createWorker, elements: els, onBuild, onParamsCommit });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: lastMs, ...(cache ? { cache } : {}) } });
+  onBuild.mockClear();
+  const pose = poseStubs.at(-1);
+  pose.delivered.mockClear();
+  const post = workers.manifold.postMessage;
+  const generates = () => post.mock.calls.filter(([m]) => m.type === "generate").length;
+  const deliver = (ms = 5) => workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms } });
+  const done = () => { handle.dispose(); vi.useRealTimers(); };
+  return { handle, pose, onBuild, onParamsCommit, els, generates, deliver, done, viewer: fakeViewers[0], workers };
+}
+
+test("LIVE_REBUILD_MS is 120", () => {
+  expect(LIVE_REBUILD_MS).toBe(120);
+});
+
+test("a cheap part rebuilds mid-drag, transiently: drawn and un-ghosted, no onBuild until the release builds once", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  expect(t.generates()).toBe(before + 1); // dispatched while the drag holds
+  t.viewer.setSubGeometry.mockClear();
+  t.deliver(80);
+  expect(t.viewer.setSubGeometry).toHaveBeenCalledWith("body", expect.anything()); // drawn
+  expect(t.pose.delivered).toHaveBeenCalledWith("body"); // the session lifts the ghost
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.els.exports.stl.disabled).toBe(true); // export state untouched by a transient build
+  t.pose.opts.write({ h: 7 });
+  expect(t.generates()).toBe(before + 2);
+  t.deliver(80);
+  expect(t.onBuild).not.toHaveBeenCalled();
+  // Release at the values the last transient build already drew: the drag still owes
+  // the host its one build.
+  t.pose.opts.hold(false);
+  expect(t.generates()).toBe(before + 3);
+  t.deliver(9);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "success", ms: 9 });
+  expect(t.els.exports.stl.disabled).toBe(false);
+  expect(t.onParamsCommit).not.toHaveBeenCalled(); // commits are the session's, never a build's
+  t.done();
+});
+
+test("progress from a transient build shows no busy chip or status", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  t.pose.opts.write({ h: 6 }); // dispatches a transient build
+  t.els.status.busy.classList.remove("show");
+  const status = t.els.status.status.textContent;
+  t.workers.manifold.onmessage({ data: { type: "progress", phase: "text" } });
+  expect(t.els.status.busy.classList.contains("show")).toBe(false);
+  expect(t.els.status.status.textContent).toBe(status);
+  t.deliver(80);
+  t.pose.opts.hold(false); // the release build is not transient: progress shows again
+  t.workers.manifold.onmessage({ data: { type: "progress", phase: "text" } });
+  expect(t.els.status.busy.classList.contains("show")).toBe(true);
+  t.done();
+});
+
+test("a release while a transient build is in flight discards it and builds normally", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.hold(false); // the transient job is still in flight: the release waits for it
+  expect(t.generates()).toBe(before + 1);
+  t.deliver(70); // the transient reply: outdated by the release, never reported
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.generates()).toBe(before + 2); // the release build
+  t.deliver(11);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "success", ms: 11 });
+  t.done();
+});
+
+test("a transient build outdated by a later drag frame still draws, and the next frame's build goes out", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.write({ h: 7 }); // in flight: absorbed
+  expect(t.generates()).toBe(before + 1);
+  t.viewer.setSubGeometry.mockClear();
+  t.deliver(80);
+  expect(t.viewer.setSubGeometry).toHaveBeenCalledWith("body", expect.anything()); // best effort, like playback
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.generates()).toBe(before + 2); // always for the latest params
+  t.deliver(80);
+  t.pose.opts.hold(false);
+  t.deliver(8);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  t.done();
+});
+
+test("a transient build error is not surfaced; the release build reports", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  t.pose.opts.write({ h: 6 });
+  t.workers.manifold.onmessage({ data: { type: "error", message: "mid-drag failure" } });
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.els.status.status.textContent).not.toContain("mid-drag failure");
+  t.pose.opts.hold(false);
+  t.workers.manifold.onmessage({ data: { type: "error", message: "release failure" } });
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "error", error: "release failure" });
+  t.done();
+});
+
+test("a transient error landing after release, past the debounce, still sends the release build", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.hold(false); // the transient job is in flight: the release kick is absorbed
+  vi.advanceTimersByTime(250); // and so is the debounce timer's
+  expect(t.generates()).toBe(before + 1);
+  t.workers.manifold.onmessage({ data: { type: "error", message: "slow mid-drag failure" } });
+  expect(t.onBuild).not.toHaveBeenCalled();
+  expect(t.generates()).toBe(before + 2); // the release build
+  t.deliver(9);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  expect(t.onBuild).toHaveBeenCalledWith({ status: "success", ms: 9 });
+  t.done();
+});
+
+test("a fresh transient error mid-drag does not re-send the same failing params", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.workers.manifold.onmessage({ data: { type: "error", message: "mid-drag failure" } });
+  expect(t.generates()).toBe(before + 1);
+  t.done();
+});
+
+test("a drag that ends where it began after transient builds owes no build", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.deliver(80);
+  t.pose.opts.write({ h: 4 }); // back to the start
+  t.deliver(80);
+  t.pose.opts.hold(false);
+  expect(t.generates()).toBe(before + 2);
+  expect(t.onBuild).not.toHaveBeenCalled();
+  t.done();
+});
+
+test("a slow part keeps today's shape drag: no build until release, then one", () => {
+  const t = shapeDrag(200);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.pose.opts.write({ h: 7 });
+  expect(t.generates()).toBe(before);
+  t.pose.opts.hold(false);
+  expect(t.generates()).toBe(before + 1);
+  t.deliver(200);
+  expect(t.onBuild).toHaveBeenCalledOnce();
+  t.done();
+});
+
+test("live rebuild: 119 ms on, 121 ms off", () => {
+  for (const [ms, live] of [[119, true], [121, false]]) {
+    const t = shapeDrag(ms);
+    t.pose.opts.hold(true);
+    const before = t.generates();
+    t.pose.opts.write({ h: 6 });
+    expect(t.generates()).toBe(before + (live ? 1 : 0));
+    t.done();
+  }
+});
+
+test("live rebuild is decided at drag start: a slow mid-drag build does not switch it off", () => {
+  const t = shapeDrag(80);
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  t.deliver(300); // this drag's own build ran slow
+  t.pose.opts.write({ h: 7 });
+  expect(t.generates()).toBe(before + 2);
+  t.deliver(300);
+  t.pose.opts.hold(false);
+  t.deliver(300);
+  // ...but the NEXT drag starts from the slow reading
+  t.pose.opts.hold(true);
+  const next = t.generates();
+  t.pose.opts.write({ h: 8 });
+  expect(t.generates()).toBe(next);
+  t.done();
+});
+
+test("a build answered wholly from the worker cache does not count as the last build's time", () => {
+  const t = shapeDrag(200);
+  t.handle.setParams({ h: 5 });
+  vi.advanceTimersByTime(250);
+  t.workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 3, cache: { hits: 4, misses: 0 } } });
+  t.pose.opts.hold(true);
+  const before = t.generates();
+  t.pose.opts.write({ h: 6 });
+  expect(t.generates()).toBe(before); // still the 200 ms reading
+  t.done();
 });
 
 test("a user edit mid-playback still discards the stale meshes", () => {
@@ -2429,6 +2929,22 @@ test("the first live build replaces the preview in place and keeps the camera", 
   runtime.dispose();
 });
 
+test("a preview holds posing off only until the live build lands, never through the host's switch", async () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements(), preview: await previewFor() });
+  await settleDecodes();
+  const pose = poseStubs.at(-1);
+  expect(runtime.previewActive).toBe(true);
+  expect(pose.suppressedLog.at(-1)).toBe(true);
+  finishFirstBuild(workers);
+  await runtime.ready;
+  expect(pose.suppressedLog.at(-1)).toBe(false);
+  expect(pose.setEnabled).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
 test("picking, hover, measure, sketch and cutaway are held while the preview shows", async () => {
   const { workers, createWorker } = makeWorkers();
   const els = makeElements();
@@ -2964,4 +3480,18 @@ test("a batch from a build an edit has overtaken is not shown", () => {
   expect(v.setSubGeometry).not.toHaveBeenCalled();
   handle.dispose();
   vi.useRealTimers();
+});
+
+test("carried pose pins come back on a remount: joint pins ('<handle>:<joint>') too, a gone handle's dropped", () => {
+  const part = makeAnimatedPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { workers, createWorker } = makeWorkers();
+  const handle = mount(part, {
+    createWorker, elements: makeElements(),
+    viewerState: { pose: { pins: ["grow:tip", "grow:elbow", "grow:palm.wristPitch", "gone:tip"] } },
+  });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  expect(pose.setPins).toHaveBeenCalledWith(["grow:tip", "grow:elbow", "grow:palm.wristPitch"]);
+  handle.dispose();
 });

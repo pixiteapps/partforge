@@ -2,6 +2,7 @@
 import { resolveFrames, compose, invert } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { axisAngle } from "../../geometry/rotations.js";
+import { jointSteps, restValue } from "./tree.js";
 
 /** Round to 0.001 with −0 written as 0 (the frame report's convention). */
 export const r3 = (v) => { const x = Math.round(v * 1000) / 1000; return x === 0 ? 0 : x; };
@@ -31,18 +32,19 @@ export function buildFrames(tree, steps) {
 }
 
 /**
- * `{ bend, clamped, tip?, reach?, grip? }`. `tip` is in part coordinates, so it needs the
+ * `{ bend, clamped, tip?, reach?, grip?, goals? }`. `tip` is in part coordinates, so it needs the
  * parent's frames (`frames`) when the limb has a parent; it is omitted otherwise. `reach` is
  * `{ target, residual, status }` and `grip` is `{ touching, gap, joints: [{ joint, bend,
  * touched, skipped }] }` (the final pose's whole-limb verdict, read first, then one entry per driven
- * bend joint), each present only when the pose asked for one.
+ * bend joint), each present only when the pose asked for one. `goals` is one
+ * `{ at, residual, aimResidual?, status }` per goal, `aimResidual` only for a goal with an aim or up.
  */
-export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null) {
+export function buildReport(tree, values, clamped, posedFrames, frames, fail, reach = null, grip = null, goals = null, via = resolveFrames) {
   const report = { bend: values.map(roundValue), clamped: [...clamped] };
   if (tree.parent == null || frames != null) {
     const all = frames == null ? posedFrames : { ...frames, ...posedFrames };
     if (tree.parent != null && !Object.hasOwn(frames, tree.parent)) fail("parent", `unknown frame "${tree.parent}"`);
-    const W = resolveFrames(all).get(`${tree.name}.tip`).world;
+    const W = via(all).get(`${tree.name}.tip`).world;
     report.tip = [r3(W[9]), r3(W[10]), r3(W[11])];
   }
   if (reach) report.reach = { target: reach.target.map(r3), residual: r3(reach.residual), status: reach.status };
@@ -52,16 +54,63 @@ export function buildReport(tree, values, clamped, posedFrames, frames, fail, re
       joints: grip.joints.map(({ joint, value, touched, skipped }) => ({ joint, bend: r3(value), touched, skipped })),
     };
   }
+  if (goals) {
+    report.goals = goals.map(({ at, residual, aimResidual, status }) =>
+      (aimResidual === undefined ? { at, residual: r3(residual), status } : { at, residual: r3(residual), aimResidual: r3(aimResidual), status }));
+  }
   return report;
 }
 
 const PLACE_FROM = new Set(["joint", "rest"]);
 
+// Everything resolveFrames reads of a frame set, flat and in its order: each frame's name,
+// parent, `at` and rotate steps (axis, deg), raw. Two sets with equal keys (element by
+// element, Object.is) resolve to the same transforms, bit for bit. A typed array (an `at` or
+// axis held in a Float64Array) is copied by value like an array: kept by reference, an edit
+// to it in place would hit the memo with the old transforms.
+function frameKey(set) {
+  const out = [];
+  const listLike = (a) => Array.isArray(a) || (ArrayBuffer.isView(a) && typeof a.length === "number");
+  const arr = (a) => { if (listLike(a)) { out.push(a.length); for (let i = 0; i < a.length; i++) out.push(a[i]); } else out.push(a); };
+  for (const name of Object.keys(set)) {
+    const f = set[name];
+    out.push(name);
+    if (f == null || typeof f !== "object") { out.push(f, "\0frame"); continue; }
+    out.push(f.parent);
+    arr(f.at);
+    const steps = f.rotate == null ? [] : Array.isArray(f.rotate) ? f.rotate : [f.rotate];
+    out.push(steps.length);
+    for (const r of steps) { if (r == null || typeof r !== "object") { out.push(r); continue; } arr(r.axis); out.push(r.deg); }
+  }
+  return out;
+}
+const sameKey = (a, b) => a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+
+/**
+ * resolveFrames with its last answer kept, keyed by the set's values (frameKey): one posed
+ * limb places each of its pieces through the same frame set, and each place() resolved
+ * the whole set afresh. Exact — a set whose values changed resolves again — and a throw is
+ * never kept (each call throws afresh), so it is invisible but for time.
+ */
+export function resolveMemo() {
+  let key = null, resolved = null;
+  return (set) => {
+    const k = frameKey(set);
+    if (resolved && sameKey(k, key)) return resolved;
+    const r = resolveFrames(set);
+    key = k;
+    resolved = r;
+    return r;
+  };
+}
+
 /**
  * The adapters of one posed limb: world and place for solids. `frames` are the parent frames
  * passed to `pose`; `restFrames` every frame of the chain at rest (`place`'s `from: "rest"`).
+ * `resolvePosed` (a resolveMemo) resolves the posed chain among its parent's frames; pose()
+ * shares one with buildReport, so the report's tip and every place() read one resolve.
  */
-export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
+export function buildAdapters(tree, posedFrames, frames, restFrames, fail, values, resolvePosed = resolveMemo()) {
   const { name, joints } = tree;
   const base = joints[0].frame, tip = `${name}.tip`;
   const known = new Set([...joints.map((j) => j.frame), tip]);
@@ -72,11 +121,13 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
     if (tree.parent != null && frames == null) fail("", `${op} needs the parent frames — pass them as pose(…, frames)`);
     return frame;
   };
-  const resolve = (set, frame) => {
+  const resolve = (set, frame, via = resolveFrames) => {
     if (tree.parent != null && !Object.hasOwn(set, tree.parent)) fail("parent", `unknown frame "${tree.parent}"`);
-    return resolveFrames(set).get(frame).world;
+    return via(set).get(frame).world;
   };
-  const worldOf = (op, joint) => resolve(frames == null ? posedFrames : { ...frames, ...posedFrames }, frameOf(op, joint));
+  // the chain's posed frames among its parent's, and at rest: every place() and world() reads one
+  const resolveRest = resolveMemo();
+  const worldOf = (op, joint) => resolve(frames == null ? posedFrames : { ...frames, ...posedFrames }, frameOf(op, joint), resolvePosed);
 
   function world(joint = base) {
     const M = worldOf("world", joint);
@@ -92,11 +143,90 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail) {
     let M = worldOf("place", joint);
     // from: "rest" — the solid was built in part coordinates with the whole chain at rest, so it
     // moves by the joint's rest-to-posed motion: posed ∘ rest⁻¹.
-    if (from === "rest") M = compose(M, invert(resolve(restFrames, frameOf("place", joint))));
+    if (from === "rest") M = compose(M, invert(resolve(restFrames, frameOf("place", joint), resolveRest)));
     const a = axisAngle(M);
     const rotated = a ? x.rotate(a.deg, [0, 0, 0], a.axis) : x;
     return rotated.translate([M[9], M[10], M[11]]);
   }
 
-  return { world, place };
+  /**
+   * The posed limb as plain JSON for the viewer (handles, skeleton, limit arcs, joint rings):
+   * joint records (a hinge's with its `axisKind`), every joint's and the tip's origin in part
+   * coordinates, each hinge's world rotation axis (the direction a positive value turns about)
+   * and, for a limb with ball joints, each ball's `{ bend, spread, twist }` axes in `ballAxes`.
+   * Throws without the parent frames, like `world`.
+   */
+  function ikInfo() {
+    const points = {}, axes = {}, ballAxes = {};
+    const origin = (joint) => world(joint).origin;
+    const all = () => (frames == null ? posedFrames : { ...frames, ...posedFrames });
+    // The direction a positive unit value of one hinge (or one ball component) turns about,
+    // in the frame its step acts in: the step's axis times the sign of its angle.
+    const unitStep = (i, value) => {
+      const unit = joints.map((jt, k) => (k === i ? value : restValue(jt)));
+      const step = jointSteps(tree, unit)[joints[i].frame].at(-1);
+      return step.axis.map((c) => c * (step.deg < 0 ? -1 : 1));
+    };
+    const inWorld = (a, W) => [0, 1, 2].map((k) => r3(a[0] * W.x[k] + a[1] * W.y[k] + a[2] * W.z[k]));
+    joints.forEach((j, i) => {
+      points[j.name] = origin(j.frame);
+      if (j.type === "ball") {
+        // bend and spread swing the segment about axes of the frame BEFORE the ball turns it
+        // (its own steps are the last in its frame's list: drop them); twist turns about the
+        // swung segment, the posed frame's own y.
+        const v = values[i];
+        const own = (Math.hypot(v.bend, v.spread) !== 0 ? 1 : 0) + (v.twist !== 0 ? 1 : 0);
+        const f = posedFrames[j.frame];
+        const rotate = (f.rotate ?? []).slice(0, (f.rotate ?? []).length - own);
+        const { rotate: _r, ...rest } = f;
+        const M = resolve({ ...all(), [j.frame]: rotate.length ? { ...rest, rotate } : rest }, j.frame);
+        const unitOf = (c) => { const x = M[c], y = M[3 + c], z = M[6 + c], l = hypot3(x, y, z); return [x / l, y / l, z / l]; };
+        const pre = { x: unitOf(0), y: unitOf(1), z: unitOf(2) };
+        const W = world(j.frame);
+        ballAxes[j.name] = {
+          bend: inWorld(unitStep(i, { bend: 1, spread: 0, twist: 0 }), pre),
+          spread: inWorld(unitStep(i, { bend: 0, spread: 1, twist: 0 }), pre),
+          twist: inWorld(unitStep(i, { bend: 0, spread: 0, twist: 1 }), W),
+        };
+        return;
+      }
+      // The hinge's own step is the last in its frame's list, so its axis is unchanged by it.
+      axes[j.name] = inWorld(unitStep(i, 1), world(j.frame));
+    });
+    points.tip = origin(tip);
+    const info = {
+      kind: "partforge.limb", name, tip,
+      joints: joints.map((j) => {
+        const rec = { name: j.name, frame: j.frame, type: j.type };
+        if (j.type === "ball") rec.cone = j.cone; else { rec.range = [...j.range]; rec.axisKind = j.axisKind; }
+        rec.follower = j.follow != null;
+        return rec;
+      }),
+      points, values: values.map(roundValue), axes,
+    };
+    if (Object.keys(ballAxes).length) info.ballAxes = ballAxes;
+    if (tree.r) info.r = [...tree.r];
+    return info;
+  }
+
+  /**
+   * The posed limb as a point source (spec 2026-11-02 section 2), so a handle's geometric
+   * drags ("point", "axis", "plane", "rotary") can sit on a joint or the tip: `points` are
+   * ikInfo's (every joint and `tip`) plus a `"<joint>.child"` per joint (below), `axes` each hinge's `{ origin, direction }` (a ball
+   * has none), `lines` the bone chain. Goal and angles drags read the richer ikInfo().
+   */
+  function handleInfo() {
+    const info = ikInfo();
+    const axes = {};
+    for (const [n, direction] of Object.entries(info.axes)) axes[n] = { origin: [...info.points[n]], direction: [...direction] };
+    const chain = [...info.joints.map((j) => j.name), "tip"];
+    // "<joint>.child": where the joint's child bone ends — the next joint's origin, the tip
+    // for the last. A rotary handle there takes axes.<joint> by its `at` prefix and puts its
+    // dot on the bone the joint turns, off the axis (at the joint itself it would not move).
+    const points = { ...info.points };
+    chain.slice(0, -1).forEach((n, i) => { points[`${n}.child`] = [...info.points[chain[i + 1]]]; });
+    return { kind: "partforge.points", points, axes, lines: chain.slice(1).map((n, i) => [chain[i], n]) };
+  }
+
+  return { world, place, ikInfo, handleInfo };
 }

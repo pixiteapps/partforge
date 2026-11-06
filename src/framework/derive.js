@@ -1,4 +1,5 @@
 import { recorder } from "./read-recorder.js";
+import { activeDeriveMemo } from "./derive-memo.js";
 
 // Resolve a part's `derive` into the derived-values object `d` that builds receive.
 //
@@ -11,6 +12,8 @@ import { recorder } from "./read-recorder.js";
 export function resolveDerived(part, p) {
   const derive = part.derive;
   if (!derive) return {};
+  const memo = activeDeriveMemo();
+  if (memo) return memoized(memo, part, p).d;
   if (typeof derive === "function") return derive(p) ?? {};
   const d = {};
   // Groups read earlier groups' outputs through this guard: a key nothing has
@@ -35,6 +38,12 @@ export function resolveDerived(part, p) {
 // Grouped form: depsOf maps each key to its own group's raw reads, transitively
 // through the earlier groups it read. Single-function form: depsOf is null.
 export function resolveDerivedAttributed(part, p, { through = false } = {}) {
+  const memo = activeDeriveMemo();
+  if (memo && part.derive) return memoized(memo, part, through ? p : { ...p });
+  return attributed(part, p, { through });
+}
+
+function attributed(part, p, { through }) {
   const allInputs = new Set();
   const derive = part.derive;
   if (!derive) return { d: {}, depsOf: null, allInputs };
@@ -70,4 +79,15 @@ export function resolveDerivedAttributed(part, p, { through = false } = {}) {
     }
   }
   return { d, depsOf, allInputs };
+}
+
+// ---- the derive memo (derive-memo.js) ----------------------------------------------
+/** The attributed result for p (derive's writes land on p, as with `through`), from or into `memo`. */
+function memoized(memo, part, p) {
+  const hit = memo.find(part, p);
+  if (hit) return hit;
+  const key = { ...p };
+  const result = attributed(part, p, { through: true });
+  memo.store(part, key, p, result);
+  return result;
 }

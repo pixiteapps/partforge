@@ -51,8 +51,8 @@ export const fieldsFor = (type) => BY_TYPE.get(type)?.fields ?? [];
 
 // Per-type extras beyond AUTHOR_COMMON.
 const AUTHOR_EXTRAS = {
-  slider: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
-  number: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended"],
+  slider: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended", "wrap"],
+  number: ["unit", "min", "max", "step", "scale", "ticks", "snap", "recommended", "wrap"],
   text: [],
   textarea: [],
   checkbox: ["on"],

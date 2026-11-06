@@ -19,6 +19,10 @@ import { flexMembers } from "./flex-members.js";
 import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverhangAngle, partWallBands } from "./gates.js";
 import { summarizeContours } from "./shape-probe.js";
 import { DOMAINS } from "../domains/registry.js";
+import { handlesReport } from "./handles.js";
+import { runSweeps } from "./sweep.js";
+import { REPORT_SHARE_MS } from "./changes.js";
+import { normalizeCollisions } from "../collide/declaration.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -291,6 +295,11 @@ function printPoseBboxes(kernel, part, view, built, { p, d }) {
 //   → { part, view, measuredMinWall, subparts[], aggregate, overlaps[], gaps[],
 //       nearMisses[], ok }
 export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
+  // The sweeps' clock and deadline (below), read at the start: with no deadline of the
+  // caller's (an inspect job passes its report's), they get the report share counted
+  // from this call's start, as change tracking counts from the inspect's.
+  const sweepNow = opts.now ?? Date.now;
+  const sweepDeadline = opts.deadline ?? sweepNow() + REPORT_SHARE_MS;
   // `opts.built` is a build of this view the caller already has. The inspect job
   // needs those meshes anyway — it rasterizes them for silhouette match scoring —
   // and a second buildView here would be a whole duplicate build of the part for
@@ -539,6 +548,11 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     ? evaluateProbes(kernel, part, params, reads)
     : undefined;
 
+  // Pose-mode handles (where each sits and which params it drives), for the view and
+  // params measured. Absent on a part with none, so those reports are unchanged; it
+  // never fails the measurement (a handle that cannot be read is listed with an error).
+  const handles = opts.handles !== false ? handlesReport(part, view, params) : undefined;
+
   // Pair surface distances from the meshes already built — no kernel dependency,
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that
   // *almost* touch; overlapping pairs are excluded by name (a fully-contained
@@ -568,8 +582,27 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // Rebuilds with the same kernel and cleans up at its end — every solid fact
   // above is already read, so this is safe.
   const canIntersect = built.length > 0 && typeof built[0].solid.intersect === "function";
-  const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params, { reads }) : [];
+  // `collisions.allow` pairs may touch, so the overlaps gate never reports them.
+  const allow = normalizeCollisions(part)?.allow;
+  const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params, { reads, allow }) : [];
   kernel.cleanup?.();
+
+  // Declared motions (verify.sweeps, sweep.js), stepped end to end for contact. View-level
+  // and never memoized: a row reads every sub-part across the whole motion, which no one
+  // sub-part's hash covers. `opts.sweeps: false` skips them — verify's per-case
+  // re-measures pass it, as they pass `probes: false`, so presets do not re-run every
+  // sweep. Absent when none is declared, so other reports are unchanged; `[]` in a view
+  // where no declared sweep moves anything (a print kit).
+  // A row's `ms` is wall time: never compare or hash it.
+  //
+  // `opts.beforeSweeps({ subparts })` runs first, whether or not any sweep is declared:
+  // the inspect job finishes its change tracking there, so the diffs take the shared
+  // report deadline before the sweeps do, and the sweeps get only what is left of it.
+  opts.beforeSweeps?.({ subparts });
+  const sweeps = opts.sweeps !== false && part.verify?.sweeps
+    ? runSweeps(kernel, part, view, params, { deadline: sweepDeadline, now: sweepNow })
+    : undefined;
+  if (sweeps) kernel.cleanup?.();
 
   const overlapping = new Set(overlaps.map((o) => pairKey(o.a, o.b)));
   const gapThreshold = opts.gapThreshold ?? GAP_THRESHOLD;
@@ -627,6 +660,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // Present only when the part declares probes AND this run evaluated them —
     // a probe error stays inside its own entry and never reaches `ok` below.
     ...(probes ? { probes } : {}),
+    ...(handles ? { handles } : {}),
+    ...(sweeps ? { sweeps } : {}),
     ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };
 }

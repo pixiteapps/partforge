@@ -23,6 +23,7 @@ import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
+import { withDeriveMemo } from "./derive-memo.js";
 import { createBackendPolicy } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -41,6 +42,15 @@ import { attachMeasureControls } from "./measure/measure-controls.js";
 import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
 import { attachSketchToolbar } from "./annotate/sketch-toolbar.js";
+import { createPoseMode } from "./pose/pose-mode.js";
+import { attachPoseControls } from "./pose/pose-controls.js";
+import { attachReadoutChip } from "./pose/readout-chip.js";
+import { attachDragReadout } from "./pose/drag-readout.js";
+import { createPoseCollide } from "./pose/pose-collide.js";
+import { createFeatureHighlight } from "./selection/feature-highlight.js";
+import { parsePinId } from "./pose/pose-session.js";
+import { handleParamKeys } from "./pose/handle-source.js";
+import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
 import { samplePreviewAnimation } from "./preview-animation.js";
@@ -62,6 +72,11 @@ const NOOP_ANNOTATE = {
   strokeCount: () => 0, send: () => false,
   onInkChange: () => () => {}, onModeChange: () => () => {},
 };
+// Same stance again for Pose mode: a part with no `handles` has no mode to drive.
+const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
+// A shape drag (spec 2026-11-02 §4) rebuilds live while it holds only on a part whose
+// last real build took under this many milliseconds; a slower one waits for release.
+export const LIVE_REBUILD_MS = 120;
 // The STEP-on-Manifold import crossover's broken-state message (a second
 // needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
 // case below). One shared string so the status line, onBuild, and the ready
@@ -74,7 +89,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -145,6 +160,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       ...(() => { const d = viewer.getDisplayOverrides?.(); return d && Object.keys(d).length ? { display: d } : {}; })(),
       // The open selection popover, so a remount reopens it where it was.
       ...(() => { const s = selectionState?.(); return s ? { selection: s } : {}; })(),
+      // Pose mode's pins ("<handle>:<at>" ids) — viewer state, never parameters.
+      // Only while one is set, like `display`.
+      ...(() => { const p = poseState?.(); return p ? { pose: p } : {}; })(),
     }),
     // The selection popover (mount's `selectionPopover` option), or null:
     // { setSlotHeight(px), onSlotChange(cb) → off, onClose(cb) → off, close(), isOpen() }.
@@ -226,6 +244,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // the built-in pencil button. send() delivers to onAnnotationSend and
     // returns false when there is no ink or the capture failed.
     annotate: annotate ?? NOOP_ANNOTATE,
+    // Pose-mode API (spec 2026-10-30 §4): { isEnabled, setEnabled, pinCount,
+    // releasePins, handlePoints } — a no-op stand-in for a part with no handles.
+    pose: pose ?? NOOP_POSE,
     // Projection is a viewer-wide display mode, not a part property — same
     // shape as `measure` and `annotate` so a host reads one convention.
     projection: projection ?? {
@@ -265,6 +286,9 @@ function createCleanupStack() {
     defer(cleanup) {
       cleanups.push(cleanup);
     },
+    // True from the moment dispose() starts, so a cleanup that runs late (LIFO) can
+    // tell its effects would land in state already torn down.
+    isDisposed: () => disposed,
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -379,6 +403,12 @@ function createCleanupStack() {
 //                                 // subscribes return an unsubscribe; onInkChange fires on
 //                                 // every stroke/undo/clear, which is what a host driving its
 //                                 // own Send button gates that button on (strokeCount() > 0).
+//   runtime.pose: { isEnabled, setEnabled, isLive, pinCount, releasePins, handlePoints }
+//                                 // Posing (a part with `handles`): always on in the normal
+//                                 // click mode — hover near a limb, drag a handle, and its
+//                                 // parameters follow. Stands down while measure, sketch or
+//                                 // cutaway is on; setEnabled(false) switches it off.
+//                                 // A no-op stand-in for a part with none.
 //   runtime.projection: { get, set, onChange }
 //                                         // "perspective" | "orthographic". AUTOMATIC in the UI
 //                                         // (Fusion 360's "Perspective with Ortho Faces"): a view
@@ -430,7 +460,9 @@ function createCleanupStack() {
 // or a programmatic setView) — always the new view name.
 // onParamsCommit({ changed, params })   // the user FINISHED editing a panel control (slider
 //                                         // released, box committed, checkbox ticked, preset
-//                                         // applied): `changed` lists the keys written, `params`
+//                                         // applied), or released a Pose-mode drag that changed
+//                                         // something (one call per drag, so one undo step):
+//                                         // `changed` lists the keys written, `params`
 //                                         // is a snapshot copy. Never fired by setParams or
 //                                         // animation playback — hosts call setParams from their
 //                                         // own undo/reset, and firing here would loop.
@@ -553,6 +585,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       cutaway: elements.chrome?.cutaway ?? byId("cutaway"),
       measure: elements.chrome?.measure ?? byId("measure"),
       annotate: elements.chrome?.annotate ?? byId("annotate"),
+      pose: elements.chrome?.pose ?? byId("pose"),
       railToggle: elements.chrome?.railToggle ?? byId("rail-toggle"),
     },
   };
@@ -677,12 +710,24 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // incoming view composes its assembly from un-animated params. Anything
         // that reads params (refreshView / updateRelevance / the loop kick) must
         // run after it. autoplayKick stays LAST — it starts the new view's own.
+        // A drag in progress is cancelled before anything else: its values were
+        // solved against the outgoing view's limbs (a no-op with no drag).
+        poseMode?.externalWrite();
         animCtl?.viewChanged();
-        pendingPosed.clear(); cutawayChrome.reset(); refreshView();
+        releaseGround(); // a new view places its floor afresh
+        pendingPosed.clear(); cutawayChrome.reset();
         // place() may read `view`: re-pose the incoming view's canonical meshes
-        // (and clear the posed ones' matrices) before anything else reads them.
+        // (and clear the posed ones' matrices) before anything else reads them —
+        // refreshView included, since it frames the camera to the posed bounds.
         fastPath.apply(viewSubParts(part, view(), params));
+        refreshView();
         updateRelevance(); loop.kick(); animCtl?.autoplayKick();
+        // The outgoing layout's hover, focus, cursor and claim go, and the incoming view's
+        // handles are read (syncPoseVisible above re-read only if the shown SET changed).
+        // The readout chip goes too: its handle may not be in this view.
+        poseMode?.viewChanged();
+        poseCollide?.refresh();
+        poseChipHide?.();
         for (const cb of [...viewChangeListeners]) { try { cb(name); } catch { /* listener's problem */ } }
         onViewChange?.(name);
       },
@@ -729,6 +774,159 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (measureMode.isEnabled()) annotateMode.setEnabled(false);
       }));
     }
+    // Posing (spec 2026-10-30 inverse kinematics §4): drag a part's declared
+    // `handles` on screen and the parameters follow. Created only for a part that
+    // declares some, and ALWAYS ON in the normal click mode — no toggle: it stands down
+    // while measure, sketch, cutaway or a cached preview is on (syncPoseSuppression
+    // below) and a host may switch it off (runtime.pose.setEnabled). Hovering near a
+    // limb shows its handles; a press on one drags it; every other press orbits and
+    // picks exactly as without posing. Everything the mode does to the app goes through the effects
+    // below — the session (pose/pose-session.js) decides, mount only applies:
+    //   write    — one drag frame's values, through the animation path's per-frame
+    //              write (applyAnimationValues, minus its playback stamp: a pose
+    //              write is the user's own edit, and a stale delivery must be
+    //              discarded, never shown as best-effort playback);
+    //   hold     — no build is DISPATCHED while a drag holds (poseHold gates the
+    //              regen loop's missing set); a release kicks exactly one. The
+    //              exception is a cheap part (liveRebuild, decided once at hold(true)
+    //              from lastBuildMs < LIVE_REBUILD_MS): its stale sub-parts keep
+    //              building through the drag, one cycle at a time, always at the
+    //              latest params. Those builds are TRANSIENT (cycleTransient): they
+    //              draw and lift ghosts, and nothing else sees them — no onBuild, no
+    //              status, busy or debug line, no export/preview/ready/floor change.
+    //              What they drew is `owed` a real build, which the release sends
+    //              (from the worker's cache) so the host still sees exactly one;
+    //   ghost    — a sub-part the drag made stale (its build reads a pose param, so
+    //              no matrix can move it) fades to GHOST_OPACITY and stays put; the
+    //              delivery that replaces it lifts the ghost in the same tick it
+    //              calls setSubGeometry (applyFreshMeshes), so mesh and opacity land
+    //              in one frame and nothing flashes;
+    //   commit   — onParamsCommit once per drag that changed something (the session
+    //              commits nothing for a drag that ends where it began).
+    // poseHold is read by the loop's missingParts wrapper and send (createRegenLoop
+    // below) and ONLY there: exportPreview, ready and the busy line keep the real
+    // missing set (owed sub-parts included).
+    const GHOST_OPACITY = 0.35;
+    // The animation-channel opacity each ghost replaced, restored when it lifts: the
+    // ghost shares that channel, and writing 1 back would erase a track's fade.
+    const ghostReplaced = new Map();
+    let poseHold = false;
+    let liveRebuild = false; // this drag rebuilds as it goes (set at hold(true), kept to release)
+    let holdStart = null; // the params at hold(true): a drag that ends there owes nothing
+    let lastBuildMs = null; // data.ms of the last successful generate that built anything
+    let cycleTransient = false; // the in-flight dispatch cycle is a mid-drag build (one cycle at a time)
+    const owed = new Set(); // sub-parts a transient build made current: the host has not seen them built
+    let poseVisible = null; // handle ids shown in this view (null: all), set by updateRelevance
+    let poseVisibleKey = null; // poseVisible joined, to tell a real change (syncPoseVisible)
+    let poseChipHide = null; // the readout chip's hide, once it exists (a view switch calls it)
+    // Per view: the derived keys its shown sub-parts read (pose/handle-views.js), probed once
+    // per view and set of shown sub-parts — never per drag frame.
+    const poseSourceReads = new Map();
+    let poseMode = null;
+    // Collisions while posing (pose/pose-collide.js): idle-time indexes and each drag's
+    // guard, for a part whose `collisions` block leaves Pose mode on. Created with the
+    // fast path below; the session reaches it through these late-bound effects.
+    let poseCollide = null;
+    let lastDragEnd = null; // the last onDragEnd payload (a test hook)
+    const handleIds = part.handles && typeof part.handles === "object" && !Array.isArray(part.handles)
+      ? Object.keys(part.handles) : [];
+    if (handleIds.length) {
+      // Pose mode is detached late in a teardown (cleanups run LIFO, after the panel
+      // and loop), and detaching mid-drag cancels the drag. Once disposal has begun
+      // every effect is a no-op, so that cancel writes nothing into torn-down state.
+      const live = (fn) => (...args) => (cleanup.isDisposed() ? undefined : fn(...args));
+      poseMode = createPoseMode(viewer, {
+        part,
+        orbitControls: viewer.orbitControls,
+        getParams: () => params,
+        write: live((values) => writePoseValues(values)),
+        restore: live((snapshot) => writePoseValues(snapshot)),
+        commit: live((changed) => onParamsCommit?.({ changed, params: { ...params } })),
+        staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n)),
+        ghost: live((names) => {
+          for (const n of names) {
+            if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
+            viewer.setSubPartOpacity(n, GHOST_OPACITY);
+          }
+        }),
+        unghost: live((names) => {
+          for (const n of names) {
+            const was = ghostReplaced.get(n) ?? 1;
+            ghostReplaced.delete(n);
+            // An animation track that wrote the channel while ghosted owns it now.
+            const now = viewer.getSubPartOpacity?.(n);
+            if (now === undefined || now === GHOST_OPACITY) viewer.setSubPartOpacity(n, was);
+          }
+        }),
+        collide: (args) => poseCollide?.guardFor(args) ?? null,
+        onBlocked: live((pair) => poseCollide?.tint(pair)),
+        hold: live((on) => {
+          poseHold = !!on;
+          // A drag is the user's own edit: it pauses playback the way a slider does,
+          // before the first frame writes anything.
+          if (poseHold) {
+            // Decided once, so the look does not change mid-drag (a slow build
+            // during this drag is read by the next one).
+            liveRebuild = lastBuildMs != null && lastBuildMs < LIVE_REBUILD_MS;
+            holdStart = { ...params };
+            animCtl?.notifyUserEdit();
+            return;
+          }
+          liveRebuild = false;
+          // Back where it began (a cancel's restore, a drag returned to its start):
+          // what the transient builds drew is what the host last saw built.
+          if (owed.size && holdStart && Object.keys({ ...params, ...holdStart }).every((k) => Object.is(params[k], holdStart[k]))) owed.clear();
+          holdStart = null;
+          // Release (or revert): mark the params dirty and dispatch now — the one
+          // build the drag owes. The debounce timer onParamChange arms finds the
+          // cycle in flight and is absorbed.
+          onParamChange();
+          loop.kick();
+        }),
+        visibleHandles: () => poseVisible ?? handleIds,
+        // a handle's `showOn`: the sub-part the hover tooltip's pick found under the mouse
+        hoveredSubPart: () => hover.hoveredSubPart?.() ?? null,
+        // the resting cue waits out the opening view's autoplay (animCtl is assigned
+        // below; the cue first asks once a build is on screen)
+        cueBlocked: () => !!animCtl?.openingAutoplay(),
+      });
+      cleanup.defer(() => poseMode.detach());
+      // Pins are viewer state, carried across a remount (getViewerState().pose).
+      // Only ids naming a handle this part still declares come back.
+      const carriedPins = viewerState?.pose?.pins;
+      if (Array.isArray(carriedPins)) {
+        poseMode.setPins(carriedPins.filter((id) => {
+          const pin = typeof id === "string" ? parsePinId(id) : null;
+          return pin != null && Object.hasOwn(part.handles, pin.handleId);
+        }));
+      }
+      // Measure, sketch and cutaway claim canvas pointer input, and a cached preview
+      // has no live limbs: while any is on, posing hides and stands down; when the last
+      // goes off it comes back. Pulled from the modes' own state, so nothing is turned
+      // off on posing's account.
+      const syncPoseSuppression = live(() => poseMode.setSuppressed(
+        previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || !!viewer.cutawayEnabled?.()));
+      syncPoseSuppression();
+      cleanup.defer(measureMode.onModeChange(syncPoseSuppression));
+      if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncPoseSuppression));
+      cleanup.defer(viewer.onCutawayChange?.(syncPoseSuppression) ?? (() => {}));
+      cleanup.defer(previewGate.onChange(syncPoseSuppression));
+    }
+    // Release pins sits in the viewbar while pins exist and posing is live.
+    const poseChrome = poseMode
+      ? attachPoseControls(viewer, poseMode, { viewbar: els.viewer.querySelector("#viewbar") }, { tooltip })
+      : null;
+    // A generic handle's drag values, live, in the viewbar's readout slot (measure's spot).
+    const poseReadout = poseMode ? attachDragReadout(poseMode, { viewbar: els.viewer.querySelector("#viewbar") }) : null;
+    if (poseReadout) cleanup.defer(() => poseReadout.detach());
+    // There is no Pose toggle any more: a host page that still carries a #pose button
+    // (written for the toggle) gets it hidden; dispose hands it back as it was.
+    if (els.chrome.pose) {
+      const wasHidden = els.chrome.pose.hidden;
+      els.chrome.pose.hidden = true;
+      cleanup.defer(() => { els.chrome.pose.hidden = wasHidden; });
+    }
+    if (poseChrome) cleanup.defer(() => poseChrome.detach());
     const annotateChrome = attachAnnotateControls(viewer, annotateMode, {
       annotate: els.chrome.annotate,
     }, { tooltip, escapeScope: els.viewer });
@@ -870,6 +1068,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       const c = viewer.domElement.getBoundingClientRect();
       return { x: a.x + c.left - s.left, y: a.y + c.top - s.top, visible: a.visible !== false };
     };
+    // Pose mode's readout chip (pose/readout-chip.js): after a generic handle's drag, the
+    // values by the handle, editable for exact numbers (written as a slider writes them,
+    // one commit), or the pin hint when a pin held the drag.
+    const poseChip = poseMode
+      ? attachReadoutChip(viewer, poseMode, { stage: els.viewer }, { part, getParams: () => params, apply: (values) => writeChipValues(values), toStage })
+      : null;
+    if (poseChip) {
+      poseChipHide = () => poseChip.hide();
+      cleanup.defer(() => poseChip.detach());
+    }
     if (selectionOpt) {
       selPopover = attachSelectionPopover({
         stage: els.viewer, canvas: viewer.domElement, slot: selectionOpt.slot, parts: partsSeam,
@@ -903,6 +1111,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // are both created above).
       cleanup.defer(measureMode.onModeChange(() => { if (measureMode.isEnabled()) selPopover.close("gone"); }));
       if (annotateMode) cleanup.defer(annotateMode.onModeChange(() => { if (annotateMode.isEnabled()) selPopover.close("gone"); }));
+      // A pose drag moves the part out from under the popover's marker.
+      if (poseMode) cleanup.defer(poseMode.onHoverChange(() => { if (poseMode.isDragging() && !cleanup.isDisposed()) selPopover.close("gone"); }));
     }
     // setHidden takes one boolean, and there are two independent reasons to hide
     // the cube: Sketch mode (below) and a crowded transport bar (wired into the
@@ -942,13 +1152,15 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       cutaway: els.chrome.cutaway,
     }, { tooltip, escapeGuard: () => measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) });
     cleanup.defer(() => cutawayChrome.detach());
-    // Suppress the always-on hover tooltip while measure OR annotate mode is
-    // active — measure's highlight + dims take the pointer; annotate's overlay
-    // canvas takes it entirely.
+    // Suppress the always-on hover tooltip while measure or annotate is active, or
+    // while a pose dot is hovered or pressed — measure's highlight + dims take the
+    // pointer; annotate's overlay canvas takes it entirely; a pose handle does while
+    // the pointer is on it (between handles, the tooltip names the feature as ever).
     const syncHoverSuppression = () =>
-      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false));
+      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.claimsHover() ?? false));
     cleanup.defer(measureMode.onModeChange(syncHoverSuppression));
     if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncHoverSuppression));
+    if (poseMode) cleanup.defer(poseMode.onHoverChange(syncHoverSuppression));
     cleanup.defer(previewGate.onChange(syncHoverSuppression));
     // Deferred AFTER the cutaway/measure/annotate chrome attached, so at dispose
     // (LIFO) the gate hands the buttons back before those controls restore the
@@ -979,7 +1191,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // resync on mode changes. The ?pick/?pickserver harnesses below are
         // deliberately not guarded — one is armed by an explicit dev toggle,
         // the other per agent request.
-        suppressed: () => previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
+        // A press that grabbed a pose handle claims its click (a pin toggle or the end
+        // of a drag), so it never also picks: takeClick() answers once, and comes
+        // first so the claim is spent on this click even when another guard is up.
+        suppressed: () => (poseMode?.takeClick() ?? false) || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
         onPick: (selection, anchor) => {
           onPick({
             selection,
@@ -1026,6 +1241,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let cameraRestored = false; // saved camera applied once, on the first frame after load
     let partialView = null;        // the view whose first build is shown in batches (showPartial)
     let partialCameraKept = false; // that build must not reframe on completion
+    let staleView = null;          // a view framed on stale meshes (a switch to a view that must rebuild)
+    let staleCameraKept = false;   // the user moved the camera since: its rebuild must not reframe
     let cutawayRestored = false; // a carried cutaway, applied once — after any preview, never on one
     let selectionRestored = false; // a carried selection, tried once, after the camera
     function restoreCarriedSelection() {
@@ -1055,7 +1272,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // probe for it; only a sub-part with no stamp at all gets the prediction.
     // (cache.readsOf itself keeps null for both — the pose fast path needs that.)
     const displayReadsOf = (name) => cache.readsOf(name) ?? (cache.hasStamp(name) ? new Set(Object.keys(params)) : null);
-    const missingParts = () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n));
+    // A sub-part a transient (mid-drag) build made current still awaits the real build
+    // the host sees: it counts as missing, and as unsettled to export and the floor.
+    const isSettled = (n) => isCurrent(n) && !owed.has(n);
+    const missingParts = () => viewSubParts(part, view(), params).filter((n) => !isSettled(n));
 
     // The regenerate state machine (ready gating / debounce / stale-redo) lives in
     // regen-loop.js; this send callback is the one place a build job is dispatched.
@@ -1071,15 +1291,24 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const dispatched = new Map(); // sub-part -> { view, params } its latest job was sent with
     let updateRelevance = () => {}; // assigned once the panel exists; message handlers call it
     const loop = createRegenLoop({
-      missingParts,
+      // A pose drag holds every dispatch until release (see the pose mode block),
+      // unless it rebuilds live: then only the sub-parts it made stale, never `owed`
+      // ones (a transient build already drew them at these params).
+      missingParts: () => (!poseHold ? missingParts()
+        : liveRebuild ? viewSubParts(part, view(), params).filter((n) => !isCurrent(n)) : []),
       send: (missing) => {
-        const needed = viewSubParts(part, view(), params);
-        // for the overlay; this build reports the poses repaired in its own cycle.
-        lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
-        pendingPosed.clear(); // consumed — never counted against a second build
+        // Flagged at dispatch, read by this cycle's replies: the loop sends the next
+        // cycle only after this one's last reply, so the flag travels with its jobs.
+        cycleTransient = poseHold;
         const at = { view: view(), params: { ...params } };
         for (const n of missing) dispatched.set(n, at);
-        ui.showBusy("generating");
+        if (!cycleTransient) {
+          const needed = viewSubParts(part, view(), params);
+          // for the overlay; this build reports the poses repaired in its own cycle.
+          lastGen = { skipped: needed.length - missing.length, rebuilt: missing.length, posed: pendingPosed.size };
+          pendingPosed.clear(); // consumed — never counted against a second build
+          ui.showBusy("generating");
+        }
         const backends = backendPolicy.backendsFor(params);
         let jobs = 0;
         for (const backend of ["manifold", "occt"]) {
@@ -1098,6 +1327,18 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const fastPath = createPoseFastPath(part, viewer, cache, {
       params, getView: view, getParamsVersion: () => loop.version(),
     });
+    if (poseMode) {
+      const pc = createPoseCollide({
+        part, viewer, fastPath, getView: view, getParams: () => params,
+        isLive: () => !!poseMode.isLive?.(), frameOf: (n) => cache.frameOf(n), createHighlight: createFeatureHighlight,
+      });
+      if (pc.enabled) {
+        poseCollide = pc;
+        cleanup.defer(() => pc.dispose());
+        cleanup.defer(poseMode.onModeChange?.(() => { if (poseMode.isLive?.()) pc.refresh(); }) ?? (() => {}));
+      }
+      cleanup.defer(poseMode.onDragEnd?.((e) => { lastDragEnd = e; }) ?? (() => {}));
+    }
 
     // ?debug: how the in-view meshes were delivered, e.g. "3 canonical / 1 posed".
     const frameSummary = () => {
@@ -1146,8 +1387,58 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       }
     }
 
+    // The realistic floor belongs to the part's base, not its pose. Every param
+    // change holds it where it is (the viewer's "pose" ground hold: a placement
+    // keeps its centre and size and may only lower it, never lift it into the
+    // part); only a REAL change lets it come to the part again, once the
+    // geometry that change asked for has landed (showView, below). A change is
+    // pose-only when every key it moved is one a pose handle writes (a drag's
+    // release may still rebuild the sub-parts whose build reads those — they
+    // ghost and land under the held floor), or when the playing animation wrote
+    // it (its frames, while the driver holds the floor). Anything else is real —
+    // a place-only slider too (an explode or lift moves the part's base, and a
+    // lifted part must not float over a floor left behind). Until a real change's
+    // geometry lands, the stale meshes on screen keep the floor where it was;
+    // when it lands while another hold stands (the animation driver's), the
+    // change stays pending and the first showView after that hold drops re-fits.
+    // A view switch, and a view not yet wholly on screen, place the floor afresh.
+    // Entering realistic and switching environment honour the hold: lastGround
+    // is the base's floor (an unheld CAD placement forgets it), so the floor
+    // lands where it was rather than under the pose of the moment.
+    const poseParamKeys = new Set(handleIds.flatMap((id) => handleParamKeys(part.handles[id])));
+    let groundParams = { ...params }; // the params the last change was measured from
+    let groundRealPending = false; // a real change whose geometry has not landed yet
+    function noteGroundChange({ animated = false } = {}) {
+      const changed = Object.keys({ ...groundParams, ...params }).filter((k) => !Object.is(groundParams[k], params[k]));
+      groundParams = { ...params };
+      if (!changed.length) return;
+      // Part of the view has no mesh yet (a first build): no floor to hold, and
+      // each batch that lands places it, as it always has.
+      const needed = viewSubParts(part, view(), params);
+      if (!needed.every((n) => viewer.hasSubMesh(n))) { releaseGround(); return; }
+      const poseOnly = animated || changed.every((k) => poseParamKeys.has(k));
+      if (!poseOnly) groundRealPending = true;
+      viewer.holdGround?.(true, "pose");
+    }
+    function releaseGround() {
+      groundRealPending = false;
+      viewer.holdGround?.(false, "pose");
+    }
+
     function showView(needed) {
       let frame = view() !== framedView;
+      const wasRestored = cameraRestored;
+      const current = needed.every(isCurrent);
+      // A view switch framed the outgoing geometry because the incoming view had to
+      // rebuild: frame again once it is current, unless the user has taken the camera.
+      if (!frame && staleView === view() && current) frame = !staleCameraKept;
+      // The geometry a real change asked for has all landed: the floor comes to it —
+      // unless another hold (the animation driver's) still stands, in which case the
+      // change stays pending until a showView finds the floor free.
+      if (groundRealPending && needed.every(isSettled)) {
+        const stillHeld = viewer.holdGround?.(false, "pose") ?? false;
+        if (!stillHeld) groundRealPending = false;
+      }
       // A first build shown in batches (showPartial) completes: frame the whole view now,
       // unless the user moved the camera meanwhile or a restored camera stands.
       if (partialView === view()) {
@@ -1157,6 +1448,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       viewer.showAssembly(needed, { frame });
       if (frame) {
         framedView = view();
+        // Not on the first show: a restored camera wins over any refit.
+        staleView = wasRestored && !current ? view() : null;
+        staleCameraKept = false;
         if (!cameraRestored) {
           // A carried camera beats the persisted one: it is this session's live
           // answer, where the stored one is the last page-reload's — and it is
@@ -1285,7 +1579,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     function refreshView() {
       const needed = viewSubParts(part, view(), params);
-      if (needed.every(isCurrent)) {
+      if (needed.every(isSettled)) {
         showView(needed);
         ui.setExportEnabled(true);
         // The line used to read "N triangles" here; that debug readout now goes
@@ -1311,6 +1605,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       liveDelivered = true; // only a delivery that is applied beats a preview still decoding
       for (const m of meshes) {
         viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
+        // A mid-drag build leaves the host its real build owed; a real one pays it.
+        if (cycleTransient) owed.add(m.name); else owed.delete(m.name);
         // The view its job was SENT for, and the frame the worker delivered
         // in: "canonical" (place() not applied — mount poses it below) or
         // "posed". An older worker sends no frame; its meshes are posed.
@@ -1326,6 +1622,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // non-stale branch: the stamp must describe the geometry actually
         // delivered, which buildDone() true guarantees is at the live params.
         fastPath.recordDelivered(m.name);
+        // A pose drag's ghost lifts HERE, in the same tick as the new mesh (so the
+        // fresh geometry and the restored opacity reach the screen in one frame), and
+        // after the stamps above, so isCurrent already reads this name as current.
+        poseMode?.delivered(m.name);
       }
       // setSubGeometry reset every delivered mesh's matrix, so each one gets
       // its display pose now, after its geometry landed: a canonical mesh
@@ -1335,6 +1635,32 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // forgetting on a disagreement would rebuild at the same params forever).
       fastPath.apply(meshes.map((m) => m.name), undefined, { fresh: true });
       recordFrames(meshes);
+      poseCollide?.delivered(meshes.map((m) => m.name));
+    }
+
+    // Show a delivery built at params the live ones have left (playback's best effort, a
+    // shape drag's outdated frame) and record nothing about the LIVE params: cache and
+    // fast-path stamps must describe geometry built at the live params, and this was not
+    // (spec §2). Stamps go first, so a pose ghost lifts only if its sub-part is current
+    // without them — mid-drag it is not, and the ghost stays over the off-params mesh.
+    // Material frames are recorded against the params the job was dispatched with (what
+    // it was built at): a stale frame would lay a sheet's burn over moved geometry.
+    function showBestEffort(meshes) {
+      for (const m of meshes) {
+        viewer.setSubGeometry(m.name, m);
+        fastPath.forget(m.name);
+        cache.forget(m.name);
+        // A pose ghost on this sub-part has just been replaced by a new mesh; left at
+        // GHOST_OPACITY it would stay faded through playback.
+        poseMode?.delivered(m.name);
+      }
+      // With the stamps gone the frame comes from the reply: a canonical mesh is posed
+      // by place() at the LIVE params (a rigid place() needs no geometry at those
+      // params), or cleared when the probe is untrusted.
+      fastPath.apply(meshes.map((m) => m.name),
+        Object.fromEntries(meshes.map((m) => [m.name, m.frame ?? "posed"])));
+      recordFrames(meshes);
+      poseCollide?.delivered(meshes.map((m) => m.name));
     }
 
     // Progressive delivery (feedback #212). A view with many sub-parts posts what it has
@@ -1344,7 +1670,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // on screen frames to the first batch, and showView frames the whole view when the
     // build completes — unless the user has moved the camera since, or a carried or
     // persisted camera was restored, which win as they always have.
-    cleanup.defer(viewer.onCameraStart(() => { if (partialView === view()) partialCameraKept = true; }));
+    cleanup.defer(viewer.onCameraStart(() => {
+      if (partialView === view()) partialCameraKept = true;
+      if (staleView === view()) staleCameraKept = true;
+    }));
     function showPartial() {
       const needed = viewSubParts(part, view(), params);
       // Everything already on screen (an edit), or a cached preview filling the
@@ -1381,6 +1710,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
           break;
         case "progress":
+          if (cycleTransient && poseHold) break; // a mid-drag build shows no status (spec §4)
           ui.showBusy(data.phase);
           ui.setStatus(`${data.phase}…`);
           break;
@@ -1394,7 +1724,26 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           break;
         case "meshes": {
           const fresh = loop.buildDone();
-          if (fresh) { // stale results (params changed mid-build) are discarded
+          // A build that built something times the part for the next drag's live-rebuild
+          // call; one answered wholly from the worker's cache (no misses) built nothing.
+          if (fresh && Number.isFinite(data.ms) && data.cache?.misses !== 0) lastBuildMs = data.ms;
+          if (fresh && cycleTransient) {
+            // A mid-drag build at the live params: drawn, its ghost lifted (applyFreshMeshes
+            // calls the session's delivered), and nothing else — no busy/status/debug line,
+            // no onBuild, no preview hand-over, ready or floor. refreshView keeps export
+            // off: the sub-parts it drew are owed.
+            applyFreshMeshes(data.meshes);
+            refreshView();
+            updateRelevance();
+          } else if (!fresh && cycleTransient && poseHold) {
+            // Outdated by a later frame of the same drag: shown anyway, best effort (a
+            // continuous drag would otherwise draw nothing until it paused), and recorded
+            // as nothing, exactly as the playback branch below. Its sub-parts stay stale,
+            // so their ghosts stay and the loop's kick builds the latest params next.
+            for (const m of data.meshes) owed.delete(m.name); // stale now: missing in its own right
+            showBestEffort(data.meshes);
+            refreshView();
+          } else if (fresh) { // stale results (params changed mid-build) are discarded
             applyFreshMeshes(data.meshes);
             // The whole view is live: every sub-part the preview drew has just been
             // replaced in place, so the tools it held back come back. Before
@@ -1431,28 +1780,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           } else if (lastAnimApplyVersion === loop.version()) {
             // Stale ONLY because animation frames kept bumping the version:
             // show the delivered meshes anyway — that IS best-effort playback —
-            // but record nothing about the LIVE params. Cache and fast-path stamps
-            // must describe geometry built at the live params, and this delivery
-            // wasn't; the fast-path stamp is dropped too, so a later pose-only
-            // repair can never re-pose this newer geometry off an older delivery's
-            // stamp. Its material frames are the exception: those are recorded
-            // against the params its job was dispatched with, which is what it was
-            // built at — keeping the last fresh delivery's frame instead would lay a
-            // sheet's burn over geometry that has moved along its normal.
+            // but record nothing about the LIVE params (showBestEffort). The
+            // fast-path stamp is dropped too, so a later pose-only repair can never
+            // re-pose this newer geometry off an older delivery's stamp.
             // A user edit mid-play pauses playback and bumps the version WITHOUT
             // touching lastAnimApplyVersion, so a genuinely user-stale result
             // fails this test and is discarded exactly as before.
-            for (const m of data.meshes) {
-              viewer.setSubGeometry(m.name, m);
-              fastPath.forget(m.name);
-              cache.forget(m.name); // the stamp described the last FRESH delivery; this mesh was built at other params, so no stamp may describe it (spec §2)
-            }
-            // With the stamps gone the frame comes from the reply: a canonical
-            // mesh is posed by place() at the LIVE params (a rigid place() needs
-            // no geometry at those params), or cleared when the probe is untrusted.
-            fastPath.apply(data.meshes.map((m) => m.name),
-              Object.fromEntries(data.meshes.map((m) => [m.name, m.frame ?? "posed"])));
-            recordFrames(data.meshes);
+            showBestEffort(data.meshes);
             ui.hideBusy();
             refreshView();
           }
@@ -1479,21 +1813,23 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           loop.buildDone();
           loop.kick();
           break;
-        case "needs-import-mesh":
+        case "needs-import-mesh": {
           // STEP import on the Manifold worker: an unprimed import threw
           // NEEDS_IMPORT_MESH (Task 8). Settle this build the same way
           // needs-occt does — buildDone() only, no kick() here: the retry can't
           // succeed until priming completes, and kicking now would just repeat
           // the same failure before the mesh exists. The "import-meshes" case
           // below is what kicks, once the prime has actually landed.
-          loop.buildDone();
+          const importFresh = loop.buildDone();
           if (importMeshState === "primed") {
             // Tessellation already delivered a mesh but Manifold still can't
             // satisfy the import — the digest didn't match. A genuinely broken
             // state, not a retry loop: surface it like any other build error
-            // rather than re-requesting tessellation forever.
-            ui.hideBusy();
+            // rather than re-requesting tessellation forever. A mid-drag build's
+            // failure stays quiet: the release build hits it again and reports.
             refreshView();
+            if (cycleTransient) { if (!importFresh || !poseHold) loop.kick(); break; }
+            ui.hideBusy();
             ui.setStatus(`failed: ${IMPORT_MESH_BROKEN_MESSAGE}`, true);
             onBuild?.({ status: "error", error: IMPORT_MESH_BROKEN_MESSAGE });
             if (!readySettled) { readySettled = true; rejectReady(new Error(IMPORT_MESH_BROKEN_MESSAGE)); }
@@ -1503,6 +1839,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             service.send({ type: "tessellate-imports", jobId: importTessellateJobId }, "occt");
           }
           break;
+        }
         case "import-meshes":
           // The OCCT worker answered tessellate-imports: prime the Manifold
           // worker's import cache (worker-lifetime, per Task 8) with transferable
@@ -1537,8 +1874,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             if (!readySettled) { readySettled = true; rejectReady(new Error(tessellateMessage)); }
             break;
           }
-          loop.buildDone();
+          const fresh = loop.buildDone();
+          // A mid-drag build's failure is not the host's: the release build reports.
+          // Outdated (a later frame) or released, it kicks: the release's own kicks were
+          // absorbed while it was in flight. A fresh one mid-drag does not, or it would
+          // re-send the same failing params.
+          if (cycleTransient) {
+            refreshView();
+            if (!fresh || !poseHold) loop.kick();
+            break;
+          }
           ui.hideBusy();
+          // The change this build was for will never land: a held floor would wait
+          // for it through every later edit, so it is placed afresh instead.
+          if (groundRealPending) releaseGround();
           // refreshView FIRST: its all-current branch clears the status line,
           // so writing the failure after it keeps the message on screen.
           refreshView();
@@ -1586,7 +1935,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // (mount.js ~:250). Readouts simply stay em-dashed.
       let derived = {};
       try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
-      panel.refresh({ relevant: recordedRelevantKeys(part, view(), params, displayReadsOf), derived });
+      const relevant = recordedRelevantKeys(part, view(), params, displayReadsOf);
+      panel.refresh({ relevant, derived });
+      if (poseMode) syncPoseVisible(relevant);
     };
     updateRelevance(); // initial view
 
@@ -1594,7 +1945,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // forceRegen path: forceRegen() forgets cache stamps WITHOUT bumping the params
     // version, so a repair there would re-stamp everything current off the memoized
     // probe and the forced rebuild would silently no-op.
-    function onParamChange({ debounce = true } = {}) {
+    function onParamChange({ debounce = true, animated = false } = {}) {
+      // The pose repair and the relevance pass below each derive the same params:
+      // memoized, one derive serves all three (derive-memo.js).
+      withDeriveMemo(() => applyParamChange(debounce, animated));
+    }
+    function applyParamChange(debounce, animated) {
       loop.markDirty({ debounce }); // bump the version first: refreshView below must see the parts as stale
       // Pose-only edits: re-posed + re-stamped current, no job. Skipped entirely
       // when caching is off — ?debug&nocache is there to measure true uncached
@@ -1604,6 +1960,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         for (const name of posed) pendingPosed.add(name);
         dbg?.update({ posed: pendingPosed.size }); // partial: merges over the last build's numbers
       }
+      noteGroundChange({ animated });
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
     }
@@ -1612,6 +1969,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // path as a slider edit: pose-only changes repair synchronously (no worker
     // job, no debounce); geometry changes fall through to the regen loop.
     function setParams(partial) {
+      // A host's write mid-drag (its undo, a remote edit) reverts the drag first, so
+      // the values it sets are not overwritten by the next drag frame. No-op otherwise.
+      poseMode?.externalWrite();
       animCtl?.notifyUserEdit();
       Object.assign(params, partial);
       panel.syncValues(Object.keys(partial));
@@ -1626,9 +1986,60 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     function applyAnimationValues(values) {
       Object.assign(params, values);
       panel.syncValues(Object.keys(values));
-      onParamChange({ debounce: false });
+      // A playing frame is pose-only for the floor; the driver's Reset restore
+      // (written after it drops its hold) is classified like any edit.
+      onParamChange({ debounce: false, animated: viewer.isGroundHeld?.("animation") ?? false });
       lastAnimApplyVersion = loop.version(); // this version came from playback, not a user edit
       loop.kick();
+    }
+
+    // Pose mode's per-frame write: applyAnimationValues without the playback stamp.
+    // A drag is a user edit, so a delivery its frames outdate is discarded like any
+    // stale build (never shown as best-effort playback), and the kick finds nothing
+    // to send while the drag holds — rigid sub-parts still move by matrix (the
+    // fast path's repair in onParamChange), the rest stay ghosted.
+    function writePoseValues(values) {
+      Object.assign(params, values);
+      panel.syncValues(Object.keys(values));
+      onParamChange({ debounce: false });
+      loop.kick();
+    }
+
+    // The readout chip's write: what a slider's input and change do (pause playback, write,
+    // re-pose or rebuild, relevance), for every value the chip changed, then one commit.
+    function writeChipValues(values) {
+      const changed = Object.keys(values).filter((k) => !Object.is(params[k], values[k]));
+      if (!changed.length) return;
+      poseMode?.externalWrite(); // no drag holds while the chip is edited; a no-op then
+      animCtl?.notifyUserEdit();
+      for (const k of changed) params[k] = values[k];
+      panel.syncValues(changed);
+      onParamChange();
+      onParamsCommit?.({ changed, params: { ...params } });
+    }
+
+    // Which handles Pose mode shows in this view (pose/handle-views.js, the rule the oracle's
+    // report and lint share): a handle's declared `views`, else those with a parameter
+    // something on screen reads — the same relevance the panel dims by — whose source (the
+    // limb or derived value its point sits on) this view draws, when any view draws it. A
+    // handle whose limb this view never draws (a print layout) stays hidden, even when the
+    // layout reads a derived value that makes every pose parameter "relevant". The mode
+    // re-reads only when the set changes, so a drag frame (which runs updateRelevance
+    // through onParamChange) costs nothing beyond the relevance it already had.
+    function syncPoseVisible(relevant) {
+      // Keyed by view + its shown sub-parts, NOT params: what a view draws rarely depends on them.
+      const sourceReads = (v) => {
+        const key = `${v}\u0000${viewSubParts(part, v, params).join("\u0000")}`;
+        if (!poseSourceReads.has(key)) poseSourceReads.set(key, viewSourceReads(part, v, params));
+        return poseSourceReads.get(key);
+      };
+      let ids = handleIds;
+      try { ids = handlesShownInView(part, view(), params, { relevant, sourceReads }); } catch { /* all show */ }
+      const key = ids.join("\u0000");
+      if (key === poseVisibleKey) return;
+      poseVisibleKey = key;
+      poseVisible = ids;
+      poseMode.refresh();
     }
 
     // Animation transport + driver (null when NO view declares animations).
@@ -1779,6 +2190,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         }
         measureMode.setEnabled(false);
         annotateMode?.setEnabled(false);
+        // Posing has no toggle to turn back on: the preview gate suppresses it
+        // (syncPoseSuppression) and lets it go when the live build lands.
         previewGate.start();
         for (const m of shown) viewer.setSubGeometry(m.name, m);
         refreshView();
@@ -1863,6 +2276,53 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         clearPins: measureMode.clearPins,
         pinCount: measureMode.pinCount,
       },
+      // Pose mode (spec 2026-10-30 §4): null-free like measure — a part with no
+      // handles gets the no-op stand-in. handlePoints() is where each shown
+      // handle's grab points sit on the canvas (CSS px from its top-left), for a
+      // host's own coach marks and for scripts/check-pose.mjs.
+      pose: poseMode ? {
+        // The host's switch, on by default. Posing is LIVE only while it is on and no
+        // measure, sketch, cutaway or cached preview holds it off (isLive).
+        isEnabled: poseMode.isEnabled,
+        setEnabled: poseMode.setEnabled,
+        isLive: poseMode.isLive,
+        pinCount: poseMode.pinCount,
+        releasePins: poseMode.releasePins,
+        handlePoints: poseMode.handlePoints,
+        // Test hook only (scripts/check-pose.mjs): the aim gizmo on screen, or null —
+        // its centre and a grabbable point on each ring, CSS px on the canvas.
+        __aimGizmo: () => poseMode.aimGizmoPoints(),
+        // Test hooks only (scripts/check-pose.mjs): the joint gizmo on screen, or null, and
+        // every joint with rings (where to hover to show them), CSS px on the canvas.
+        __jointGizmo: () => poseMode.jointGizmoPoints(),
+        __jointRings: () => poseMode.jointRingPoints(),
+        // Test hook only (scripts/check-pose.mjs): every pin badge drawn — the pinned point
+        // (part coordinates) and where it sits on the canvas.
+        __pinPoints: () => poseMode.pinPoints(),
+        // Test hook only (scripts/check-pose.mjs): a pose drag is past its threshold.
+        __isDragging: () => poseMode.isDragging(),
+        // Test hook only (scripts/check-pose.mjs): what the readout chip shows, or null.
+        __chip: () => poseChip?.state() ?? null,
+        // Test hook only (scripts/check-pose.mjs): what the live drag readout shows, or null.
+        __dragReadout: () => poseReadout?.text() ?? null,
+        // Test hook only (scripts/check-pose.mjs): what the pose overlay draws now and whether
+        // it claims the hover (a grab cursor, the model's tooltip held off).
+        __drawn: () => ({ objects: poseMode.drawnObjects(), claims: poseMode.claimsHover() }),
+        // Test hook only (scripts/check-pose.mjs): what one sub-part's mesh shows
+        // right now — its material's opacity and its geometry's identity — so the
+        // check can see ghost and delivery land in the same frame.
+        __subPart: (name) => {
+          const m = viewer.__subMesh?.(name);
+          return m ? { opacity: m.material?.opacity ?? 1, geometry: m.geometry?.uuid ?? null } : null;
+        },
+        // Test hook only (scripts/check-pose.mjs): the realistic floor as placed, or null.
+        __ground: () => viewer.__ground?.() ?? null,
+        // Test hooks only (scripts/check-pose.mjs): the collision index (indexed sub-parts,
+        // queue size, the pair tinted) or null without collisions; the last onDragEnd payload.
+        __collide: () => poseCollide?.state() ?? null,
+        __lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
+      } : null,
+      poseState: () => (poseMode && poseMode.pinCount() > 0 ? { pins: poseMode.getPins() } : null),
       annotate: annotateMode ? {
         isEnabled: annotateMode.isEnabled,
         setEnabled: (on) => { if (on && previewGate.isActive()) return; annotateMode.setEnabled(on); },

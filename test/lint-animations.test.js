@@ -3,7 +3,7 @@
 // minimal valid part; assertions check the finding id lands on the right path.
 // Animations are VIEW-OWNED (spec 2026-08-10-per-view-animations): every block
 // lives at `views.<view>.animations`, and every finding path says so.
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
 import lattice from "./fixtures/lattice-lid-part.js";
 
@@ -365,4 +365,41 @@ test("a readable place() that reshapes on both purposes still classifies pose-on
     views: { v: { label: "V", animations: { x: { duration: 1, tracks: { a: [[0, 0], [1, 100]] } } } } },
   });
   expect(findingsFor(part, "animation-track-rebuilds")).toEqual([]);
+});
+
+// A one-function derive has no per-key attribution, so a querying build reading any
+// d.* counts as reading the tracked param. The viewer rebuilds it per frame (it
+// cannot trust the probe), and the fix is not the one the generic hint names.
+describe("a track reaching a querying build only through derive", () => {
+  const part = (derive) => base({
+    defaults: { w: 10, a: 0 },
+    derive,
+    parts: { p: {
+      build: (k, p, d) => { const s = k.box({ size: [d.w, 10, 10] }); return s.isEmpty() ? s : s; },
+      views: { v: (s, p, d) => s.rotateZ(d.angle) },
+    } },
+    views: { v: { label: "V", animations: { x: { duration: 1, tracks: { a: [[0, 0], [1, 100]] } } } } },
+  });
+
+  test("a one-function derive earns a note whose hint names derive groups", () => {
+    const notes = trackNotes(lintPart(part((p) => ({ w: p.w, angle: p.a }))));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].hint).toMatch(/`a` reaches `build\(\)` only through `derive`/);
+    expect(notes[0].hint).toMatch(/own group/);
+  });
+
+  test("the same part with derive grouped earns no note", () => {
+    expect(trackNotes(lintPart(part({ size: (p) => ({ w: p.w }), pose: (p) => ({ angle: p.a }) })))).toEqual([]);
+  });
+
+  test("a direct read in a querying build keeps the generic hint", () => {
+    const direct = base({
+      defaults: { a: 0 },
+      parts: { p: { views: ["v"], build: (k, p) => { const s = k.box({ size: [10 + p.a, 10, 10] }); return s.isEmpty() ? s : s; } } },
+      views: { v: { label: "V", animations: { x: { duration: 1, tracks: { a: [[0, 0], [1, 100]] } } } } },
+    });
+    const notes = trackNotes(lintPart(direct));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].hint).not.toMatch(/through `derive`/);
+  });
 });

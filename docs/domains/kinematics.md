@@ -169,6 +169,24 @@ thumb.pose({ bend: { ball: { bend: 40, spread: 30 } } }).report;
 thumb.pose({ curl: 1 }).report.bend;                          // [{ bend: 0, spread: 0, twist: 0 }, 90]
 ```
 
+**A ball posed by rotate steps.** When you already have the orientation as a sequence
+of turns (Euler angles, or rotations you chained by hand), give it as
+`{ rotate: [{ axis, deg }, …] }` in place of `bend`/`spread`/`twist`. The steps are in
+the joint's frame (+Y along the segment, −Z toward `bendToward`), each about the
+CURRENT axes, the same form as a frame's `rotate`, so `euler(…)` from
+`partforge/geometry` gives a valid list. The limb turns them into the one swing and
+twist that end in the same orientation, and applies the cone to that swing, as for any
+other ball value. The report shows the swing and twist:
+
+```js
+thumb.pose({ bend: { ball: { rotate: [{ axis: "x", deg: -30 }, { axis: "z", deg: 20 }, { axis: "y", deg: 15 }] } } }).report;
+// { bend: [{ bend: 28.726, spread: 20.911, twist: 20.41 }, 0], clamped: [false, false], tip: [-17.101, 40.69, -23.492] }
+```
+
+Thus four zero-length hinges chained to make a ball (swing, yaw, roll, twist) become
+one ball joint driven by the same angles. A swing of exactly 180° has no shortest turn,
+and is read as a bend.
+
 `curl` leaves a ball at rest unless you name it in an object `bend`. In an array
 `bend`, a ball's entry is its object. `reach` and `grip` hold a ball at the value you
 give and solve the hinges. The cone is round: for a limit on one side only, use hinge
@@ -399,29 +417,21 @@ links.
 
 ## Solid parts: placing links
 
-Build each link the way its joint frame expects it: **its own joint at the origin,
-running along +Y, with its bending side toward −Z**. Then
-`posed.place(solid, joint)` moves the link into that joint's place in part
-coordinates, through every joint above it.
+`posed.place(solid, joint, { from })` moves a link into its posed place in part
+coordinates, through every joint above it. First decide where you build the link,
+because `from` must say so:
 
-- `joint` is a joint name (`"pip"`), a frame name (`"finger.pip"`) or `"tip"`. The
-  default is the base joint.
-- `place` makes at most one `rotate(deg, [0, 0, 0], axis)` call (none when the frame
-  is not turned) and then one `translate` call. These are calls that a `views` pose may make, so the probe can read
-  the pose. `place` also works on any object with those two methods.
-- `world(joint)` gives that frame in part coordinates as `{ origin, x, y, z }`
-  (the unit axes), with values rounded to 0.001. Use it to anchor other features to a
-  joint, or to check a placement in a probe or a test.
+| You build the link… | Pass | `place` moves it by |
+| --- | --- | --- |
+| **where it prints**: in part coordinates, with the whole limb at rest. This is how a print-in-place part is built. | `{ from: "rest" }` | that joint's motion from rest to the pose |
+| at its joint: **its own joint at the origin, running along +Y, with its bending side toward −Z** | nothing (`from: "joint"` is the default) | that joint's whole frame |
 
-**Links built where they print: `from: "rest"`.** A print-in-place part builds every
-link in part coordinates, where it prints, which is the limb at rest (every joint at
-0). Do not move such a link into its joint frame by hand. Pass `{ from: "rest" }`:
-`posed.place(solid, joint, { from: "rest" })` moves the link by that joint's motion
-from rest to the pose. The links then need no second statement of where each joint is,
-and the limb's `at`, `toward`, lengths and offsets must describe the joints where the
-links print. For a limb on a parent limb, pass the parent's posed limb to `pose` (not its
-`frames`), so that rest is the whole chain at rest. Rest is every joint at 0 even when a
-range excludes 0, and a parent given as plain frames is the same at rest as posed.
+**Built where it prints: `from: "rest"`.** Rest is every joint at 0, even when a range
+excludes 0. Do not move such a link into its joint frame by hand: the links then need
+no second statement of where each joint is. The limb's `at`, `toward`, lengths and
+offsets must describe the joints where the links print. For a limb on a parent limb,
+pass the parent's posed limb to `pose` (not its `frames`), so that rest is the whole
+chain at rest. A parent given as plain frames is the same at rest as posed.
 
 ```js
 derive: (p) => ({
@@ -438,6 +448,22 @@ parts: {
   },
 },
 ```
+
+**Built at its joint.** The worked example, `robot-finger.js`, builds its links this
+way and lays them out for printing in its own `print` view.
+
+- `joint` is a joint name (`"pip"`), a frame name (`"finger.pip"`) or `"tip"`. The
+  default is the base joint.
+- `place` makes at most one `rotate(deg, [0, 0, 0], axis)` call (none when the frame
+  is not turned) and then one `translate` call. These are calls that a `views` pose may make, so the probe can read
+  the pose. `place` also works on any object with those two methods.
+- **Check the joints without renders.** `world(joint)` gives that frame in part
+  coordinates as `{ origin, x, y, z }` (the unit axes), with values rounded to 0.001.
+  A probe can return `posed.joints.map((j) => posed.world(j))` (the joint frames, from
+  the base) to show that every hinge is where the links' pins are, and that each `x`
+  axis (the bend axis) points the way you expect. A wrong sign then shows as a number,
+  not as a link that looks slightly off in a render. Use `world` also to anchor other
+  features to a joint.
 
 **The fast-path rule.** Pose the limb in `derive`, and read the limb's pose params
 (`curl`, `bend` values, a grip toggle) ONLY in `derive` and in `views` poses. Never read
@@ -459,6 +485,442 @@ parts: {
 },
 ```
 
+## Posing by goals: `goals` and `pins`
+
+`reach` and `grip` fit a finger. For an arm, a leg or a hand with a held tool, use
+`goals`. A goal says where a point on the limb must be, and optionally which way it
+must point. The solver finds the joint values. It uses damped least squares on all the
+free joints at once, so it can move a whole chain, not only the pitch joint.
+
+`goals`, `reach` and `grip` are mutually exclusive: a pose takes only one of them.
+`bend`, `curl`, `spread` and `twist` still give the joint values the solver starts from.
+
+```js
+index.pose({ goals: [{ at: "tip", position: [-30, 137, -64] }] }).report.goals;
+// [{ at: "tip", residual: 0, status: "reached" }]
+```
+
+A goal is `{ at, position?, aim?, up?, weight? }`:
+
+| field | meaning |
+| --- | --- |
+| `at` | A joint name, the name of its frame, or `"tip"`. |
+| `position` | `[x, y, z]` in part coordinates, in mm. |
+| `aim` | A direction. The frame's +Y axis (the way the link points) must turn toward it. |
+| `up` | A second direction that fixes the roll about `aim`. With an `aim`, it is made square to `aim`, and it must not be parallel to it. It is matched to the frame's +Z side, the back of the bend (opposite the side a positive bend closes toward). |
+| `weight` | How much the goal counts against other goals. The default is 1. |
+
+- A goal needs at least one of `position`, `aim` and `up`.
+- A goal at a joint moves only the joints above that joint.
+- The solve starts from the joint values you give with `bend` or `curl`, so the same
+  parameters always give the same pose. It never starts from the last result.
+- Every joint stays inside its range. A ball joint stays inside its cone.
+- `couple`ings hold. A follower moves with its leader.
+- `goals: []` is legal and poses like `bend` does.
+- A limb with a `parent` needs the parent frames, as `reach` does.
+
+### Pins
+
+`pins` is a list of joint names. A pinned joint keeps the value the pose gives it
+(from `bend`) and the solver does not move it. Use it to hold the shoulder while the
+rest of the arm reaches. A pin on a follower does nothing. A pinned leader holds its
+followers.
+
+```js
+index.pose({ goals: [{ at: "tip", position: [-30, 137, -64] }], pins: ["mcp"], bend: { mcp: 20 } }).report.bend;
+// [20, 50.034, 37.526]
+```
+
+`pins` needs `goals`. In the example the pinned mcp stays at 20, and the other joints
+do what they can.
+
+### The status of each goal
+
+`report.goals` has one entry per goal: `{ at, residual, aimResidual?, status }`.
+`residual` is the position miss in mm. `aimResidual` is the larger of the aim miss and
+the up miss, in degrees. It is there only when the goal has an `aim` or an `up`. An
+aim-only goal has `residual: 0`. Numbers are rounded to 0.001.
+
+| status | meaning |
+| --- | --- |
+| `reached` | The position is within 0.01 mm, and the aim and the up are within 0.1 degrees. |
+| `too-far` | The position is farther from the first moving joint than the segments can reach. The limb stretches toward it. |
+| `conflict` | There are two or more goals, and this goal would be met better if it were the only one. |
+| `out-of-range` | None of the above. A joint limit or a cone stops the goal, or the aim cannot be met. |
+
+The order of the tests is `reached`, `too-far`, `conflict`, `out-of-range`.
+
+- **`too-far` is judged on the straight-line sum of the segment lengths.** It ignores
+  joint limits. A limb whose limit stops it short of full stretch (the arm's elbow stops
+  10 degrees short of straight) cannot reach the last few mm below that sum. A target in
+  that band reads `out-of-range`, not `too-far`.
+
+- **`conflict` is judged for each goal.** The solver solves the goal alone, from the
+  same start. If that gives a smaller error than the combined solve, by more than
+  0.01, this goal reads `conflict`. Two goals 400 mm apart on a 230 mm arm both read
+  `conflict`. One goal can read `conflict` while the other reads `reached`.
+- **A miss is never an error.** The limb takes the nearest pose it can reach, and the
+  residual says by how much it missed. Always read the status.
+- **`report.clamped` means something different under goals.** `reach` clamps a joint to
+  its range and says so. The goal solver keeps every joint inside its range by itself.
+  So a solved joint that rests on its limit reads `false`. `clamped` is `true` only for
+  a value the solver was not free to choose: a pinned value outside its range, a
+  follower pushed past its own range, or a ball joint whose swing is past its cone.
+  To see that a goal was limited by a joint, read `status`, not `clamped`.
+- **Re-targeting from read-back values.** `world()` and `tip` are rounded to 0.001. If
+  you feed a rounded pose back in as `position` and `aim` and `up` together, the goal
+  can read `out-of-range`. The aim error is weighted 100 times, against a position
+  tolerance of only 0.01 mm, so the rounding in the aim is enough to miss. Give `position`
+  only, or `aim` only, when you set a new goal from values you read back.
+
+## `aimFromAngles`
+
+A goal with an `aim` needs a direction vector. People think in pitch and yaw.
+`aimFromAngles` converts them, and a part and the viewer's rotate rings use the same
+function, so they always agree.
+
+```js
+import { aimFromAngles } from "partforge/kinematics";
+```
+
+`aimFromAngles({ toward, pitch = 0, yaw = 0, roll })` returns `{ aim }`, or `{ aim, up }`
+when you give `roll`.
+
+- **Zero is `toward`.** With `pitch` 0, `yaw` 0 and no roll, `aim` is `toward`.
+- **Yaw first, then pitch.** Yaw turns the aim about part +Z. Pitch then lifts it toward
+  the up side. A positive pitch raises the aim. Angles are in degrees.
+- **`roll` turns `up` about `aim`.** The `up` before the roll is part +Z, made square to
+  `aim`. When `toward` is vertical, it is +Y.
+- A vertical `toward` makes yaw and roll the same turn at zero pitch. Use a horizontal
+  `toward`, as the arm does.
+
+```js
+aimFromAngles({ toward: [0, 1, 0] }).aim;                              // [0, 1, 0]
+aimFromAngles({ toward: [0, 1, 0], yaw: 90 }).aim.map(Math.round);     // [-1, 0, 0]
+aimFromAngles({ toward: [0, 1, 0], pitch: 90, roll: 0 }).up.map(Math.round);   // [0, -1, 0]
+```
+
+Spread the result into a goal: `{ at: "tip", position, ...aimFromAngles({ … }) }`.
+
+**Roll 0 is the natural roll.** A goal's `up` is matched to the frame's +Z side, the
+back of the bend. That is the `up` that `aimFromAngles` gives at roll 0, so
+`src/parts/robot-arm.js` passes `roll: p.toolRoll` unchanged, and a `toolRoll` of 0 is
+the natural gripper roll with the wrist near 0.
+
+## Handles and Pose mode
+
+Handles are a general part feature: the declaration (`on` / `point`, `params`, `drag`),
+the four geometric drags, `wrap: true`, motion and shape, when a handle shows, pins, lint
+and the `inspect` entry are in `docs/AUTHORING-PARTS.md`, "Handles". Read that first.
+This section covers what is particular to a posed limb: the `"goal"` and `"angles"`
+drags, their aim gizmos and joint rings, and how pins act on a limb.
+
+Give each finger, leg or chain ONE `"angles"` handle (or one `"goal"` handle for an
+arm's tool point), not a `rotary` handle per joint. With it every joint and the tip are
+draggable, the solve moves the chain's joints together, joint rings show limit arcs, and
+one readout at the bottom of the stage shows the values the drag moves. Per-joint `rotary` / `axis` handles on a limb are for a lone
+hinge with no chain to solve (lint: `handle-limb-per-joint`). See `src/parts/hand.js`
+and `src/parts/robot-arm.js`.
+
+Handles let a person pose the part with the mouse. A handle on a limb is a draggable
+point on a posed limb. A part declares them in a top-level `handles` object, in the
+same form as every other handle: `on` names the limb, and `drag` says how it moves
+(`"goal"` or `"angles"`). Lint checks every name (`handle-unknown-source`,
+`handle-unknown-param`, `handle-param-count`, `handle-aim-toward`,
+`handle-unknown-joint`, `handle-bad-drag`, `handle-unknown-view`).
+
+```js
+handles: {
+  tool:  { on: "arm", at: "tip", drag: "goal",
+           params: { position: ["toolX", "toolY", "toolZ"], aim: ["toolPitch", "toolYaw", "toolRoll"] },
+           toward: [1, 0, 0],
+           seed: ["base", "shoulder", "elbow", "wristPitch", "wristYaw", "wristRoll"] },
+  index: { on: "index", drag: "angles", params: ["indexKnuckle", "indexCurl", "indexSpread", "wristPitch"],
+           lock: "indexLock",
+           joints: { spread: "indexSpread", mcp: "indexKnuckle", "palm.wristPitch": "wristPitch" } },
+},
+```
+
+`on` is a key of the object `derive` returns, and for `"goal"` and `"angles"` its value
+is a posed limb. A limb handle always sets `drag`: lint refuses one without it
+(`handle-bad-drag`) rather than guess. Every parameter a handle names must be a numeric
+key of `defaults` (a `lock`'s default may also be a boolean).
+
+A limb handle shows only in the views that draw its limb: a view whose sub-parts read
+`d.<on>` (most often `d.finger.place(s, joint)`). A print kit that lays the pieces flat
+by fixed offsets does not, so the handle stays out of it. To say it outright, give the
+handle `views: ["assembly"]` (keys of `views`; lint: `handle-unknown-view`). The authoring
+guide's "When a handle shows" has the whole rule.
+
+The key must be the one the placements read. If `on: "indexLimb"` names a limb the
+placements read as `d.poses.index`, no view reads `indexLimb`, so this test cannot tell the
+views apart: the handle also shows in unposed views, floating at the posed position (lint:
+`handle-source-unread`). Keep one name for each limb, or declare `views`.
+
+A posed limb is also a point source: its `handleInfo()` gives its joints and `tip` as
+points, each hinge's axis, and the bone chain. So the geometric drags of any handle
+(`"point"`, `"axis"`, `"plane"`, `"rotary"`) work on a limb point too, for example
+`{ on: "arm", at: "tip", drag: "axis", direction: [0, 0, 1], params: ["lift"] }`. They
+write `params` through `derive` like on any source, with no goal or angles behaviour.
+
+To turn one joint with a rotary handle, put the handle at `"<joint>.child"`. That point is
+the next joint's origin, or the tip for the last joint, so it sits on the bone the joint
+turns. The `"pip"` prefix of `at` picks `axes.pip`, so the handle turns about that joint:
+`{ on: "index", at: "pip.child", drag: "rotary", params: ["indexCurl"] }`. At `"pip"`
+itself the dot is on its own axis and does not move when the joint turns, and lint warns
+(`handle-inert`).
+
+### `drag: "goal"`
+
+Dragging the handle writes the goal parameters: `position` (three parameters) and,
+if declared, `aim` (two parameters for pitch and yaw, three for pitch, yaw and roll, all
+in degrees, in the `aimFromAngles` convention).
+The part solves in `derive` with `goals`. The goal holds when other parameters change,
+for example when the upper arm gets longer.
+
+- **`seed`** lists the joint-angle parameters that `derive` passes to `pose({ bend })`.
+  During a drag, the viewer writes the goal, reads the solved joint values, and writes
+  them into the seed parameters on the same frame. So `derive` stays a pure function of
+  the parameters, and each frame starts where the last frame ended. This is what stops
+  the arm from flipping between two solutions. An agent sets only the goal parameters.
+  The solve then starts from the saved seed, which gives the same pose every time.
+  Keep the seed parameters in a collapsed section. They are saved with the goal.
+- Only the `at` point can be grabbed. With `aim`, the handle gets an aim gizmo: a centre
+  ball on the `at` point and one rotate ring for each aim parameter (pitch red, yaw
+  blue, roll green; a roll ring only when `aim` lists three). It is the cutaway
+  control's widget, so it acts the same way. See "Pose mode".
+- **`toward`** is required with `aim`: the direction zero pitch and yaw point, the same
+  `toward` the part passes `aimFromAngles` (share one constant, as the arm does). The
+  rings turn about axes built from it and the aim parameters' values, never from the
+  posed limb, so they stay right at pitch ±90 and on a goal at a joint.
+- At pitch ±90 the yaw and roll rings turn about the same axis. That is gimbal lock, and
+  it is in the angles themselves, not the viewer.
+- **Joint rings.** Each joint `seed` names gets a rotate ring (see "Joint rings" under
+  "Pose mode"). Turning it turns that joint alone, and the viewer then writes the goal
+  where the turned pose puts the `at` point: its position, and with `aim` its pitch, yaw
+  and roll, read back through the `aimFromAngles` convention from the handle's `toward`.
+  The seed already holds the turned angles, so the next solve starts at its answer and
+  the limb stays put. Where the angles are not unique, the viewer picks the pitch inside
+  the pitch parameter's range nearest its current value, and with the aim straight up or
+  down it keeps the current yaw and puts the rest of the turn in the roll.
+- **Pins on a goal drag.** With a pin on the goal's own limb (click the elbow, say), a
+  drag of the `at` point no longer writes the goal straight through, because `derive`'s
+  goal solve would pull the limb to it and ignore the pin. The viewer solves the seed
+  joints itself instead (forward kinematics), so the `at` point goes as near the cursor
+  as it can while each pinned point holds still. It then writes the seed and the goal as a
+  joint ring does: the goal where the solved pose puts the `at` point, aim included. The
+  next solve starts at its answer and lands on the same pose. With pins, the aim follows
+  the pose, since a pinned arm has too few joints left to hold both the point and the aim.
+  An aim ring drag with a pin holds the pins too: it pulls the aim toward the ring's angle
+  while the `at` point keeps where the drag began, and a pin can stop the aim short. A
+  goal the schema would clip stops the pose short, as a joint ring does. A pin on another
+  limb is not held by a goal drag. Without a pin on its limb, a goal drag works as before.
+
+### `drag: "angles"`
+
+Dragging solves for the listed parameters directly and writes them. The parameters can
+be anything the pose reads: a joint angle, a `curl`, a `spread`, a parent limb's wrist
+angle. Use it for fingers and legs. Every joint of the limb, and its tip, can be
+grabbed, and the grabbed point follows the cursor. A joint below the grabbed point moves
+however the listed parameters move it: a `curl` curls the whole finger.
+
+A drag can only move the grabbed point where some value of the listed parameters puts
+it. One `curl` that bends every joint of a finger gives its tip a single arc to move
+along, so a pull off that arc stops at the nearest point of it, still bent. Give the
+base joint its own parameter (the hand's `<f>Knuckle`, beside a `<f>Curl` for the outer
+joints) and a tip pulled straight out straightens the finger.
+
+- **`lock`** names a parameter. While it is true, the handle's parameters are frozen in a
+  drag of any handle. This includes a parameter that two handles share, such as the
+  wrist: a locked finger holds the wrist still.
+- Presets still write a locked value. Set presets in the panel. A lock only stops a drag.
+- **`joints`** gives joints a rotate ring (see "Joint rings" under "Pose mode"). Each key
+  is a joint of the handle's limb (`"spread"`) or `"<limb>.<joint>"` for a joint of
+  another posed limb, such as a parent palm (`"palm.wristPitch"`; `<limb>` is a key of
+  `derive`'s result). Each value names the parameter that drives that joint directly, in
+  degrees:
+  - a parameter name, when the joint's value is the parameter;
+  - `{ param, scale }`, when the joint turns `scale` × the parameter (the hand's ring and
+    pinky spreads are `scale: -1`);
+  - `{ bend?, spread?, twist? }` for a ball joint, one parameter for each ring.
+
+  Leave out a joint whose parameter drives more than one joint, such as a `curl`: a ring
+  would turn the whole finger. Lint checks every key (`handle-unknown-joint`) and every
+  parameter (`handle-unknown-param`). A parameter that a locked handle drives (one it
+  lists in `params` or `joints`) gets no ring.
+
+### Pose mode
+
+Posing has no button. In a part that declares `handles`, posing is always on in the
+normal click mode. It stops while measure, sketch or cutaway is on, and it starts again
+when they are all off.
+
+- **At rest, no handles show.** Only the pin badges show, one at each pinned point.
+- **Hover near a limb to show its handles.** When the pointer is 32 CSS px or less from a
+  limb's bones on screen, that limb's skeleton, joint dots and tip dot appear. If two
+  limbs are near, the nearest one shows. Move away and they go.
+- **Hover a dot** to highlight it. The cursor changes to a grab hand, and the model's
+  hover label does not show.
+- **Drag a dot, a joint or an aim ring** to pose the limb. Orbit gives way to the grab.
+  A dragged point (a dot, a joint, the aim ball) moves on a plane fixed when the drag
+  starts. The plane holds the line from the limb's base joint to the point and faces you
+  as squarely as it can. So moving the pointer along the limb's line on screen pulls the
+  point along the limb, out or in, even when you look nearly down the limb. When the limb
+  points within about 18° of your line of sight, the plane faces you instead.
+- **The aim gizmo.** A goal handle with `aim` shows a ball and rotate rings at its `at`
+  point instead of a dot. They show when you hover the point, and they stay while the
+  pointer is inside the rings and while you drag any part of them. Hover a part to highlight it: it gets lighter and thicker,
+  and the cursor changes to a grab hand. Drag the ball to move the point, as you drag a
+  dot. Drag a ring to turn the aim parameter of that ring. Seen edge-on, a ring turns
+  as you move the pointer across it. The ball's target is 28 CSS px wide and a ring's
+  band is 24 CSS px wide. Where the ball and a ring overlap, the ball wins.
+- **Every other press is the usual press.** On empty space or on the model away from the
+  handles, a drag orbits and a click picks (the chat box opens as before).
+- **Click any dot (no drag)** to pin that point: a tip, a joint, a goal handle's `at`
+  point (the aim gizmo's ball), a goal limb's middle joint or a ring-only joint. Click it again to unpin it. This
+  click does not pick. A drag does not pick when you release it.
+  - A pinned point holds its position in space through every inverse-kinematics drag:
+    a drag of another point of the same limb, or of another limb's handle (angles mode
+    holds pins on any limb; a goal drag holds pins on its own limb, see "Pins on a goal
+    drag" under `drag: "goal"`). Dragging a pinned dot moves it, and it holds its new
+    place in the next drag.
+  - A pin holds a point's POSITION, not a joint's angle. A pivot turns about its own
+    point, so pinning it (the hand's wrist, say) does not stop it turning. To hold a
+    joint's angle, turn on the digit's lock, or set the angle with the joint's ring
+    alone.
+  - **Joint rings ignore pins.** A ring turns its one joint and nothing else, so a pinned
+    point past that joint moves with it.
+  - A pin badge (a pink dot and a head on a short stem) sits at each pinned point at all
+    times while posing is on, at rest too, and follows the point as the pose changes.
+    While its limb shows, the pinned dot itself is pink and larger. The badge's head sits
+    inside the dot's 28 px target, so a click on the badge unpins it. Captures never show
+    the badges.
+  - A pin is view state, not a parameter. Its id is `"<handle>:<at>"` (`at` a joint name
+    or `tip`; a joint of a limb only a `joints` entry shows is `"<limb>.<joint>"`), and
+    pins are carried in `getViewerState().pose.pins`. A "Release pins" button shows in the
+    viewbar while a pin is set and posing is on.
+- **Joint rings.** A joint with a parameter to turn (a goal handle's `seed`, an angles
+  handle's `joints`) shows a rotate ring about its axis while you hover its dot: a hinge
+  shows one ring, a ball joint three (bend, spread and twist). The ring colour follows the
+  axis: bend red, spread blue, twist green. Joints at one point share one gizmo, each in
+  its own ring (the robot arm's wrist pitch, yaw and roll). Each ring holds one joint: a
+  joint at that point whose axis kind matches a joint already in the gizmo gets no ring. Drag a ring to turn that one
+  joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
+  range. The limit arc shows during the drag, and a joint at its stop shows the warning
+  colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
+  joint that a seeded joint above it moves (the robot arm's elbow and wrist) is a grab
+  too: drag it and the seeded joints carry THAT joint toward the pointer, the joints
+  below it keep their angles and the tool rides along; the drag writes every seed
+  parameter and the goal at the new tool frame, as a joint ring does, and holds pins on
+  the limb. A goal handle's other joints (the first driven joint, or one on a twist axis
+  above it, like the arm's shoulder over its base), and a limb that only a `joints`
+  entry names, have ring-only dots: hover one to show its ring; a drag from it orbits
+  and a click on it pins it (the cursor is a pointer, not a grab). A touch on one puts its rings up and its tap picks nothing. A
+  ring drag does not hold pins. A goal handle's joint stops where its
+  goal would leave a goal parameter's range (the tool below its lowest Z, say), with the
+  warning colour, rather than letting the solve spread the turn over the other joints.
+  Inside a shown gizmo, a press within 14 px of another dot, with no ring under it, still
+  grabs that dot.
+- **One gizmo at a time.** The aim gizmo shows once you hover its goal point; a joint's
+  rings show once you hover its dot. A gizmo stays while the pointer is inside its rings.
+  There, another joint's dot takes over only when the pointer is on its core (8 CSS px),
+  so moving from a joint out to its ring never flashes the gizmo away. Where a dot and the
+  shown ring are both under the pointer, the nearer one wins.
+- **Touch has no hover.** A touch press 24 px or less from a dot of any limb drags that
+  dot. A touch press anywhere else orbits or picks. A touch on a joint with rings leaves
+  its rings up until a touch lands somewhere else, as with the aim gizmo.
+- **Touch and pins.** A tap on a dot with no rings or gizmo (an angles limb's tip) pins it
+  at once. On a dot with rings or a gizmo, the first tap only puts them up; a tap on the
+  dot while they are up toggles its pin. With a mouse or a finger, on the dot's 8 px core
+  the dot wins over a ring seen edge-on through it.
+- **Touch and the aim gizmo.** A tap on a goal point with `aim` shows its aim gizmo and
+  does not pin it. The gizmo stays until a touch lands somewhere else, so you can then
+  drag a ring with your finger. A drag from the point also leaves it shown. While the
+  gizmo shows, a tap on its ball pins the point, as a mouse click does.
+- **Rigid parts move live.** A sub-part that the pose only places by matrix moves on every
+  frame.
+- **A part that must rebuild** fades to a ghost (0.35 opacity) and stays still. A
+  skeleton (bones and joints) follows the drag. A slow part builds nothing during the
+  drag; a cheap one (its last build under 120 ms) rebuilds as the drag goes, and each new
+  mesh lifts its ghost (see "Motion and shape" under "Handles" in
+  `docs/AUTHORING-PARTS.md`). One build runs on release, and the new mesh and the full
+  opacity appear in the same frame.
+- **One drag is one `onParamsCommit`.** It lists every parameter that changed. A drag that
+  changed nothing commits nothing.
+- **Release snaps to the schema step.** Every parameter the drag wrote rounds to its
+  control's `step`. Give the parameters a limb handle writes a fine step (the reference parts
+  use 0.1° and 0.1 mm, and 0.001 for a 0..1 curl), or the release moves the limb visibly:
+  at 1° a wrist step moved the hand's fingertips up to 0.85 mm.
+- **Escape or a cancel** restores the values from before the drag. A `setParams` from
+  the host in the middle of a drag cancels the drag.
+- **The values show at the bottom.** While a limb drag moves, the viewbar's readout pill
+  (the one a generic handle's drag and measure's X/Y/Z use) shows the values it writes,
+  each named by its control's `label` and `unit`: the handle's `readout` params if it sets
+  them, else its `params` (a `"goal"` handle's `position`, then its `aim`). A joint ring
+  shows only its own parameter, an aim ring only that aim angle. The readout goes on
+  release; a limb drag leaves no chip. Pose mode draws no text in the scene.
+- **Out of reach.** The chain stops at the nearest pose it can make. A dashed line runs
+  from the grabbed point to the cursor's point, ending in a hollow target, and the readout
+  adds a last value, "Out of reach", the miss in mm. The chain does not jump to another
+  solution to catch up.
+- **Straight limbs can jump.** A limb whose elbow can go fully straight has no bend to
+  push on there. When the goal comes back into reach, the solver may jump to the bent
+  pose in one step. `src/parts/robot-arm.js` stops its elbow 10 degrees short of
+  straight (`range: [10, 150]`). Do the same for a goal-mode arm.
+
+Pose mode is a pointer tool. The panel sliders drive the same parameters, so keyboard
+users lose nothing.
+
+`runtime.pose` is the host's view of the mode. `setEnabled(false)` turns posing off and
+`setEnabled(true)` turns it on again (it is on by default). `isEnabled()` reads that
+setting; on a part with no `handles` it is always false, since there is nothing to
+switch. `isLive()` is true when handles can be used now: posing is enabled and measure,
+sketch, cutaway and a cached preview are all off. `pinCount()` counts the pins badged in
+this view (a pin on a handle the view hides is kept, but not counted), and
+`releasePins()` clears every pin. `handlePoints()` gives each handle's grab point on the canvas, in CSS
+px, also when the handle does not show. It is empty while posing is not live.
+
+## Posing a part as an agent
+
+Do not change `build` or `derive` to pose a part. Set parameters, and read the probe:
+
+- for an arm, the goal parameters (`toolX`, `toolY`, `toolZ`, `toolPitch`, `toolYaw`,
+  `toolRoll`);
+- for a hand, the knuckle, `curl` and `spread` per digit (the thumb's oppose, knuckle and
+  curl), or a preset.
+
+Then measure the part at that pose and read the probe. Where the measure report comes
+from depends on your setup, but the probe is the same everywhere:
+
+- **A host with a check loop** (one that reports measure output after each edit) carries
+  the probe in that report under `probes`, keyed by its name. It is measured at the
+  parameters the host builds with, which are often the part's `defaults`.
+- **The CLI:** `partforge measure` has no `--params` flag, so it reads `defaults` too. To
+  check a pose without changing the part, write a small module that changes the defaults:
+
+  ```text
+  // far-tool.js
+  import arm from "./src/parts/robot-arm.js";
+  export default { ...arm, defaults: { ...arm.defaults, toolX: 380 } };
+  ```
+
+  `npx partforge measure far-tool.js` then prints the probe line of the part.
+
+The robot-arm's `tool` probe returns the goal's report. At `toolX: 380`, out of reach,
+it reads:
+
+```text
+tool  {"at":"tip","residual":39.916,"aimResidual":6.141,"status":"out-of-range"}
+```
+
+At the default goal the same line reads `{"at":"tip","residual":0,"aimResidual":0,"status":"reached"}`.
+Read `status` first. If it is not `reached`, `residual` (mm) and `aimResidual` (degrees)
+say how far the arm is from the goal. Then change the parameters and measure again. Leave
+the seed parameters alone: the solve starts from them, and they are not an input.
+One exception: if the probe reads `out-of-range` for a target on the far side of the arm,
+also set the `base` seed to the target's heading, `atan2(y, x)` in degrees. The solve
+starts from the saved seed, and from the near side it can stop short of a far target.
+
 ## The report
 
 `posed.report` is plain JSON, so a probe can return it unchanged:
@@ -471,7 +933,8 @@ parts: {
   or, for a ball joint, when its swing was past the cone.
 - `tip`: the tip in part coordinates. It is absent for a parented limb posed without
   frames.
-- `reach` / `grip`: these are present only when the pose asked for them (see above).
+- `reach` / `grip` / `goals`: these are present only when the pose asked for them (see
+  above). Under `goals`, `clamped` has a narrower meaning: see "The status of each goal".
 
 Numbers are rounded to 0.001.
 
@@ -521,7 +984,8 @@ limb "index": place: unknown joint "pipp"
 limb "index".grip.around: node kind "twist" needs the implicit engine — pass a distance function (x, y, z) => mm instead
 limb "index".grip.around: distance function returned a non-finite value at [-30, 96, 2]
 limb "x".joints[0].offset: the base joint has no previous joint — place it with the limb's at
-limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? }
+limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? } or { rotate }
+limb "thumb".bend.ball.bend: use rotate or bend/spread/twist, not both
 limb "thumb".joints[0].range: a ball joint takes cone (its largest swing, in degrees), not range
 limb "index": place: from must be "joint" or "rest"
 ```
@@ -541,7 +1005,8 @@ the message above.
 
 ## What lint and verify check
 
-The domain adds no lint rules and no verify metrics. Use the ordinary ones:
+The domain adds no lint rules and no verify metrics. A part's `handles` are checked by
+the core `handle-*` lint rules (see "Handles and Pose mode"). Use the ordinary ones:
 
 - lint's view-pose rules and the `animation-track-rebuilds` note confirm that each
   `place` pose is rigid and that a pose param does not rebuild a link;
@@ -550,6 +1015,33 @@ The domain adds no lint rules and no verify metrics. Use the ordinary ones:
   intend. Without the pair, the gap is a near-miss warning.
 - To check other poses, run verify with other params. The `robot-finger` test verifies
   at `curl` 0 and 0.9.
+- To check a whole motion, declare a sweep (`verify.sweeps`): a joint param end to end, a
+  handle, a path between presets, or an animation. See "Collisions and sweeps" in
+  [`docs/AUTHORING-PARTS.md`](../AUTHORING-PARTS.md#collisions-and-sweeps).
+
+### Hinge limits: a range, or collision
+
+A hinge's limit is your choice. Either write its `range` as before, or leave the range wide
+and let the pieces stop it: with a `collisions` block, a Pose mode drag stops a link at the
+piece it meets (it never passes through), and a sweep reports where that happens.
+
+- **A range** is a hard limit everywhere: sliders, presets, derive and Pose mode all clamp
+  to it. Write one when the joint's travel is a design fact (a hinge stop, a servo's arc).
+- **Collision** stops only Pose mode drags. A slider can still push a finger into the palm,
+  and only a sweep or the `overlaps` gate says so.
+- **Read the limit off a sweep.** Sweep the joint's param
+  (`verify.sweeps: { indexKnuckle: { param: "indexKnuckle" } }`) and run
+  `npx partforge measure`. A param sweep's row carries `freeRange`, the contact-free span
+  around the param's current value. Write that span as the joint's `range` (less a margin
+  for print tolerance), and the limit comes from the geometry instead of a guess.
+
+`src/parts/hand.js` declares a knuckle and a curl sweep for the index and thumb (the
+other digits sweep the same way from the CLI, so the declared ones fit the inspect's report
+share), REPORTED, not gated (no `sweepContacts` in its `expect`): its joints could leave their ranges wide and use
+collision as their limit, and a sweep that meets would then be expected. Pin joints stay
+blocked pairs: their ~0.4 mm running gap is above the default clearance (0.001 mm), so they
+read clear. A sweep's own `clearance` must stay below that gap, or every pin reads as a
+contact at the start of the sweep.
 
 ## Worked example: `src/parts/robot-finger.js`
 
