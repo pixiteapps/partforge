@@ -973,6 +973,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The sweep's `clearance` is above the running gap of a pair it moves (the hand's pins sit about 0.4 mm apart): a sweep counts a pair inside its clearance as in contact from the start and exempts no pair, unlike a Pose mode drag, which only refuses to push a pair further in. Lint cannot catch it, because it does not build geometry.
 - **Fix:** Set the sweep's `clearance` below the start gap of every pair it moves (the hand's `fist` path uses 0.3 under 0.4 mm pins), or leave it at the default (`collisions.clearance`, 0.001 mm). To hold a joint's running gap, state it statically with `verify.expect._view.clearance: { "a×b": ">=0.3" }` ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps").
 
+## handle-source-unread
+
+- **Symptom:** In an assembly or print view that draws the part unposed, hovering it shows drag dots and bones floating where the posed view holds them. `handle-source-unread` warns, naming the handles, their sources and the views they show in.
+- **Cause:** No view's sub-parts read the derived key the handle sits on, usually because one value has two names: `on: "indexLimb"` over a placement that reads `d.poses.index`. With no view reading the source, the view rule cannot tell which views draw it, so it skips that test ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "When a handle shows"). A one-function `derive` then makes the pose params relevant in every view that reads any derived value.
+- **Fix:** Declare `views: ["<posed view>"]` on the handle, or keep one name for the value and read it in the placement under the name `on` uses.
+
 # Hardware library
 
 Reserved for `hardware-*` patterns (issue #30). No entries yet.

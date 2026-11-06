@@ -3470,8 +3470,36 @@ handle without it belongs to every view that passes three tests:
 
 The second test matters because relevance alone is generous: when `derive` is one
 function, a layout that reads any derived value counts as reading every parameter derive
-uses, the pose parameters included. A source the rule cannot see (a limb read only through
-another derived value) is what `views` is for. The viewer, `npx partforge measure`'s handle
+uses, the pose parameters included.
+
+**If no view reads the source, the second test is skipped**, and that is easy to do by
+accident. Name each posed limb once, and read it under the name the handle uses:
+
+```js
+derive: (p) => {
+  const index = limb("index", { /* ... */ }).pose({ bend: { mcp: p.indexMcp } });
+  return { poses: { index }, indexLimb: index };     // one limb, two names
+},
+parts: {
+  indexLink: {
+    views: {
+      assembly: true,                                // flat: reads no limb
+      posed: (s, p, d) => d.poses.index.place(s, "mcp"),  // reads `poses`, not `indexLimb`
+    },
+    build: (k, p, d) => /* ... */,
+  },
+},
+handles: {
+  index: { on: "indexLimb", drag: "angles", params: ["indexMcp"] },  // shows in assembly too
+},
+```
+
+No view reads `indexLimb`, so the handle shows in `assembly` as well, its dots floating at
+the posed position over a flat hand. Lint warns (`handle-source-unread`). Either write
+`on: "index"` with `index` returned from `derive` and read as `d.index` in the placement, or
+say where it belongs with `views: ["posed"]`. A part with a posed view beside unposed ones
+(assembly, print layout) is better off declaring `views` on its handles anyway: the choice
+is then in the source, not inferred. The viewer, `npx partforge measure`'s handle
 list and the `handles` of an inspect report all use this rule. A view switch drops the old
 view's hover, pointer cursor and readout; pins on a handle the new view hides are kept, but
 are not drawn and hold nothing until a view shows it again.
@@ -3601,7 +3629,7 @@ not a non-empty string), `handle-point-throws`,
 `handle-unknown-param`, `handle-unknown-view` (a `views` entry that is not a key of
 `views`), the limb rules `handle-param-count`, `handle-aim-toward` and
 `handle-unknown-joint` (all errors), and the warnings `handle-inert`, `handle-axis-moves`
-`handle-crowded`, `handle-limb-per-joint` and `handle-joint-range`. `handle-joint-range` warns when an `angles` handle's `joints` entry is driven by a slider whose `min`/`max` reaches past its joint's range (a hinge's `range / scale`, a ball's `±cone`): a drag stops at the joint's own range, so set the slider's range to it. `handle-inert` nudges each listed param one step at the defaults, and
+`handle-crowded`, `handle-limb-per-joint`, `handle-source-unread` and `handle-joint-range`. `handle-source-unread` warns when no view's sub-parts read a handle's source and it shows in two or more views ("When a handle shows"). `handle-joint-range` warns when an `angles` handle's `joints` entry is driven by a slider whose `min`/`max` reaches past its joint's range (a hinge's `range / scale`, a ball's `±cone`): a drag stops at the joint's own range, so set the slider's range to it. `handle-inert` nudges each listed param one step at the defaults, and
 again with each param at 0%, 25%, 50%, 75% and 100% of its range (the others at their
 defaults), and warns where no nudge moves the point 0.01 mm, naming the value: "inert at
 drawerOpen = 0". `handle-crowded` warns when more than 5 handles without a `showOn` show in

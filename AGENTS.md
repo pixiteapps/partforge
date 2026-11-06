@@ -753,6 +753,9 @@ the installed package, so let the publish finish before bumping the dep there.
   Lint requires `drag` on every handle (`handle-bad-drag`; the runtime still defaults it to
   "point"), `handle-inert` samples each listed param at 0/25/50/75/100% of its range, and
   `handle-crowded` warns past 5 non-`showOn` handles in a view (a `group` counting once).
+  `handle-source-unread` warns when a handle with no `views` shows in two or more views and
+  no view reads its source: the view rule's source test has stood aside, usually over an
+  alias (`on: "indexLimb"`, placements reading `d.poses.index`; feedback #227 in cloud).
   A handle `group` (`pose/handle-groups.js`, pure) shows one member at a time: of the
   members that would show under the pointer, only the one nearest it — by the nearest dot
   or arrow it offers (a limb's knuckles count, not just its tip), else its bones — shows
