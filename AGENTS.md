@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-seven: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-eight: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -60,7 +60,12 @@ spread/oppose params and six `{ type: "preset" }` shapes, one
 lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI); rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
-is the fixture that script drags), `gearbox.js` (the rotary-handle reference part and the
+is the fixture that script drags), `organic-hand.js` (the organic reference part - one contact `k.implicit` hand
+with crease detail and fine-grid nails unioned on, each digit a `limb` posed in `derive`
+with an angles-mode handle (a Pose-mode drag skins the last exact mesh until the rebuild lands), its frames
+reported by a `k.implicitFrames` probe; its builders are also the implicit
+engine's test fixture, re-exported by `test/fixtures/implicit-trees.js`, so
+editing them moves pinned mesh hashes; no demo page), `gearbox.js` (the rotary-handle reference part and the
 worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 `gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
@@ -92,6 +97,8 @@ node scripts/check-app.mjs demo.html         # smoke-test a specific app entry
 npm run bench:pose                           # posing frame times in real Chromium (robot-arm.html, hand.html; --preview for a production build)
 node scripts/time-sheet-inspect.mjs [--browser]    # inspect timing for the sheet-part stress cases (docs/research/sheet-inspect-timing.md)
 node scripts/capture-contact-sheet.mjs --out <dir> # realistic captures of materials.html in every environment + the laser-burn diffs
+npm run bench:implicit [-- --core on|off|both]     # CPU ms per k.implicit engine stage on the hand and vase fixtures
+node scripts/check-step-freecad.mjs                # dev-only: a hybrid STEP (hand + plate) imported by FreeCAD's CLI
 ```
 
 The CLI (also the agent-facing surface) builds parts in pure Node - no browser:
@@ -643,19 +650,24 @@ the installed package, so let the publish finish before bumping the dep there.
   worker-safe; a domain never imports another domain. A manifest's `lintRules` may
   import `lint/finding.js` and nothing else from lint - `verify-metrics.js` reads the
   registry at module top level, so a rule reaching `rules-verify.js` would hit the
-  registry before it exists. `DOMAINS` lists two domains, kinematics
+  registry before it exists. `DOMAINS` lists three domains. Kinematics
   (`domains/kinematics/`, `partforge/kinematics`) and mechanisms
   (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
-  crank-sliders as derive-time point sources that also place sub-parts). Neither
-  tags a kernel op or declares facts, so the registry's other seams are exercised by the test-only
+  crank-sliders as derive-time point sources that also place sub-parts) tag no kernel
+  op. Organic (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
+  `implicit` and `implicitFrames`, but the engine stays in `geometry/implicit/`, since
+  both backends and the native core call it and core may not import a domain folder;
+  its attaches are only the fallbacks for a kernel without the ops, and its entry
+  reaches the grammar's leaf modules alone (no mesher, no native core —
+  `test/organic-domain.test.js`). None declares facts, so the registry's other seams are exercised by the test-only
   fixture at `test/fixtures/domain-fixture/`, which seam tests reach by
   `vi.mock`-ing `registry.js` - never by a test-only parameter on a public API.
   `partforge/lint` exports the registry as names only (`DOMAINS`) and
   `domainsOf(sources)`, which tells a host which domain guides to load for an
   existing part from its source alone (a static import of the subpath or a call of a
   tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
-  text, vector, image, import and organic are NOT domains yet; they migrate one
-  design at a time.
+  text, vector, image and import are NOT domains yet; they migrate one design at a
+  time.
 - **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
   outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
   `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics
@@ -811,10 +823,20 @@ the installed package, so let the publish finish before bumping the dep there.
   below every start gap it moves (a pin's) - lint, geometry-free, cannot check it.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
-  and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded
+  the oracle's BVH + min-wall, and the implicit engine's sample/mesh/cleanup/detail
+  path), compiled to ONE WebAssembly module, built twice — scalar and
+  `-msimd128` (per-lane exact ops only; no `-ffast-math`, no relaxed SIMD),
+  `core.js` booting the SIMD build when a v128 probe validates — embedded
   in `core-wasm.js` (generated by `scripts/build-core-wasm.mjs`, committed) and
   instantiated synchronously on first use. `creased-normals.js` dispatches to it
-  (well-formed MeshGL only), and `cachedBVH` hands out core-backed indexes ONLY
+  (well-formed MeshGL only), `implicit/index.js`'s `meshImplicit` runs everything
+  after `planLeaves` on one native session (`core/implicit-core.js`'s
+  `meshImplicitCore`; a refusal or fault falls back to the JS engine, and
+  `test/implicit-speed.test.js` gates its speed on `cpuMs`; a contact node - only ever
+  the top of the spec (nested, it is a compile error) - takes the OWNER path: `ip_mesh_owners` →
+  `ip_cleanup` → `ip_crease` → `ip_untangle` → `ip_detail`, each vertex carrying its
+  owner piece, `ownerHeld`, `pinned` and `crease` through every stage, so exact gaps and
+  crisp creases are cut natively; `native/README.md` "The owner path"), and `cachedBVH` hands out core-backed indexes ONLY
   on paths partforge owns — no Map (meshGaps frees them) or a `coreBVHCache()`
   Map (measure's, freed by measure) — since they live in WebAssembly memory and
   must be freed with `disposeBVHs`; the public `buildBVH` and a caller's own
@@ -843,6 +865,22 @@ the installed package, so let the publish finish before bumping the dep there.
   (partforge/oracle, and partforge/worker for a host's worker entry — from
   `core/core-status.js`, which carries no WebAssembly) report it once per realm with a fixed reason
   (`CORE_FALLBACK_REASONS`) — never an error message — for host telemetry.
+- **Pose drag** (spec `docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md`).
+  `src/framework/skin/` is MAIN-THREAD only: `deform.js` (`frameMotions`, `skinVertices`
+  - linear blend of the last exact mesh from a preview `k.implicit`'s per-corner
+  bindings), `frames-only.js` (`framesOnlyChange`) and `skin-drag.js` (the drag state,
+  the 150 ms pause, `hold()` for captures). `canSkin` needs a trusted probe, skinnable
+  on both sides, an equal `shapeHash` (the build hash without implicit frames, assets
+  included) and a frames-only change; anything else rebuilds. Bindings are made by
+  `geometry/implicit/bindings.js` per call slot and ride Manifold vertex properties
+  (`mesh-bindings.js`); the preview cache key carries the slot only for calls that bind.
+  The preview sample cache (`geometry/implicit/sample-cache.js`, native `ip_sample_cached`)
+  is preview-only and anchors the grid, so cold == warm bit for bit. The `generate` job
+  also posts `meshes-provisional` (the pieces of a union of `k.implicit` bodies, ahead of
+  the real union) through the off-contract `kernel._setProvisionalUnions` /
+  `_takeProvisionalPieces`; mount never caches it and drops the stage during a drag or
+  playback (`provisional: false`). While deformed, edge lines are hidden. `npm run
+  bench:pose-drag` times it.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

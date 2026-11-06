@@ -48,6 +48,7 @@ description, read that guide first.
 |---|---|---|---|
 | Kinematics | jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip | `import { … } from "partforge/kinematics"` | [`docs/domains/kinematics.md`](domains/kinematics.md) |
 | Mechanisms | gears, gear trains, pulleys and belts, racks, cranks and sliders; parts that move together | `import { … } from "partforge/mechanisms"` | [`docs/domains/mechanisms.md`](domains/mechanisms.md) |
+| Organic | smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail | `import { … } from "partforge/organic"` | [`docs/domains/organic.md`](domains/organic.md) |
 <!-- end generated -->
 
 ---
@@ -135,6 +136,8 @@ export default {
   stay out of `print` — they are cut, not printed, and export assembled.
 - Exports write the checked pieces as built. STL is one file per piece; a 3MF or STEP of
   several printed (non-sheet) pieces lays them out on the bed automatically, 10 mm apart.
+  In a STEP, a piece whose build calls `k.implicit` is a tessellated (mesh) solid beside
+  the others' exact B-rep ([`docs/domains/organic.md`](domains/organic.md), "Backend").
 
 The Lattice Box's `lid` shows all of it (helpers elided — see `src/parts/lattice-box.js` for the whole part, whose `swing` is `(s, p, d) => s.rotate(-p.lidAngle, d.hinge, [1, 0, 0])`):
 
@@ -5002,6 +5005,22 @@ is a supported call shape, not a name) (error); `image-source-scheme`
 list would refuse — same shape as `font-source-scheme` above, including the
 empty-string and raw-bytes exemptions from `image-source.js`) (warning).
 
+**Organic bodies** (the organic domain's rules, `docs/domains/organic.md`), run on
+every `k.implicit` / `k.implicitFrames` spec the probe records, at the lint params:
+`implicit-spec-invalid` (the engine's compiler rejects the spec — the same error the
+build throws; image names are checked only against a static `images` object)
+(error); `implicit-needs-manifold` (a `k.implicit` call in a part that builds on
+OCCT — `meta.backend: "occt"`, or a `shell` that routes it there) (error);
+`implicit-thin-feature` (the thinnest feature is under 2 cells of the preview grid —
+the spec's `preview` or the automatic choice — or of the print grid) (warning);
+`implicit-blend-eats-child` (a blend's `k`, or a contact `attach` entry's `k`, is
+wider than a child it joins) (warning); `implicit-lipschitz-low` (an `expr` node's
+formula, sampled on an 8 × 8 × 8 lattice across its `box`, changes faster per mm than
+its declared `lipschitz` — a spot check, not a bound; formulas that read a texture are
+skipped) (warning); `implicit-csg-in-disguise` (the tree is only
+boxes, cylinders and halfspaces under sharp booleans — plain CAD the standard ops
+build exactly) (note).
+
 **Source rules** — the tenth group, which runs only when the caller hands over
 `sources` (above) — `control-default-not-literal` (a control's `defaults` entry is
 written as something other than a plain literal: an expression like `13 / 3`, an
@@ -5143,6 +5162,10 @@ pair: `{ a, b, distance, at }`, distance 0 = touching or overlapping) and
 `measuredGaps` is the companion to `measuredMinWall` for that pass, and `gaps` is
 **absent** rather than empty when it did not run — an empty table means "measured,
 and these pairs have no distance", which a declared `clearance` gate fails on.
+`warnings` (0.179, always present, often empty) lists the build's own warnings as
+`{ part, message }`, the same text the app shows: a fillet or chamfer the geometry
+defeated and skipped, a `k.implicit` feature too thin for its grid, a shape clipped at
+the edge of its sampling box. `partforge measure` prints them. They never gate `ok`.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

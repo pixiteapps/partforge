@@ -211,6 +211,13 @@ test("a probe that throws stays an error, even after a stubbed query", () => {
   expect(r.notes.map((f) => f.rule)).not.toContain("probe-throws");
 });
 
+test("a frame-set probe raises no probe-throws or unknown-kernel-op", () => {
+  const r = lintPart(partWith((k) => k.box({ size: [1, 1, 1] }),
+    { probes: { f: (k) => k.implicitFrames({ root: { kind: "sphere", r: 1 } }).rotateY(180).translate([0, 0, 1]) } }));
+  expect(ids(r.errors)).not.toContain("probe-throws");
+  expect(ids(r.errors)).not.toContain("unknown-kernel-op");
+});
+
 test("a part posing a limb with grip in derive lints clean through partforge/kinematics", async () => {
   const { limb } = await import("../src/framework/domains/kinematics/index.js");
   expect(typeof limb).toBe("function");

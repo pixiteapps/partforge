@@ -37,7 +37,7 @@ async function manifoldKernels() {
 // 105-plate forge's plates ran out of heap (feedback #212). The cost is one cold
 // display build after an export; exports are rare and deliberate, a failed one
 // costs the user the whole job.
-const EXPORT_JOBS = new Set(["export-stl", "export-step", "export-3mf", "export-bundle"]);
+const EXPORT_JOBS = new Set(["export-stl", "export-step", "export-3mf", "export-bundle", "mesh-subparts"]);
 
 async function occtKernel() {
   const [{ default: opencascade }, wasmUrlMod, replicad, { createOcctKernel }] = await Promise.all([
@@ -138,10 +138,11 @@ export function runWorker(part, opts = {}) {
           // generate that goes stale once dequeued. Both would otherwise post the OLD
           // part's meshes after a rebind. Downgrading them to `superseded` keeps the
           // contract simple: a `meshes` post is current as of the moment it is posted.
-          // A progressive batch that went stale is simply dropped: the job's own
-          // final reply (or its superseded) still settles the cycle.
+          // A progressive batch or a provisional stage (two-stage delivery) that went
+          // stale is simply dropped: the job's own final reply (or its superseded)
+          // still settles the cycle.
           const gated = (m, transfer = []) => {
-            if (m.type === "meshes-partial" && isStale()) return;
+            if ((m.type === "meshes-partial" || m.type === "meshes-provisional") && isStale()) return;
             if (m.type === "meshes" && isStale()) return post({ type: "superseded" });
             post(m, transfer);
           };

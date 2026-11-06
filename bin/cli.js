@@ -636,6 +636,12 @@ function printMeasure(r) {
   console.log(`  near-misses: ${r.nearMisses.length
     ? r.nearMisses.map((g) => `${g.a}×${g.b} (${g.distance.toFixed(2)}mm at [${g.at.map((n) => n.toFixed(1)).join(", ")}])`).join(", ")
     : "none"}`);
+  // The kernel's build warnings (a thin implicit feature, a skipped fillet) — the same
+  // text the app shows.
+  if (r.warnings?.length) {
+    console.log(`  warnings:`);
+    for (const w of r.warnings) console.log(`    ${w.part}: ${w.message}`);
+  }
   if (r.sweeps) console.log(`  sweeps: ${r.sweeps.length ? r.sweeps.map(sweepText).join("; ") : "none move anything in this view"}`);
   if (r.handles) {
     console.log(`  handles:`);

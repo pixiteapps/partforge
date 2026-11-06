@@ -6,7 +6,13 @@ import { roundedBoxRings, roundedBoxArcSamples } from "./rounded-solids.js";
 import { tessellateContour, tessellateProfile } from "./profile.js";
 import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
-import { manifoldFromMesh, ringStackManifold } from "./mesh-build.js";
+import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
+import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
+import { createSampleCache } from "./implicit/sample-cache.js";
+import { implicitFrames } from "./implicit/frame-report.js";
+import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
+import { implicitShapeHash } from "./implicit/call-id.js";
+import { encodeBindingProps, decodeBindings, BIND_PROPS } from "./mesh-bindings.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
 import { addSugar } from "./solid-sugar.js";
@@ -16,7 +22,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
+import { loftShadingPolicy, SMOOTH, BLEND, ORGANIC } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshOffset, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -41,6 +47,8 @@ const emptyProfile = (op) => new Error(
   "repeated, or cancel each other out). See ERROR-PATTERNS.md#boolean-invalid-operand.");
 
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
+// Trees whose automatic k.implicit preview edge a kernel remembers (each entry is a hash and a number).
+const AUTO_PREVIEW_MEMO = 256;
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 // Full-circle segment counts live in circle-segs.js: preview is a flat SEGS.preview,
@@ -99,7 +107,32 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // whose result is freed as soon as its one number is read — NOT tracked, so
   // an n-ary union of buried features does not hold n intermediates to cleanup.
   const volumes = new WeakMap();
+  // Two-stage delivery (docs/superpowers/specs/2026-10-31-implicit-pose-drag-design.md §5).
+  // While the generate job arms it (_setProvisionalUnions), a preview union with a
+  // k.implicit result among its operands is built as Manifold's LAZY union node with its
+  // judgment below DEFERRED: pendingJudge maps the node to that judgment, and settle() runs
+  // it at the first read of the node's geometry (meshOut, indexedMeshOut, volumeOf, and
+  // every wrap method that reads or builds on it). So the job can mesh the union's
+  // operands first — the provisional stage — and the union is only evaluated when it is
+  // read. A refusing judgment is put back, so it throws again at every later read; the
+  // node is the same Manifold either way, so the union's mesh is byte-identical to an
+  // unarmed build's. Unarmed, or at print, nothing is ever deferred.
+  let provisionalUnions = false;
+  const pendingJudge = new WeakMap();   // deferred union node -> its judgment
+  const implicitMs = new WeakSet();     // the Manifolds k.implicit builds
+  const deferredMs = new WeakSet();     // the deferred union nodes (an operand that counts too)
+  let lastDeferred = null;              // the bracket's last deferred union: { m, pieces }
+  const settle = (mm) => {
+    const judge = mm && pendingJudge.get(mm);
+    if (!judge) return;
+    pendingJudge.delete(mm);            // its own volumeOf(result) must not re-enter
+    try { judge(); } catch (e) { pendingJudge.set(mm, judge); throw e; }
+  };
+  // A solid reaches its node through _m, or through its canonical base when a rigid step
+  // (translate/rotate) followed the union.
+  const settleSolid = (s) => { settle(s?._m); settle(s?._canon?.m); };
   const volumeOf = (mm) => {
+    settle(mm);
     let v = volumes.get(mm);
     if (v === undefined) { v = mm.volume(); volumes.set(mm, v); }
     return v;
@@ -112,6 +145,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // as "a union smaller than its largest operand" or "a cut that emptied
     // its body", and the coaching sends the author hunting for tangent contacts
     // that are not there. It is the operand's failure, so say that instead.
+    // A deferred union among the operands is judged first, so its own refusal is
+    // the one reported.
+    for (const mm of operandMs) settle(mm);
     const bad = operandMs.findIndex((mm) => mm.status() !== "NoError");
     if (bad >= 0) throw invalidOperand(op, bad, operandMs[bad].status());
     const box = (mm) => mm.boundingBox();
@@ -129,6 +165,26 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return resultM;
   };
   const judgedUnion = (ms) => judged("union", ms, unionRaw(ms));
+  // kernel.union's evaluation over its operand SOLIDS: deferred (above) when armed at
+  // preview and an operand is a k.implicit result or an earlier deferred union, else
+  // judged at once as always.
+  //
+  // Two consequences of deferring, both deliberate: a refusing union that nothing ever
+  // READS (built, then dropped by the part's own build) passes an armed generate where
+  // an unarmed build would have thrown — every read of it still throws; and a node whose
+  // judgment refuses is in the solid cache with that judgment still pending, so a later
+  // build that hits the entry throws at its first read, exactly as the first build did.
+  const unionOfSolids = (solids) => {
+    const ms = solids.map((s) => s._m);
+    const deferrable = provisionalUnions && quality === "preview" && ms.length >= 2
+      && solids.some((s) => implicitMs.has(s._canon?.m) || deferredMs.has(s._canon?.m));
+    if (!deferrable) { for (const s of solids) settleSolid(s); return judgedUnion(ms); }
+    const node = unionRaw(ms);
+    pendingJudge.set(node, () => { for (const s of solids) settleSolid(s); judged("union", ms, node); });
+    deferredMs.add(node);
+    lastDeferred = { m: node, pieces: solids };
+    return node;
+  };
 
   // A retained solid's heap, estimated from its counts (solid-cache.js MEMORY BUDGET):
   // Manifold keeps per triangle three half-edges, a face normal, a triangle reference and
@@ -164,6 +220,28 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // every degrade in the build lands in one drainable list rather than only in
   // the console.
   const recordWarning = (msg) => { buildWarnings.push(msg); console.warn(`partforge: ${msg}`); };
+  // k.implicit's engine warnings, keyed by the cached solid they belong to (re-recorded on a hit).
+  const implicitWarnings = new WeakMap();
+  // k.implicit solid -> the originalIDs its runs carry (meshOut's binding repair finds a
+  // call's triangles by them).
+  const implicitIds = new WeakMap();
+  // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
+  // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
+  const autoPreviewEdges = new Map();
+  // k.implicit's leaf samples across builds (implicit/sample-cache.js): a preview build
+  // anchors its grid to the world lattice and reuses the samples a pose change did not
+  // reach — the same bytes as a cold build. Bounded (SAMPLE_CACHE_BYTES); never used at print.
+  const sampleCache = createSampleCache();
+  // The preview k.implicit CALLS of the open sub-part bracket, in call order (the pose
+  // bindings, mesh-bindings.js): `{ id, frames, shape }`, a call's slot being its index.
+  // Reset when the outermost bracket opens and closes (brackets nest, as the solid
+  // cache's do); outside a bracket nothing is recorded, so a toMesh there carries no
+  // bindings and a call keys as slot 0. So a generate with `cache: false` (no bracket)
+  // posts no bindings, and the oracle's buildView — one bracket per VIEW — runs slots on
+  // across sub-parts (its framed implicits key apart from the display build's; their
+  // bindings are never read there).
+  let implicitCalls = [];
+  let bracketDepth = 0;
   // Profile-validity warnings (profile-warnings.js): one warner per kernel so a
   // self-crossing profile built six times records ONE line; reset per drain.
   const profileWarner = makeProfileWarner(recordWarning);
@@ -254,17 +332,51 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     return { value: cs, pin: cs, dispose: () => del(cs) };
   });
 
+  // decodeBindings' repair hooks for one MeshGL: a run whose originalID belongs to a bound
+  // k.implicit call of this bracket gets its unbound (boolean-cut) vertices bound afresh by
+  // that call's own bindVertices, after undoing the run's transform (positions are the
+  // posed mesh's; the call bound in its own build frame). A label() or other re-stamp
+  // that gives the run a fresh originalID loses the repair (its seam corners stay unbound).
+  function bindingRepair(g) {
+    if (!implicitCalls.some((c) => c.ids)) return {};
+    const slotOf = new Map();
+    implicitCalls.forEach((c, s) => { for (const id of c.ids ?? []) slotOf.set(id, s); });
+    const roid = g.runOriginalID, rt = g.runTransform;
+    return {
+      runSlot: (r) => slotOf.get(roid[r]) ?? -1,
+      rebind: (slot, r, xyz) => {
+        const c = implicitCalls[slot];
+        const M = rt && rt.length >= (r + 1) * 12 ? invertAffine(affineAt(rt, r)) : IDENTITY;
+        if (!M) return null;
+        const p = new Float64Array(xyz.length);
+        for (let i = 0; i < xyz.length; i += 3) {
+          const x = xyz[i], y = xyz[i + 1], z = xyz[i + 2];
+          p[i] = M[0] * x + M[3] * y + M[6] * z + M[9];
+          p[i + 1] = M[1] * x + M[4] * y + M[7] * z + M[10];
+          p[i + 2] = M[2] * x + M[5] * y + M[8] * z + M[11];
+        }
+        return bindVertices(c.compiled, p, c.edge);
+      },
+    };
+  }
+
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
   function meshOut(m, asStl) {
+    settle(m);
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
+    if (!asStl) {
+      const bindings = decodeBindings(g, implicitCalls, bindingRepair(g));
+      if (bindings) r.bindings = bindings;
+    }
     g.delete?.();
     return r;
   }
 
   // Raw indexed mesh (positions x,y,z per vertex + triangle indices) for 3MF.
   function indexedMeshOut(m) {
+    settle(m);
     const g = m.getMesh();
     const np = g.numProp, vp = g.vertProperties;
     const nVert = (vp.length / np) | 0;
@@ -522,11 +634,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // the cache key or the capability checks. Declared as a binding the closures
   // capture: every reference runs after addSugar has returned.
   const wrap = (m, hash, canon = { m, hash, chain: [] }) => {
+    // Every method that reads this solid's geometry or builds a new base on it judges a
+    // deferred union under it first (settle, above); translate/rotate/clone carry the
+    // node in their canon instead.
+    const S = () => { settle(m); if (canon.m !== m) settle(canon.m); };
     const self = addSugar({
     _m: m,
     _hash: hash,
     _canon: canon,
-    cut: (t) => cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))),
+    cut: (t) => { S(); settleSolid(t); return cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))); },
     // THROWING forms. These are the composition primitives — internal callers
     // that have their own recovery (prismRoundAllFast, which answers a failed
     // fillet by falling back to the reference Minkowski roundAll) must use
@@ -536,12 +652,14 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _filletRaw: (r, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("fillet: function selectors need the OCCT backend");
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      S();
       return cached(h("fillet", hash, r, selector ?? null, segs), () =>
         meshCadOp("fillet", m, () => meshFillet(kernel, wrap(m, hash), { r, edges: selector, segs, segsAt })));
     },
     _chamferRaw: (d, selector) => {
       if (typeof selector === "function") throw new KernelCapabilityError("chamfer: function selectors need the OCCT backend");
       if (d === 0) return wrap(m, hash);
+      S();
       return cached(h("chamfer", hash, d, selector ?? null, segs), () =>
         meshCadOp("chamfer", m, () => meshChamfer(kernel, wrap(m, hash), { d, edges: selector, segs, segsAt })));
     },
@@ -555,6 +673,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // same failure → same cheap re-warn, while an upstream geometry change mints
     // a new key and genuinely re-attempts the feature.
     fillet: (r, selector) => {
+      S(); // a refused union must throw here, not degrade into a skipped fillet
       const key = h("fillet", hash, r, selector ?? null, segs);
       const skipped = skippedOps.get(key);
       if (skipped !== undefined) { buildWarnings.push(skipped); return wrap(m, hash); }
@@ -567,6 +686,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       }
     },
     chamfer: (d, selector) => {
+      S();
       const key = h("chamfer", hash, d, selector ?? null, segs);
       const skipped = skippedOps.get(key);
       if (skipped !== undefined) { buildWarnings.push(skipped); return wrap(m, hash); }
@@ -580,6 +700,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     roundAll: (r) => {
       if (r === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      S();
       // `quality` in the key is redundant but harmless — the cache lives on a
       // per-quality kernel, so it can never collide across tiers (the OCCT twin
       // key omits it for the same reason); it just spells out that the ball
@@ -593,6 +714,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     offset: (d) => {
       if (!Number.isFinite(d)) throw new Error(`offset: d must be a finite number (got ${d})`);
       if (d === 0) return wrap(m, hash); // contract: zero magnitude is the identity
+      S();
       return cached(h("offset", hash, d, quality), () => {
         const { out, support, segs: ballSegs } = meshOffset(wasm, m, d, quality);
         const sign = Math.sign(d); // a dilate moves a face out by h(n), an erode in by h(n)
@@ -601,12 +723,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     // batch difference: first minus the union of the rest, evaluated as one boolean
     // tree — no materialized intermediate union (the unionRaw memory note applies)
-    cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
-      const ms = [m, ...tools.map((t) => t._m)];
-      return judged("cutAll", ms, T(Manifold.difference(ms)));
-    }),
-    intersect: (t) => cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))),
-    union: (t) => cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))),
+    cutAll: (tools) => {
+      S(); for (const t of tools) settleSolid(t);
+      return cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
+        const ms = [m, ...tools.map((t) => t._m)];
+        return judged("cutAll", ms, T(Manifold.difference(ms)));
+      });
+    },
+    intersect: (t) => { S(); settleSolid(t); return cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))); },
+    union: (t) => { S(); settleSolid(t); return cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))); },
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every
@@ -614,6 +739,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // registry entry lives exactly as long as the cache pins the solid — eviction
     // disposes both, so the registry can't grow unboundedly across regenerates.
     label: (name) => {
+      S();
       // Labeling only re-stamps surface ids, so it commutes with the trailing
       // transform. This is load-bearing rather than an optimization: the common
       // authoring idiom labels each piece AFTER positioning it, which would give every
@@ -747,12 +873,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       });
     },
     boundingBox: () => {
+      S();
       const b = m.boundingBox();           // { min: Vec3, max: Vec3 } — addSugar derives center/size
       return { min: [...b.min], max: [...b.max] };
     },
-    volume: () => m.volume(),
-    genus: () => m.genus(),
-    isEmpty: () => m.isEmpty(),
+    volume: () => { S(); return m.volume(); },
+    genus: () => { S(); return m.genus(); },
+    isEmpty: () => { S(); return m.isEmpty(); },
     translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
       { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] }),
     rotate: (deg, center, axis) => {
@@ -764,15 +891,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
         { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] });
     },
-    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
+    mirror: (plane) => { S(); return wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)); },
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
+      S();
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
       return wrap(T(b.translate(center)), h("scale", hash, factor, center));
     },
-    toMesh: () => meshOut(m, false),
-    toSTL: () => Promise.resolve(meshOut(m, true)),
-    toIndexedMesh: () => indexedMeshOut(m),
+    toMesh: () => { S(); return meshOut(m, false); },
+    toSTL: () => { S(); return Promise.resolve(meshOut(m, true)); },
+    toIndexedMesh: () => { S(); return indexedMeshOut(m); },
     });
     return self;
   };
@@ -950,6 +1078,82 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         return { value: wrap(m, key), pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
       });
     },
+    // Signed-distance tree → solid (implicit/index.js). The engine meshes at the
+    // tier's grid (`preview` for preview, `resolution` for print) — the preview
+    // tier also decimates in cleanup (PREVIEW_CLEANUP), print does not — and hands
+    // Manifold one welded mesh; the result shades ORGANIC (one smooth skin: no
+    // same-surface feature lines, normals smoothed through detail grooves).
+    // Cached on the spec plus every bound image's digest, per quality tier; the key
+    // holds only this tier's grid (defaulted), so editing the other tier's grid is
+    // a hit. A spec without `preview` previews at the grid choosePreviewEdge picks from
+    // the compiled tree (implicit/preview-edge.js: pure, no clock), remembered per tree
+    // so a cache hit does not re-run its probe. The engine's warnings (thin feature,
+    // clipped) live beside the cached value and are recorded again on every hit, so
+    // each build that uses the solid reports them. A preview build hands the engine the
+    // kernel's sample cache (a world-anchored grid, byte-identical warm or cold); print never.
+    //
+    // A preview call inside a sub-part bracket also records itself (implicitCalls: its call
+    // id and frame table) and, when its spec has frames, binds every vertex to ≤ 2 of them
+    // (implicit/bindings.js) as four vertex properties coded by its SLOT — its index among
+    // the bracket's calls — which is why such a solid's key holds the slot. A frameless
+    // call binds nothing: no props, and the key it always had. Print never binds.
+    implicit: (spec) => {
+      const compiled = compileImplicit(spec, { images });
+      const isPreview = quality !== "print";
+      let slot = 0, call = null;
+      if (isPreview && bracketDepth > 0) {
+        const shape = implicitShapeHash(spec);
+        let n = 0;
+        for (const c of implicitCalls) if (c.shape === shape) n++;
+        slot = implicitCalls.length;
+        implicitCalls.push((call = { id: `${shape}#${n}`, frames: compiled.frameNames ?? [], shape }));
+      }
+      const binds = isPreview && (compiled.frameNames?.length ?? 0) > 0 && compiled.frameNames.length <= MAX_BIND_FRAMES;
+      const { preview, resolution, ...rest } = spec;
+      const autoPreview = () => {
+        const treeKey = h("implicitPreviewEdge", implicitHashable(rest, compiled));
+        let e = autoPreviewEdges.get(treeKey);
+        if (e === undefined) {
+          if (autoPreviewEdges.size >= AUTO_PREVIEW_MEMO) autoPreviewEdges.clear();
+          autoPreviewEdges.set(treeKey, (e = choosePreviewEdge(compiled)));
+        }
+        return e;
+      };
+      const edge = quality === "print" ? (resolution ?? IMPLICIT_DEFAULTS.resolution) : (preview ?? autoPreview());
+      const keySpec = quality === "print" ? { ...rest, resolution: edge } : { ...rest, preview: edge };
+      const key = binds ? h("implicit", implicitHashable(keySpec, compiled), quality, slot)
+        : h("implicit", implicitHashable(keySpec, compiled), quality);
+      const solid = cache.lookup(key, () => {
+        const out = meshImplicit(compiled, edge, { tier: quality, cache: quality === "print" ? undefined : sampleCache });
+        if (out.indices.length === 0) {
+          for (const w of out.warnings) recordWarning(w);
+          throw new Error(`implicit: the shape is empty at a ${edge} mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid`);
+        }
+        // A contact root (a triOwner) is one original ID per piece, all one shading group
+        // (shading-policy.js SIBLING_SEAM_ANGLE): the crease shades hard, the attachment-zone
+        // seams between siblings stay smooth. Anything else is one ORGANIC skin.
+        const pieces = out.triOwner ? compiled.ownerK : 1;
+        const first = wasm.Manifold.reserveIDs(pieces), ids = Array.from({ length: pieces }, (_, i) => first + i);
+        const extra = binds ? { per: BIND_PROPS, data: encodeBindingProps(bindVertices(compiled, out.positions, edge), slot) } : null;
+        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
+        const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
+        for (const id of ids) oidPolicies.set(id, policy);
+        implicitMs.add(m); // a union with this operand may be delivered in two stages
+        const value = wrap(m, key);
+        implicitWarnings.set(value, out.warnings);
+        implicitIds.set(value, ids);
+        return { value, pin: m, dispose: () => { for (const id of ids) oidPolicies.delete(id); m.delete?.(); } };
+      });
+      for (const w of implicitWarnings.get(solid) ?? []) recordWarning(w);
+      // What meshOut's seam repair needs to re-bind this call's cut vertices; kept for the
+      // bracket's lifetime (implicitCalls is dropped when it closes).
+      if (call && binds) Object.assign(call, { compiled, edge, ids: implicitIds.get(solid) ?? [] });
+      return solid;
+    },
+    // Where a k.implicit spec's frames and labelled nodes end up (implicit/frame-report.js).
+    // Pure and mesh-free, so it is not cached.
+    implicitFrames: (spec) => implicitFrames(spec, { images }),
     // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
     // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
     // construction. Cached atomically; the hash folds profile pts, path pts, and opts
@@ -992,8 +1196,21 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // would pin one WASM object under two entries and eviction would dispose it twice.
     union: (solids) => solids.length === 1
       ? solids[0]
-      : hoistBoolean("union", solids, (ops) => judgedUnion(ops.map((s) => s._m)))
-        ?? cached(h("union", solids.map((s) => s._hash)), () => judgedUnion(solids.map((s) => s._m))),
+      : hoistBoolean("union", solids, (ops) => unionOfSolids(ops))
+        ?? cached(h("union", solids.map((s) => s._hash)), () => unionOfSolids(solids)),
+    // Two-stage delivery (unionOfSolids above): the generate job arms the deferral for its
+    // own duration; nothing else ever does.
+    // Off-contract (underscore): framework plumbing between this backend and jobs.js.
+    _setProvisionalUnions: (on) => { provisionalUnions = !!on; },
+    // The operands of the bracket's last deferred union, when `solid` IS that union up to
+    // rigid steps (its canonical base is the node): each with those steps replayed, so
+    // their meshes lie where the union's will. Handed out once; null otherwise.
+    _takeProvisionalPieces: (solid) => {
+      const last = lastDeferred;
+      lastDeferred = null;
+      if (!last || solid?._canon?.m !== last.m || !pendingJudge.has(last.m)) return null;
+      return last.pieces.map((p) => replay(p, solid._canon.chain));
+    },
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.
@@ -1056,6 +1273,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    _shadingPolicy: (oid) => oidPolicies.get(oid),   // tests: the policy an original ID shades with
     // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
     // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's
     // declared name (e.g. "relief"), not on content, so without this a name
@@ -1067,16 +1285,25 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       for (const name of [...images.keys()]) if (!keep.has(name)) images.delete(name);
     },
     _acceptsMesh: true,
+    _sampleCache: sampleCache,   // tests and the bench: k.implicit's preview sample cache
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
     // that Shape2D.offset itself runs on — published here for callers that want the
     // region-in/region-out form directly. `_`-prefixed — not part of the public kernel
     // surface.
     _offsetRegions: offsetRegions,
-    beginSubPart: (name) => cache.begin(name),
-    endSubPart: () => cache.end(),
+    beginSubPart: (name) => {
+      if (bracketDepth++ === 0) implicitCalls = [];
+      cache.begin(name);
+    },
+    endSubPart: () => {
+      lastDeferred = null;
+      cache.end();
+      if (bracketDepth > 0 && --bracketDepth > 0) return;
+      implicitCalls = [];
+    },
     sweepCache: () => cache.sweep(),
-    dropCache: () => cache.clear(),
+    dropCache: () => { cache.clear(); sampleCache.clear(); },
     setCacheBudget: (bytes) => cache.setBudget(bytes),
     trimCache: () => cache.trim(),
     cacheBytes: () => cache.retainedBytes(),

@@ -75,6 +75,10 @@
       "types": "./types/mechanisms.d.ts",
       "default": "./src/framework/domains/mechanisms/index.js"
     },
+    "./organic": {
+      "types": "./types/organic.d.ts",
+      "default": "./src/framework/domains/organic/index.js"
+    },
     "./tokens.css": "./src/framework/tokens.css",
     "./chrome.css": "./src/framework/chrome.css"
   },
@@ -112,6 +116,9 @@
       ],
       "mechanisms": [
         "./types/mechanisms.d.ts"
+      ],
+      "organic": [
+        "./types/organic.d.ts"
       ]
     }
   },
@@ -134,7 +141,9 @@
     "check:softrender": "node scripts/check-softrender-parity.mjs",
     "check:pose": "node scripts/check-pose.mjs",
     "bench:pose": "node scripts/bench-pose.mjs",
-    "bench:core": "vitest run --config scripts/bench-core/vitest.config.js"
+    "bench:core": "vitest run --config scripts/bench-core/vitest.config.js",
+    "bench:implicit": "node scripts/bench-implicit.mjs",
+    "bench:pose-drag": "node scripts/bench-pose-drag.mjs"
   },
   "peerDependencies": {
     "happy-dom": ">=20"
