@@ -30,6 +30,9 @@ import { CANONICAL_VIEWS, cameraPoseForView, cameraCueForPose } from "./view-ang
 import { srgbEncodeInPlace, RENDER_STYLES, getRenderStyle, CAD_LIGHT_THEME, CAD_DARK_THEME } from "./renderStyles.js";
 import { stylePose, modelToWorld } from "./style-camera.js";
 import { contactShadowMask } from "./contact-shadow.js";
+import { CEL } from "./cel/cel-style.js";
+import { buildCelMaterial } from "./cel/cel-material.js";
+import { createCelInk, CEL_LAYER } from "./cel/cel-ink.js";
 import { buildContactShadowPlane } from "./contact-shadow-plane.js";
 export { srgbEncodeInPlace }; // was exported from here; keep the name importable
 
@@ -332,6 +335,9 @@ export function createViewer(container, part, {
   for (const [n, m] of Object.entries(subMesh)) {
     m.name = n;
     m.visible = false;
+    // The cel ink's normal+depth prepass draws this layer alone, so it outlines
+    // the sub-parts and nothing else (grid, gizmos, caps, pose handles).
+    m.layers.enable(CEL_LAYER);
     partsGroup.add(m);
   }
 
@@ -471,14 +477,18 @@ export function createViewer(container, part, {
       if (hadFade) mesh.material = baseMats[name];
       if (lines.material === fadeLineMats.get(name)) lines.material = lineMaterial;
       if (hadFade) cutaway.resyncSubpart(name);
+      mesh.layers.enable(CEL_LAYER);
     } else {
       const fm = fadeMatFor(name);
       fm.opacity = fade;
       mesh.material = fm;
       const flm = fadeLineMatFor(name);
       const so = effectiveDisplayOf(name).opacity ?? 1;
-      flm.opacity = so > 0 ? (fade / so) * edgeOpacity : 0; // lines fade by the multiplier alone
+      flm.opacity = so > 0 ? (fade / so) * lineOpacityForMode() : 0; // lines fade by the multiplier alone
       lines.material = flm;
+      // A ghost writes no depth, so the ink would outline it as if it were
+      // solid and hide what shows through it: it stays out of the prepass.
+      mesh.layers.disable(CEL_LAYER);
     }
     mesh.visible = meshVisible;
     lines.visible = linesVisible && meshVisible;
@@ -530,9 +540,13 @@ export function createViewer(container, part, {
     cadMats[name] = cad;
     const phys = physicalMats.get(name);
     if (phys) { phys.dispose(); physicalMats.delete(name); }
+    const cel = celMats.get(name);
+    if (cel) { cel.dispose(); celMats.delete(name); }
     if (renderMode === "realistic") {
       if (subCache[name] && physicalFor(name).userData.pfAnisotropic) ensureBoxUVs(subCache[name]);
       rebaseSubMaterial(name, physicalFor(name));
+    } else if (renderMode === "cel") {
+      rebaseSubMaterial(name, celFor(name));
     } else {
       rebaseSubMaterial(name, cad);
     }
@@ -738,6 +752,9 @@ export function createViewer(container, part, {
   function refreshFeatureLines() { for (const n of names) applySubOpacity(n); }
 
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
+  const celMats = new Map();         // name -> the cel band ShaderMaterial (cached like physicalMats)
+  let celInk = null;                 // the ink pass, built on the first entry into cel
+  const celField = new THREE.Color(CEL.field.color); // cel's backdrop, which the ink dots
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
   const borrowedRigRefs = new Map();  // environment id -> count of in-flight captures (thumbnails, renderViews) borrowing it
@@ -893,6 +910,16 @@ export function createViewer(container, part, {
       m = cloneKeepsPattern(buildPhysicalMaterial(realisticDisplay(eff), { printFrame: printFrames[name], burn: burnsFor(eff), loadTexture }));
       physicalMats.set(name, m);
       syncGrain(name);
+    }
+    return m;
+  }
+  // The cel band material, toned from the EFFECTIVE display's colour like the
+  // CAD one (celBase), so an appearance override reaches cel too.
+  function celFor(name) {
+    let m = celMats.get(name);
+    if (!m) {
+      m = buildCelMaterial(effectiveDisplayOf(name));
+      celMats.set(name, m);
     }
     return m;
   }
@@ -1106,6 +1133,7 @@ export function createViewer(container, part, {
     try {
       syncFrames(); // before the swap: the first realistic frame has the export-pose layers and the sheets' burns
       renderMode = "realistic";
+      syncLineLook(); // a fade clone made in cel would otherwise keep the ink colour
       // A regen can land between the proxy compile and here, while the mode
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
       for (const n of names) if (subCache[n] && physicalFor(n).userData.pfAnisotropic) ensureBoxUVs(subCache[n]);
@@ -1147,6 +1175,7 @@ export function createViewer(container, part, {
       renderer.toneMappingExposure = 1;
     });
     renderMode = "cad";
+    attempt(syncLineLook);
     attempt(() => {
       if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
     });
@@ -1168,6 +1197,39 @@ export function createViewer(container, part, {
     attempt(refreshFeatureLines);
     if (live) invalidateMaterialThumbnails();
     if (firstError) throw firstError;
+  }
+  // Cel is lit by its own band shader (CEL.light, fixed to the camera), so the
+  // scene's lights, environment and tone mapping all stand aside; the backdrop
+  // is the flat field the ink pass dots, never the theme's. It keeps CAD's
+  // pixel ratio and draws the kernel's feature lines in ink, under the ink
+  // pass's own outlines.
+  function enterCel({ live = true } = {}) {
+    try {
+      renderMode = "cel";
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.toneMappingExposure = 1;
+      if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
+      realisticRig = null;
+      shadowMovedAt = null;
+      scene.environment = null;
+      scene.background = transparent ? null : celField.clone();
+      scene.backgroundBlurriness = 0;
+      scene.backgroundIntensity = 1;
+      scene.backgroundRotation.set(0, 0, 0);
+      scene.environmentRotation.set(0, 0, 0);
+      for (const l of Object.values(liveLights)) l.visible = false;
+      grid.visible = false;
+      setSubMaterials(celFor);
+      disposeLiveShadow();
+      celInk = celInk ?? createCelInk();
+      if (live) applyPixelRatio("cad");
+      syncLineLook();
+      refreshFeatureLines();
+      if (live) invalidateMaterialThumbnails();
+    } catch (e) {
+      try { enterCad({ live }); } catch (rollback) { console.warn("partforge: rolling back to CAD failed", rollback); }
+      throw e;
+    }
   }
 
   const isStale = (token) => disposed || token !== modeToken;
@@ -1203,20 +1265,46 @@ export function createViewer(container, part, {
     }
     return Promise.resolve(compiling).finally(() => probe?.dispose());
   }
+  // The cel programs compile before the swap too. No tone mapping and no
+  // environment key them, so one compile serves the canvas and a capture.
+  function compileCel() {
+    const proxy = new THREE.Scene();
+    for (const n of names) {
+      const geo = subCache[n];
+      if (geo) proxy.add(new THREE.Mesh(geo, celFor(n))); // unbuilt: compiles when first shown
+    }
+    return Promise.resolve(renderer.compileAsync?.(proxy, activeCamera));
+  }
 
   // Resolves to the mode actually in effect. A later setRenderMode or
   // setEnvironment supersedes this one; a superseded completion changes
   // nothing (its rig and materials are cached, so there is nothing to undo).
   async function setRenderMode(next) {
     if (disposed) return renderMode;
-    const want = next === "realistic" ? "realistic" : "cad";
+    const want = next === "realistic" || next === "cel" ? next : "cad";
     const token = ++modeToken;
     if (want === "cad") {
       realisticPending = false;
       if (renderMode !== "cad") {
-        try { enterCad(); } catch (e) { console.warn("partforge: leaving the realistic view failed", e); }
+        try { enterCad(); } catch (e) { console.warn(`partforge: leaving the ${renderMode} view failed`, e); }
       }
       publishMode();
+      return renderMode;
+    }
+    if (want === "cel") {
+      realisticPending = false;
+      if (renderMode === "cel") { publishMode(); return renderMode; }
+      publishMode({ busy: true });
+      try {
+        await compileCel();
+        if (isStale(token)) return renderMode;
+        enterCel(); // rolls itself back to CAD if it throws
+        publishMode();
+      } catch (e) {
+        if (isStale(token)) return renderMode;
+        console.warn("partforge: the cel view failed to load", e);
+        publishMode({ error: "couldn't switch to cel" });
+      }
       return renderMode;
     }
     const envId = environmentId;
@@ -2364,22 +2452,36 @@ export function createViewer(container, part, {
     return result;
   }
 
+  // The feature lines' colour and opacity for the look on screen: the theme's
+  // line colour, or in cel the ink's, under the ink pass's own outlines and so
+  // a step lighter (CEL.ink.kernelLineOpacity). The fade clones get the
+  // colour here; their opacity is applySubOpacity's, on the same multiplier.
+  const lineOpacityForMode = () => (renderMode === "cel" ? CEL.ink.kernelLineOpacity * edgeOpacity : edgeOpacity);
+  function syncLineLook() {
+    const color = renderMode === "cel" ? CEL.ink.color : THEME[currentTheme].line;
+    const opacity = lineOpacityForMode();
+    lineMaterial.color.set(color);
+    lineMaterial.opacity = opacity;
+    lineMaterial.transparent = opacity < 1;
+    for (const m of fadeLineMats.values()) m.color.set(color);
+  }
+
   // Swap the scene background, grid, and edge-line colors for the given theme.
   function setTheme(mode) {
     const t = THEME[mode] ?? THEME.dark;
     // Realistic mode's backdrop belongs to the environment and its grid is off;
     // enterCad puts the theme's background back on the way out.
+    // Cel's field is the look's own, not the theme's: it stays put too.
     if (renderMode === "cad") scene.background = cadBackground(THEME[mode] ? mode : "dark");
     scene.remove(grid);
     grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, t.grid[0], t.grid[1]);
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
     grid.visible = renderMode === "cad" && cadGrid;
     scene.add(grid);
-    lineMaterial.color.set(t.line);
-    for (const m of fadeLineMats.values()) m.color.set(t.line); // clones follow the theme
+    currentTheme = THEME[mode] ? mode : "dark";
+    syncLineLook(); // the clones follow the theme too (cel keeps its ink)
     cutaway.setTheme(mode, t.line);
     reassertLiveFades(); // setTheme re-clones every section's materials and reassigns them
-    currentTheme = THEME[mode] ? mode : "dark";
     invalidateMaterialThumbnails();
     for (const cb of [...themeListeners]) cb(currentTheme);
   }
@@ -2525,7 +2627,10 @@ export function createViewer(container, part, {
     const { key: capKey, fill: capFill } = _capLights;
     // Restored to what they WERE, not to true: realistic mode keeps them off.
     const keyWas = liveLights.key.visible, fillWas = liveLights.fill.visible;
-    if (!realistic) {
+    // Cel lights itself (its band shader ignores scene lights), so it takes no
+    // capture lights either.
+    const lit = !realistic && renderMode !== "cel";
+    if (lit) {
       const poses = captureLightPoses({ position, up, target });
       capKey.position.set(poses.key[0], poses.key[1], poses.key[2]);
       capFill.position.set(poses.fill[0], poses.fill[1], poses.fill[2]);
@@ -2578,7 +2683,7 @@ export function createViewer(container, part, {
       // Never leave the user's own view unlit, pointed at the offscreen target,
       // or missing a marker the user is still looking at.
       renderer.setRenderTarget(null);
-      if (!realistic) {
+      if (lit) {
         scene.remove(capKey, capKey.target, capFill, capFill.target);
         liveLights.key.visible = keyWas;
         liveLights.fill.visible = fillWas;
@@ -2665,7 +2770,7 @@ export function createViewer(container, part, {
             if (lines.material === fadeLineMats.get(n)) lines.material = lineMaterial;
           } else {
             const f = fadeMatFor(n); f.opacity = fade; mesh.material = f;
-            const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? (fade / staticOpacity) * edgeOpacity : 0; lines.material = fl;
+            const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? (fade / staticOpacity) * lineOpacityForMode() : 0; lines.material = fl;
           }
           mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible;
         },
@@ -2764,6 +2869,7 @@ export function createViewer(container, part, {
     // Revealed inside the capture, so inside any borrowed look (revealEntries).
     const capture = () => withRevealed(includeHidden, () => currentFramingInCurrentLook(rest));
     if (want === "cad") return captureIn("cad", null, capture);
+    if (want === "cel") return captureIn("cel", null, capture);
     if (want === "realistic" && renderMode !== "realistic") {
       const rig = loadedRigs.get(environmentId);
       if (rig) return captureIn("realistic", rig, capture);
@@ -2801,23 +2907,31 @@ export function createViewer(container, part, {
       if (want === "realistic" && !active) renderShadow(undefined, { force: true });
       return capture();
     }
-    if (want === "realistic") {
-      enterRealistic(rig, { live: false }); // rolls itself back to CAD if it throws
-      try { return capture(); } finally { enterCad({ live: false }); }
-    }
-    const liveRig = realisticRig, movedAt = shadowMovedAt;
+    const liveMode = renderMode, liveRig = realisticRig, movedAt = shadowMovedAt;
+    // Each enter rolls itself back to CAD if it throws, so a failed borrow
+    // leaves a CAD scene for the restore below to put the live look back on.
     try {
-      enterCad({ live: false });
+      if (want === "realistic") enterRealistic(rig, { live: false });
+      else if (want === "cel") enterCel({ live: false });
+      else enterCad({ live: false });
       return capture();
     } finally {
-      try {
-        enterRealistic(liveRig, { live: false, reground: false });
-        shadowMovedAt = movedAt;
-      } catch (e) {
-        // enterRealistic already rolled the scene back to CAD: make it the live mode.
-        console.warn("partforge: restoring the realistic view after a capture failed", e);
-        try { applyPixelRatio("cad"); } catch { /* the view is CAD either way */ }
-        publishMode({ error: "couldn't load realistic view" });
+      if (liveMode === "cad") {
+        enterCad({ live: false });
+      } else {
+        try {
+          if (liveMode === "realistic") {
+            enterRealistic(liveRig, { live: false, reground: false });
+            shadowMovedAt = movedAt;
+          } else {
+            enterCel({ live: false });
+          }
+        } catch (e) {
+          // The enter already rolled the scene back to CAD: make it the live mode.
+          console.warn(`partforge: restoring the ${liveMode} view after a capture failed`, e);
+          try { applyPixelRatio("cad"); } catch { /* the view is CAD either way */ }
+          publishMode({ error: liveMode === "cel" ? "couldn't switch to cel" : "couldn't load realistic view" });
+        }
       }
     }
   }
@@ -2833,6 +2947,7 @@ export function createViewer(container, part, {
     if (!box || box.isEmpty()) return null;
     const capture = () => currentFramingInCurrentLook({ size, quality: 0.8 });
     if (style === "cad") return captureIn("cad", null, capture);
+    if (style === "cel") return captureIn("cel", null, capture);
     const id = resolveEnvironmentId(style).id;
     // Borrowed BEFORE awaiting (see releaseRig).
     const p = borrowRig(id);
@@ -2951,6 +3066,11 @@ export function createViewer(container, part, {
   // are CAD-only, so borrowing the realistic look draws without them for free.
   async function renderViews(viewNames, { renderMode: want = "cad" } = {}) {
     if (disposed) return [];
+    if (want === "cel") {
+      await compileCel();
+      if (disposed) return [];
+      return captureIn("cel", null, () => canonicalViewsInCurrentLook(viewNames));
+    }
     if (want !== "realistic") return captureCanonicalViews(viewNames);
     // Borrowed like a thumbnail's rig, so a thumbnail of the same environment
     // finishing first cannot dispose it mid-capture (and, in CAD, it is freed
@@ -3099,6 +3219,7 @@ export function createViewer(container, part, {
     const background = renderScene.background;
     if (!cam.isOrthographicCamera || !background?.isTexture) {
       renderer.render(renderScene, cam);
+      renderCelInk(renderScene, cam);
       return;
     }
     cam.updateMatrixWorld();
@@ -3131,6 +3252,24 @@ export function createViewer(container, part, {
       renderer.autoClearColor = clearColorWas;
       _backdropScene.background = null; // hold no reference to a rig's texture
     }
+    renderCelInk(renderScene, cam);
+  }
+  // Cel's outlines and field dots, composited into whatever target is bound
+  // (the canvas, or a capture's). The ink is sized in device pixels: the
+  // canvas's ratio live, and for a capture its size over an 800 px reference,
+  // so a large capture's lines are no thinner, relative to the frame, than
+  // the screen's. Only the live scene: a throwaway one is CAD.
+  const _inkClipPlane = new THREE.Plane();
+  function renderCelInk(renderScene, cam) {
+    if (renderMode !== "cel" || renderScene !== scene || !celInk) return;
+    const bound = renderer.getRenderTarget();
+    const pixelScale = bound === null ? renderer.getPixelRatio() : Math.max(1, Math.max(bound.width, bound.height) / 800);
+    const plane = cutaway.getPlane?.(_inkClipPlane) ?? null;
+    celInk.render(renderer, scene, cam, {
+      pixelScale,
+      field: transparent ? null : { color: celField, dots: true },
+      clippingPlanes: plane ? [plane] : [],
+    });
   }
 
   // --- render loop ----------------------------------------------------------
@@ -3502,6 +3641,10 @@ export function createViewer(container, part, {
     fadeMats.clear();
     fadeLineMats.clear();
     disposeRealistic();
+    for (const m of celMats.values()) m.dispose();
+    celMats.clear();
+    celInk?.dispose();
+    celInk = null;
     disposeLiveShadow();
     material.dispose();
     lineMaterial.dispose();
