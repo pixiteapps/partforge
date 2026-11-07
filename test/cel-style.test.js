@@ -13,17 +13,25 @@ describe("celBase", () => {
   });
 });
 describe("celTones", () => {
-  const luma = (h) => 0.2126 * ((h >> 16) & 255) + 0.7152 * ((h >> 8) & 255) + 0.0722 * (h & 255);
-  it("white goes to a blue-grey shadow: darker than lit, bluer than it, deep darker still", () => {
+  // Goldens: the spike's shader maths (linear-space mix), read back as bytes.
+  const rgb = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
+  it("white goes to a blue-grey shadow, as the spike drew it", () => {
     const t = celTones(0xeef1f4);
     expect(t.lit).toBe(0xeef1f4);
-    expect(luma(t.shadow)).toBeLessThan(luma(t.lit) * 0.8);
+    expect(rgb(t.shadow)).toEqual([193, 210, 218]);
+    expect(rgb(t.deep)).toEqual([164, 179, 186]);
     expect(t.shadow & 255).toBeGreaterThan((t.shadow >> 16) & 255); // blue > red
-    expect(luma(t.deep)).toBeCloseTo(luma(t.shadow) * CEL.shadow.deepDarken, -1);
   });
   it("a saturated red keeps red dominant in its shadow", () => {
     const t = celTones(0xe8442c);
+    expect(rgb(t.shadow)).toEqual([163, 99, 125]);
+    expect(rgb(t.deep)).toEqual([139, 83, 106]);
     expect((t.shadow >> 16) & 255).toBeGreaterThan(t.shadow & 255);
+  });
+  it("a dark slate", () => {
+    const t = celTones(0x5b6577);
+    expect(rgb(t.shadow)).toEqual([75, 87, 111]);
+    expect(rgb(t.deep)).toEqual([63, 73, 94]);
   });
   it("black stays black", () => {
     expect(celTones(0x000000)).toEqual({ lit: 0, shadow: 0, deep: 0 });

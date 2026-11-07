@@ -1,7 +1,9 @@
 // The cel (anime) look as data plus two colour functions. Pure on purpose: no
 // three.js and no DOM, so the constants and the tone derivation can be read and
 // tested anywhere; the three.js materials built from them live in sibling modules
-// the viewer alone imports. Every value here was locked by the look-and-feel spike.
+// the viewer alone imports. Every value here was locked by the look-and-feel spike,
+// and the tones are derived in LINEAR space, because that is where the spike's
+// shader mixed them.
 import { cadAppearance } from "../materials/resolve.js";
 
 export const CEL = Object.freeze({
@@ -32,19 +34,26 @@ export function celBase(display) {
   return cadAppearance(display).color;
 }
 
-const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-const channels = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255].map((v) => v / 255);
-const pack = (c) => c.reduce((acc, v) => (acc << 8) | Math.round(Math.min(1, Math.max(0, v)) * 255), 0);
+// The spike's shader took the base and tint as THREE.Colors, which three decodes
+// to linear, mixed them there, and encoded the result back to sRGB on output; so
+// the tones are derived in linear space too, with the spike's own luma weights.
+// This function's contract is "what the spike drew".
+const luma = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const toSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+const channels = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255].map((v) => toLinear(v / 255));
+const pack = (c) => c.reduce((acc, v) => (acc << 8) | Math.round(Math.min(1, Math.max(0, toSrgb(v))) * 255), 0);
 
 /** Lit / shadow / deep-shadow sRGB hexes for a base colour (shadow leans toward the cool tint). */
 export function celTones(baseHex) {
   const { darken, tint, tintAmount, deepDarken } = CEL.shadow;
   const base = channels(baseHex);
   const tc = channels(tint);
-  const scale = luma(...base) / luma(...tc);
+  const k = luma(...base) / Math.max(luma(...tc), 0.001);
   const shadow = base.map((b, i) => {
-    const s = b * darken * (1 - tintAmount) + tc[i] * scale * darken * tintAmount;
-    return Math.min(1, Math.max(0, s));
+    const plain = b * darken;
+    const tinted = Math.min(1, tc[i] * k) * darken;
+    return plain + (tinted - plain) * tintAmount;
   });
   const deep = shadow.map((s) => s * deepDarken);
   return { lit: baseHex, shadow: pack(shadow), deep: pack(deep) };

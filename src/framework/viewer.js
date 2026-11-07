@@ -2756,7 +2756,7 @@ export function createViewer(container, part, {
       // part of what the pass must put back, beside the assignments.
       const was = {
         mat: mesh.material, lmat: lines.material, vis: mesh.visible, lvis: lines.visible,
-        fmOpacity: fm?.opacity, flmOpacity: flm?.opacity,
+        fmOpacity: fm?.opacity, flmOpacity: flm?.opacity, layers: mesh.layers.mask,
       };
       out.push({
         object: mesh,
@@ -2768,9 +2768,11 @@ export function createViewer(container, part, {
           if (fade === null) {
             if (mesh.material === fadeMats.get(n)) mesh.material = baseMats[n];
             if (lines.material === fadeLineMats.get(n)) lines.material = lineMaterial;
+            mesh.layers.enable(CEL_LAYER); // solid again: back in the ink prepass (applySubOpacity's rule)
           } else {
             const f = fadeMatFor(n); f.opacity = fade; mesh.material = f;
             const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? (fade / staticOpacity) * lineOpacityForMode() : 0; lines.material = fl;
+            mesh.layers.disable(CEL_LAYER);
           }
           mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible;
         },
@@ -2779,6 +2781,7 @@ export function createViewer(container, part, {
           if (f) f.opacity = was.fmOpacity ?? f.opacity;
           if (fl) fl.opacity = was.flmOpacity ?? fl.opacity;
           mesh.material = was.mat; lines.material = was.lmat; mesh.visible = was.vis; lines.visible = was.lvis;
+          mesh.layers.mask = was.layers;
         },
       });
     }
