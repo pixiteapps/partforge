@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { bootManifoldKernel, measure } from "../src/testing.js";
+import drawerBox from "../src/parts/drawer-box.js";
 import demo from "../src/parts/demo.js";
 import robotArm from "../src/parts/robot-arm.js";
 import { handlesReport } from "../src/framework/oracle/handles.js";
@@ -69,5 +70,15 @@ describe("handles in the measure report", () => {
   it("has no handles key on a part without handles", () => {
     expect("handles" in measure(k, demo, "spacer")).toBe(false);
     expect(handlesReport(demo, "spacer", {})).toBeUndefined();
+  });
+
+  it("reports which handles a cached preview would show, and why the rest are hidden", () => {
+    const r = measure(k, drawerBox, Object.keys(drawerBox.views)[0]);
+    expect(r.previewHandles.shown).toEqual(["drawer1", "drawer2", "drawer3"]);
+    expect(r.previewHandles.hidden.corner).toMatch(/rebuilds/);
+  });
+
+  it("a part without handles reports no previewHandles either", () => {
+    expect("previewHandles" in measure(k, demo, "spacer")).toBe(false);
   });
 });

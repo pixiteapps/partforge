@@ -643,6 +643,10 @@ function printMeasure(r) {
       const at = h.point ? `[${h.point.map((n) => n.toFixed(1)).join(", ")}]` : `unreadable (${h.error})`;
       console.log(`    ${h.label} (${h.kind}${h.group ? `, group ${h.group}` : ""}) at ${at} → ${h.params.join(", ")}`);
     }
+    if (r.previewHandles) {
+      console.log(`  preview handles: ${r.previewHandles.shown.length ? r.previewHandles.shown.join(", ") : "none"}`);
+      for (const [id, why] of Object.entries(r.previewHandles.hidden)) console.log(`    hidden in a preview: ${id} — ${why}`);
+    }
   }
   if (r.probes) {
     // Solid-fact probes get the sub-part line treatment (in mm³ — probes are
