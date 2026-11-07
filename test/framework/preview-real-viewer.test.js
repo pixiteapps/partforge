@@ -494,6 +494,33 @@ test("exportPreview carries the hinged box's autoplay cycle as channels", async 
   runtime.dispose();
 });
 
+test("exportPreview stores the params the meshes sit at", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const runtime = await mountHingedBox(hingedBox);
+  runtime.setParams({ lidAngle: 50 });
+  const d = await decodePreviewGlb(await runtime.exportPreview());
+  runtime.dispose();
+  expect(d.params.lidAngle).toBe(0); // the cycle's t = 0 value, not the live 50
+  expect(d.params.width).toBe(hingedBox.defaults.width); // the defaults ride along
+});
+
+test("a still export stores the live params", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const base = makePart();
+  const part = { ...base, defaults: { ...base.defaults, tilt: 0 } }; // build() never reads tilt
+  const runtime = mount(part, { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 1, meshes: [
+    { ...boxSoup("body", [0, 0, 0], [4, 4, 4]), reads: ["h"] },
+  ] } });
+  await runtime.ready;
+  runtime.setParams({ tilt: 7 });
+  const d = await decodePreviewGlb(await runtime.exportPreview());
+  runtime.dispose();
+  expect(d.animation).toBeNull();
+  expect(d.params).toMatchObject({ h: 4, tilt: 7 });
+});
+
 test("exportPreview carries no animation when a tracked param is read by build()", async () => {
   const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
   const animations = hingedBox.views.box.animations;

@@ -54,6 +54,7 @@ import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
 import { samplePreviewAnimation } from "./preview-animation.js";
+import { openingParams } from "./preview-pose.js";
 import { observeViewbarClear } from "./viewbar-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -2207,6 +2208,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // first build and an edit still rebuilding), never a cached preview. The
     // view's autoplay animation rides along as channels when every track is
     // place-only (samplePreviewAnimation decides; otherwise the file is still).
+    // The file also carries the params its meshes sit at: the live ones, with the
+    // autoplay animation's t = 0 values over them (openingParams) — a baked
+    // animation's tracked meshes decode at its first frame.
     // The encoder loads on first use: a host that never exports never pays for it.
     async function exportPreview({ view: wanted } = {}) {
       if (disposed) throw new Error("exportPreview: this mount is disposed");
@@ -2227,7 +2231,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         buildReads: (name) => (cache.hasStamp(name) ? cache.readsOf(name) : null),
       });
       const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
-      return encodePreviewGlb({ meshes, part, view: current, ...(animation ? { animation } : {}) });
+      return encodePreviewGlb({ meshes, part, view: current, params: openingParams(part, current, params), ...(animation ? { animation } : {}) });
     }
 
     return makeHandle({
