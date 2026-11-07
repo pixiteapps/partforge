@@ -560,8 +560,8 @@ export function createViewer(container, part, {
   function visibilityChanged() {
     matchGeneration++;
     cutaway.setVisible(effectiveVisible());
-    if (realisticRig) { shadowMovedAt = performance.now(); placeGround(); }
-    placeCelGround(); // cel only
+    if (realisticRig) shadowMovedAt = performance.now();
+    placeFloor();
   }
   // Shallow, key-by-key: effective displays hold only primitives.
   function sameDisplay(a, b) {
@@ -751,6 +751,7 @@ export function createViewer(container, part, {
   let environmentId = resolveEnvironmentId(part.meta?.environment).id;
   let modeToken = 0;                 // bumped by every request; a stale completion does nothing
   let realisticPending = false;      // a realistic request is in flight (setEnvironment joins it)
+  let celPending = false;            // a cel request is compiling its programs (getViewerState reports it as the mode headed for)
   let environmentChosen = false;     // set by setEnvironment; false while seeded from meta/default
 
   // Feature lines are CAD-only: applySubOpacity reads the render mode
@@ -1098,6 +1099,15 @@ export function createViewer(container, part, {
     _celFloorBox.min.y = floor.y;
     celGround.fit(_celFloorBox);
   }
+  // One floor placer for both grounded modes. Realistic's rig and cel's plane
+  // each place by floorFromBounds, and each returns at once in the other mode
+  // (placeGround, in cel, also forgets an unheld record, which placeCelGround
+  // then re-derives), so every re-place goes through here and neither ground
+  // can be left behind by a call site that knew about only one.
+  function placeFloor(opts = {}) {
+    placeGround(opts);
+    placeCelGround(opts);
+  }
   // Once per live cel frame, before the scene render: casters, the light's
   // camera-relative aim (aim clamps its world elevation), and the map size.
   // Like the realistic contact shadow, the map runs small while the camera or
@@ -1106,7 +1116,9 @@ export function createViewer(container, part, {
   // turntable or an animation, always moving) and a coarse pointer stay small.
   // A small frame asks for the frames that follow it, so the settled full-size
   // frame lands without further input.
-  const celFullMapSize = () => (frameSwept || framePoses?.length || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize);
+  // Decided once: the mount options and the pointer kind do not change in a session.
+  const celFullMap = frameSwept || framePoses?.length || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize;
+  const celFullMapSize = () => celFullMap;
   function prepareCelGround(cam) {
     // Casters are the ink prepass's members: exactly the sub-parts drawn
     // opaque (subPartVisibility's `inked`), so an authored ghost, a user
@@ -1119,7 +1131,11 @@ export function createViewer(container, part, {
     cam.updateMatrixWorld();
     celGround.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
     const full = celFullMapSize();
-    const moving = celMovedAt != null && performance.now() - celMovedAt < SHADOW_SETTLE_MS;
+    // Only the live canvas runs the moving schedule: a capture (a target bound)
+    // takes the full map, so its shadow never depends on how recently the user
+    // orbited.
+    const onCanvas = renderer.getRenderTarget() === null;
+    const moving = onCanvas && celMovedAt != null && performance.now() - celMovedAt < SHADOW_SETTLE_MS;
     const want = moving ? CEL.ground.mapSizeSmall : full;
     if (want !== celMapSize) { celGround.setMapSize(want); celMapSize = want; }
     if (want !== full) requestRender(SHADOW_SETTLE_MS);
@@ -1214,6 +1230,7 @@ export function createViewer(container, part, {
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
       for (const n of names) if (subCache[n] && physicalFor(n).userData.pfAnisotropic) ensureBoxUVs(subCache[n]);
       setSubMaterials(physicalFor);
+      cutaway.setTheme(currentTheme, hatchInkForMode()); // the hatch back in the theme's colour after cel
       if (realisticRig && realisticRig !== rig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
       realisticRig = rig;
       scene.environment = rig.envMap;
@@ -1269,6 +1286,7 @@ export function createViewer(container, part, {
     attempt(() => { for (const l of Object.values(liveLights)) l.visible = true; });
     attempt(() => { grid.visible = cadGrid; });
     for (const n of names) attempt(() => { if (baseMats[n] !== cadMats[n]) rebaseSubMaterial(n, cadMats[n]); else applySubOpacity(n); });
+    attempt(() => cutaway.setTheme(currentTheme, hatchInkForMode())); // the hatch and clipped lines back in the theme's colour
     if (live) attempt(() => applyPixelRatio("cad"));
     if (contactShadow) attempt(rebuildLiveShadow);
     attempt(refreshFeatureLines);
@@ -1296,11 +1314,11 @@ export function createViewer(container, part, {
       scene.environmentRotation.set(0, 0, 0);
       for (const l of Object.values(liveLights)) l.visible = false;
       grid.visible = false;
-      // Before the rebase: an enabled cutaway clones its clipped line material
-      // from lineMaterial there (refreshSubpartMaterial), so it must already
-      // carry the ink colour and opacity.
       syncLineLook();
       setSubMaterials(celFor);
+      // The cutaway re-derives its clipped line clones and its hatch ink from
+      // the look now in effect, so neither depends on the order above.
+      cutaway.setTheme(currentTheme, hatchInkForMode());
       disposeLiveShadow();
       celInk = celInk ?? createCelInk();
       // The ground's light, target and plane stay on layer 0: the ink prepass
@@ -1358,15 +1376,47 @@ export function createViewer(container, part, {
     }
     return Promise.resolve(compiling).finally(() => probe?.dispose());
   }
-  // The cel programs compile before the swap too. No tone mapping and no
-  // environment key them, so one compile serves the canvas and a capture.
+  // The cel programs compile before the swap too. Three keys a program on
+  // whether shadow maps are on and a casting light is in view, and on the
+  // object's receiveShadow, so the proxy that compiles the band materials and
+  // the ground plane carries a casting light under VSM maps — the variant the
+  // live frame draws — while a lightless twin compiles the ink quad and the
+  // prepass override, which render with no light in view (the quad's own
+  // scene; the prepass camera's layer excludes the light). No tone mapping and
+  // no environment key them, so one pass serves the canvas and a capture.
   function compileCel() {
-    const proxy = new THREE.Scene();
+    celInk = celInk ?? createCelInk();
+    if (!celGround) {
+      celGround = createCelGround({ mapSize: celFullMapSize() });
+      celMapSize = celFullMapSize();
+    }
+    const lit = new THREE.Scene(), unlit = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xffffff, 0);
+    sun.castShadow = true;
+    const floor = new THREE.Mesh(celGround.plane.geometry, celGround.plane.material);
+    floor.receiveShadow = true;
+    lit.add(sun, sun.target, floor);
+    const quad = new THREE.PlaneGeometry(2, 2);
+    unlit.add(new THREE.Mesh(quad, celInk.material));
     for (const n of names) {
       const geo = subCache[n];
-      if (geo) proxy.add(new THREE.Mesh(geo, celFor(n))); // unbuilt: compiles when first shown
+      if (!geo) continue; // unbuilt: compiles when first shown
+      const caster = new THREE.Mesh(geo, celFor(n));
+      caster.castShadow = true;
+      lit.add(caster);
+      unlit.add(new THREE.Mesh(geo, celInk.prepassMaterial));
     }
-    return Promise.resolve(renderer.compileAsync?.(proxy, activeCamera));
+    const was = { enabled: renderer.shadowMap.enabled, type: renderer.shadowMap.type };
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.VSMShadowMap;
+    let compiling;
+    try {
+      compiling = Promise.all([renderer.compileAsync?.(lit, activeCamera), renderer.compileAsync?.(unlit, activeCamera)]);
+    } finally {
+      renderer.shadowMap.enabled = was.enabled;
+      renderer.shadowMap.type = was.type;
+    }
+    return compiling.then(() => { quad.dispose(); });
   }
 
   // Resolves to the mode actually in effect. A later setRenderMode or
@@ -1378,6 +1428,7 @@ export function createViewer(container, part, {
     const token = ++modeToken;
     if (want === "cad") {
       realisticPending = false;
+      celPending = false;
       if (renderMode !== "cad") {
         try { enterCad(); } catch (e) { console.warn(`partforge: leaving the ${renderMode} view failed`, e); }
       }
@@ -1386,15 +1437,18 @@ export function createViewer(container, part, {
     }
     if (want === "cel") {
       realisticPending = false;
-      if (renderMode === "cel") { publishMode(); return renderMode; }
+      if (renderMode === "cel") { celPending = false; publishMode(); return renderMode; }
+      celPending = true;
       publishMode({ busy: true });
       try {
         await compileCel();
         if (isStale(token)) return renderMode;
+        celPending = false;
         enterCel(); // rolls itself back to CAD if it throws
         publishMode();
       } catch (e) {
         if (isStale(token)) return renderMode;
+        celPending = false;
         console.warn("partforge: the cel view failed to load", e);
         publishMode({ error: "couldn't switch to cel" });
       }
@@ -1407,6 +1461,7 @@ export function createViewer(container, part, {
       return renderMode;
     }
     const wasRealistic = renderMode === "realistic";
+    celPending = false;
     realisticPending = true;
     publishMode({ busy: true });
     try {
@@ -2506,8 +2561,7 @@ export function createViewer(container, part, {
     }
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
-    placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
-    placeCelGround(); // cel only: the same floor, for the shadow plane
+    placeFloor(); // the ground comes to the part (realistic re-renders its shadow; cel refits its plane)
     if (contactShadow) rebuildLiveShadow(); // CAD only (a no-op in realistic)
     for (const cb of [...assemblyListeners]) {
       try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }
@@ -2552,6 +2606,8 @@ export function createViewer(container, part, {
   // a step lighter (CEL.ink.kernelLineOpacity). The fade clones get the
   // colour here; their opacity is applySubOpacity's, on the same multiplier.
   const lineOpacityForMode = () => (renderMode === "cel" ? CEL.ink.kernelLineOpacity * edgeOpacity : edgeOpacity);
+  // The cutaway's hatch (and its clipped line clones) take the same colour.
+  const hatchInkForMode = () => (renderMode === "cel" ? CEL.ink.color : THEME[currentTheme].line);
   function syncLineLook() {
     const color = renderMode === "cel" ? CEL.ink.color : THEME[currentTheme].line;
     const opacity = lineOpacityForMode();
@@ -2575,7 +2631,7 @@ export function createViewer(container, part, {
     scene.add(grid);
     currentTheme = THEME[mode] ? mode : "dark";
     syncLineLook(); // the clones follow the theme too (cel keeps its ink)
-    cutaway.setTheme(mode, t.line);
+    cutaway.setTheme(mode, hatchInkForMode()); // in cel the hatch is ink, like the feature lines
     reassertLiveFades(); // setTheme re-clones every section's materials and reassigns them
     invalidateMaterialThumbnails();
     for (const cb of [...themeListeners]) cb(currentTheme);
@@ -3456,8 +3512,7 @@ export function createViewer(container, part, {
     resize(); // rebuild the buffer at whatever size the container is now
     // A parked viewer renders no contact shadow (placeGround skips it), so a
     // regen while hidden left it stale.
-    placeGround();
-    placeCelGround(); // in cel, placeGround just forgot the floor record: put it back
+    placeFloor();
     lastFrameTime = null; // parked time is not elapsed time — no dt jump on unpark
     renderer.setAnimationLoop(renderFrame);
   }
@@ -3860,6 +3915,8 @@ export function createViewer(container, part, {
     // A realistic request is loading (getRenderMode still reads the mode on
     // screen until it lands); false once it lands, fails, or is superseded.
     isRealisticPending: () => realisticPending,
+    // A cel request is compiling (getRenderMode still reads the mode on screen).
+    isCelPending: () => celPending,
     onEnvironmentChange: (cb) => { envListeners.add(cb); return () => envListeners.delete(cb); },
     setPrintFrames,
     setSheetFrames,

@@ -394,7 +394,7 @@ export function mountPreview(container, options = {}) {
       camera: v.getCameraState(),
       projection: v.getProjection?.() ?? "perspective",
       cutaway: null, // a preview has no live solid to section
-      renderMode: v.isRealisticPending?.() ? "realistic" : v.getRenderMode?.() ?? "cad",
+      renderMode: v.isRealisticPending?.() ? "realistic" : v.isCelPending?.() ? "cel" : v.getRenderMode?.() ?? "cad",
       ...(v.isEnvironmentChosen?.() ? { environment: v.getEnvironment() } : {}),
     };
   }

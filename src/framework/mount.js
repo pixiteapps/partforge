@@ -150,7 +150,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // realistic restore or switch still loading reads "realistic", so a
       // remount mid-load (the cloud remounts on every edit) doesn't drop it.
       // A failed load settles back to "cad".
-      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.getRenderMode?.() ?? "cad",
+      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.isCelPending?.() ? "cel" : viewer.getRenderMode?.() ?? "cad",
       // Only an environment someone CHOSE: carrying the one merely seeded
       // from meta.environment (or the default) would outrank the part's own
       // meta.environment on the next mount, masking an edit to it.

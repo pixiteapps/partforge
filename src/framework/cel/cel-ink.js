@@ -105,18 +105,25 @@ export function createCelInk() {
   quadScene.add(new THREE.Mesh(quadGeometry, inkMat));
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const size = new THREE.Vector2(), clearColor = new THREE.Color();
-  let target = null;
+  // One prepass target for the canvas and one for captures: a capture is
+  // rarely the canvas's size, and one shared target would be reallocated (a
+  // float depth texture included) around every capture and again on the next
+  // live frame.
+  const targets = { live: null, capture: null };
 
-  function ensureTarget(w, h) {
-    if (target && target.width === w && target.height === h) return target;
-    target?.dispose();
-    target?.depthTexture?.dispose();
-    const depthTexture = new THREE.DepthTexture(w, h, THREE.FloatType);
-    target = new THREE.WebGLRenderTarget(w, h, {
-      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthTexture, depthBuffer: true,
-    });
+  function ensureTarget(slot, w, h) {
+    let target = targets[slot];
+    if (!target || target.width !== w || target.height !== h) {
+      target?.dispose();
+      target?.depthTexture?.dispose();
+      const depthTexture = new THREE.DepthTexture(w, h, THREE.FloatType);
+      target = new THREE.WebGLRenderTarget(w, h, {
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthTexture, depthBuffer: true,
+      });
+      targets[slot] = target;
+    }
     inkMat.uniforms.tNormal.value = target.texture;
-    inkMat.uniforms.tDepth.value = depthTexture;
+    inkMat.uniforms.tDepth.value = target.depthTexture;
     inkMat.uniforms.uRes.value.set(w, h);
     return target;
   }
@@ -128,7 +135,7 @@ export function createCelInk() {
     const bound = renderer.getRenderTarget();
     if (bound) size.set(bound.width, bound.height); else renderer.getDrawingBufferSize(size);
     if (size.x < 2 || size.y < 2) return; // a parked viewer's canvas is 1x1
-    const rt = ensureTarget(size.x, size.y);
+    const rt = ensureTarget(bound ? "capture" : "live", size.x, size.y);
     const clearWas = renderer.getClearColor(clearColor).clone(), clearAlphaWas = renderer.getClearAlpha();
     const layersWas = camera.layers.mask, overrideWas = scene.overrideMaterial, backgroundWas = scene.background;
     const autoClearWas = renderer.autoClear;
@@ -167,9 +174,11 @@ export function createCelInk() {
   }
 
   function dispose() {
-    target?.dispose();
-    target?.depthTexture?.dispose();
-    target = null;
+    for (const slot of Object.keys(targets)) {
+      targets[slot]?.dispose();
+      targets[slot]?.depthTexture?.dispose();
+      targets[slot] = null;
+    }
     normalMat.dispose();
     inkMat.dispose();
     quadGeometry.dispose();
@@ -180,5 +189,7 @@ export function createCelInk() {
     dispose,
     /** The ink pass's ShaderMaterial (its uniforms are what tests read). */
     get material() { return inkMat; },
+    /** The prepass override (normals, double-sided), for the viewer's pre-compile. */
+    get prepassMaterial() { return normalMat; },
   };
 }

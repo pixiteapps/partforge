@@ -393,7 +393,6 @@ try {
       for (const t of r.top ?? []) console.log(`      ${String(t.ms).padStart(7)} ms  ${t.fn}`);
     }
   }
-  results.mode = mode;
   const json = arg("--json");
   if (json) writeFileSync(json, JSON.stringify(results, null, 2));
 } finally {

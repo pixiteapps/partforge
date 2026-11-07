@@ -4406,9 +4406,10 @@ mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`,
 rather than merely defaulted from `meta.environment`, `viewerState.environment`.
 `renderMode` reports the mode the user is **headed for**, not only the one on
 screen: a realistic restore or switch that's still loading reports
-`"realistic"`, so a host that remounts on every edit (as an embedder applying
-edits by remounting typically does) doesn't drop the in-flight choice — a
-load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
+`"realistic"`, and a cel switch still compiling its programs reports `"cel"`,
+so a host that remounts on every edit (as an embedder applying edits by
+remounting typically does) doesn't drop the in-flight choice — a load that
+ultimately fails still settles back to the mode it left. Pass `viewerState`
 back into the next `mount()` call to resume both where the previous mount
 left them; omit it on a first mount and the viewer restores its own persisted
 choice instead, the same way it does for the camera.

@@ -82,6 +82,23 @@ describe("createCelInk render", () => {
     expect(src).toContain("max(uThin * uPx, 1.0)");
     ink.dispose();
   });
+  it("keeps one prepass target for the canvas and one for captures, pointing the shader at the one in use", () => {
+    const bound = { width: 64, height: 48 };
+    const ink = createCelInk();
+    const u = ink.material.uniforms;
+    ink.render(stubRenderer([800, 600], bound), scene, cam, { pixelScale: 1, field: null });
+    const captureTex = u.tNormal.value;
+    expect([u.uRes.value.x, u.uRes.value.y]).toEqual([64, 48]);
+    ink.render(stubRenderer([800, 600]), scene, cam, { pixelScale: 2, field: null });
+    const liveTex = u.tNormal.value;
+    expect([u.uRes.value.x, u.uRes.value.y]).toEqual([800, 600]);
+    expect(liveTex).not.toBe(captureTex);
+    // The same capture size again reuses the capture target rather than reallocating.
+    ink.render(stubRenderer([800, 600], bound), scene, cam, { pixelScale: 1, field: null });
+    expect(u.tNormal.value).toBe(captureTex);
+    expect(ink.prepassMaterial.isMeshNormalMaterial).toBe(true);
+    ink.dispose();
+  });
   it("skips a 1x1 drawing buffer entirely", () => {
     const r = stubRenderer([1, 1]);
     const ink = createCelInk();
