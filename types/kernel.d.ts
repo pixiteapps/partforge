@@ -54,6 +54,14 @@ export interface Mesh {
   triangles: number;
   /** Feature-edge line segments (Manifold). */
   edges?: Float32Array;
+  /** Per-triangle feature id (1-based into `features`; 0 = none). */
+  featureIds?: Uint16Array;
+  /** Feature label names, indexed by `featureIds` - 1. */
+  features?: string[];
+  /** Per-triangle origin id (1-based into `origins`; 0 = no record). */
+  originIds?: Uint16Array;
+  /** Per origin id, the param keys its face run was built from, newest first. */
+  origins?: string[][];
 }
 
 /** The indexed mesh 3MF export needs. */

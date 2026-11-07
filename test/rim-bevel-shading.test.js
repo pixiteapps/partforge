@@ -1,10 +1,9 @@
 // Regression pin: rim-bevel.js builds its bevel band from the profile's own
 // point ring via k.loft(...) (see rim-bevel.js). A plain rectangle profile has
 // only 4 points — well under loft's 32-side smooth-inference threshold — so
-// left to infer, the internal bevel-band lofts register FACETED. That (a)
-// drops the bevel band's own corner crease lines and (b), via label()'s
-// triangle-count majority vote, can strip ALL edge lines from a labeled
-// beveled solid (the bevel band outweighs the box body's flat-cap-only faces).
+// left to infer, the internal bevel-band lofts register FACETED. That
+// drops the bevel band's own corner crease lines, and label() carries each
+// face's policy over 1:1, so a labeled beveled solid would keep that faceted band.
 // rim-bevel.js now passes shading: "smooth" on its three internal loft() calls —
 // a bevel band inherits the profile's shading intent, not loft's own facet
 // inference — so a beveled solid keeps its edge lines both unlabeled and
