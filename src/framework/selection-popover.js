@@ -29,7 +29,7 @@ function el(tag, className, attrs = {}) {
   return e;
 }
 
-export function attachSelectionPopover({ stage, canvas = null, slot = false, parts, renderThumb = null, getSaveState = () => "screen-only", onClosed = null, toStage = (a) => a } = {}) {
+export function attachSelectionPopover({ stage, canvas = null, slot = false, parts, renderThumb = null, getSaveState = () => "screen-only", onClosed = null, toStage = (a) => a, controls = null } = {}) {
   const pop = el("div", "pf-selection-popover", { role: "dialog", "aria-label": "Selected spot", tabindex: "-1" });
   pop.hidden = true;
   const tail = el("span", "pf-selection-tail", { "aria-hidden": "true" });
@@ -46,6 +46,9 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   closeBtn.innerHTML = ICONS.close;
   head.append(openBtn, eye, closeBtn);
   spot.append(head);
+  // Filled by the host's `controls.build`; this file knows nothing of params.
+  const ctlEl = controls ? el("div", "pf-selection-controls") : null;
+  if (ctlEl) { ctlEl.hidden = true; spot.append(ctlEl); }
   const slotEl = slot ? el("div", "pf-selection-slot") : null;
   if (slotEl) { slotEl.style.height = `${MIN_SLOT}px`; spot.append(slotEl); }
   // Scrolls in here, not on the popover: the tail pokes out past the popover's edge.
@@ -57,6 +60,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   let current = null; // { subPart, anchor } while open; anchor as handed in, before toStage
   let requestedSlot = MIN_SLOT; // what the host asked for; place() may apply less
   let page = "spot";
+  let ctl = null;     // the built region's { dispose } while shown
   let card = null;    // built on first use of the appearance page
   let lastSlotKey = null;
   let detached = false;
@@ -79,6 +83,22 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     eye.setAttribute("aria-label", `Hide ${row.label}`);
     pop.setAttribute("aria-label", row.label);
     return row;
+  }
+
+  function buildControls() {
+    ctl?.dispose?.();
+    ctl = null;
+    if (ctlEl) {
+      ctlEl.replaceChildren();
+      const n = current?.subPart;
+      ctl = current && rowFor(n) ? controls.build(ctlEl, { subPart: n, hit: current.hit }) ?? null : null;
+      ctlEl.hidden = !ctl;
+    }
+  }
+  function disposeControls() {
+    ctl?.dispose?.();
+    ctl = null;
+    if (ctlEl) { ctlEl.replaceChildren(); ctlEl.hidden = true; }
   }
 
   function emitSlot() {
@@ -134,6 +154,14 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
         slotEl.style.height = `${applied}px`;
         plan = planFor(); // the smaller box may now fit on a side it did not before
       }
+    }
+    // The slot is at its floor and it still does not fit: the controls region
+    // scrolls inside itself rather than the whole popover.
+    if (ctlEl) {
+      if (page === "spot" && !ctlEl.hidden && natural > plan.maxHeight) {
+        const room = plan.maxHeight - (natural - ctlEl.offsetHeight);
+        ctlEl.style.maxHeight = `${Math.max(72, Math.floor(room))}px`;
+      } else ctlEl.style.maxHeight = "";
     }
     pop.style.maxHeight = `${plan.maxHeight}px`;
     pop.style.left = `${plan.left}px`;
@@ -218,14 +246,15 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
   // `page: "appearance"` opens straight onto the card (a carried selection
   // reopening where it was) with one slot report, not an "open" then a
   // "collapsed"; with no head row to open a card for, it is the spot page.
-  function open({ subPart = null, anchor, page: startPage = "spot" } = {}) {
+  function open({ subPart = null, anchor, page: startPage = "spot", hit = null } = {}) {
     if (detached || !anchor) return false;
     const n = typeof subPart === "string" ? subPart : null;
     if (!slot && !rowFor(n)) return false;
     const wasOpen = isOpen();
-    current = { subPart: n, anchor };
+    current = { subPart: n, anchor, hit };
     pop.hidden = false;
     renderHead();
+    buildControls();
     if (!wasOpen) document.addEventListener("pointerdown", onOutside, true);
     if (startPage !== "appearance" || !showPage("appearance")) showPage("spot");
     return true;
@@ -253,6 +282,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     body.scrollTop = 0; // the next open starts at the top
     spot.hidden = false;
     current = null;
+    disposeControls();
     document.removeEventListener("pointerdown", onOutside, true);
     emitSlot();
     onClosed?.();
@@ -277,6 +307,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     setAnchor,
     setSlotHeight,
     showPage,
+    refreshControls: () => { if (!isOpen() || !ctlEl) return; buildControls(); place(); },
     close: (reason) => close(reason === "dismiss" || reason === "hide" || reason === "gone" ? reason : undefined),
     isOpen,
     getState: () => (isOpen() ? { subPart: current.subPart, page } : null),
@@ -291,6 +322,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
       offParts();
       ro?.disconnect();
       card?.detach?.();
+      disposeControls();
       slotCbs.clear();
       closeCbs.clear();
       pop.remove();

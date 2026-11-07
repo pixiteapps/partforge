@@ -478,3 +478,50 @@ describe("selection popover: toStage", () => {
     p.detach();
   });
 });
+
+describe("selection popover: controls region", () => {
+  const controls = (impl) => ({ build: vi.fn(impl) });
+  it("builds between the head and the slot, passes the hit, hides when build returns null", () => {
+    const c = controls((el, spot) => { el.append(Object.assign(document.createElement("i"), { textContent: spot.subPart })); return { dispose: vi.fn() }; });
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: c });
+    p.open({ subPart: "body", anchor: at, hit: { triIndex: 3 } });
+    const spot = p.element.querySelector(".pf-selection-spot");
+    expect([...spot.children].map((e) => e.className)).toEqual(["pf-selection-head", "pf-selection-controls", "pf-selection-slot"]);
+    expect(c.build.mock.calls[0][1]).toEqual({ subPart: "body", hit: { triIndex: 3 } });
+    expect(spot.querySelector(".pf-selection-controls").hidden).toBe(false);
+    c.build.mockImplementation(() => null);
+    p.refreshControls();
+    expect(spot.querySelector(".pf-selection-controls").hidden).toBe(true);
+    p.detach();
+  });
+  it("disposes on close and on rebuild; the slot is still reported when the region is hidden", () => {
+    const dispose = vi.fn();
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls(() => ({ dispose })) });
+    const reports = []; p.onSlotChange((r) => reports.push(r));
+    p.open({ subPart: "body", anchor: at });
+    p.refreshControls();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    p.close("dismiss");
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(reports.some((r) => r.state === "open")).toBe(true);
+    p.detach();
+  });
+  it("a tall region scrolls while the slot keeps its floor", () => {
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls((el) => { el.style.height = "900px"; return { dispose() {} }; }) });
+    const ctl = p.element.querySelector(".pf-selection-controls");
+    const slotEl = p.element.querySelector(".pf-selection-slot");
+    Object.defineProperty(p.element, "offsetWidth", { configurable: true, get: () => 320 });
+    Object.defineProperty(ctl, "offsetHeight", { configurable: true, get: () => 900 });
+    Object.defineProperty(p.element, "offsetHeight", { configurable: true, get: () => {
+      const natural = 40 + (ctl.hidden ? 0 : 900) + (parseFloat(slotEl.style.height) || 0);
+      const cap = parseFloat(p.element.style.maxHeight);
+      return Number.isFinite(cap) ? Math.min(natural, cap) : natural;
+    } });
+    slotEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 320, height: parseFloat(slotEl.style.height) || 0 });
+    p.setSlotHeight(300);
+    p.open({ subPart: "body", anchor: at });
+    expect(parseFloat(ctl.style.maxHeight)).toBeGreaterThan(0);
+    expect(slotEl.style.height).toBe("44px");
+    p.detach();
+  });
+});
