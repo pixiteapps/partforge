@@ -112,6 +112,16 @@
 // the handle is disposed before that frame. A parked preview draws nothing, so
 // `drawn` waits for setActive(true).
 //
+// `part` (0.186.0): the part module the file was written from. Pose mode then runs
+// on the file's meshes, as the editor's does, with no kernel: every handle the editor
+// would show in this view whose params move pieces by placement alone
+// (preview-pose.js's previewHandles, decided in idle time after `drawn`) can be
+// dragged, IK included. A drag writes the preview's own params — seeded from the
+// file's (`getParams()`) — and re-poses each mesh by matrix (createFilePlacer); it
+// edits nothing else. `handle.pose` is mount()'s pose surface plus `onDragEnd`;
+// without `part` it is mount()'s no-op stand-in and `getParams()` is null. A file
+// whose view the part does not declare gets nothing attached (warned once).
+//
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
@@ -126,6 +136,14 @@ import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { createPreviewPlayer, animationPoses } from "./preview-player.js";
 import { attachPreviewPlayButton } from "./preview-play-button.js";
+import { NOOP_POSE } from "./mount.js";
+import { createFilePlacer, previewHandles } from "./preview-pose.js";
+import { createPoseMode } from "./pose/pose-mode.js";
+import { attachPoseControls } from "./pose/pose-controls.js";
+import { attachDragReadout } from "./pose/drag-readout.js";
+import { attachReadoutChip } from "./pose/readout-chip.js";
+import { withDeriveMemo } from "./derive-memo.js";
+import { raycastViewer } from "./selection/raycast.js";
 
 // A value the option does not know is a host bug: say so at the call rather
 // than quietly showing the default.
@@ -142,7 +160,7 @@ function flag(name, value, fallback) {
 const KNOWN_OPTIONS = new Set([
   "glb", "elements", "viewerState", "animate",
   "chrome", "background", "contactShadow", "zoom", "pan", "turntable", "fill", "camera", "renderMode",
-  "autostart", "edgeWidth", "edgeOpacity",
+  "autostart", "edgeWidth", "edgeOpacity", "part",
 ]);
 
 function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode, autostart, edgeWidth, edgeOpacity }) {
@@ -213,6 +231,82 @@ function createTurntable(viewer, container, degPerSec, onChange) {
   };
 }
 
+// Pose mode on the file (`part`): the editor's pose mode (mount.js) over the file's
+// meshes, its params the preview's own and every write re-posing by matrix. Pushes its
+// teardown onto `cleanups`, pose mode's detach FIRST so it runs LAST (they pop LIFO),
+// and every effect is a no-op once `isDisposed()`. Fills `preview` as it decides.
+function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip, chrome, drawn, cleanups, isDisposed, cueBlocked, onDragEnd, preview }) {
+  const drawnNames = decoded.meshes.map((m) => m.name).filter((n) => Object.hasOwn(part.parts, n));
+  const params = { ...(part.defaults ?? {}), ...(decoded.params ?? {}) };
+  const fileParams = Object.freeze({ ...params });
+  const placer = createFilePlacer(part, view, fileParams, drawnNames);
+  const live = (fn) => (...args) => (isDisposed() ? undefined : fn(...args));
+  // The session snaps on release (and the chip wraps), so a write takes values as given.
+  const write = live((values) => {
+    Object.assign(params, values);
+    withDeriveMemo(() => placer.apply(viewer, params));
+    viewer.requestRender();
+  });
+  // `showOn`: the sub-part under the last pointermove, raycast when asked (once per point).
+  let pointer = null, hovered = null;
+  const onMove = (ev) => { pointer = { x: ev.clientX, y: ev.clientY }; hovered = undefined; };
+  const hoveredSubPart = () => {
+    if (!pointer) return null;
+    if (hovered === undefined) hovered = raycastViewer(viewer, pointer.x, pointer.y)?.subPart ?? null;
+    return hovered;
+  };
+  let lastDragEnd = null;
+  const poseMode = createPoseMode(viewer, {
+    part,
+    orbitControls: viewer.orbitControls,
+    getParams: () => params,
+    write,
+    restore: write,
+    // onDragEnd's listeners are pose mode's own; this only keeps the __lastDragEnd hook.
+    commit: live((changed) => { lastDragEnd = { changed }; }),
+    staleSubParts: () => [], // nothing rebuilds: a shown handle is place-only
+    ghost() {},
+    unghost() {},
+    // Seams for the following tasks — no-ops for now: hold (pausing playback while a
+    // drag holds, Tasks 7–8), collide / onBlocked (collisions while posing, Task 7).
+    hold: () => {},
+    collide: () => null,
+    onBlocked() {},
+    visibleHandles: () => preview.visible?.shown ?? [],
+    hoveredSubPart,
+    cueBlocked,
+  });
+  cleanups.push(() => poseMode.detach());
+  viewer.domElement.addEventListener("pointermove", onMove);
+  cleanups.push(() => viewer.domElement.removeEventListener("pointermove", onMove));
+  cleanups.push(poseMode.onDragEnd((e) => { lastDragEnd = e; onDragEnd(e); }));
+  let readout = null;
+  if (chrome) {
+    const controls = attachPoseControls(viewer, poseMode, { viewbar: toolbar }, { tooltip });
+    cleanups.push(() => controls.detach());
+    const pill = readout = attachDragReadout(poseMode, { viewbar: toolbar });
+    cleanups.push(() => pill.detach());
+  }
+  const chip = attachReadoutChip(viewer, poseMode, { stage: container }, { part, getParams: () => params, apply: (values) => write(values) });
+  cleanups.push(() => chip.detach());
+
+  // Which handles may show is decided off the first frame's path: in idle time once drawn.
+  const idle = (cb) => (typeof requestIdleCallback === "function" ? requestIdleCallback(cb) : setTimeout(cb, 0));
+  drawn.then(() => idle(() => {
+    if (isDisposed()) return;
+    preview.visible = previewHandles(part, view, fileParams, drawnNames);
+    poseMode.refresh();
+    viewer.requestRender();
+  }), () => {});
+
+  Object.assign(preview, { params, fileParams, placer, poseMode });
+  return {
+    poseMode,
+    dragReadout: () => readout?.text() ?? null,
+    lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
+  };
+}
+
 function previewPart({ meshes, view, meta }) {
   return {
     meta: { title: "Preview", ...(meta ?? {}) },
@@ -227,6 +321,9 @@ function previewPart({ meshes, view, meta }) {
   };
 }
 
+// mount()'s no-op pose, plus the onDragEnd the preview's pose surface always carries.
+const NOOP_PREVIEW_POSE = Object.freeze({ ...NOOP_POSE, onDragEnd: () => () => {} });
+
 const relay = (listeners) => (event) => {
   for (const cb of [...listeners]) {
     try { cb(event); } catch (error) { console.warn("partforge: preview listener failed", error); }
@@ -238,7 +335,10 @@ export function mountPreview(container, options = {}) {
   for (const key of Object.keys(options ?? {})) {
     if (!KNOWN_OPTIONS.has(key)) throw new TypeError(`mountPreview: unknown option "${key}"`);
   }
-  const { glb, elements = {}, viewerState = null, animate = true } = options ?? {};
+  const { glb, elements = {}, viewerState = null, animate = true, part = null } = options ?? {};
+  if (part !== null && !(part && typeof part === "object" && part.parts && typeof part.parts === "object")) {
+    throw new TypeError("mountPreview: part must be a PartDefinition");
+  }
   const opts = presentation(options ?? {});
   // A carried state as this mount applies it: under camera: "default" without
   // its camera and projection (render mode and environment still carry).
@@ -257,6 +357,11 @@ export function mountPreview(container, options = {}) {
   let player = null;                 // the baked animation's player, once drawn
   let motion = null;                 // handle.motion, once the GLB has decoded
   const motionListeners = new Set();
+  const dragEndListeners = new Set(); // handle.pose.onDragEnd's, kept from before ready
+  // Pose mode on the file, with `part`: what attachPosing decided (handle.__preview).
+  const preview = part ? { params: null, fileParams: null, placer: null, poseMode: null, visible: null } : null;
+  let posing = null;                 // attachPosing's result, once attached
+  let poseEnabled = true;            // handle.pose.setEnabled's, kept from before ready
   const cleanups = [];
   const modeListeners = new Set();
   const envListeners = new Set();
@@ -382,6 +487,21 @@ export function mountPreview(container, options = {}) {
         return () => motionListeners.delete(cb);
       },
     };
+    if (part) {
+      // A file that names no view has no view of the part to pose: nothing attaches.
+      if (!Object.hasOwn(part.views ?? {}, view)) {
+        if (decoded.view != null) console.warn(`partforge: preview part ignored — the file shows view "${decoded.view}", which the part does not declare`);
+      } else {
+        posing = attachPosing({
+          viewer, part, view, decoded, container, toolbar, tooltip, chrome: opts.chrome, drawn, cleanups, preview,
+          isDisposed: () => disposed,
+          onDragEnd: relay(dragEndListeners),
+          // the resting cue waits out a playing animation
+          cueBlocked: () => (player ? motionState() === "playing" : false),
+        });
+        if (!poseEnabled) posing.poseMode.setEnabled(false);
+      }
+    }
   });
   ready.catch(rejectDrawn); // the host awaits it; never an unhandled rejection
 
@@ -411,9 +531,11 @@ export function mountPreview(container, options = {}) {
       disposed = true;
       rejectDrawn(new Error("mountPreview: disposed before the preview was drawn")); // a no-op once drawn
       live = null;
+      posing = null; // getParams and pose answer as before ready (pose mode detaches below)
       player = null; // `animation` answers null once disposed (the cleanup below disposes it)
       motion = null;
       motionListeners.clear();
+      dragEndListeners.clear();
       const errors = [];
       while (cleanups.length) {
         try { cleanups.pop()(); } catch (error) { errors.push(error); }
@@ -422,6 +544,31 @@ export function mountPreview(container, options = {}) {
       if (errors.length > 1) throw new AggregateError(errors, "partforge mountPreview cleanup failed");
     },
     getView: () => live?.view ?? null,
+    // A copy of the preview's params (with `part`); null before ready, without part and once disposed.
+    getParams: () => (posing && preview.params ? { ...preview.params } : null),
+    // mount()'s pose surface on the file's meshes; the no-op stand-in without `part`.
+    pose: part ? {
+      isEnabled: () => posing?.poseMode.isEnabled() ?? false,
+      setEnabled(on) {
+        if (disposed) return;
+        poseEnabled = on !== false;
+        posing?.poseMode.setEnabled(poseEnabled);
+      },
+      isLive: () => posing?.poseMode.isLive() ?? false,
+      pinCount: () => posing?.poseMode.pinCount() ?? 0,
+      releasePins: () => posing?.poseMode.releasePins(),
+      handlePoints: (o) => posing?.poseMode.handlePoints(o) ?? [],
+      onDragEnd(cb) {
+        if (disposed) return () => {};
+        dragEndListeners.add(cb);
+        return () => dragEndListeners.delete(cb);
+      },
+      // Test hooks only (scripts/check-pose.mjs), as mount() names them.
+      __dragReadout: () => posing?.dragReadout() ?? null,
+      __lastDragEnd: () => posing?.lastDragEnd() ?? null,
+    } : NOOP_PREVIEW_POSE,
+    // Test hook only: what posing decided (params, fileParams, placer, poseMode, visible); null without part.
+    __preview: preview,
     // null before ready, for a still file, with animate: false, and once disposed.
     get animation() {
       return player ? { state: player.state, pause: player.pause, resume: player.resume, replay: player.replay } : null;

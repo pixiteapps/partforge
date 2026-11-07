@@ -74,7 +74,7 @@ const NOOP_ANNOTATE = {
   onInkChange: () => () => {}, onModeChange: () => () => {},
 };
 // Same stance again for Pose mode: a part with no `handles` has no mode to drive.
-const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
+export const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
 // A shape drag (spec 2026-11-02 §4) rebuilds live while it holds only on a part whose
 // last real build took under this many milliseconds; a slower one waits for release.
 export const LIVE_REBUILD_MS = 120;

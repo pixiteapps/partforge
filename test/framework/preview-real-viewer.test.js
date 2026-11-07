@@ -737,3 +737,223 @@ test("a tooltip showing when the label changes no longer names the old action", 
   expect(shown).not.toBe("Pause animation");
   handle.dispose();
 });
+
+// --- mountPreview({ part }): posing on the file ---------------------------------
+// A gearbox GLB without a kernel: a 10 mm box soup per view sub-part, each at that
+// sub-part's placement origin (so the viewer has something to frame), with the params
+// the file sits at. Pose mode then runs on these meshes, posed by the file placer.
+import gearbox from "../../src/parts/gearbox.js";
+import drawerBox from "../../src/parts/drawer-box.js";
+import { viewSubParts, resolveParams } from "../../src/framework/part-model.js";
+import { placeMatrix } from "../../src/framework/collide/place.js";
+import { snapValues } from "../../src/framework/pose/param-solve.js";
+
+async function partGlb(part, view, params) {
+  const { p, d } = resolveParams(part, params);
+  const meshes = viewSubParts(part, view, params).map((name) => {
+    const m = placeMatrix(part.parts[name], view, p, d);
+    const o = m ? [m[12], m[13], m[14]] : [0, 0, 0];
+    return boxSoup(name, o.map((c) => c - 5), o.map((c) => c + 5));
+  });
+  return encodePreviewGlb({ meshes, part, view, params });
+}
+const gearboxGlb = ({ params = gearbox.defaults } = {}) => partGlb(gearbox, "gearbox", { ...gearbox.defaults, ...params });
+// The fake renderer draws only when its loop is driven: one frame lands `drawn`.
+async function drawn(handle) {
+  await handle.ready;
+  state.renderer.animationLoop((clockMs += 100));
+  await handle.drawn;
+}
+// The pose mode decides its handles in idle time after the first frame.
+const settleIdle = (handle) => vi.waitFor(() => expect(handle.__preview.visible).not.toBeNull());
+// The crank's point at `params`, turned `deg` about the crank's declared axis
+// (gearbox.js: origin [C1x, C1y, GEAR_Z] with C1 = [0, 0], direction +Z).
+function crankTarget(params, deg) {
+  const { p, d } = resolveParams(gearbox, params);
+  const [x, y, z] = gearbox.handles.crank.point(p, d);
+  const [ox, oy] = gearbox.handles.crank.axis.origin;
+  const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return [ox + (x - ox) * c - (y - oy) * s, oy + (x - ox) * s + (y - oy) * c, z];
+}
+// Turn the crank by `total` degrees through the session, in `step`-degree frames.
+function turnCrank(handle, total, step = 30) {
+  const { poseMode } = handle.__preview;
+  const start = { ...handle.getParams() };
+  poseMode.session.begin("crank");
+  for (let a = step; a <= total; a += step) poseMode.session.frame(crankTarget(start, Math.min(a, total)));
+  if (total % step) poseMode.session.frame(crankTarget(start, total));
+}
+
+// Turn the crank with the pointer on the canvas: hover its point, press, four moves
+// round its axis on screen (`during` runs once pose mode's frame has taken them —
+// it batches moves into a requestAnimationFrame), release.
+async function pointerTurnCrank(handle, v, during = () => {}) {
+  v.domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300 });
+  const fire = (type, x, y) => v.domElement.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, button: 0, buttons: type === "pointerup" ? 0 : 1, bubbles: true }));
+  const centre = v.projectPoint(gearbox.handles.crank.axis.origin);
+  const s = handle.pose.handlePoints().find((h) => h.handleId === "crank");
+  const r = Math.hypot(s.x - centre.x, s.y - centre.y);
+  const a0 = Math.atan2(s.y - centre.y, s.x - centre.x);
+  fire("pointermove", s.x, s.y);
+  fire("pointerdown", s.x, s.y);
+  for (let k = 1; k <= 4; k++) fire("pointermove", centre.x + r * Math.cos(a0 + k * 0.15), centre.y + r * Math.sin(a0 + k * 0.15));
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  during();
+  fire("pointerup", centre.x + r * Math.cos(a0 + 0.6), centre.y + r * Math.sin(a0 + 0.6));
+}
+
+test("without part, mountPreview exposes the no-op pose and null params", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb() });
+  await handle.ready;
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.isEnabled()).toBe(false);
+  expect(handle.pose.pinCount()).toBe(0);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(handle.pose.onDragEnd(() => {})).toBeTypeOf("function");
+  expect(handle.getParams()).toBeNull();
+  expect(handle.__preview).toBeNull();
+  handle.dispose();
+});
+
+test("part must be a PartDefinition", () => {
+  expect(() => mountPreview(makeStage(), { glb: new Uint8Array(4), part: 3 })).toThrow(/part must be a PartDefinition/);
+  expect(() => mountPreview(makeStage(), { glb: new Uint8Array(4), part: { defaults: {} } })).toThrow(/part must be a PartDefinition/);
+});
+
+test("with part, the pose surface is safe before ready", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(() => handle.pose.releasePins()).not.toThrow();
+  expect(typeof handle.pose.onDragEnd(() => {})).toBe("function");
+  expect(handle.pose.__lastDragEnd()).toBeNull();
+  handle.pose.setEnabled(false); // kept until pose mode exists
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.pose.isEnabled()).toBe(false);
+  expect(handle.pose.isLive()).toBe(false);
+  handle.pose.setEnabled(true);
+  expect(handle.pose.isLive()).toBe(true);
+  handle.dispose();
+  expect(() => { handle.pose.setEnabled(false); handle.pose.releasePins(); }).not.toThrow();
+  expect(handle.pose.onDragEnd(() => {})).toBeTypeOf("function");
+});
+
+test("with part, the preview seeds its params from the file and shows the place-only handles once decided", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ params: { driveAngle: 37 } }), part: gearbox });
+  await drawn(handle);
+  expect(handle.getParams().driveAngle).toBe(37);
+  expect(handle.__preview.fileParams.driveAngle).toBe(37);
+  expect(Object.isFrozen(handle.__preview.fileParams)).toBe(true);
+  await settleIdle(handle);
+  expect(handle.pose.isLive()).toBe(true);
+  const ids = handle.pose.handlePoints().map((h) => h.handleId);
+  expect(new Set(ids)).toEqual(new Set(Object.keys(gearbox.handles)));
+  handle.dispose();
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(handle.pose.isLive()).toBe(false);
+});
+
+test("a drag writes the params and poses every gear by matrix; release fires onDragEnd once", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  const early = [];
+  handle.pose.onDragEnd((e) => early.push(e)); // subscribed before ready
+  await drawn(handle); await settleIdle(handle);
+  const v = viewers.at(-1);
+  const { poseMode, placer } = handle.__preview;
+  turnCrank(handle, 30);
+  const mid = handle.getParams().driveAngle;
+  expect(mid).toBeCloseTo(30, 0);
+  const { p, d } = resolveParams(gearbox, handle.getParams());
+  const want = placer.matricesAt(p, d);
+  for (const name of ["gear1", "gear2", "gear3", "crank"]) {
+    expectNear([...v._subMeshes[name].matrix.elements], want.get(name), 4);
+  }
+  expect(want.get("gear2")).not.toEqual(IDENTITY); // the idler turned too
+  poseMode.session.end();
+  expect(handle.pose.__lastDragEnd()).toMatchObject({ changed: ["driveAngle"] });
+
+  // A released pointer drag tells onDragEnd once.
+  const ends = [];
+  const off = handle.pose.onDragEnd((e) => ends.push(e));
+  await pointerTurnCrank(handle, v);
+  expect(ends).toHaveLength(1);
+  expect(ends[0]).toMatchObject({ handleId: "crank", changed: ["driveAngle"] });
+  expect(early).toEqual(ends);
+  expect(handle.pose.__lastDragEnd()).toMatchObject({ handleId: "crank", changed: ["driveAngle"] });
+  off();
+  handle.dispose();
+});
+
+test("a wrapped param keeps its turn: a drag to 370 lands as the editor's own snapping has it", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  turnCrank(handle, 370, 10);
+  handle.__preview.poseMode.session.end();
+  expect(handle.getParams().driveAngle).toBe(snapValues(gearbox, { driveAngle: 370 }).driveAngle);
+  handle.dispose();
+});
+
+test("the drawer box's corner handle is hidden in a preview; its drawers show", async () => {
+  const glb = await partGlb(drawerBox, "cabinet", drawerBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: drawerBox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.__preview.visible).toEqual({ shown: ["drawer1", "drawer2", "drawer3"], hidden: { corner: expect.stringMatching(/rebuilds/) } });
+  expect(new Set(handle.pose.handlePoints({ offscreen: true }).map((h) => h.handleId))).toEqual(new Set(["drawer1", "drawer2", "drawer3"]));
+  handle.dispose();
+});
+
+test("a file showing a view the part does not declare attaches nothing, and says so once", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const glb = await encodePreviewGlb({ meshes: [boxSoup("gear1", [0, 0, 0], [4, 4, 4])], view: "elsewhere" });
+  const handle = mountPreview(makeStage(), { glb, part: gearbox });
+  await drawn(handle);
+  expect(warn.mock.calls.filter(([m]) => /preview part ignored/.test(m))).toEqual([
+    ['partforge: preview part ignored — the file shows view "elsewhere", which the part does not declare'],
+  ]);
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  handle.dispose();
+});
+
+test("dispose mid-drag writes nothing and throws nothing", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  const v = viewers.at(-1);
+  const { poseMode } = handle.__preview;
+  turnCrank(handle, 30);
+  v.setSubPose.mockClear();
+  expect(() => handle.dispose()).not.toThrow();
+  expect(handle.getParams()).toBeNull();
+  // A late session effect after teardown is a no-op.
+  expect(() => poseMode.session.end()).not.toThrow();
+  expect(v.setSubPose).not.toHaveBeenCalled();
+});
+
+test("chrome: false attaches no Release pins action and no readout pill, but the chip", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await gearboxGlb(), part: gearbox, chrome: false });
+  await drawn(handle); await settleIdle(handle);
+  expect(stage.querySelector(".pf-pose-actions")).toBeNull();
+  expect(stage.querySelector(".pf-pose-readout")).toBeNull();
+  expect(stage.querySelector(".pf-pose-chip")).not.toBeNull();
+  handle.dispose();
+  expect(stage.querySelector(".pf-pose-chip")).toBeNull();
+});
+
+test("with chrome, the Release pins action and the readout pill sit in the viewbar", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  expect(stage.querySelector("#viewbar .pf-pose-actions")).not.toBeNull();
+  expect(stage.querySelector("#viewbar .pf-pose-readout")).not.toBeNull();
+  let mid = null;
+  await pointerTurnCrank(handle, viewers.at(-1), () => { mid = handle.pose.__dragReadout(); });
+  expect(mid).toMatch(/Input angle/);
+  expect(handle.pose.__dragReadout()).toBeNull(); // released
+  handle.dispose();
+  expect(stage.querySelector(".pf-pose-actions")).toBeNull();
+  expect(stage.querySelector(".pf-pose-readout")).toBeNull();
+});
