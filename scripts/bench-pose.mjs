@@ -4,7 +4,10 @@
 // timed by wrappers installed before the app loads), the frame rate, the part's
 // main-thread derive() calls, and the top self-time functions from a CDP CPU profile.
 //
-//   npm run bench:pose -- [--preview] [--url <base>] [--json <file>] [--no-profile] [--swiftshader]
+//   npm run bench:pose -- [--preview] [--mode <cad|realistic|cel>] [--url <base>] [--json <file>] [--no-profile] [--swiftshader]
+//
+// --mode times a render mode (default cad): applied to each page after it loads, before its
+// scenarios run, and printed in the report header.
 //
 // Without --url it starts its own server: the Vite dev server, or with --preview a
 // production build (built into a temp dir with base "/") served by `vite preview`.
@@ -47,6 +50,13 @@ const profile = !args.includes("--no-profile");
 const root = fileURLToPath(new URL("..", import.meta.url));
 const VIEWER_CANVAS = "#app > canvas:not(.pf-ink-canvas)";
 const FRAMES = 60;
+const MODES = ["cad", "realistic", "cel"];
+const modeAt = args.indexOf("--mode");
+const mode = modeAt >= 0 ? args[modeAt + 1] : "cad";
+if (!MODES.includes(mode)) {
+  console.error(`usage: bench-pose --mode <${MODES.join("|")}> (got ${mode ?? "nothing"})`);
+  process.exit(2);
+}
 
 let server = null;
 let outDir = null;
@@ -178,6 +188,11 @@ async function open(page, url) {
   await sleep(500);
   return page.locator(VIEWER_CANVAS).boundingBox();
 }
+/** Switch the viewer to the bench's render mode; realistic loads assets and cel compiles shaders, so settle after it lands. */
+async function applyMode(page) {
+  await page.evaluate((m) => window.__pfRuntime.renderMode.set(m), mode);
+  await sleep(500);
+}
 const handlePoints = (page) => page.evaluate(() => window.__pfRuntime.pose.handlePoints());
 const inBox = (box, p) => p.x > 30 && p.y > 30 && p.x < box.width - 30 && p.y < box.height - 30;
 
@@ -253,7 +268,9 @@ async function benchPage(browser, base, entry) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e?.message ?? e)));
   const cdp = profile ? await page.context().newCDPSession(page) : null;
-  const box = await open(page, `${base}/${entry}`);
+  await open(page, `${base}/${entry}`);
+  await applyMode(page);
+  const box = await page.locator(VIEWER_CANVAS).boundingBox();
   const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
   const find = async (id) => (await handlePoints(page)).find((p) => (id == null || p.handleId === id) && inBox(box, p));
   const out = {};
@@ -370,12 +387,13 @@ try {
   for (const entry of ["robot-arm.html", "hand.html"]) {
     results[entry] = await benchPage(browser, base, entry);
     const { gl, errors, ...scenarios } = results[entry];
-    console.log(`\n${entry}  (GL: ${gl})${errors.length ? `  page errors: ${errors.join(" | ")}` : ""}`);
+    console.log(`\n${entry}  (mode: ${mode}, GL: ${gl})${errors.length ? `  page errors: ${errors.join(" | ")}` : ""}`);
     for (const [name, r] of Object.entries(scenarios)) {
       console.log(`  ${name.padEnd(10)} frames ${String(r.frames).padStart(3)}  median ${String(r.medianMs).padStart(5)} ms  p95 ${String(r.p95Ms).padStart(5)} ms  max ${String(r.maxMs).padStart(5)} ms  fps ${String(r.fps).padStart(5)}  derives/frame ${r.derivesPerFrame}${r.handle ? `  (${r.handle})` : ""}`);
       for (const t of r.top ?? []) console.log(`      ${String(t.ms).padStart(7)} ms  ${t.fn}`);
     }
   }
+  results.mode = mode;
   const json = arg("--json");
   if (json) writeFileSync(json, JSON.stringify(results, null, 2));
 } finally {
