@@ -747,7 +747,7 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `Failed to construct 'URL': Invalid URL` (Node: `TypeError: Invalid URL`) as the part module loads — before any build runs — on a part that declares a `vectors`, `fonts`, `imports` or `images` source as `new URL("./…", import.meta.url)`.
 - **Cause:** The host loaded the part's source from somewhere with no folder to resolve `./…` against — a `data:` or `blob:` URL, or one bundled module made from a part's file tree — so `import.meta.url` is not a hierarchical base and the `URL` constructor throws.
-- **Fix:** Declare the source in a form that needs no base: a vector document as the parsed object itself — `import plate from "./assets/plate.vector.json" with { type: "json" }`, then `vectors: { plate }` — or, for a file the host stores, the host's own asset token. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" ("A source may also be the parsed file itself").
+- **Fix:** Declare the source in a form that needs no base: a vector document as the parsed object itself — `import plate from "./assets/plate.vector.json" with { type: "json" }`, then `vectors: { plate }`, where a bundler inlines that import (an unbundled `data:`/`blob:` module cannot import `./…` either, so write the object in the part) — or, for a file the host stores, the host's own asset token. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" ("A source may also be the parsed file itself").
 
 ## vector-unknown-name
 

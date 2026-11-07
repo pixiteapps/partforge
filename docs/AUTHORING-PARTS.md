@@ -2758,7 +2758,9 @@ The `new URL` form needs the part to load from a real file path. A host that loa
 source as one bundled module, or from a `data:`/`blob:` URL, has no folder to resolve
 `./…` against, and the module fails to load with `Invalid URL`
 ([ERROR-PATTERNS.md#asset-url-no-module-base](ERROR-PATTERNS.md#asset-url-no-module-base)).
-There, use the parsed-object form below or the host's own asset token.
+There, use the parsed-object form below or the host's own asset token. The JSON import
+that form shows needs a bundler too; in an unbundled `data:`/`blob:` module, write the
+object in the part.
 
 **A source may also be the parsed file itself.** Alongside bytes, a URL and a thunk, a
 `vectors` entry accepts the **contents** of a `.vector.json` — the object a JSON import
