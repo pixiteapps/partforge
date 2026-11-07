@@ -3594,4 +3594,51 @@ describe("spot controls", () => {
     expect(seen).toHaveBeenCalledTimes(1);
     handle.dispose();
   });
+  it("the piece fallback takes the first three keys in the panel's order, not alphabetical", async () => {
+    const reordered = unhandled();
+    const [w, h, open, z] = reordered.parameters[0].controls;
+    reordered.parameters[0].controls = [z, open, w, h];
+    const { worker, elements, handle } = await mountWith(reordered, { onPick: vi.fn(), selectionPopover: { slot: true } });
+    deliver(worker, { originIds: undefined, origins: undefined, pieceKeys: ["h", "open", "w", "z"] });
+    pickBody({ triIndex: 0 });
+    expect(sliders(elements.viewer).map(labelOf)).toEqual(["z", "open", "w"]);
+    handle.dispose();
+  });
+  it("More in the panel expands a collapsed rail, then reveals", async () => {
+    try {
+      const { worker, elements, handle } = await mountWith(unhandled(), { onPick: vi.fn(), selectionPopover: { slot: true } });
+      const seen = vi.fn();
+      handle.selection.onReveal(seen);
+      elements.chrome.railToggle.click(); // collapse
+      expect(elements.rail.hasAttribute("inert")).toBe(true);
+      deliver(worker, { origins: [["h", "w", "z", "open"]] });
+      pickBody({ triIndex: 0 });
+      elements.viewer.querySelector(".pf-selection-more").click();
+      expect(elements.rail.hasAttribute("inert")).toBe(false);
+      expect(elements.chrome.railToggle.getAttribute("aria-expanded")).toBe("true");
+      expect(elements.controls.querySelector(".pf-param-flash")).not.toBeNull();
+      expect(seen).not.toHaveBeenCalled();
+      handle.dispose();
+    } finally {
+      localStorage.clear(); // the collapse preference persists
+    }
+  });
+  it("More in the panel opens an overlay drawer itself, and tells a docking host", async () => {
+    const { worker, elements, handle } = await mountWith(unhandled(), { onPick: vi.fn(), selectionPopover: { slot: true } });
+    const seen = vi.fn();
+    handle.selection.onReveal(seen);
+    handle.setRailLayout({ mode: "overlay" });
+    const shell = elements.rail.parentElement;
+    deliver(worker, { origins: [["h", "w", "z", "open"]] });
+    pickBody({ triIndex: 0 });
+    expect(shell.hasAttribute("data-pf-rail-open")).toBe(false);
+    elements.viewer.querySelector(".pf-selection-more").click();
+    expect(shell.hasAttribute("data-pf-rail-open")).toBe(true);
+    expect(elements.chrome.railToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(seen).not.toHaveBeenCalled();
+    handle.setRailLayout({ mode: "dock", inset: 0, railHeight: 200 });
+    elements.viewer.querySelector(".pf-selection-more").click();
+    expect(seen).toHaveBeenCalledWith({ keys: ["h", "w", "z"] });
+    handle.dispose();
+  });
 });

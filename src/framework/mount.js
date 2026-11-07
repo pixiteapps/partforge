@@ -1088,17 +1088,24 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     if (selectionOpt) {
       // The clicked spot's controls: up to SPOT_CAP of the keys its face (else its piece)
       // was built from, minus what a handle on the piece drags, as bare rail rows.
+      // The rail is made visible first where partforge can (the narrow layout's
+      // pane, a collapsed rail, an overlay drawer); a host that owns the pane or
+      // docks the rail is told instead, since only it can show the rows.
       const revealInRail = (keys) => {
-        const shown = paneTabs.showPane("rail");
+        const paneShown = paneTabs.showPane("rail");
+        const railShown = railChrome.reveal();
         panelRef?.revealParams(keys, keys[0]);
-        if (!shown) for (const cb of [...revealListeners]) cb({ keys });
+        if (!paneShown || !railShown) for (const cb of [...revealListeners]) cb({ keys });
       };
       const spotControls = {
         build(container, { subPart, hit }) {
           let derived = {};
           try { derived = resolveDerived(part, params); } catch { /* derived stays {} */ }
           const faceKeys = faceKeysOf(viewer.getSubOrigins?.(subPart) ?? null, hit);
-          const pieceKeys = spotPieceKeys.get(subPart) ?? subPartParamKeys(part, view(), params, displayReadsOf, subPart);
+          const schemaKeys = controlNodes(buildTree(desugar(part.parameters))).map((n) => n.key);
+          // The piece's keys are a set (sorted); the fallback takes them in the panel's order.
+          const pieceSet = new Set(spotPieceKeys.get(subPart) ?? subPartParamKeys(part, view(), params, displayReadsOf, subPart));
+          const pieceKeys = [...schemaKeys.filter((k) => pieceSet.has(k)), ...[...pieceSet].filter((k) => !schemaKeys.includes(k))];
           const bounds = viewer.getSubBounds?.(subPart) ?? null;
           const excluded = new Set();
           for (const id of poseVisible ?? handleIds) {
@@ -1108,8 +1115,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             if (handleOnPiece(handle, subPart, { point, bounds })) for (const k of handleParamKeys(handle)) excluded.add(k);
           }
           const relevant = recordedRelevantKeys(part, view(), params, displayReadsOf);
-          const drawable = new Set(controlNodes(buildTree(desugar(part.parameters))).map((n) => n.key)
-            .filter((k) => relevant === RELEVANT_ALL || relevant.has(k)));
+          const drawable = new Set(schemaKeys.filter((k) => relevant === RELEVANT_ALL || relevant.has(k)));
           const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, excluded, drawable });
           if (!keys.length) return null;
           const sub = buildControls(container, part.parameters, params, () => {
