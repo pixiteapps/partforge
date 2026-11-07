@@ -36,6 +36,7 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
 
   /** Size the plane and the shadow frustum to the part's rest-pose bounds. */
   function fit(bounds) {
+    if (bounds.isEmpty()) return;
     bounds.getCenter(centre);
     radius = Math.max(1e-3, bounds.getSize(dir).length() / 2);
     const span = (G.frustumR * radius * 2) / Math.SQRT2 * G.planeFill;

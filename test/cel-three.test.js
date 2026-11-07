@@ -34,7 +34,48 @@ describe("createCelInk", () => {
     expect(() => ink.dispose()).not.toThrow();
   });
 });
+function stubRenderer(buffer, bound = null) {
+  const calls = [];
+  let current = bound;
+  return {
+    calls, autoClear: true,
+    getRenderTarget: () => current,
+    setRenderTarget: (t) => { current = t; calls.push(["set", t]); },
+    getDrawingBufferSize: (v) => v.set(buffer[0], buffer[1]),
+    getClearColor: (c) => c.set(0x123456), getClearAlpha: () => 0.5, setClearColor: () => {}, clear: () => {},
+    render: (scene) => calls.push(["render", scene, current]),
+  };
+}
+describe("createCelInk render", () => {
+  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
+  it("draws the quad into the target that was bound, and restores it", () => {
+    const bound = { width: 64, height: 48 };
+    const r = stubRenderer([800, 600], bound);
+    const ink = createCelInk();
+    ink.render(r, scene, cam, { pixelScale: 1, field: null });
+    const renders = r.calls.filter((c) => c[0] === "render");
+    expect(renders).toHaveLength(2);
+    expect(renders[1][2]).toBe(bound);
+    expect(r.calls.at(-1)).toEqual(["set", bound]);
+    ink.dispose();
+  });
+  it("skips a 1x1 drawing buffer entirely", () => {
+    const r = stubRenderer([1, 1]);
+    const ink = createCelInk();
+    ink.render(r, scene, cam, {});
+    expect(r.calls).toEqual([]);
+    ink.dispose();
+  });
+});
 describe("createCelGround", () => {
+  it("fit ignores an empty box", () => {
+    const g = createCelGround({ mapSize: 1024 });
+    g.fit(new THREE.Box3(new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 2, 1)));
+    const pos = g.plane.position.clone(), far = g.light.shadow.camera.far;
+    g.fit(new THREE.Box3());
+    expect(g.plane.position.equals(pos)).toBe(true);
+    expect(g.light.shadow.camera.far).toBe(far);
+  });
   const bounds = new THREE.Box3(new THREE.Vector3(-10, 0, -20), new THREE.Vector3(10, 30, 20));
   const R = bounds.getSize(new THREE.Vector3()).length() / 2;
   it("fits the plane under the bounds, inside the shadow frustum, with the slab per spec", () => {

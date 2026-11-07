@@ -120,7 +120,10 @@ export function createCelInk() {
   /** Draw the ink over what was just rendered. Call after the scene's own render. */
   function render(renderer, scene, camera, opts = {}) {
     const { pixelScale = 1, field = null, clippingPlanes } = opts;
-    renderer.getDrawingBufferSize(size);
+    // Draw into whatever is bound now: the canvas (null) or a capture's target.
+    const bound = renderer.getRenderTarget();
+    if (bound) size.set(bound.width, bound.height); else renderer.getDrawingBufferSize(size);
+    if (size.x < 2 || size.y < 2) return; // a parked viewer's canvas is 1x1
     const rt = ensureTarget(size.x, size.y);
     const clearWas = renderer.getClearColor(clearColor).clone(), clearAlphaWas = renderer.getClearAlpha();
     const layersWas = camera.layers.mask, overrideWas = scene.overrideMaterial, backgroundWas = scene.background;
@@ -135,9 +138,9 @@ export function createCelInk() {
       renderer.setClearColor(0x808080, 1);
       renderer.clear(true, true, true);
       renderer.render(scene, camera);
-      renderer.setRenderTarget(null);
+      renderer.setRenderTarget(bound);
     } finally {
-      renderer.setRenderTarget(null);
+      renderer.setRenderTarget(bound);
       renderer.setClearColor(clearWas, clearAlphaWas);
       camera.layers.mask = layersWas;
       scene.overrideMaterial = overrideWas;
@@ -155,6 +158,7 @@ export function createCelInk() {
       renderer.render(quadScene, quadCam);
     } finally {
       renderer.autoClear = autoClearWas;
+      renderer.setRenderTarget(bound);
     }
   }
 
