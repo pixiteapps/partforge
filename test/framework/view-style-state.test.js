@@ -1,14 +1,16 @@
 import { expect, test } from "vitest";
 import { STYLES, styleFor, createThumbnailCache } from "../../src/framework/view-style-state.js";
 
-test("styles are CAD first, then every environment in order", () => {
-  expect(STYLES.map((s) => s.id)).toEqual(["cad", "studio", "workshop", "print-bed", "outdoor"]);
+test("styles are CAD, then Cel, then every environment in order", () => {
+  expect(STYLES.map((s) => s.id)).toEqual(["cad", "cel", "studio", "workshop", "print-bed", "outdoor"]);
   expect(STYLES[0].label).toBe("CAD");
-  expect(STYLES[3].label).toBe("Print bed");
+  expect(STYLES[1]).toEqual({ id: "cel", label: "Cel" });
+  expect(STYLES[4].label).toBe("Print bed");
 });
 
-test("the current style is cad in CAD and the environment in realistic", () => {
+test("the current style is cad in CAD, cel in cel and the environment in realistic", () => {
   expect(styleFor("cad", "workshop")).toBe("cad");
+  expect(styleFor("cel", "workshop")).toBe("cel");
   expect(styleFor("realistic", "workshop")).toBe("workshop");
 });
 

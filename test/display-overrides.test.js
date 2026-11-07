@@ -121,6 +121,7 @@ describe("subPartVisibility", () => {
   it("shown and untouched: visible, lines in cad only, no fade", () => {
     expect(subPartVisibility(base)).toEqual({ meshVisible: true, linesVisible: true, fade: null });
     expect(subPartVisibility({ ...base, renderMode: "realistic" })).toEqual({ meshVisible: true, linesVisible: false, fade: null });
+    expect(subPartVisibility({ ...base, renderMode: "cel" })).toEqual({ meshVisible: true, linesVisible: true, fade: null });
   });
   it("hidden wins over everything", () => {
     expect(subPartVisibility({ ...base, hidden: true, anim: 1, user: 1 })).toEqual({ meshVisible: false, linesVisible: false, fade: null });

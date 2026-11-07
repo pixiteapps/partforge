@@ -138,7 +138,7 @@ export function subPartVisibility({ shown, anim, user, hidden, renderMode, stati
   const u = user === undefined ? 1 : user;
   const v = a * u;
   if (v <= 0) return off;
-  const linesVisible = renderMode === "cad";
+  const linesVisible = renderMode !== "realistic";
   if (v >= 1) return { meshVisible: true, linesVisible, fade: null };
   return { meshVisible: true, linesVisible, fade: staticOpacity * v };
 }
