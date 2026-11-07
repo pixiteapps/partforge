@@ -4183,10 +4183,14 @@ instead of (or in addition to) the built-in `#part` bar:
   clicked face: the parameters of the operation that created it, newest first. It is
   rebuilt on each click, not on each rebuild. Parameters a pose handle on that piece
   drags are left out. A face with no record, a part on OCCT, and a click on a section
-  cap fall back to the piece's reads (as `runtime.controlsFor` lists them).
-  `selectionPopover: { slot, controls: false }` turns the region off.
-  `runtime.selection.onReveal(({ keys }) => …)` fires when "More in the panel" is
-  pressed while the host holds the pane lease (`runtime.setHostPane`). Reads that sit
+  cap fall back to the piece's own build reads, first three in the panel's order. Those
+  leave out the piece's `enabled()` and `place()` reads, so they can be fewer than
+  `runtime.controlsFor` lists. `selectionPopover: { slot, controls: false }` turns the
+  region off. "More in the panel" makes the rail visible where partforge places it (the
+  narrow layout's Controls pane, a collapsed rail, an overlay drawer) and flashes the
+  rows. `runtime.selection.onReveal(({ keys }) => …)` fires when only the host can show
+  them: while it holds the pane lease (`runtime.setHostPane`) or docks the rail
+  (`runtime.setRailLayout({ mode: "dock", … })`). Reads that sit
   next to the op that uses them attribute best; a build that computes every number
   first and then issues ops charges all of them to its first op.
 

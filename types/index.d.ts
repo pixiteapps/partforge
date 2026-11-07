@@ -624,9 +624,11 @@ export interface SelectionRuntime {
    */
   onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" }) => void): () => void;
   /**
-   * Fires when "More in the panel" is pressed while the host holds the pane lease
-   * (`runtime.setHostPane`); `keys` are the parameter keys the popover was showing,
-   * so the host can switch to its own panel pane.
+   * Fires when "More in the panel" is pressed while only the host can show the rail:
+   * it holds the pane lease (`runtime.setHostPane`) or docks the rail
+   * (`runtime.setRailLayout({ mode: "dock" })`). `keys` are the parameter keys the
+   * popover was showing, so the host can show its own panel. A collapsed rail or an
+   * overlay drawer partforge opens itself, and this does not fire.
    */
   onReveal(cb: (event: { keys: string[] }) => void): () => void;
   close(): void;
