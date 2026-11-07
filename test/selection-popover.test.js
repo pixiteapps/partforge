@@ -506,22 +506,69 @@ describe("selection popover: controls region", () => {
     expect(reports.some((r) => r.state === "open")).toBe(true);
     p.detach();
   });
-  it("a tall region scrolls while the slot keeps its floor", () => {
-    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls((el) => { el.style.height = "900px"; return { dispose() {} }; }) });
+  // Layout stub: popover height = 40 head + region (own height, capped by its
+  // max-height) + slot, capped by the popover's max-height.
+  function tallLayout(p, ctlH) {
     const ctl = p.element.querySelector(".pf-selection-controls");
     const slotEl = p.element.querySelector(".pf-selection-slot");
+    const ctlNow = () => { const c = parseFloat(ctl.style.maxHeight); return ctl.hidden ? 0 : Number.isFinite(c) ? Math.min(ctlH, c) : ctlH; };
     Object.defineProperty(p.element, "offsetWidth", { configurable: true, get: () => 320 });
-    Object.defineProperty(ctl, "offsetHeight", { configurable: true, get: () => 900 });
+    Object.defineProperty(ctl, "offsetHeight", { configurable: true, get: () => ctlNow() });
     Object.defineProperty(p.element, "offsetHeight", { configurable: true, get: () => {
-      const natural = 40 + (ctl.hidden ? 0 : 900) + (parseFloat(slotEl.style.height) || 0);
+      const natural = 40 + ctlNow() + (parseFloat(slotEl.style.height) || 0);
       const cap = parseFloat(p.element.style.maxHeight);
       return Number.isFinite(cap) ? Math.min(natural, cap) : natural;
     } });
     slotEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 320, height: parseFloat(slotEl.style.height) || 0 });
+    return { ctl, slotEl };
+  }
+  const mid = { x: 400, y: 300, visible: true };
+  const make = (ctlH) => {
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls(() => ({ dispose() {} })) });
+    return { p, ...tallLayout(p, ctlH) };
+  };
+  it("a tall region scrolls while the slot keeps its floor", () => {
+    const { p, ctl, slotEl } = make(900);
     p.setSlotHeight(300);
-    p.open({ subPart: "body", anchor: at });
+    p.open({ subPart: "body", anchor: mid });
     expect(parseFloat(ctl.style.maxHeight)).toBeGreaterThan(0);
     expect(slotEl.style.height).toBe("44px");
+    // a second place() keeps the same cap and slot
+    const before = [ctl.style.maxHeight, slotEl.style.height];
+    p.setAnchor({ ...mid });
+    p.setAnchor({ ...mid });
+    expect([ctl.style.maxHeight, slotEl.style.height]).toEqual(before);
+    p.detach();
+  });
+  it("does not cap the region when the slot shrink alone makes it fit", () => {
+    const { p, ctl, slotEl } = make(100);
+    p.open({ subPart: "body", anchor: mid });
+    // 600 stage: room 278 each side (600 stage, 12 gutter, 10 gap). 40 + 100 + 300 = 440 > 288: slot shrinks to 138.
+    p.setSlotHeight(300);
+    expect(slotEl.style.height).toBe("138px");
+    expect(ctl.style.maxHeight).toBe("");
+    p.detach();
+  });
+  it("caps the region to the post-shrink room when it still does not fit", () => {
+    const { p, ctl, slotEl } = make(900);
+    p.open({ subPart: "body", anchor: mid });
+    p.setSlotHeight(300);
+    expect(slotEl.style.height).toBe("44px");
+    // maxHeight 278: 278 - (40 + 44) = 194 for the region
+    expect(ctl.style.maxHeight).toBe("194px");
+    p.detach();
+  });
+  it("a build that throws leaves the region hidden and the popover open and dismissable", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = controls(() => { throw new Error("boom"); });
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: c });
+    expect(p.open({ subPart: "body", anchor: at })).toBe(true);
+    expect(p.isOpen()).toBe(true);
+    expect(p.element.querySelector(".pf-selection-controls").hidden).toBe(true);
+    stage.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+    expect(p.isOpen()).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
     p.detach();
   });
 });

@@ -91,7 +91,13 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     if (ctlEl) {
       ctlEl.replaceChildren();
       const n = current?.subPart;
-      ctl = current && rowFor(n) ? controls.build(ctlEl, { subPart: n, hit: current.hit }) ?? null : null;
+      try {
+        ctl = current && rowFor(n) ? controls.build(ctlEl, { subPart: n, hit: current.hit }) ?? null : null;
+      } catch (e) {
+        console.warn("partforge: selection controls build failed", e);
+        ctl = null;
+        ctlEl.replaceChildren();
+      }
       ctlEl.hidden = !ctl;
     }
   }
@@ -140,19 +146,21 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     // Measure the natural height at the host's REQUESTED slot height, not last
     // frame's cap — a taller stage or a new request starts from the request.
     pop.style.maxHeight = "";
+    if (ctlEl) ctlEl.style.maxHeight = "";
     if (slotEl) slotEl.style.height = `${requestedSlot}px`;
     let plan = planFor();
     // Short of room, the slot gives up the difference so the whole popover fits
     // and the rect reported is the slot's real one: a host UI floated at it then
     // scrolls inside itself rather than spilling past the popover. The floor
     // still holds, and only then does the body scroll.
-    const natural = pop.offsetHeight;
+    let natural = pop.offsetHeight;
     if (slotEl && page === "spot" && natural > plan.maxHeight) {
       const laidOut = slotEl.getBoundingClientRect().height;
       const applied = Math.max(MIN_SLOT, Math.min(requestedSlot, Math.floor(plan.maxHeight - (natural - laidOut))));
       if (applied < requestedSlot) {
         slotEl.style.height = `${applied}px`;
         plan = planFor(); // the smaller box may now fit on a side it did not before
+        natural = pop.offsetHeight;
       }
     }
     // The slot is at its floor and it still does not fit: the controls region
