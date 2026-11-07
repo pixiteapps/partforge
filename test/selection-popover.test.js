@@ -558,6 +558,24 @@ describe("selection popover: controls region", () => {
     expect(ctl.style.maxHeight).toBe("194px");
     p.detach();
   });
+  it("a scrolled region keeps its scroll across a re-placement", () => {
+    const { p, ctl } = make(900);
+    p.open({ subPart: "body", anchor: mid });
+    p.setSlotHeight(300);
+    // The browser resets a scroller's scrollTop when its cap is cleared to
+    // measure; happy-dom does no layout, so mimic that on the style write.
+    let top = 0;
+    Object.defineProperty(ctl, "scrollTop", { configurable: true, get: () => top, set: (v) => { top = v; } });
+    const style = new Proxy(ctl.style, {
+      get: (t, k) => { const v = Reflect.get(t, k, t); return typeof v === "function" ? v.bind(t) : v; },
+      set: (t, k, v) => { if (k === "maxHeight" && v === "") top = 0; return Reflect.set(t, k, v, t); },
+    });
+    Object.defineProperty(ctl, "style", { configurable: true, get: () => style });
+    ctl.scrollTop = 120;
+    p.setAnchor({ ...mid }); // what a slider write from the region does
+    expect(ctl.scrollTop).toBe(120);
+    p.detach();
+  });
   it("a build that throws leaves the region hidden and the popover open and dismissable", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const c = controls(() => { throw new Error("boom"); });

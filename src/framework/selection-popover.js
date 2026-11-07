@@ -141,8 +141,9 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     // Clearing the cap below stops the body overflowing for a moment, and the
     // browser answers by resetting its scroll to the top — so every slider
     // write from the card (each re-places the popover) jumped back up. Keep
-    // the scroll across the measurement.
+    // the scroll across the measurement, the controls region's as well.
     const scrolled = body.scrollTop;
+    const ctlScrolled = ctlEl ? ctlEl.scrollTop : 0;
     // Measure the natural height at the host's REQUESTED slot height, not last
     // frame's cap — a taller stage or a new request starts from the request.
     pop.style.maxHeight = "";
@@ -178,6 +179,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     tail.hidden = plan.tailOffset === null;
     if (plan.tailOffset !== null) tail.style.left = `${plan.tailOffset - 6}px`;
     body.scrollTop = scrolled;
+    if (ctlEl) ctlEl.scrollTop = ctlScrolled;
     emitSlot();
   }
 
