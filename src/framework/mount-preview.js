@@ -144,6 +144,9 @@ import { attachDragReadout } from "./pose/drag-readout.js";
 import { attachReadoutChip } from "./pose/readout-chip.js";
 import { withDeriveMemo } from "./derive-memo.js";
 import { raycastViewer } from "./selection/raycast.js";
+import { createPoseCollide } from "./pose/pose-collide.js";
+import { createFeatureHighlight } from "./selection/feature-highlight.js";
+import { normalizeCollisions } from "./collide/declaration.js";
 
 // A value the option does not know is a host bug: say so at the call rather
 // than quietly showing the default.
@@ -256,6 +259,9 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     return hovered;
   };
   let lastDragEnd = null;
+  // The editor's collision index (mount.js's), over the file's meshes: only for a part
+  // whose `collisions` block leaves Pose mode on, so any other loads no BVH.
+  let poseCollide = null;
   const poseMode = createPoseMode(viewer, {
     part,
     orbitControls: viewer.orbitControls,
@@ -267,11 +273,11 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     staleSubParts: () => [], // nothing rebuilds: a shown handle is place-only
     ghost() {},
     unghost() {},
-    // Seams for the following tasks — no-ops for now: hold (pausing playback while a
-    // drag holds, Tasks 7–8), collide / onBlocked (collisions while posing, Task 7).
+    // Seam for the following task — a no-op for now: hold (pausing playback while a
+    // drag holds, Task 8).
     hold: () => {},
-    collide: () => null,
-    onBlocked() {},
+    collide: (args) => poseCollide?.guardFor(args) ?? null,
+    onBlocked: live((pair) => poseCollide?.tint(pair)),
     visibleHandles: () => preview.visible?.shown ?? [],
     hoveredSubPart,
     cueBlocked,
@@ -290,6 +296,21 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   const chip = attachReadoutChip(viewer, poseMode, { stage: container }, { part, getParams: () => params, apply: (values) => write(values) });
   cleanups.push(() => chip.detach());
 
+  // Every mesh the file draws is in its own canonical frame — the placer poses each by a
+  // matrix relative to it — so each is indexable as it stands. Disposed before the viewer
+  // (and before pose mode's detach), since its tint highlights live in the viewer's scene.
+  if (normalizeCollisions(part)?.pose) {
+    const pc = createPoseCollide({
+      part, viewer, fastPath: placer, getView: () => view, getParams: () => params,
+      isLive: () => poseMode.isLive(), frameOf: () => "canonical", createHighlight: createFeatureHighlight,
+    });
+    poseCollide = pc;
+    cleanups.push(() => pc.dispose());
+    // indexing waits while Pose mode is not live: going live indexes what the file shows
+    cleanups.push(poseMode.onModeChange(live(() => { if (poseMode.isLive()) pc.refresh(); })));
+    pc.delivered(drawnNames); // showAssembly drew them: the one delivery a preview gets
+  }
+
   // Which handles may show is decided off the first frame's path: in idle time once drawn.
   const idle = (cb) => (typeof requestIdleCallback === "function" ? requestIdleCallback(cb) : setTimeout(cb, 0));
   drawn.then(() => idle(() => {
@@ -299,7 +320,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     viewer.requestRender();
   }), () => {});
 
-  Object.assign(preview, { params, fileParams, placer, poseMode });
+  Object.assign(preview, { params, fileParams, placer, poseMode, poseCollide });
   return {
     poseMode,
     dragReadout: () => readout?.text() ?? null,
@@ -359,7 +380,7 @@ export function mountPreview(container, options = {}) {
   const motionListeners = new Set();
   const dragEndListeners = new Set(); // handle.pose.onDragEnd's, kept from before ready
   // Pose mode on the file, with `part`: what attachPosing decided (handle.__preview).
-  const preview = part ? { params: null, fileParams: null, placer: null, poseMode: null, visible: null } : null;
+  const preview = part ? { params: null, fileParams: null, placer: null, poseMode: null, poseCollide: null, visible: null } : null;
   let posing = null;                 // attachPosing's result, once attached
   let poseEnabled = true;            // handle.pose.setEnabled's, kept from before ready
   const cleanups = [];
@@ -567,7 +588,7 @@ export function mountPreview(container, options = {}) {
       __dragReadout: () => posing?.dragReadout() ?? null,
       __lastDragEnd: () => posing?.lastDragEnd() ?? null,
     } : NOOP_PREVIEW_POSE,
-    // Test hook only: what posing decided (params, fileParams, placer, poseMode, visible); null without part.
+    // Test hook only: what posing decided (params, fileParams, placer, poseMode, poseCollide, visible); null without part.
     __preview: preview,
     // null before ready, for a still file, with animate: false, and once disposed.
     get animation() {

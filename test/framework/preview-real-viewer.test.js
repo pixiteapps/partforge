@@ -904,6 +904,53 @@ test("the drawer box's corner handle is hidden in a preview; its drawers show", 
   handle.dispose();
 });
 
+test("collisions: a part with a collisions block gets the editor's collide index over the drawn meshes", async () => {
+  const glb = await partGlb(drawerBox, "cabinet", drawerBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: drawerBox });
+  await drawn(handle); await settleIdle(handle);
+  const pc = handle.__preview.poseCollide;
+  expect(pc).not.toBeNull();
+  const count = viewSubParts(drawerBox, "cabinet", drawerBox.defaults).length;
+  // world.js loads on the first idle slice, then each slice indexes what it has time for
+  await vi.waitFor(() => expect(pc.state().indexed.length).toBe(count));
+  expect(pc.state().queued + pc.state().indexed.length).toBe(count);
+  handle.dispose();
+  expect(pc.state().indexed).toEqual([]); // disposed with the preview
+});
+
+test("collisions: a drawer dragged into the next one stops at contact and tints the pair", async () => {
+  // partGlb's 10 mm boxes sit at each placement's origin: drawer1 (closed) at y = 0 and
+  // drawer2 (40 % open) 44 mm out along -Y, so drawer1 meets it about 31 % open.
+  const glb = await partGlb(drawerBox, "cabinet", drawerBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: drawerBox });
+  await drawn(handle); await settleIdle(handle);
+  const pc = handle.__preview.poseCollide;
+  const count = viewSubParts(drawerBox, "cabinet", drawerBox.defaults).length;
+  await vi.waitFor(() => expect(pc.state().indexed.length).toBe(count));
+  const { poseMode } = handle.__preview;
+  poseMode.session.begin("drawer1");
+  for (const open of [20, 40, 60]) {
+    const { d } = resolveParams(drawerBox, { ...drawerBox.defaults, drawer1Open: open });
+    poseMode.session.frame(d.pulls[0]);
+  }
+  const held = handle.getParams().drawer1Open;
+  expect(held).toBeGreaterThan(29);
+  expect(held).toBeLessThan(32);
+  expect(pc.state().tinted).toEqual({ a: "drawer1", b: "drawer2" });
+  poseMode.session.end();
+  expect(pc.state().tinted).toBeNull();
+  handle.dispose();
+});
+
+test("collisions: a part with no collisions block creates no collide index", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const glb = await partGlb(hingedBox, "box", hingedBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: hingedBox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.__preview.poseCollide).toBeNull();
+  handle.dispose();
+});
+
 test("a file showing a view the part does not declare attaches nothing, and says so once", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const glb = await encodePreviewGlb({ meshes: [boxSoup("gear1", [0, 0, 0], [4, 4, 4])], view: "elsewhere" });
