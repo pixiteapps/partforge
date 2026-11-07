@@ -53,3 +53,37 @@ test("a spread of the params records nothing; a label keeps the records; no prov
   expect(keysAt(l, 0)).toEqual(["w"]);
   expect(k.box({ min: [0, 0, 0], max: [1, 1, 1] }).toMesh().originIds).toBeUndefined();
 });
+
+const wallWithNormal = (m, n, inside) => { for (let t = 0; t < m.triangles; t++) { const d = m.normals[t*9]*n[0] + m.normals[t*9+1]*n[1] + m.normals[t*9+2]*n[2]; if (Math.abs(d) > 0.99 && inside(m.positions.subarray(t*9, t*9+3))) return t; } throw new Error("no wall"); };
+
+test("a Solid extruded from a Shape2D carries the profile's and the extrude's reads", () => {
+  const m = buildWith((k, p) => k.shape2d([[0, 0], [p.r, 0], [p.r, p.r], [0, p.r]]).extrude({ h: p.h }), { r: 5, h: 3 });
+  expect(keysAt(m, faceWithNormal(m, [1, 0, 0]))).toEqual(["h", "r"]);
+});
+
+test("a cut by a translated extrude: the wall carries translate + extrude + profile reads; the box keeps its own", () => {
+  const m = buildWith((k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, p.w] })
+    .cut(k.shape2d([[0, 8], [p.r, 8], [p.r, 12], [0, 12]]).extrude({ h: p.h }).translate([p.x, 0, -5])), { w: 20, r: 4, h: 30, x: 8 });
+  const wall = wallWithNormal(m, [0, 1, 0], ([, y]) => y > 7.9 && y < 12.1);
+  expect(keysAt(m, wall)).toEqual(["x", "h", "r"]);
+  expect(keysAt(m, faceWithNormal(m, [0, 0, 1]))).toEqual(["w"]);
+});
+
+test("a tool that misses the body adds no origins entry", () => {
+  const m = buildWith((k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, p.w] })
+    .cut(k.cylinder({ r: p.r, h: 5 }).translate([100, 0, 0])), { w: 10, r: 2 });
+  expect(m.origins).toEqual([["w"]]);
+});
+
+test("originsFor skips a run that has no triangles", () => {
+  const log = [];
+  const prov = createProvenance({ log, expand: (e) => orderedReads(e) });
+  const solid = (id) => ({ _runs: () => [{ id, mat: null }] });
+  log.push("a"); prov.boundary("box", null, [], () => solid(7));
+  log.push("b"); prov.boundary("box", null, [], () => solid(8));
+  const g = { triVerts: new Uint32Array(6), runIndex: [0, 0, 6], runOriginalID: [7, 8], runTransform: [] };
+  const o = prov.originsFor(g);
+  expect(o.origins).toEqual([["b"]]);
+  expect(Array.from(o.originIds)).toEqual([1, 1]);
+  expect(prov.origins).toEqual([["b"]]);
+});

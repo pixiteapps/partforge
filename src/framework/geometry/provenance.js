@@ -13,6 +13,7 @@
 // a hit without re-running the op, and the backend calls its own ops internally
 // (replay, hoisting, fillet tools, label's chain). The proxy sees exactly the
 // author's calls, hit or miss. Boundaries read `_runs()` only — never getMesh().
+// Shape2D results are proxied too, since `shape.extrude(...)` mints a Solid.
 //
 // Pure leaf: imports only run-lineage.js.
 
@@ -25,6 +26,7 @@ export const TRANSFORM_OPS = new Set([
 const MAT_TOL = 1e-3;
 
 const isSolid = (v) => v != null && typeof v === "object" && typeof v._runs === "function";
+const isShape2D = (v) => v != null && typeof v === "object" && !!v._shape2d;
 const isPlainObject = (v) => v != null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
 
 // Newest first, each key once (its first, i.e. newest, occurrence).
@@ -121,7 +123,8 @@ export function createProvenance({ log, expand }) {
     for (let r = 0; r < ids.length; r++) {
       const mat = rt && rt.length >= (r + 1) * 12 ? Array.prototype.slice.call(rt, r * 12, r * 12 + 12) : IDENTITY12;
       const rec = lookup(ids[r], mat);
-      if (!rec || rec.length === 0) continue;
+      const t0 = (ri[r] / 3) | 0, t1 = Math.min(nTri, (ri[r + 1] / 3) | 0);
+      if (t1 <= t0 || !rec || rec.length === 0) continue; // no triangles: never listed
       const sig = rec.join("\u0000");
       let idx = indexOf.get(sig);
       if (idx === undefined) {
@@ -131,9 +134,8 @@ export function createProvenance({ log, expand }) {
         indexOf.set(sig, idx);
         if (!allSigs.has(sig)) { allSigs.add(sig); allOrigins.push(rec.slice()); }
       }
-      const t0 = (ri[r] / 3) | 0, t1 = Math.min(nTri, (ri[r + 1] / 3) | 0);
       for (let t = t0; t < t1; t++) originIds[t] = idx;
-      if (t1 > t0) any = true;
+      any = true;
     }
     return any ? { originIds, origins } : null;
   }
@@ -147,21 +149,30 @@ export function provenanceKernel(kernel, prov) {
   const targetOf = new WeakMap(); // proxy -> wrapper
   const proxyOf = new WeakMap(); // wrapper -> proxy
 
-  const unwrap = (v) => targetOf.get(v) ?? v;
-  const unwrapArg = (a) => {
+  // Proxied Solids/Shape2Ds back to the backend's own wrappers: directly, in
+  // arrays, and as plain-object values (one more level, for `{ sections: [...] }`).
+  const unwrapArg = (a, depth = 0) => {
     if (a == null || typeof a !== "object") return a;
     if (targetOf.has(a)) return targetOf.get(a);
-    if (Array.isArray(a)) return a.some((x) => targetOf.has(x)) ? a.map(unwrap) : a;
-    if (isPlainObject(a) && Object.values(a).some((x) => targetOf.has(x))) {
+    if (depth >= 2) return a;
+    if (Array.isArray(a)) {
+      const out = a.map((x) => unwrapArg(x, depth + 1));
+      return out.some((x, i) => x !== a[i]) ? out : a;
+    }
+    if (isPlainObject(a)) {
+      let changed = false;
       const o = {};
-      for (const [key, x] of Object.entries(a)) o[key] = unwrap(x);
-      return o;
+      for (const [key, x] of Object.entries(a)) { o[key] = unwrapArg(x, depth + 1); if (o[key] !== x) changed = true; }
+      return changed ? o : a;
     }
     return a;
   };
-  const wrapResult = (r) => (isSolid(r) ? solidProxy(r) : r);
+  const wrapResult = (r) => (isSolid(r) || isShape2D(r) ? objectProxy(r) : r);
 
-  function solidProxy(s) {
+  // One Proxy per wrapper. A Solid's or Shape2D's author-facing methods go through
+  // boundary, which only records (and only consumes the slice) when the result is a
+  // Solid; a Shape2D result comes back proxied so its own extrude/revolve are seen.
+  function objectProxy(s) {
     let p = proxyOf.get(s);
     if (p) return p;
     p = new Proxy(s, {
@@ -170,7 +181,7 @@ export function provenanceKernel(kernel, prov) {
         if (typeof v !== "function") return v;
         if (typeof name !== "string" || name.startsWith("_")) return v.bind(t);
         return (...args) => {
-          const raw = args.map(unwrapArg);
+          const raw = args.map((a) => unwrapArg(a));
           return wrapResult(prov.boundary(name, t, raw, () => v.apply(t, raw)));
         };
       },
@@ -185,7 +196,7 @@ export function provenanceKernel(kernel, prov) {
       const v = Reflect.get(t, name);
       if (typeof v !== "function" || typeof name !== "string" || name.startsWith("_")) return v;
       return (...args) => {
-        const raw = args.map(unwrapArg);
+        const raw = args.map((a) => unwrapArg(a));
         return wrapResult(prov.boundary(name, null, raw, () => v.apply(t, raw)));
       };
     },
