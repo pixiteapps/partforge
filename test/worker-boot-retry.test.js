@@ -63,3 +63,23 @@ test("the next job boots the kernel again after a failed boot, and builds", asyn
   const meshes = await waitFor(posts, "meshes");
   expect(meshes.meshes.length).toBeGreaterThan(0);
 });
+
+// mount's gate opens on the FIRST ready from either worker, and the occt worker posts
+// its ready at once, so a real host's first generate reaches the manifold worker while
+// the eager boot is still in flight. That boot failing is not this job's own attempt.
+test("a job already waiting when the eager boot fails boots again instead of inheriting the failure", async () => {
+  failures = 1;
+  const posts = start();
+  generate(); // before ready, exactly as mount sends it
+  const meshes = await waitFor(posts, "meshes");
+  expect(meshes.meshes.length).toBeGreaterThan(0);
+  expect(posts.some((p) => p.type === "error")).toBe(false);
+});
+
+test("a job waiting on the eager boot still reports a failure when its own boot fails too", async () => {
+  failures = 2;
+  const posts = start();
+  generate();
+  const err = await waitFor(posts, "error");
+  expect(err.message).toMatch(/Network error/);
+});

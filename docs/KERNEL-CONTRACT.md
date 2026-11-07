@@ -892,7 +892,9 @@ download, a 404, an out-of-memory during instantiation) fails the job that was w
 on it with an `{type:"error"}` post, and the worker forgets it: the next job that needs
 that kernel boots it again, so a transient failure costs one job, not the worker. The
 manifold worker posts `{type:"ready"}` once its eager boot settles, whether it worked or
-not — a host's first generate is what reports the failure, after booting again.
+not. Its eager boot belongs to no job, so a host's first generate, whether it arrives
+before or after that boot fails, boots again: one failed download at startup costs no
+job at all, and the generate reports a failure only if its own boot fails too.
 
 **Epoch guard.** Generates supersede each other; exports (`export-stl`/`export-step`/
 `export-3mf`/`export-bundle`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's

@@ -82,10 +82,10 @@ export function runWorker(part, opts = {}) {
 
   // Manifold is cheap to boot — bring it up eagerly and signal readiness.
   if (backend === "manifold") {
-    // Ready is posted whether or not the eager boot worked: mount gates its first
-    // generate on it, and that generate boots again and reports a failure through
-    // the pump's error boundary. Gating on success alone left a failed boot as a
-    // spinner that never ends.
+    // Ready is posted whether or not the eager boot worked: a host that gates its
+    // first generate on this worker alone would otherwise wait forever on a failed
+    // boot. That generate boots again and reports a failure through the pump's
+    // error boundary.
     boot(bootManifold).then(
       () => postMessage({ type: "ready" }),
       () => postMessage({ type: "ready" }),
@@ -101,6 +101,12 @@ export function runWorker(part, opts = {}) {
 
   async function kernelFor(data) {
     if (backend === "manifold") {
+      // A job can arrive while the eager boot is still running, and mount's first
+      // generate always does: its gate opens on the first ready from EITHER worker,
+      // and the occt worker's comes at once. That boot failing was nobody's attempt
+      // on this job's behalf, so wait it out and try once more; only then does the job
+      // fail. Nothing else can be in flight here, since the pump runs one job at a time.
+      if (!manifold && booting) await booting.catch(() => {});
       if (!manifold) await (booting ?? boot(bootManifold));
       // The sender declares the job's mesh quality; the worker knows nothing about
       // job-type semantics (mount marks STL/3MF exports quality:"print").
