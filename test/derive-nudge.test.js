@@ -37,3 +37,18 @@ test("no derive, too many inputs, skipped inputs and function leaves", () => {
   expect(n.depsForPath("b").has("s")).toBe(true);
   expect(n.depsForPath("f")).toBeNull();
 });
+
+test("a large derive answers path lookups from an index, not a scan of every leaf", () => {
+  // 1,500 leaf paths (500 points × [x, y, z]) and 30,000 lookups - the shape of a
+  // laser-box generate (855 leaves × ~6,000 log entries), scaled up.
+  const big = { derive: (p) => ({ pts: Array.from({ length: 500 }, (_, i) => [p.a * i, p.b, i]), w: p.a }) };
+  const n = nudgeAttribution(big, { a: 1, b: 2 }, { budgetMs: 1000 });
+  expect([...n.depsForPath("pts")].sort()).toEqual(["a", "b"]);
+  expect([...n.depsForPath("pts.3")].sort()).toEqual(["a", "b"]);
+  expect([...n.depsForPath("pts.3.0")]).toEqual(["a"]);
+  expect(n.depsForPath("pts.3.2")).toBeNull();
+  expect(n.depsForPath("pt")).toBeNull(); // a prefix of a key, not of a path
+  const t0 = performance.now();
+  for (let r = 0; r < 20; r++) for (let i = 0; i < 500; i++) { n.depsForPath(`pts.${i}`); n.depsForPath(`pts.${i}.1`); n.depsForPath("w"); }
+  expect(performance.now() - t0).toBeLessThan(250);
+});

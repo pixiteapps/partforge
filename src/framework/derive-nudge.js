@@ -71,15 +71,19 @@ export function nudgeAttribution(
     for (const [path, a] of base) if (!out.has(path) || differs(a, out.get(path))) add(path, key);
   }
 
-  const depsForPath = (path) => {
-    let union = null;
-    for (const [k, set] of depsOfPath) {
-      if (k === path || k.startsWith(`${path}.`)) {
-        union ??= new Set();
-        for (const x of set) union.add(x);
-      }
+  // Every leaf's deps, unioned into each of its path's prefixes once, so a lookup
+  // (orderedReads makes one per { path } log entry) is a Map hit, not a scan.
+  const byPrefix = new Map();
+  for (const [leaf, set] of depsOfPath) {
+    const segs = leaf.split(".");
+    let prefix = "";
+    for (const seg of segs) {
+      prefix = prefix === "" ? seg : `${prefix}.${seg}`;
+      let union = byPrefix.get(prefix);
+      if (!union) byPrefix.set(prefix, (union = new Set()));
+      for (const x of set) union.add(x);
     }
-    return union;
-  };
+  }
+  const depsForPath = (path) => byPrefix.get(path) ?? null;
   return { depsOfPath, inputs, depsForPath };
 }
