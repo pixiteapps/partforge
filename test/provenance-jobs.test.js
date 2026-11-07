@@ -37,3 +37,30 @@ test("capture-generate carries no origins", async () => {
   const reply = post.mock.calls.map(([m]) => m).find((m) => m.type === "capture-meshes");
   expect(reply.meshes[0].originIds).toBeUndefined();
 });
+
+test("a frozen derived profile read through .map builds", async () => {
+  const frozen = {
+    parameters: [{ id: "s", title: "S", controls: [{ key: "h", type: "slider", min: 1, max: 9, step: 1 }] }],
+    defaults: { h: 2 },
+    views: { v: { label: "V" } },
+    derive: () => ({ prof: Object.freeze([Object.freeze([0, 0]), Object.freeze([5, 0]), Object.freeze([5, 5])]) }),
+    parts: { one: { views: ["v"], build: (k, p, d) => k.extrude({ profile: d.prof.map(([x, y]) => [x, y]), h: p.h }) } },
+  };
+  const reply = await gen(frozen, ["one"], frozen.defaults);
+  expect(reply?.meshes?.[0]?.name).toBe("one");
+  expect(reply.meshes[0].pieceKeys).toEqual(["h"]);
+});
+
+test("a throwing build ends its provenance; the next build still carries origins", async () => {
+  const throwing = { ...part, parts: { ...part.parts, bad: { views: ["v"], build: (k, p) => { k.box({ min: [0, 0, 0], max: [p.w, 1, 1] }); throw new Error("boom"); } } } };
+  const post = vi.fn();
+  await handle(k, throwing, { type: "generate", subparts: ["one", "bad"], view: "v", params: part.defaults }, post);
+  expect(post.mock.calls.map(([m]) => m).find((m) => m.type === "error")).toBeTruthy();
+  // Nothing is still recording: a build outside a generate gets no origins...
+  const cap = vi.fn();
+  await handle(k, throwing, { type: "capture-generate", subparts: ["two"], view: "v", params: part.defaults }, cap);
+  expect(cap.mock.calls.map(([m]) => m).find((m) => m.type === "capture-meshes").meshes[0].originIds).toBeUndefined();
+  // ...and the next generate's clean sub-part carries its own origins.
+  const { meshes } = await gen(throwing, ["two"], { ...part.defaults, w: 21 });
+  expect(meshes[0].origins[meshes[0].originIds[0] - 1]).toEqual(["b", "w"]);
+});

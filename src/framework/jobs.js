@@ -464,7 +464,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     const displayWithReads = (name) => {
       const sp = part.parts[name];
       if (!nudgeDone) { nudgeDone = true; nudged = nudgedFor(kernel, part, p, msg.params); }
-      const sink = newReadSink();
+      const sink = newReadSink({ log: true });
       sink.attribution = attribution;
       const rec = recordedParams({ p, d }, sink);
       const canonical = probeSubPartPose(sp, { view: msg.view, purpose: "display", p, d }, { scope: "place" }).trusted === true;

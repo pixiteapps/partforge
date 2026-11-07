@@ -5,7 +5,7 @@ import { newReadSink, orderedReads, recorder } from "../src/framework/read-recor
 let k; beforeAll(async () => { k = await bootManifoldKernel(); });
 
 function buildWith(build, params) {
-  const sink = newReadSink();
+  const sink = newReadSink({ log: true });
   const p = recorder(params, sink.raw, { through: true, log: sink.log });
   const prov = createProvenance({ log: sink.log, expand: (entries) => orderedReads(entries, { attribution: { depsOf: null, allInputs: new Set() } }) });
   k.beginProvenance(prov);
