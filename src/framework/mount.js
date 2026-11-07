@@ -18,7 +18,10 @@ import { realisticDisplay, sheetFrameFor, wantsSheetFrame } from "./materials/sh
 import { pruneOverrides } from "./materials/overrides.js";
 import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
-import { recordedRelevantKeys, subPartParamKeys } from "./param-deps.js";
+import { recordedRelevantKeys, subPartParamKeys, RELEVANT_ALL } from "./param-deps.js";
+import { resolveSpotKeys, faceKeysOf, handleOnPiece } from "./selection/spot-keys.js";
+import { buildTree, controlNodes } from "./panel/model.js";
+import { desugar } from "./panel/legacy.js";
 import { createMeshCache } from "./mesh-cache.js";
 import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
@@ -49,7 +52,7 @@ import { attachDragReadout } from "./pose/drag-readout.js";
 import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { parsePinId } from "./pose/pose-session.js";
-import { handleParamKeys } from "./pose/handle-source.js";
+import { handleParamKeys, locateHandle } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
@@ -1058,8 +1061,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // following the held pick marker. Only with onPick, and only for a host
     // that passed the option as an object.
     const selectionOpt = onPick && selectionPopover && typeof selectionPopover === "object"
-      ? { slot: selectionPopover.slot === true } : null;
+      ? { slot: selectionPopover.slot === true, controls: selectionPopover.controls !== false } : null;
     let selPopover = null;
+    let spotPanel = null; // the popover's controls region while one is built (spec 2026-11-06 §4)
+    const spotPieceKeys = new Map(); // sub-part -> the keys its last live delivery was built from
+    const revealListeners = new Set(); // handle.selection.onReveal: "More in the panel" under a host pane lease
+    cleanup.defer(() => revealListeners.clear());
     let pendingSelection = null; // a carried selection waiting for its marker's first anchor
     // The marker's anchor is in canvas px; the popover lives in the stage.
     const toStage = (a) => {
@@ -1079,6 +1086,55 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       cleanup.defer(() => poseChip.detach());
     }
     if (selectionOpt) {
+      // The clicked spot's controls: up to SPOT_CAP of the keys its face (else its piece)
+      // was built from, minus what a handle on the piece drags, as bare rail rows.
+      const revealInRail = (keys) => {
+        const shown = paneTabs.showPane("rail");
+        panelRef?.revealParams(keys, keys[0]);
+        if (!shown) for (const cb of [...revealListeners]) cb({ keys });
+      };
+      const spotControls = {
+        build(container, { subPart, hit }) {
+          let derived = {};
+          try { derived = resolveDerived(part, params); } catch { /* derived stays {} */ }
+          const faceKeys = faceKeysOf(viewer.getSubOrigins?.(subPart) ?? null, hit);
+          const pieceKeys = spotPieceKeys.get(subPart) ?? subPartParamKeys(part, view(), params, displayReadsOf, subPart);
+          const bounds = viewer.getSubBounds?.(subPart) ?? null;
+          const excluded = new Set();
+          for (const id of poseVisible ?? handleIds) {
+            const handle = part.handles[id];
+            let point = null;
+            try { point = locateHandle(part, params, derived, handle); } catch { /* not located */ }
+            if (handleOnPiece(handle, subPart, { point, bounds })) for (const k of handleParamKeys(handle)) excluded.add(k);
+          }
+          const relevant = recordedRelevantKeys(part, view(), params, displayReadsOf);
+          const drawable = new Set(controlNodes(buildTree(desugar(part.parameters))).map((n) => n.key)
+            .filter((k) => relevant === RELEVANT_ALL || relevant.has(k)));
+          const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, excluded, drawable });
+          if (!keys.length) return null;
+          const sub = buildControls(container, part.parameters, params, () => {
+            animCtl?.notifyUserEdit();
+            panelRef?.syncValues(keys);
+            onParamChange();
+          }, onParamsCommit
+            ? (changed) => onParamsCommit({ changed, params: { ...params } })
+            : undefined,
+          { fontCatalog, imageCatalog, onAssetUpload,
+            declaredSource: declaredSourceLookup(part, params),
+            files, panelState: null, bare: true, only: new Set(keys) });
+          sub.refresh({ relevant, derived });
+          spotPanel = sub;
+          if (more) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "pf-selection-more";
+            btn.textContent = "More in the panel";
+            btn.addEventListener("click", () => revealInRail(keys));
+            container.append(btn);
+          }
+          return { dispose() { if (spotPanel === sub) spotPanel = null; sub.dispose(); } };
+        },
+      };
       selPopover = attachSelectionPopover({
         stage: els.viewer, canvas: viewer.domElement, slot: selectionOpt.slot, parts: partsSeam,
         renderThumb: viewer.renderMaterialThumbnail ? (id, display) => viewer.renderMaterialThumbnail(display, { size: 96 }) : null,
@@ -1089,6 +1145,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // Converted at every placement, not once per anchor: the canvas can
         // move within the stage (a dock inset) with no new anchor arriving.
         toStage,
+        controls: selectionOpt.controls ? spotControls : null,
       });
       cleanup.defer(() => selPopover.detach());
       cleanup.defer(viewer.onFlashAnchorChange?.((a) => {
@@ -1195,7 +1252,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // of a drag), so it never also picks: takeClick() answers once, and comes
         // first so the claim is spent on this click even when another guard is up.
         suppressed: () => (poseMode?.takeClick() ?? false) || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
-        onPick: (selection, anchor) => {
+        onPick: (selection, anchor, hit) => {
           onPick({
             selection,
             label: selection.feature?.label ?? part.parts[selection.subPart]?.label ?? selection.subPart,
@@ -1207,7 +1264,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             anchor,
           });
           // After the host has its chip: open at the spot, and keep the marker.
-          if (selPopover && selPopover.open({ subPart: selection.subPart ?? null, anchor })) {
+          if (selPopover && selPopover.open({ subPart: selection.subPart ?? null, anchor, hit })) {
             viewer.holdFlashPoint?.();
           } else if (selPopover?.isOpen()) {
             // A pick it cannot show (slot-less, no listed sub-part) moves on from
@@ -1611,6 +1668,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // in: "canonical" (place() not applied — mount poses it below) or
         // "posed". An older worker sends no frame; its meshes are posed.
         cache.record(m.name, m.reads, dispatched.get(m.name)?.view ?? view(), m.frame ?? "posed");
+        if (Array.isArray(m.pieceKeys)) spotPieceKeys.set(m.name, m.pieceKeys); else spotPieceKeys.delete(m.name);
         // A sub-part that built into NOTHING. Manifold booleans return an
         // empty solid rather than throwing (a bore wider than its body),
         // and typed values may sit outside the authored range, so a
@@ -1650,6 +1708,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         viewer.setSubGeometry(m.name, m);
         fastPath.forget(m.name);
         cache.forget(m.name);
+        spotPieceKeys.delete(m.name);
         // A pose ghost on this sub-part has just been replaced by a new mesh; left at
         // GHOST_OPACITY it would stay faded through playback.
         poseMode?.delivered(m.name);
@@ -1917,6 +1976,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let animCtl = null; // assigned below; panel edits must pause active playback
     const panel = buildControls(els.controls, part.parameters, params, () => {
       animCtl?.notifyUserEdit();
+      spotPanel?.syncValues();
       onParamChange();
     }, onParamsCommit
       ? (changed) => onParamsCommit({ changed, params: { ...params } })
@@ -1937,6 +1997,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
       const relevant = recordedRelevantKeys(part, view(), params, displayReadsOf);
       panel.refresh({ relevant, derived });
+      spotPanel?.refresh({ relevant, derived });
       if (poseMode) syncPoseVisible(relevant);
     };
     updateRelevance(); // initial view
@@ -1975,6 +2036,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       animCtl?.notifyUserEdit();
       Object.assign(params, partial);
       panel.syncValues(Object.keys(partial));
+      spotPanel?.syncValues(Object.keys(partial));
       onParamChange();
     }
 
@@ -1986,6 +2048,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     function applyAnimationValues(values) {
       Object.assign(params, values);
       panel.syncValues(Object.keys(values));
+      spotPanel?.syncValues(Object.keys(values));
       // A playing frame is pose-only for the floor; the driver's Reset restore
       // (written after it drops its hold) is classified like any edit.
       onParamChange({ debounce: false, animated: viewer.isGroundHeld?.("animation") ?? false });
@@ -2001,6 +2064,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     function writePoseValues(values) {
       Object.assign(params, values);
       panel.syncValues(Object.keys(values));
+      spotPanel?.syncValues(Object.keys(values));
       onParamChange({ debounce: false });
       loop.kick();
     }
@@ -2014,6 +2078,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       animCtl?.notifyUserEdit();
       for (const k of changed) params[k] = values[k];
       panel.syncValues(changed);
+      spotPanel?.syncValues(changed);
       onParamChange();
       onParamsCommit?.({ changed, params: { ...params } });
     }
@@ -2083,7 +2148,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // ?debug switch updates the readout for the same design without a param change.
     function forceRegen() {
       pendingPosed.clear(); // this rebuild is not the pose edit's — don't credit it
-      for (const n of viewSubParts(part, view(), params)) cache.forget(n);
+      for (const n of viewSubParts(part, view(), params)) { cache.forget(n); spotPieceKeys.delete(n); }
       refreshView();
       loop.kick();
     }
@@ -2249,6 +2314,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         onClose: (cb) => selPopover.onClose(cb),
         close: () => selPopover.close(),
         isOpen: () => selPopover.isOpen(),
+        onReveal: (cb) => { revealListeners.add(cb); return () => revealListeners.delete(cb); },
       } : null,
       selectionState: () => {
         const st = selPopover?.getState();

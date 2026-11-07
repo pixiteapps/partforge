@@ -4,13 +4,14 @@
 // everything else — status-ui, view-tabs, controls, regen-loop, mesh-cache,
 // geometry-service — runs for real against fake workers.
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 
 const fakeViewers = [];
 const fakeTooltips = [];
 vi.mock("../../src/framework/viewer.js", () => ({
   createViewer: vi.fn(() => {
     const built = new Set();
+    const delivered = new Map();
     let cutawayOn = false;
     // Animation-driver surface: the transport bar subscribes to the frame loop
     // and to orbit starts. tickFrame(dt) is the test's hand on that loop.
@@ -31,7 +32,14 @@ vi.mock("../../src/framework/viewer.js", () => ({
       domElement: document.createElement("div"),
       showAssembly: vi.fn(),
       hideAssembly: vi.fn(),
-      setSubGeometry: vi.fn((name) => built.add(name)),
+      setSubGeometry: vi.fn((name, m) => { built.add(name); delivered.set(name, m); }),
+      // The spot controls' reads (Task 8's viewer surface): what the delivery carried,
+      // and a unit box for the posed bounds.
+      getSubOrigins: (name) => {
+        const m = delivered.get(name);
+        return m?.originIds && m?.origins ? { originIds: m.originIds, origins: m.origins } : null;
+      },
+      getSubBounds: (name) => (built.has(name) ? { min: [0, 0, 0], max: [1, 1, 1] } : null),
       setSubPose: vi.fn(),
       hasSubMesh: (name) => built.has(name),
       // exportPreview's read: one 1mm triangle for every sub-part delivered.
@@ -3494,4 +3502,96 @@ test("carried pose pins come back on a remount: joint pins ('<handle>:<joint>') 
   const pose = poseStubs.at(-1);
   expect(pose.setPins).toHaveBeenCalledWith(["grow:tip", "grow:elbow", "grow:palm.wristPitch"]);
   handle.dispose();
+});
+
+// --- spot controls (spec 2026-11-06 §2, §4) ---------------------------------
+// mount() over the file's fixtures; `worker.emit(msg)` delivers a manifold message.
+async function mountWith(part, options = {}) {
+  const { workers, createWorker } = makeWorkers();
+  const elements = makeElements();
+  const handle = mount(part, { createWorker, elements, ...options });
+  const worker = workers.manifold;
+  worker.emit = (msg) => worker.onmessage({ data: msg });
+  worker.emit({ type: "ready" });
+  return { worker, elements, handle };
+}
+
+describe("spot controls", () => {
+  const part = () => ({
+    parameters: [{ id: "c", title: "Cabinet", controls: [
+      { key: "w", label: "w", type: "slider", min: 1, max: 100, step: 1 }, { key: "h", label: "h", type: "slider", min: 1, max: 100, step: 1 },
+      { key: "open", label: "open", type: "slider", min: 0, max: 100, step: 1 }, { key: "z", label: "z", type: "slider", min: 0, max: 9, step: 1 }] }],
+    defaults: { w: 10, h: 20, open: 0, z: 1 },
+    views: { v: { label: "V" } },
+    parts: { body: { views: ["v"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, p.h] }) } },
+    handles: { pull: { point: (p) => [0, -p.open, 0], params: ["open"], drag: "axis", direction: [0, -1, 0], showOn: "body" } },
+  });
+  const deliver = (worker, extra = {}) => worker.emit({ type: "meshes", meshes: [{ name: "body", positions: new Float32Array(9), triangles: 1, reads: ["h", "open", "w", "z"], pieceKeys: ["h", "open", "w"], originIds: new Uint16Array([1]), origins: [["h", "w", "open"]], ...extra }] });
+  const sliders = (el) => [...el.querySelectorAll(".pf-selection-controls input[type=range]")];
+  const labelOf = (i) => i.closest(".slider").querySelector("label").textContent;
+
+  // A part with no handle: four drawable keys, so a cap of three leaves one for the rail.
+  const unhandled = () => { const p = part(); delete p.handles; return p; };
+
+  // The face's three newest keys are chosen; the region draws them in panel order.
+  it("shows the face's keys newest first, minus the handle's, and syncs both ways", async () => {
+    const onParamsCommit = vi.fn();
+    const { worker, elements, handle } = await mountWith(part(), { onPick: vi.fn(), selectionPopover: { slot: true }, onParamsCommit });
+    deliver(worker);
+    pickBody({ triIndex: 0 });
+    const s = sliders(elements.viewer);
+    expect(s.map(labelOf)).toEqual(["w", "h"]);
+    s[0].value = "15"; s[0].dispatchEvent(new Event("input", { bubbles: true }));
+    expect([...elements.controls.querySelectorAll(".slider")].find((el) => el.querySelector("label").textContent === "w").querySelector("input[type=range]").value).toBe("15");
+    s[0].dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onParamsCommit).toHaveBeenCalledTimes(1);
+    handle.setParams({ h: 33 });
+    expect(s[1].value).toBe("33");
+    expect(onParamsCommit).toHaveBeenCalledTimes(1);
+    const railH = [...elements.controls.querySelectorAll(".slider")].find((el) => el.querySelector("label").textContent === "h").querySelector("input[type=range]");
+    railH.value = "44"; railH.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(s[1].value).toBe("44");
+    handle.dispose();
+  });
+  it("falls back to the piece's keys with no origins, and hides when a handle drags them all", async () => {
+    const { worker, elements, handle } = await mountWith(part(), { onPick: vi.fn(), selectionPopover: { slot: true } });
+    deliver(worker, { originIds: undefined, origins: undefined, pieceKeys: ["open", "w"] });
+    pickBody({ triIndex: 0 });
+    expect(sliders(elements.viewer).map(labelOf)).toEqual(["w"]);
+    deliver(worker, { originIds: undefined, origins: undefined, pieceKeys: ["open"] });
+    pickBody({ triIndex: 0 });
+    expect(elements.viewer.querySelector(".pf-selection-controls").hidden).toBe(true);
+    expect(elements.viewer.querySelector(".pf-selection-slot")).not.toBeNull();
+    handle.dispose();
+  });
+  it("More in the panel reveals the keys in the rail; controls: false draws nothing", async () => {
+    const { worker, elements, handle } = await mountWith(unhandled(), { onPick: vi.fn(), selectionPopover: { slot: true } });
+    deliver(worker, { origins: [["h", "w", "z", "open"]] });
+    pickBody({ triIndex: 0 });
+    const more = elements.viewer.querySelector(".pf-selection-more");
+    expect(more.textContent).toBe("More in the panel");
+    more.click();
+    expect(elements.controls.querySelector(".pf-param-flash")).not.toBeNull();
+    handle.dispose();
+    const off = await mountWith(part(), { onPick: vi.fn(), selectionPopover: { slot: true, controls: false } });
+    deliver(off.worker); pickBody({ triIndex: 0 });
+    expect(off.elements.viewer.querySelector(".pf-selection-controls")).toBeNull();
+    off.handle.dispose();
+  });
+  it("a host holding the pane lease is told what More in the panel revealed", async () => {
+    const { worker, elements, handle } = await mountWith(unhandled(), { onPick: vi.fn(), selectionPopover: { slot: true } });
+    const seen = vi.fn();
+    const off = handle.selection.onReveal(seen);
+    deliver(worker, { origins: [["h", "w", "z", "open"]] });
+    pickBody({ triIndex: 0 });
+    elements.viewer.querySelector(".pf-selection-more").click();
+    expect(seen).not.toHaveBeenCalled(); // no lease: the bar's own pane switch
+    handle.setHostPane("stage");
+    elements.viewer.querySelector(".pf-selection-more").click();
+    expect(seen).toHaveBeenCalledWith({ keys: ["h", "w", "z"] });
+    off();
+    elements.viewer.querySelector(".pf-selection-more").click();
+    expect(seen).toHaveBeenCalledTimes(1);
+    handle.dispose();
+  });
 });

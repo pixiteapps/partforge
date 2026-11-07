@@ -99,7 +99,7 @@ function buildIcon(paths) {
 // below can recognize it; omitting it costs the drawer its close button.
 export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = {}) {
   if (!shell || !stage || !rail) {
-    return { setHostPane: () => {}, setRailLayout: () => {}, detach: () => {} };
+    return { setHostPane: () => {}, setRailLayout: () => {}, showPane: () => false, detach: () => {} };
   }
 
   let pane = "stage"; // the standalone user's choice
@@ -189,6 +189,14 @@ export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = 
   apply();
 
   return {
+    // Show a pane as the tab bar would ("More in the panel"). False when a host
+    // holds the pane lease: the host draws the pane, so it has to be told instead.
+    showPane: (next) => {
+      if (hostPane !== null || !PANES.includes(next)) return false;
+      pane = next;
+      apply();
+      return true;
+    },
     // 'stage' | 'rail' takes the lease; anything else (including null) releases
     // it and restores the standalone bar and the user's own last choice.
     setHostPane: (next) => {
