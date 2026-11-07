@@ -660,4 +660,8 @@ export interface GeometryKernel {
    * build over. Drain per sub-part to attribute each message to its build.
    */
   takeBuildWarnings?(): string[];
+  /** Manifold only: while active, `toMesh` adds per-triangle `originIds`/`origins` (provenance.js). */
+  beginProvenance?(prov: unknown): void;
+  /** End the provenance bracket `beginProvenance` opened. */
+  endProvenance?(): void;
 }

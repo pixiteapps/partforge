@@ -300,9 +300,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
 
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
+  let activeProv = null; // provenance.js recorder, between beginProvenance/endProvenance
   function meshOut(m, asStl) {
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
+    // Per-triangle param provenance, only while a build has provenance active.
+    const o = !asStl && activeProv ? activeProv.originsFor(g) : null;
+    if (o) { r.originIds = o.originIds; r.origins = o.origins; }
     g.delete?.();
     return r;
   }
@@ -1064,6 +1068,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _offsetRegions: offsetRegions,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
+    // Param provenance (provenance.js): while active, toMesh adds originIds/origins.
+    beginProvenance: (prov) => { activeProv = prov; },
+    endProvenance: () => { activeProv = null; },
     sweepCache: () => cache.sweep(),
     dropCache: () => cache.clear(),
     setCacheBudget: (bytes) => cache.setBudget(bytes),

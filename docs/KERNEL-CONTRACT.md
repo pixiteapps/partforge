@@ -117,6 +117,11 @@ once, under the same never-mid-bracket rule: the worker calls it on each booted 
 before an export job, because a display build's retained solids and the export's own
 build share one WASM heap, and on a very large part the cache alone can leave too little
 heap for the export. The next display build after an export is cold.
+`beginProvenance(prov)` / `endProvenance()` (Manifold only) bracket a build whose kernel
+is wrapped by `provenance.js`'s `provenanceKernel`: while a recorder is active, `toMesh`
+adds `originIds` (a `Uint16Array`, one per triangle, 0 = none, else a 1-based index) and
+`origins` (the param keys each face run was built from, newest read first). With none
+active `toMesh` is unchanged, and `toSTL` never carries them.
 `setCacheBudget(bytes)` bounds the bytes the cache's retained solids may hold (the
 Manifold backend estimates each from its triangle and vertex counts); `trimCache()`
 then drops whole partitions, least recently built first, until they fit. A trim frees
