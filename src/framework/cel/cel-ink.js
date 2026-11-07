@@ -29,10 +29,14 @@ void main() {
   bool bgC = dC >= 0.99999;
   float zC = linZ(dC);
 
+  // Every radius is floored at one texel: the target is NearestFilter, so an
+  // offset under half a texel samples the centre texel itself and the line
+  // vanishes (the thin crease radius at pixelScale < ~1.67). No ink line is
+  // thinner than one device pixel.
   // silhouettes: second difference of linear depth (zero on a plane), at the thick radius
   float edgeD = 0.0; float outer = 0.0;
   if (uThick > 0.0) {
-    vec2 r = px * uThick * uPx;
+    vec2 r = px * max(uThick * uPx, 1.0);
     float dL = rawD(vUv - vec2(r.x, 0.0)), dR = rawD(vUv + vec2(r.x, 0.0));
     float dD = rawD(vUv - vec2(0.0, r.y)), dU = rawD(vUv + vec2(0.0, r.y));
     float zL = linZ(dL), zR = linZ(dR), zD = linZ(dD), zU = linZ(dU);
@@ -41,7 +45,7 @@ void main() {
     bool allBg = dL >= 0.99999 && dR >= 0.99999 && dD >= 0.99999 && dU >= 0.99999;
     if (bgC) {
       // a background pixel next to a part: the outer contour, drawn outward
-      vec2 ro = px * uThick * uOuter * uPx;
+      vec2 ro = px * max(uThick * uOuter * uPx, 1.0);
       bool near = rawD(vUv - vec2(ro.x, 0.0)) < 0.99999 || rawD(vUv + vec2(ro.x, 0.0)) < 0.99999
                || rawD(vUv - vec2(0.0, ro.y)) < 0.99999 || rawD(vUv + vec2(0.0, ro.y)) < 0.99999;
       edgeD = near ? 1.0 : 0.0;
@@ -54,7 +58,7 @@ void main() {
   // creases: normal disagreement at the thin radius
   float edgeN = 0.0;
   if (uThin > 0.0 && !bgC) {
-    vec2 r = px * uThin * uPx;
+    vec2 r = px * max(uThin * uPx, 1.0);
     vec3 nC = nrm(vUv);
     float m = 0.0;
     m = max(m, 1.0 - dot(nC, nrm(vUv - vec2(r.x, 0.0))));
@@ -171,5 +175,10 @@ export function createCelInk() {
     quadGeometry.dispose();
   }
 
-  return { render, dispose };
+  return {
+    render,
+    dispose,
+    /** The ink pass's ShaderMaterial (its uniforms are what tests read). */
+    get material() { return inkMat; },
+  };
 }

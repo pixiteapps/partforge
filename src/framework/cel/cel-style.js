@@ -1,9 +1,10 @@
 // The cel (anime) look as data plus two colour functions. Pure on purpose: no
 // three.js and no DOM, so the constants and the tone derivation can be read and
 // tested anywhere; the three.js materials built from them live in sibling modules
-// the viewer alone imports. Every value here was locked by the look-and-feel spike,
-// and the tones are derived in LINEAR space, because that is where the spike's
-// shader mixed them.
+// the viewer alone imports. The values came from a look-and-feel spike, since
+// deleted; the contract now is the goldens in test/cel-style.test.js. The tones
+// are derived in LINEAR space, because that is where the spike's shader mixed
+// them.
 import { cadAppearance } from "../materials/resolve.js";
 
 export const CEL = Object.freeze({

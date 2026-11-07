@@ -119,19 +119,37 @@ describe("isAppearanceNoop / pruneOverrides", () => {
 describe("subPartVisibility", () => {
   const base = { shown: true, anim: undefined, user: undefined, hidden: false, renderMode: "cad", staticOpacity: 1 };
   it("shown and untouched: visible, lines in cad only, no fade", () => {
-    expect(subPartVisibility(base)).toEqual({ meshVisible: true, linesVisible: true, fade: null });
-    expect(subPartVisibility({ ...base, renderMode: "realistic" })).toEqual({ meshVisible: true, linesVisible: false, fade: null });
-    expect(subPartVisibility({ ...base, renderMode: "cel" })).toEqual({ meshVisible: true, linesVisible: true, fade: null });
+    expect(subPartVisibility(base)).toEqual({ meshVisible: true, linesVisible: true, fade: null, inked: true });
+    expect(subPartVisibility({ ...base, renderMode: "realistic" })).toEqual({ meshVisible: true, linesVisible: false, fade: null, inked: true });
+    expect(subPartVisibility({ ...base, renderMode: "cel" })).toEqual({ meshVisible: true, linesVisible: true, fade: null, inked: true });
   });
   it("hidden wins over everything", () => {
-    expect(subPartVisibility({ ...base, hidden: true, anim: 1, user: 1 })).toEqual({ meshVisible: false, linesVisible: false, fade: null });
+    expect(subPartVisibility({ ...base, hidden: true, anim: 1, user: 1 })).toEqual({ meshVisible: false, linesVisible: false, fade: null, inked: false });
   });
   it("not shown is not visible even with a fade", () => {
-    expect(subPartVisibility({ ...base, shown: false, user: 0.5 })).toEqual({ meshVisible: false, linesVisible: false, fade: null });
+    expect(subPartVisibility({ ...base, shown: false, user: 0.5 })).toEqual({ meshVisible: false, linesVisible: false, fade: null, inked: false });
   });
   it("anim 0 hides; anim and user multiply with the static opacity", () => {
-    expect(subPartVisibility({ ...base, anim: 0 })).toEqual({ meshVisible: false, linesVisible: false, fade: null });
-    expect(subPartVisibility({ ...base, anim: 0.5, user: 0.5, staticOpacity: 0.4 })).toEqual({ meshVisible: true, linesVisible: true, fade: 0.1 });
-    expect(subPartVisibility({ ...base, user: 0.25 })).toEqual({ meshVisible: true, linesVisible: true, fade: 0.25 });
+    expect(subPartVisibility({ ...base, anim: 0 })).toEqual({ meshVisible: false, linesVisible: false, fade: null, inked: false });
+    expect(subPartVisibility({ ...base, anim: 0.5, user: 0.5, staticOpacity: 0.4 })).toEqual({ meshVisible: true, linesVisible: true, fade: 0.1, inked: false });
+    expect(subPartVisibility({ ...base, user: 0.25 })).toEqual({ meshVisible: true, linesVisible: true, fade: 0.25, inked: false });
+  });
+  describe("inked (cel's ink prepass: only what is drawn opaque)", () => {
+    const cel = { ...base, renderMode: "cel" };
+    it("a shown opaque sub-part is inked", () => {
+      expect(subPartVisibility(cel).inked).toBe(true);
+    });
+    it("an authored ghost (static opacity < 1) on its base material is not", () => {
+      const v = subPartVisibility({ ...cel, staticOpacity: 0.3 });
+      expect(v.fade).toBe(null);
+      expect(v.inked).toBe(false);
+    });
+    it("a user fade or an animation fade is not", () => {
+      expect(subPartVisibility({ ...cel, user: 0.5 }).inked).toBe(false);
+      expect(subPartVisibility({ ...cel, anim: 0.35 }).inked).toBe(false);
+    });
+    it("a hidden sub-part is not", () => {
+      expect(subPartVisibility({ ...cel, hidden: true }).inked).toBe(false);
+    });
   });
 });

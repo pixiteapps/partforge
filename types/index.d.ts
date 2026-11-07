@@ -825,7 +825,11 @@ export interface PartRuntime {
   pickMarker: PickMarkerRuntime;
   /** The selection popover, or `null` without the `selectionPopover` option. */
   selection: SelectionRuntime | null;
-  /** Render mode — CAD, realistic or cel (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
+  /**
+   * Render mode — CAD, realistic or cel (docs "Materials and appearance"). set() resolves to the mode actually
+   * in effect: "cad" if realistic's assets failed to load. Cel needs no assets; a cel switch whose shaders fail
+   * to compile leaves the previous mode in effect and emits an `error` event.
+   */
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;
@@ -961,6 +965,11 @@ export interface PreviewRuntime {
     /** Each state change. Returns an unsubscribe. */
     onChange(cb: (state: "waiting" | "playing" | "stopped" | "finished") => void): () => void;
   } | null;
+  /**
+   * The preview's render mode. set() resolves to the mode actually in effect: "cad" if realistic's assets
+   * failed to load. Cel needs no assets; a cel switch whose shaders fail to compile leaves the previous mode
+   * in effect and emits an `error` event.
+   */
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;

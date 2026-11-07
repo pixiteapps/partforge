@@ -4358,8 +4358,11 @@ addition to) the generated view style button above:
 
 - `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
   `"cad"`, `"realistic"` or `"cel"`. `set()` resolves to the mode actually in effect —
-  `"cad"` if the realistic environment's assets fail to load; `"cel"` needs no
-  assets, so it always takes — and
+  `"cad"` if the realistic environment's assets fail to load. `"cel"` loads no
+  assets, so it does not fall back to CAD the way realistic can: if its shaders
+  fail to compile, the previous mode stays and `onChange` reports an `error`
+  (a failure while the look is being swapped in rolls back to CAD, with the
+  same `error`) — and
   `onChange` receives `{ mode, busy, error }` so a host can show its own
   loading/error state. Same shape as `runtime.projection`. It drives the live
   view, and `runtime.captureCurrent()` follows it by default (a "capture from

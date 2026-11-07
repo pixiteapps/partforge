@@ -25,6 +25,13 @@ describe("buildCelMaterial", () => {
     expect(c.uniforms.uLit.value.getHex()).toBe(celTones(0x3366cc).lit);
     expect(c.userData.pfCel).toBe(true);
   });
+  it("a clone keeps opacity wired to uOpacity and keeps its colour", () => {
+    const m = buildCelMaterial({ color: 0x3366cc });
+    const c = m.clone();
+    c.opacity = 0.4;
+    expect(c.uniforms.uOpacity.value).toBe(0.4);
+    expect(c.color.getHex()).toBe(m.color.getHex());
+  });
 });
 describe("createCelInk", () => {
   it("constructs, names the sub-part layer, and disposes", () => {
@@ -57,6 +64,22 @@ describe("createCelInk render", () => {
     expect(renders).toHaveLength(2);
     expect(renders[1][2]).toBe(bound);
     expect(r.calls.at(-1)).toEqual(["set", bound]);
+    ink.dispose();
+  });
+  it("dots the field only when it asks for dots", () => {
+    const ink = createCelInk();
+    ink.render(stubRenderer([64, 48]), scene, cam, { field: null });
+    expect(ink.material.uniforms.uBgDots.value).toBe(0);
+    ink.render(stubRenderer([64, 48]), scene, cam, { field: { color: new THREE.Color(CEL.field.color), dots: true } });
+    expect(ink.material.uniforms.uBgDots.value).toBe(CEL.field.dots);
+    ink.dispose();
+  });
+  it("floors every sampling radius at one texel (NearestFilter target)", () => {
+    const ink = createCelInk();
+    const src = ink.material.fragmentShader;
+    expect(src).toContain("max(uThick * uPx, 1.0)");
+    expect(src).toContain("max(uThick * uOuter * uPx, 1.0)");
+    expect(src).toContain("max(uThin * uPx, 1.0)");
     ink.dispose();
   });
   it("skips a 1x1 drawing buffer entirely", () => {

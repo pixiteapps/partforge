@@ -131,14 +131,18 @@ export function pruneOverrides(map, part) {
 // function of its inputs. `anim` is the animation driver's opacity (undefined =
 // none), `user` the viewing override's (undefined = none). `fade` is null when
 // the mesh should sit on its base material, else the fade clone's opacity.
+// `inked` is whether the mesh belongs in cel's ink prepass (CEL_LAYER): only
+// when it is drawn opaque. A ghost — an authored display opacity below 1 on its
+// base material, or any fade — writes no depth, so inking it would outline it
+// as if solid and hide the ink of what shows through it.
 export function subPartVisibility({ shown, anim, user, hidden, renderMode, staticOpacity = 1 }) {
-  const off = { meshVisible: false, linesVisible: false, fade: null };
+  const off = { meshVisible: false, linesVisible: false, fade: null, inked: false };
   if (!shown || hidden) return off;
   const a = anim === undefined ? 1 : anim;
   const u = user === undefined ? 1 : user;
   const v = a * u;
   if (v <= 0) return off;
   const linesVisible = renderMode !== "realistic";
-  if (v >= 1) return { meshVisible: true, linesVisible, fade: null };
-  return { meshVisible: true, linesVisible, fade: staticOpacity * v };
+  if (v >= 1) return { meshVisible: true, linesVisible, fade: null, inked: staticOpacity >= 1 };
+  return { meshVisible: true, linesVisible, fade: staticOpacity * v, inked: false };
 }

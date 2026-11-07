@@ -469,7 +469,7 @@ export function createViewer(container, part, {
     if (!has(name)) return;
     const mesh = subMesh[name], lines = subLines[name];
     if (!mesh) return;
-    const { meshVisible, linesVisible, fade } = subPartVisibility({
+    const { meshVisible, linesVisible, fade, inked } = subPartVisibility({
       shown: lastShown.includes(name),
       anim: animOpacity.get(name),
       user: userOpacityOf(name),
@@ -482,7 +482,6 @@ export function createViewer(container, part, {
       if (hadFade) mesh.material = baseMats[name];
       if (lines.material === fadeLineMats.get(name)) lines.material = lineMaterial;
       if (hadFade) cutaway.resyncSubpart(name);
-      mesh.layers.enable(CEL_LAYER);
     } else {
       const fm = fadeMatFor(name);
       fm.opacity = fade;
@@ -491,10 +490,12 @@ export function createViewer(container, part, {
       const so = effectiveDisplayOf(name).opacity ?? 1;
       flm.opacity = so > 0 ? (fade / so) * lineOpacityForMode() : 0; // lines fade by the multiplier alone
       lines.material = flm;
-      // A ghost writes no depth, so the ink would outline it as if it were
-      // solid and hide what shows through it: it stays out of the prepass.
-      mesh.layers.disable(CEL_LAYER);
     }
+    // A ghost (an authored display opacity below 1, or a fade) writes no
+    // depth, so the ink would outline it as if it were solid and hide what
+    // shows through it: only a mesh drawn opaque is in the prepass.
+    if (inked) mesh.layers.enable(CEL_LAYER);
+    else mesh.layers.disable(CEL_LAYER);
     mesh.visible = meshVisible;
     lines.visible = linesVisible && meshVisible;
   }
@@ -1107,7 +1108,15 @@ export function createViewer(container, part, {
   // frame lands without further input.
   const celFullMapSize = () => (frameSwept || framePoses?.length || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize);
   function prepareCelGround(cam) {
-    celGround.setCasters(castersNow());
+    // Casters are the ink prepass's members: exactly the sub-parts drawn
+    // opaque (subPartVisibility's `inked`), so an authored ghost, a user
+    // see-through, a pose-drag ghost and an animation fade all cast none.
+    celGround.setCasters(names
+      .filter((n) => subMesh[n]?.visible && subMesh[n].layers.isEnabled(CEL_LAYER))
+      .map((n) => subMesh[n]));
+    // renderer.render updates matrixWorld only later in the frame; aim off
+    // this frame's camera, not the last one.
+    cam.updateMatrixWorld();
     celGround.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
     const full = celFullMapSize();
     const moving = celMovedAt != null && performance.now() - celMovedAt < SHADOW_SETTLE_MS;
@@ -1287,6 +1296,10 @@ export function createViewer(container, part, {
       scene.environmentRotation.set(0, 0, 0);
       for (const l of Object.values(liveLights)) l.visible = false;
       grid.visible = false;
+      // Before the rebase: an enabled cutaway clones its clipped line material
+      // from lineMaterial there (refreshSubpartMaterial), so it must already
+      // carry the ink colour and opacity.
+      syncLineLook();
       setSubMaterials(celFor);
       disposeLiveShadow();
       celInk = celInk ?? createCelInk();
@@ -1304,7 +1317,6 @@ export function createViewer(container, part, {
       scene.add(celGround.light, celGround.light.target, celGround.plane);
       placeCelGround({ live });
       if (live) applyPixelRatio("cad");
-      syncLineLook();
       refreshFeatureLines();
       if (live) invalidateMaterialThumbnails();
     } catch (e) {
@@ -2845,18 +2857,19 @@ export function createViewer(container, part, {
         object: mesh,
         show: () => {
           const staticOpacity = effectiveDisplayOf(n).opacity ?? 1;
-          const { meshVisible, linesVisible, fade } = subPartVisibility({
+          const { meshVisible, linesVisible, fade, inked } = subPartVisibility({
             shown: true, anim: animOpacity.get(n), user: undefined, hidden: false, renderMode, staticOpacity,
           });
           if (fade === null) {
             if (mesh.material === fadeMats.get(n)) mesh.material = baseMats[n];
             if (lines.material === fadeLineMats.get(n)) lines.material = lineMaterial;
-            mesh.layers.enable(CEL_LAYER); // solid again: back in the ink prepass (applySubOpacity's rule)
           } else {
             const f = fadeMatFor(n); f.opacity = fade; mesh.material = f;
             const fl = fadeLineMatFor(n); fl.opacity = staticOpacity > 0 ? (fade / staticOpacity) * lineOpacityForMode() : 0; lines.material = fl;
-            mesh.layers.disable(CEL_LAYER);
           }
+          // In the ink prepass only when drawn opaque (applySubOpacity's rule).
+          if (inked) mesh.layers.enable(CEL_LAYER);
+          else mesh.layers.disable(CEL_LAYER);
           mesh.visible = meshVisible; lines.visible = linesVisible && meshVisible;
         },
         restore: () => {
