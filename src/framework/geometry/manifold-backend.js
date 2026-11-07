@@ -241,8 +241,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // A boolean's runs: every operand's, deduplicated by run key.
   const runsOfAll = (solids) => () => dedupeRuns(solids.flatMap((s2) => s2._runs()));
 
+  // A cached solid outlives its round's cleanup(), and its operands may not (an
+  // uncached cylinder, a translate intermediate), so its lineage is resolved here,
+  // while they are all alive. Structural lineage costs no mesh read; only a solid
+  // with no recorded lineage and originalID() -1 reads its mesh, once.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
     const m = computeM();                 // already T()-tracked by the op
+    runsOf(m);
     return { value: wrap(m, hash), pin: m, dispose: () => del(m) };
   });
 
@@ -859,7 +864,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const body = T(Manifold.cylinder(height, od / 2, od / 2, segsAt(od / 2), false));
       const tool0 = T(Manifold.cylinder(height + 4, bore / 2, bore / 2, segsAt(bore / 2), false));
       const tool = T(tool0.translate([0, 0, -2])); // raw ops: track each result
-      return T(body.subtract(tool));
+      return noteRuns(T(body.subtract(tool)),
+        [{ id: body.originalID(), mat: null }, { id: tool0.originalID(), mat: translateAffine([0, 0, -2]) }]);
     }),
     // Rounded box: ONE hand-meshed ring stack (no booleans) whose cross-
     // sections follow the normative formula (rounded-solids.js / the design

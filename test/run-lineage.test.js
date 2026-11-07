@@ -7,11 +7,20 @@ import {
   IDENTITY12, composeAffine, dedupeRuns, mirrorAffine, rotateAffine, runKey, scaleAffine, translateAffine,
 } from "../src/framework/geometry/run-lineage.js";
 
-let k;
-beforeAll(async () => { k = await bootManifoldKernel(); });
+let k, manifoldProto;
+beforeAll(async () => {
+  k = await bootManifoldKernel();
+  manifoldProto = Object.getPrototypeOf(k.sphere(1)._m);
+});
 
 const apply = (M, p) => [0, 1, 2].map((i) => M[i] * p[0] + M[3 + i] * p[1] + M[6 + i] * p[2] + M[9 + i]);
 const close = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 9));
+
+// How many times `fn` reads a mesh. Counted before mockRestore(), which clears the calls.
+const meshReadsDuring = (fn) => {
+  const spy = vi.spyOn(manifoldProto, "getMesh");
+  try { fn(); return spy.mock.calls.length; } finally { spy.mockRestore(); }
+};
 
 // Every run the mesh carries must be one the lineage names.
 const expectLineageCoversMesh = (solid) => {
@@ -99,17 +108,13 @@ test("lineage matches the mesh through every transform and boolean", () => {
 });
 
 test("booleans and transforms answer _runs without materializing a mesh", () => {
-  const peg = k.cylinder({ r: 1, h: 6 });
-  const body = k.box({ min: [0, 0, 0], max: [8, 8, 2] })
-    .cut(peg.translate([2, 2, -1])).union(k.sphere(1).translate([4, 4, 2])).rotateZ(30);
-  const proto = Object.getPrototypeOf(body._m);
-  const spy = vi.spyOn(proto, "getMesh");
-  try {
+  let body;
+  expect(meshReadsDuring(() => {
+    const peg = k.cylinder({ r: 1, h: 6 });
+    body = k.box({ min: [0, 0, 0], max: [8, 8, 2] })
+      .cut(peg.translate([2, 2, -1])).union(k.sphere(1).translate([4, 4, 2])).rotateZ(30);
     body._runs();
-    expect(spy).not.toHaveBeenCalled();
-  } finally {
-    spy.mockRestore();
-  }
+  })).toBe(0);
   expect(body._runs()).toBe(body._runs()); // memoized
   expectLineageCoversMesh(body);
 });
@@ -126,26 +131,57 @@ test("roundAll's restamp reports the id map it applied", () => {
 
 test("factory primitives answer _runs without materializing a mesh", () => {
   const sq = [[0, 0], [4, 0], [4, 4], [0, 4]];
-  const solids = [
-    k.cylinder({ r: 2, h: 5 }),
-    k.sphere(3),
-    k.box({ min: [1, 2, 3], max: [10, 10, 10] }),
-    k.roundedBox({ size: [10, 10, 10], round: 1, center: true }),
-    k.roundedBox({ size: [10, 10, 10], round: 1 }),
-    k.prism(sq, 3),
-    k.extrude(sq, 3),
-    k.revolve([[1, 0], [3, 0], [3, 2], [1, 2]]),
-    k.loft([{ z: 0, polygon: sq }, { z: 4, polygon: sq }]),
-  ];
-  const proto = Object.getPrototypeOf(solids[0]._m);
-  const spy = vi.spyOn(proto, "getMesh");
-  let runs;
-  try {
+  let solids, runs;
+  expect(meshReadsDuring(() => {
+    solids = [
+      k.cylinder({ r: 2, h: 5 }),
+      k.sphere(3),
+      k.box({ min: [1, 2, 3], max: [10, 10, 10] }),
+      k.prism(sq, 3),
+      k.extrude(sq, 3),
+      k.revolve([[1, 0], [3, 0], [3, 2], [1, 2]]),
+      k.loft([{ z: 0, polygon: sq }, { z: 4, polygon: sq }]),
+    ];
     runs = solids.map((s) => s._runs());
-  } finally {
-    spy.mockRestore();
-  }
-  expect(spy).not.toHaveBeenCalled();
+  })).toBe(0);
   for (const r of runs) expect(r).toHaveLength(1);
   for (const s of solids) expectLineageCoversMesh(s);
+  // Mesh-built primitives (Manifold.ofMesh reports originalID -1) read their one
+  // run off the mesh they were just built from — already materialized, no CSG.
+  for (const s of [k.roundedBox({ size: [10, 10, 10], round: 1, center: true }), k.roundedBox({ size: [10, 10, 10], round: 1 })]) {
+    expect(s._runs()).toHaveLength(1);
+    expectLineageCoversMesh(s);
+  }
+});
+
+test("a cached solid's lineage survives its round's cleanup and later cache hits", () => {
+  // Driven as jobs.js drives a build: one bracketed round per sub-part, cleanup()
+  // after it. Cached results survive the round; their uncached operands do not.
+  const round = (build) => {
+    k.beginSubPart("lineage-round");
+    try { return build(); } finally { k.endSubPart(); k.cleanup(); }
+  };
+  const cutBody = () => k.box({ min: [0, 0, 0], max: [10, 10, 10] })
+    .cut(k.cylinder({ r: 2, h: 12 }).translate([5, 5, -1]));
+  const rounded = () => k.roundedBox({ size: [6, 6, 6], round: 1, center: true });
+  const bored = () => k.boredCylinder({ od: 10, h: 6, bore: 4 });
+  // Round 1 builds and never asks _runs().
+  round(() => { cutBody(); rounded(); bored(); });
+  // Round 2 hits the cache and asks — through a fresh transform, after a cleanup.
+  const keys = round(() => [cutBody(), rounded(), bored()]
+    .map((s) => s.translate([1, 0, 0])._runs().map((r) => runKey(r.id, r.mat))));
+  expect(keys[0].length).toBe(2);
+  expect(keys[1].length).toBe(1);
+  expect(keys[2].length).toBe(2);
+  // Asked only after its own round's cleanup.
+  const late = round(() => k.roundedBox({ size: [7, 7, 7], round: 1, center: true }));
+  expect(late._runs()).toHaveLength(1);
+  const lateBored = round(() => k.boredCylinder({ od: 12, h: 6, bore: 4 }));
+  expect(lateBored._runs()).toHaveLength(2);
+});
+
+test("a bored cylinder's lineage is structural and matches its mesh", () => {
+  let b;
+  expect(meshReadsDuring(() => { b = k.boredCylinder({ od: 9, h: 5, bore: 3 }); b._runs(); })).toBe(0);
+  expectLineageCoversMesh(b);
 });
