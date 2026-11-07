@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { recorder, newReadSink, expandReads, expandDerivedReads } from "../src/framework/read-recorder.js";
+import { recorder, newReadSink, expandReads, expandDerivedReads, orderedReads } from "../src/framework/read-recorder.js";
 import { resolveDerived, resolveDerivedAttributed } from "../src/framework/derive.js";
 
 test("get records the key and returns the real value", () => {
@@ -75,4 +75,32 @@ test("through: a derive that writes to p leaves the write on p, as resolveDerive
   const a = P(); resolveDerived(writer, a);
   const b = P(); resolveDerivedAttributed(writer, b, { through: true });
   expect(b.extra).toBe(a.extra);
+});
+
+test("the sink logs reads in order, duplicates kept, enumeration as *", () => {
+  const sink = newReadSink();
+  const p = recorder({ a: 1, b: 2 }, sink.raw, { through: true, log: sink.log });
+  void p.a; void p.b; void p.a;
+  expect(sink.log).toEqual(["a", "b", "a"]);
+  Object.keys(p);
+  expect(sink.log.at(-1)).toBe("*");
+});
+
+test("deep d recording logs the leaf path and drops the parent entry", () => {
+  const sink = newReadSink();
+  const d = recorder({ open: [1, 2, 3], pulls: [[0, 1, 2]], palm: { place: () => {}, n: 1 } }, sink.dSeen, { through: true, log: sink.log, deep: true });
+  void d.open[1];
+  void d.pulls[0][2];
+  void d.palm.n;
+  expect(sink.log).toEqual([{ path: "open.1" }, { path: "pulls.0.2" }, { path: "palm" }]);
+  expect([...sink.dSeen].sort()).toEqual(["open", "palm", "pulls"]);
+  expect(Array.isArray(d.open)).toBe(true);
+});
+
+test("orderedReads is newest first, expands paths, and refuses an enumeration", () => {
+  const attribution = { depsOf: null, allInputs: new Set(["w", "h", "t"]) };
+  const nudged = { depsForPath: (path) => (path === "open.1" ? new Set(["t"]) : null) };
+  expect(orderedReads(["w", { path: "open.1" }, "h", "w"], { nudged, attribution })).toEqual(["w", "h", "t"]);
+  expect(orderedReads(["w", { path: "size" }], { nudged, attribution })).toEqual(["w", "h", "t"]);
+  expect(orderedReads(["w", "*"], { nudged, attribution })).toBeNull();
 });

@@ -53,7 +53,10 @@ export function resolveParamsAttributed(part, params, sanitize) {
 // reads them — viewSubParts' enabled(), build(), place(), expect(p, d) — lands in
 // the sink with no change to the reader.
 export function recordedParams({ p, d }, sink) {
-  return { p: recorder(p, sink.raw, { through: true }), d: recorder(d, sink.dSeen, { through: true }) };
+  return {
+    p: recorder(p, sink.raw, { through: true, log: sink.log }),
+    d: recorder(d, sink.dSeen, { through: true, log: sink.log, deep: true }),
+  };
 }
 
 // `reads` (optional): a newReadSink() (read-recorder.js). When given, the returned
