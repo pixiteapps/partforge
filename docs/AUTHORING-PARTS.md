@@ -565,6 +565,16 @@ the viewer's blue-grey.
 maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate (180, 220, 256 or 350 mm) marked with its size), `outdoor` (overcast sky,
 concrete).
 
+**Cel shaded.** The View style popover's third look, after CAD and
+realistic: every sub-part is drawn in flat bands of its effective `color` (or
+its material's colour; a sub-part with neither is drawn body-white `#eef1f4`,
+not CAD blue-grey), with the shadow tones derived automatically. A preset's
+metalness, roughness, textures and finish overrides do not change it, and
+`opacity` still ghosts. Ink runs on silhouettes and creases, plus the kernel's
+feature edges. The field is flat and faintly halftoned, with a soft ground
+shadow under the part that follows a pose. There is nothing to author and it
+needs no assets.
+
 **Viewers can change a sub-part's look.** The View style popover's Parts
 section lets a user pick a material and colour per sub-part, fade it, or hide
 it, live and without a rebuild (`runtime.setSubPartDisplay` below). Material
@@ -4347,8 +4357,9 @@ For an embedder driving realistic mode from its own UI instead of (or in
 addition to) the generated view style button above:
 
 - `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
-  `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
-  `"cad"` if the realistic environment's assets fail to load — and
+  `"cad"`, `"realistic"` or `"cel"`. `set()` resolves to the mode actually in effect —
+  `"cad"` if the realistic environment's assets fail to load; `"cel"` needs no
+  assets, so it always takes — and
   `onChange` receives `{ mode, busy, error }` so a host can show its own
   loading/error state. Same shape as `runtime.projection`. It drives the live
   view, and `runtime.captureCurrent()` follows it by default (a "capture from
@@ -4360,7 +4371,8 @@ addition to) the generated view style button above:
   instead of following the live view. `"cad"` always works. `"realistic"` from
   a CAD view works only once the current environment's assets have loaded
   (the call is synchronous and can't wait for them); before that it falls
-  back to the live look. Use `renderViews` when realistic must be guaranteed.
+  back to the live look. `"cel"` always works, from any view, since it needs no
+  assets. Use `renderViews` when realistic must be guaranteed.
 - `runtime.environment` — `{ get(), set(id), onChange(cb), list() }` for the
   realistic environment (`"studio"` | `"workshop"` | `"print-bed"` |
   `"outdoor"`, per "Materials and appearance" above). `list()` returns every
@@ -4374,7 +4386,7 @@ addition to) the generated view style button above:
   stock — "Sheet parts default to their stock"), so use this to decide
   whether to surface your own realistic control at all, not whether it works.
   Feature lines are not a preference: they draw whenever `runtime.renderMode`
-  reads `"cad"` and never while it reads `"realistic"` — there is no switch
+  reads `"cad"` or `"cel"` and never while it reads `"realistic"` — there is no switch
   to drive independently of it.
 - `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
   sibling of `runtime.captureViews` (canonical angles, framed to the visible
@@ -4382,10 +4394,12 @@ addition to) the generated view style button above:
   `captureViews` — CAD whatever the live view shows — and `{ renderMode: "realistic" }` borrows the realistic look
   for the capture — waiting on the chosen environment's assets — **without**
   switching the live view. Rejects if the realistic assets fail to load.
+  `{ renderMode: "cel" }` borrows the cel look the same way and never rejects
+  for assets.
 
 Both preferences round-trip through `mount()`'s `viewerState`: a previous
-mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`
-or `"realistic"`) and, only when the viewer's environment was actually CHOSEN
+mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`,
+`"realistic"` or `"cel"`) and, only when the viewer's environment was actually CHOSEN
 rather than merely defaulted from `meta.environment`, `viewerState.environment`.
 `renderMode` reports the mode the user is **headed for**, not only the one on
 screen: a realistic restore or switch that's still loading reports

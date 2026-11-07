@@ -365,10 +365,10 @@ export interface ViewerState {
   environment?: string;
 }
 
-/** The viewer's appearance: the drafting view, or physical materials under an environment. */
-export type RenderMode = "cad" | "realistic";
+/** The viewer's appearance: the drafting view, physical materials under an environment, or the cel-shaded look. */
+export type RenderMode = "cad" | "realistic" | "cel";
 
-/** What `renderMode.onChange` listeners receive. `busy` while realistic's assets load; `error` when they failed. */
+/** What `renderMode.onChange` listeners receive. `busy` while realistic's assets load or cel's shaders compile; `error` when they failed. */
 export interface RenderModeEvent {
   mode: RenderMode;
   busy: boolean;
@@ -825,7 +825,7 @@ export interface PartRuntime {
   pickMarker: PickMarkerRuntime;
   /** The selection popover, or `null` without the `selectionPopover` option. */
   selection: SelectionRuntime | null;
-  /** Realistic render mode (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
+  /** Render mode — CAD, realistic or cel (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;
@@ -859,9 +859,9 @@ export interface MountPreviewOptions {
   animate?: boolean;
   /** `false` (0.168.0+): no view cube, `#viewbar` controls, view style, tooltips, play button or `elements.chrome` wiring. Default true. */
   chrome?: boolean;
-  /** `"transparent"` (0.168.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
+  /** `"transparent"` (0.168.0+): alpha-0 clear, no theme background, no grid. CAD and cel modes — realistic mode draws its own environment backdrop. Cel keeps the part, ink and ground shadow but draws no field or halftone. Default `"theme"`. */
   background?: "theme" | "transparent";
-  /** `true` (0.168.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
+  /** `true` (0.168.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic and cel modes draw their own ground shadow (cel ignores this option). Default false. */
   contactShadow?: boolean;
   /** `false` (0.168.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
   zoom?: boolean;
