@@ -24,6 +24,7 @@ import { SEGS, circleSegs, doubleCurvatureSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
+import { composeAffine, dedupeRuns, mirrorAffine, rotateAffine, scaleAffine, translateAffine } from "./run-lineage.js";
 
 // A boolean whose operand was already broken. See `judged` below.
 const invalidOperand = (op, index, status) => new Error(
@@ -202,6 +203,44 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // bad cut → hole → bad cut → anything). embind knows whether a handle is
   // gone, so both owners ask before deleting instead of trusting the other.
   const del = (o) => { if (!o?.isDeleted?.()) o?.delete?.(); };
+  // Run lineage (run-lineage.js): per Manifold, the runs its mesh carries as
+  // [{ id: originalID, mat: runTransform | null }], answered STRUCTURALLY — a
+  // transform composes its operand's runs, a boolean concatenates its operands' —
+  // so asking never forces Manifold to evaluate a lazy CSG tree. Keyed on the
+  // Manifold rather than the wrapper so every re-wrap of one object (clone, a
+  // skipped fillet, hoist/replay, a cache hit) shares the answer. A value is a
+  // thunk until first asked, then the memoized array. With nothing recorded, a
+  // fresh original (originalID() >= 0, identity transform) is its own single
+  // run; anything else (a restamp that rebuilt from a mesh, a mixed solid built
+  // outside these paths) reads the mesh ONCE — the documented fallback.
+  const lineage = new WeakMap();
+  const idMaps = new WeakMap(); // restamping ops: old originalID -> new
+  const noteRuns = (mm, runs) => { if (!lineage.has(mm)) lineage.set(mm, runs); return mm; };
+  const meshRuns = (mm) => {
+    const g = mm.getMesh();
+    try {
+      const roid = g.runOriginalID, rt = g.runTransform;
+      const runs = [];
+      for (let r = 0; r < roid.length; r++)
+        runs.push({ id: roid[r], mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null });
+      return dedupeRuns(runs);
+    } finally {
+      g.delete?.();
+    }
+  };
+  const runsOf = (mm) => {
+    let v = lineage.get(mm);
+    if (Array.isArray(v)) return v;
+    if (typeof v === "function") v = v();
+    else { const id = mm.originalID(); v = id !== -1 ? [{ id, mat: null }] : meshRuns(mm); }
+    lineage.set(mm, v);
+    return v;
+  };
+  // `mm`'s runs carried by the affine `A` (applied after each run's own transform).
+  const runsThrough = (mm, A) => () => runsOf(mm).map((r) => ({ id: r.id, mat: composeAffine(A, r.mat) }));
+  // A boolean's runs: every operand's, deduplicated by run key.
+  const runsOfAll = (solids) => () => dedupeRuns(solids.flatMap((s2) => s2._runs()));
+
   const cached = (hash, computeM) => cache.lookup(hash, () => {
     const m = computeM();                 // already T()-tracked by the op
     return { value: wrap(m, hash), pin: m, dispose: () => del(m) };
@@ -217,7 +256,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     const { hoisted, residuals } = hoistCommonSuffix(solids.map((s2) => s2._canon.chain));
     if (!hoisted.length) return null;
     const ops = solids.map((s2, i) => replay(wrap(s2._canon.m, s2._canon.hash), residuals[i]));
-    const canonical = cached(h(opName, ops.map((s2) => s2._hash)), () => evaluate(ops));
+    const canonical = cached(h(opName, ops.map((s2) => s2._hash)), () => noteRuns(evaluate(ops), runsOfAll(ops)));
     return replay(canonical, hoisted);
   };
 
@@ -354,12 +393,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     try {
       const raw = run()._m;
       const baseOids = runOids(baseM);
-      for (const oid of runOids(raw)) if (!baseOids.has(oid)) oidPolicies.set(oid, BLEND);
+      // the result's runs: the base's plus the blend tools', read off the mesh this
+      // already materializes (a debris sweep below only ever drops runs)
+      const rawRuns = meshRuns(raw);
+      for (const { id: oid } of rawRuns) if (!baseOids.has(oid)) oidPolicies.set(oid, BLEND);
       // debris sweep AFTER simplify: the boolean's own femto-components are joined by
       // ones simplify() itself pinches off while collapsing seam slivers (measured:
       // 4-triangle atto-scale bubbles, one with negative volume, after a rim fillet
       // over vertical-fillet bands) — sweeping first missed those
-      return dropDebris(T(raw.simplify(SIMPLIFY_EPS)));
+      return noteRuns(dropDebris(T(raw.simplify(SIMPLIFY_EPS))), rawRuns);
     } catch (e) {
       if (e instanceof UnsupportedEdgeError) throw new KernelCapabilityError(`${op}: ${e.message}`);
       throw e;
@@ -447,13 +489,24 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const g0 = filleted._m.getMesh();
         try {
           const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
-          if (![...new Set(g0.runOriginalID)].some(isBlend)) return T(filleted._m.asOriginal());
-          const { baseId, blendIdFor } = reserveBlendRestamp(new Set(g0.runOriginalID));
-          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => blendIdFor.get(o) ?? baseId);
+          const oids0 = new Set(g0.runOriginalID);
+          if (![...oids0].some(isBlend)) {
+            const o = T(filleted._m.asOriginal());
+            idMaps.set(o, new Map([...oids0].map((oid) => [oid, o.originalID()])));
+            return o;
+          }
+          const { baseId, blendIdFor } = reserveBlendRestamp(oids0);
+          const idMap = new Map([...oids0].map((oid) => [oid, blendIdFor.get(oid) ?? baseId]));
+          const rt = g0.runTransform;
+          const runs = dedupeRuns(Array.from(g0.runOriginalID, (oid, r) =>
+            ({ id: idMap.get(oid), mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null })));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => idMap.get(o));
           // The constructor re-welds, and that can pinch a latent sliver off a
           // component as fresh femto-debris (the same rebirth dropDebris's own
           // compose() loop guards against) — sweep the reconstruction too.
-          return dropDebris(T(new Manifold(g0)));
+          const o = noteRuns(dropDebris(T(new Manifold(g0))), runs);
+          idMaps.set(o, idMap);
+          return o;
         } finally {
           g0.delete?.();
         }
@@ -521,12 +574,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // can delegate to their throwing `_`-prefixed twins above without re-deriving
   // the cache key or the capability checks. Declared as a binding the closures
   // capture: every reference runs after addSugar has returned.
-  const wrap = (m, hash, canon = { m, hash, chain: [] }) => {
+  //
+  // `runs` (a thunk or an array) is this solid's run lineage, when the op knows it
+  // structurally; `idMap` (old originalID -> new) marks a restamping op's result.
+  // Both are recorded against `m` (see `lineage` above), so re-wraps share them.
+  const wrap = (m, hash, canon = { m, hash, chain: [] }, { runs, idMap } = {}) => {
+    if (runs) noteRuns(m, runs);
+    if (idMap) idMaps.set(m, idMap);
     const self = addSugar({
     _m: m,
     _hash: hash,
     _canon: canon,
-    cut: (t) => cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))),
+    _runs: () => runsOf(m),
+    ...(idMaps.has(m) ? { _idMap: idMaps.get(m) } : {}),
+    cut: (t) => cached(h("cut", hash, t._hash), () => noteRuns(judged("cut", [m, t._m], T(m.subtract(t._m))), runsOfAll([self, t]))),
     // THROWING forms. These are the composition primitives — internal callers
     // that have their own recovery (prismRoundAllFast, which answers a failed
     // fillet by falling back to the reference Minkowski roundAll) must use
@@ -603,10 +664,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // tree — no materialized intermediate union (the unionRaw memory note applies)
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
       const ms = [m, ...tools.map((t) => t._m)];
-      return judged("cutAll", ms, T(Manifold.difference(ms)));
+      return noteRuns(judged("cutAll", ms, T(Manifold.difference(ms))), runsOfAll([self, ...tools]));
     }),
-    intersect: (t) => cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))),
-    union: (t) => cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))),
+    intersect: (t) => cached(h("intersect", hash, t._hash), () =>
+      noteRuns(judged("intersect", [m, t._m], T(m.intersect(t._m))), runsOfAll([self, t]))),
+    union: (t) => cached(h("union", [hash, t._hash]), () =>
+      noteRuns(judged("union", [m, t._m], unionRaw([m, t._m])), runsOfAll([self, t]))),
     clone: () => wrap(m, hash),
     // Name this solid's surface for hover/pick feature attribution. asOriginal()
     // stamps a fresh originalID that survives transforms and booleans, so every
@@ -754,21 +817,28 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),
     translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
-      { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] }),
+      { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] },
+      { runs: runsThrough(m, translateAffine(v)) }),
     rotate: (deg, center, axis) => {
       const nz = (axis[0] !== 0) + (axis[1] !== 0) + (axis[2] !== 0);
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = nz <= 1
         ? T(a.rotate([axis[0] * deg, axis[1] * deg, axis[2] * deg]))   // basis axis — euler is exact; unchanged
         : T(a.transform(axisAngleMat4(axis, deg)));                    // general axis-angle
+      // A basis-axis euler rotate turns by the component itself (axis [0,0,2] turns
+      // 2·deg): rotateAffine normalizes the axis, so hand it the scaled angle.
+      const turn = nz <= 1 ? deg * Math.hypot(axis[0], axis[1], axis[2]) : deg;
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
-        { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] });
+        { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] },
+        { runs: runsThrough(m, rotateAffine(turn, center, axis)) });
     },
-    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
+    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane), undefined,
+      { runs: runsThrough(m, mirrorAffine(PLANE_NORMAL[plane])) }),
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
-      return wrap(T(b.translate(center)), h("scale", hash, factor, center));
+      return wrap(T(b.translate(center)), h("scale", hash, factor, center), undefined,
+        { runs: runsThrough(m, scaleAffine(factor, center)) });
     },
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
@@ -801,7 +871,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // One count serves every corner and rim arc, so it is sized for the largest.
         const rMax = Math.max(round.side, round.top, round.bottom);
         const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segsAt(rMax), roundedBoxArcSamples(segsAt(rMax), dcAt(rMax)))));
-        return center ? T(solid.translate([0, 0, -size[2] / 2])) : solid;
+        if (!center) return solid;
+        const lift = [0, 0, -size[2] / 2];
+        return noteRuns(T(solid.translate(lift)), runsThrough(solid, translateAffine(lift)));
       }),
     // Sized by the double-curvature rule (circle-segs.js: a sphere spends the per-circle
     // count squared), on both tiers — the hash carries the count, so a sphere built at
@@ -809,7 +881,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     sphere: (r) => wrap(T(Manifold.sphere(r, dcAt(r))), h("sphere", r, dcAt(r))),
     box: (min, max) => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
-      return wrap(T(cube.translate(min)), h("box", min, max));
+      return wrap(T(cube.translate(min)), h("box", min, max), undefined, { runs: runsThrough(cube, translateAffine(min)) });
     },
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
@@ -993,7 +1065,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     union: (solids) => solids.length === 1
       ? solids[0]
       : hoistBoolean("union", solids, (ops) => judgedUnion(ops.map((s) => s._m)))
-        ?? cached(h("union", solids.map((s) => s._hash)), () => judgedUnion(solids.map((s) => s._m))),
+        ?? cached(h("union", solids.map((s) => s._hash)), () => noteRuns(judgedUnion(solids.map((s) => s._m)), runsOfAll(solids))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.
