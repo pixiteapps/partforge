@@ -3183,8 +3183,8 @@ test("makeHandle's exportPreview defaults to a rejection", async () => {
 });
 
 // --- selection popover (spec 2026-10-14) -----------------------------------
-const pickBody = () => attachPicker.mock.calls.at(-1)[1].onPick(
-  { subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 40, y: 30 });
+const pickBody = (hit) => attachPicker.mock.calls.at(-1)[1].onPick(
+  { subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 40, y: 30 }, hit);
 
 test("no selectionPopover: no popover node and runtime.selection is null", () => {
   const { createWorker } = makeWorkers();

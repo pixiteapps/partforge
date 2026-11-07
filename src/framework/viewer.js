@@ -1862,7 +1862,7 @@ export function createViewer(container, part, {
   // --- geometry builder -----------------------------------------------------
   // BufferGeometry from a worker mesh payload — kept in its shared-frame coords
   // (NOT recentred) so the pieces assemble in the right relative positions.
-  function buildGeometry({ positions, normals, indices, triangles, edges, featureIds, features }) {
+  function buildGeometry({ positions, normals, indices, triangles, edges, featureIds, features, originIds, origins }) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     if (indices?.length) geo.setIndex(new THREE.BufferAttribute(indices, 1)); // Manifold is non-indexed
@@ -1880,6 +1880,7 @@ export function createViewer(container, part, {
     }
     out.userData.triangles = triCount;
     if (featureIds) { out.userData.featureIds = featureIds; out.userData.features = features; }
+    if (originIds) { out.userData.originIds = originIds; out.userData.origins = origins; }
     // feature edge lines: kernel-supplied segments are authoritative — an EMPTY
     // array means "this solid has no feature edges" (e.g. a lone sphere), so
     // draw none rather than falling back. Only a payload with NO edge data at
@@ -1974,6 +1975,25 @@ export function createViewer(container, part, {
       indices: geo.index ? Uint32Array.from(geo.index.array) : null,
       triangles: geo.userData.triangles ?? (geo.index ? geo.index.count : pos.count) / 3,
     };
+  }
+
+  // Which params each face was built from, as delivered: `{ originIds, origins }`
+  // or null (no geometry, or a delivery that carried none). Deliberately NOT part
+  // of getSubMeshPayload, whose consumer (the cached preview) has no use for it.
+  function getSubOrigins(name) {
+    const ud = subCache[name]?.userData;
+    return ud?.originIds ? { originIds: ud.originIds, origins: ud.origins } : null;
+  }
+
+  // The sub-part's bounding box in the shared CAD frame — its geometry's box moved
+  // by the fast-path pose — as plain arrays, without copying a vertex. null when
+  // nothing has been delivered under that name.
+  const _boundsBox = new THREE.Box3();
+  function getSubBounds(name) {
+    const geo = subCache[name];
+    if (!geo?.boundingBox || !subMesh[name]) return null;
+    _boundsBox.copy(geo.boundingBox).applyMatrix4(subMesh[name].matrix);
+    return { min: _boundsBox.min.toArray(), max: _boundsBox.max.toArray() };
   }
 
   // The geometry drawn for one sub-part in its DELIVERY frame — no fast-path pose
@@ -3530,6 +3550,8 @@ export function createViewer(container, part, {
     hasSubMesh,
     subTriangles,
     getSubMeshPayload,
+    getSubOrigins,
+    getSubBounds,
     getSubMeshLocal,
     frame,
     captureCanonicalViews,
