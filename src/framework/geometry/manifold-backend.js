@@ -16,7 +16,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
+import { loftShadingPolicy, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshOffset, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -366,9 +366,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // are sub-MIN_EDGE thin, so the line pass gates them, and closed sliver DEBRIS is
   // swept above; the visible cost is a modestly larger mesh, bounded by
   // mesh-fillet-perf.test.js. Shading is unchanged (BLEND shades like SMOOTH), and
-  // label() on a blend result already handles a mixed-original mesh (the majority
-  // vote below).
-  // Fresh ids for a blend-aware re-stamp (label(), the roundAll decouple): ONE base id
+  // label() on a blend result re-stamps every run 1:1, so the distinction survives it.
+  // Fresh ids for the roundAll decouple's blend-aware re-stamp: ONE base id
   // for every non-blend run, and one fresh id PER blend surface — each keeps its BLEND
   // policy and its analytic descriptor (runTransform rides through the MeshGL
   // round-trip, so the descriptor's original frame stays valid). Folding the band
@@ -483,7 +482,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // Decouple from the fillet cache's pin: cached() will pin the object this
         // returns under the roundAll hash, and one WASM object must never sit
         // under two cache entries (double-dispose on eviction). The decouple is
-        // blend-AWARE, the same re-stamp label() performs: a blanket asOriginal()
+        // blend-AWARE: a blanket asOriginal()
         // folded blend and base into one fresh surface, erasing the distinction
         // the band-boundary lines need — a roundAll'd prism rendered with no
         // feature lines at all, unlike the identical geometry from fillet().
@@ -676,10 +675,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     union: (t) => cached(h("union", [hash, t._hash]), () =>
       noteRuns(judged("union", [m, t._m], unionRaw([m, t._m])), runsOfAll([self, t]))),
     clone: () => wrap(m, hash),
-    // Name this solid's surface for hover/pick feature attribution. asOriginal()
-    // stamps a fresh originalID that survives transforms and booleans, so every
-    // surviving triangle of this surface can be traced back to the label. The
-    // registry entry lives exactly as long as the cache pins the solid — eviction
+    // Name this solid's surface for hover/pick feature attribution. Fresh reserved
+    // originalIDs survive transforms and booleans, so every surviving triangle of
+    // this surface can be traced back to the label. The registry entries live exactly as long as the cache pins the solid — eviction
     // disposes both, so the registry can't grow unboundedly across regenerates.
     label: (name) => {
       // Labeling only re-stamps surface ids, so it commutes with the trailing
@@ -689,129 +687,42 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       if (canon.chain.length) return replay(wrap(canon.m, canon.hash).label(name), canon.chain);
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
-        // Blend-aware re-stamp. If this mesh carries blend surfaces (the boundaryLines
-        // policy), one asOriginal() would fold band and base into a single surface and
-        // erase the band-boundary overlay on exactly the solids parts label — every
-        // real part labels its top-level solids. Re-stamp onto fresh reserved ids
-        // instead, one base id and one per blend surface (reserveBlendRestamp, which
-        // also carries each band's analytic normals): the label covers all of them
-        // (same string → one feature entry), the
-        // distinction survives labeling and every later boolean, and reserved ids are
-        // fresh so cached-solid reuse under another label cannot collide — the same
-        // guarantee asOriginal() gives the plain path below.
+        // Re-stamp every distinct originalID 1:1 onto fresh reserved ids. Folding
+        // them into one id (asOriginal(), or one base id beside the blend ids) would
+        // erase per-face provenance: the sector creases and dividing lines of a
+        // sectored loft, the band-boundary lines of a blend, the seam between a loft
+        // and the tool that hollowed it, and the face a later pick names. Instead
+        // each new id inherits its old id's shading policy and analytic surface
+        // (an id with no policy keeps none and shades SMOOTH by default), and every
+        // new id maps to the one label string — creased-normals merges ids with the
+        // same label into one feature entry. Reserved ids are fresh, so reusing a
+        // cached solid under another label cannot collide.
         const g0 = m.getMesh();
-        const oids0 = new Set(g0.runOriginalID);
-        // Sector-aware re-stamp: a provenance-sectored loft (the `sector` policy
-        // marker) must keep every run's identity — folding them (either the plain
-        // asOriginal below or the blend path's two-group stamp) would erase the
-        // sector creases and dividing lines the runs exist to draw. Re-stamp every
-        // distinct id 1:1 onto fresh reserved ids: each keeps its policy (blend
-        // runs riding along keep BLEND), all map to the one label string, and the
-        // fresh ids give the same reuse-under-another-label guarantee as
-        // asOriginal(). Unregistered ids (plain boolean tools) stay unregistered —
-        // they shade SMOOTH by default exactly as before.
-        if ([...oids0].some((oid) => !!oidPolicies.get(oid)?.sector)) {
-          const olds = [...oids0];
+        let o, idMap, runs;
+        try {
+          const olds = [...new Set(g0.runOriginalID)];
           const base2 = Manifold.reserveIDs(olds.length);
-          const mapId = new Map(olds.map((o2, i2) => [o2, base2 + i2]));
-          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o2) => mapId.get(o2));
-          const o = T(new Manifold(g0));
+          idMap = new Map(olds.map((o2, i2) => [o2, base2 + i2]));
+          const rt = g0.runTransform;
+          runs = dedupeRuns(Array.from(g0.runOriginalID, (oid, r) =>
+            ({ id: idMap.get(oid), mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null })));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o2) => idMap.get(o2));
+          o = noteRuns(T(new Manifold(g0)), runs);
+        } finally {
           g0.delete?.();
-          const setIds = [];
-          for (const [oldId, newId] of mapId) {
-            featureLabels.set(newId, name);
-            const pol = oidPolicies.get(oldId);
-            if (pol !== undefined) oidPolicies.set(newId, pol);
-            const surf = blendSurfaces.get(oldId); // analytic normals ride the 1:1 stamp too
-            if (surf) blendSurfaces.set(newId, surf);
-            setIds.push(newId);
-          }
-          return { value: wrap(o, lh), pin: o, dispose: () => {
-            for (const id2 of setIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
-            o.delete?.();
-          } };
         }
-        if ([...oids0].some(keepsOwnId)) {
-          const { baseId, blendIdFor, blendIds } = reserveBlendRestamp(oids0);
-          // base-group policy: the same triangle-weighted majority vote as the plain
-          // path, but over the NON-blend runs only — blend runs would elect BLEND for
-          // the base group and flag BOTH sides of every boundary seam, which is
-          // exactly the no-line state this path exists to avoid.
-          const ri = g0.runIndex, roid = g0.runOriginalID;
-          const weightByKey = new Map();
-          let bestWeight = -1, basePol;
-          for (let r = 0; r < roid.length; r++) {
-            if (blendIdFor.has(roid[r])) continue;
-            const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
-            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
-            const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
-            weightByKey.set(key, weight);
-            const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && basePol?.sameSurfaceLines);
-            if (better) { bestWeight = weight; basePol = pol; }
-          }
-          g0.runOriginalID = Uint32Array.from(roid, (o2) => blendIdFor.get(o2) ?? baseId);
-          const o = T(new Manifold(g0));
-          g0.delete?.();
-          featureLabels.set(baseId, name);
-          for (const id2 of blendIds) featureLabels.set(id2, name);
-          if (basePol !== undefined) oidPolicies.set(baseId, basePol);
-          return { value: wrap(o, lh), pin: o, dispose: () => {
-            featureLabels.delete(baseId); oidPolicies.delete(baseId);
-            for (const id2 of blendIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
-            o.delete?.();
-          } };
+        for (const [oldId, newId] of idMap) {
+          featureLabels.set(newId, name);
+          const pol = oidPolicies.get(oldId);
+          if (pol !== undefined) oidPolicies.set(newId, pol);
+          const surf = blendSurfaces.get(oldId);
+          if (surf) blendSurfaces.set(newId, surf);
         }
-        g0.delete?.();
-        const prevId = typeof m.originalID === "function" ? m.originalID() : -1;
-        const o = T(m.asOriginal());
-        const id = o.originalID();
-        featureLabels.set(id, name);
-        // labeling re-stamps the originalID — carry the surface's shading policy along.
-        // A boolean upstream of this label() (e.g. a faceted loft().intersect(tool),
-        // as the vase does to hollow itself) leaves the solid spanning more than one
-        // original surface, so originalID() reports -1 ("mixed") rather than a single
-        // id — the direct lookup below misses even though the loft's policy is right
-        // there. Fall back to the mesh's own run table and recover it via a
-        // triangle-count-weighted majority vote across all surfaces feeding this
-        // mesh (a plain tool like a box has no registered policy of its own, but
-        // still votes SMOOTH — see below).
-        let inherited = prevId !== -1 ? oidPolicies.get(prevId) : undefined;
-        // Skip the mesh scan entirely when no surface anywhere has a registered
-        // policy (e.g. planter's labeled prism compound) — getMesh() forces a
-        // full mesh materialization and parts with no lofts must not pay for it.
-        if (inherited === undefined && prevId === -1 && oidPolicies.size > 0) {
-          const g = m.getMesh();
-          // Triangle-count-weighted majority: walk the run table with runIndex
-          // (each run r spans triangles ri[r]/3..ri[r+1]/3 — same arithmetic
-          // creased-normals.js uses) and tally triangle counts per registered
-          // policy, keyed by VALUE (creaseAngle/sameSurfaceLines), not object
-          // reference — a majority-by-object-identity check would silently
-          // break if policies were ever constructed per-op instead of shared
-          // singletons. A run whose original surface has NO registered policy
-          // (a plain boolean tool, e.g. a box) still gets a vote: at render
-          // time an unregistered surface shades SMOOTH (buildGeometry's
-          // default), so counting it as an abstention would let the vote
-          // disagree with what's actually drawn — it contributes its triangle
-          // weight to SMOOTH instead. The policy spanning the most triangles
-          // wins; an exact tie favors the FACETED-like policy
-          // (sameSurfaceLines: false) — deterministic, and biased toward
-          // honest-print rendering over silently smoothing facets away.
-          const ri = g.runIndex, roid = g.runOriginalID;
-          const weightByKey = new Map();  // policy key -> triangle count
-          let bestWeight = -1, bestPol;
-          for (let r = 0; r < roid.length; r++) {
-            const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
-            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
-            const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
-            weightByKey.set(key, weight);
-            const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && bestPol?.sameSurfaceLines);
-            if (better) { bestWeight = weight; bestPol = pol; }
-          }
-          g.delete?.();
-          inherited = bestPol;
-        }
-        if (inherited !== undefined) oidPolicies.set(id, inherited);
-        return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); oidPolicies.delete(id); o.delete?.(); } };
+        const newIds = [...idMap.values()];
+        return { value: wrap(o, lh, undefined, { runs, idMap }), pin: o, dispose: () => {
+          for (const id2 of newIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
+          o.delete?.();
+        } };
       });
     },
     boundingBox: () => {

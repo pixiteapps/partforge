@@ -42,6 +42,15 @@ test("labels survive transforms applied after label()", () => {
   expect(m.featureIds.some((v) => v === 1)).toBe(true);
 });
 
+test("label() keeps the mesh's runs: same triangle count as unlabeled, one new id per old id", () => {
+  const make = () => k.box({ min: [0, 0, 0], max: [10, 10, 10] }).cut(k.cylinder({ r: 2, h: 12 }).translate([5, 5, -1]));
+  const plain = make(), labeled = make().label("Body");
+  expect(labeled.toMesh().triangles).toBe(plain.toMesh().triangles);
+  expect(labeled._idMap.size).toBe(2);
+  expect(new Set(labeled._runs().map((r) => r.id)).size).toBe(2);
+  expect(labeled.toMesh().features).toEqual(["Body"]);
+});
+
 test("same label string merges into one feature (patterned features)", () => {
   const holes = [
     k.cylinder({ r: 1, h: 12 }).at([3, 3, -1]).label("Mounting holes"),
