@@ -164,3 +164,13 @@ test("a condition-hidden control and section carry .hidden, and a disabled prese
   expect(segButtons.some((b) => b.disabled)).toBe(false);
   panel.dispose();
 });
+
+test("only: draws the named controls in schema order and nothing else", () => {
+  const parameters = [{ id: "c", title: "Cabinet", controls: [
+    { key: "width", label: "Width", type: "slider", min: 1, max: 10 }, { key: "depth", label: "Depth", type: "slider", min: 1, max: 10 }, { key: "height", label: "Height", type: "slider", min: 1, max: 10 }] }];
+  const root = document.createElement("div");
+  const panel = buildControls(root, parameters, { width: 2, depth: 3, height: 4 }, () => {}, () => {}, { bare: true, only: new Set(["height", "width"]) });
+  expect([...root.querySelectorAll("input[type=range]")].map((i) => i.closest(".slider").querySelector("label").textContent)).toEqual(["Width", "Height"]);
+  expect(root.querySelector(".sec-header")).toBeNull();
+  panel.dispose();
+});

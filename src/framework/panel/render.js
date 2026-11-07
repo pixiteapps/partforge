@@ -28,9 +28,25 @@ function indexNodes(nodes, map) {
   }
 }
 
+// Keep only the control nodes whose key is in `only`, and the groups that
+// still hold one. Presets and displays never survive a subset.
+function pruneTree(nodes, only) {
+  const out = [];
+  for (const node of nodes ?? []) {
+    if (node.kind === "control") {
+      if (only.has(node.key)) out.push(node);
+    } else if (node.kind === "group") {
+      const children = pruneTree(node.children, only);
+      if (children.length) out.push({ ...node, children });
+    }
+  }
+  return out;
+}
+
 export function buildControls(root, parameters, params, onDirty, onCommit, opts = {}) {
   const info = createInfoPopover();
-  const tree = buildTree(desugar(parameters));
+  const fullTree = buildTree(desugar(parameters));
+  const tree = opts.only ? pruneTree(fullTree, opts.only) : fullTree;
 
   const nodeEls = new Map();      // id -> the element whose visibility we toggle
   const displayUpdates = new Map(); // id -> a display widget's update(derived)
