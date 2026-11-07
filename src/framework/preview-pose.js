@@ -21,8 +21,12 @@
 // native core.
 import { placeMatrix } from "./collide/place.js";
 import { invertRigid, mulMat4 } from "./geometry/pose.js";
-import { resolveParams } from "./part-model.js";
+import { resolveParams, viewSubParts } from "./part-model.js";
 import { viewAnimations, evaluate } from "./animation.js";
+import { probeSubPartPose } from "./pose-probe-core.js";
+import { handlesShownInView } from "./pose/handle-views.js";
+import { handleKeys } from "./pose/pose-collide.js";
+import { rangesOf } from "./pose/param-solve.js";
 
 /** The params a preview file's meshes sit at: live params under the autoplay animation's t = 0 values. */
 export function openingParams(part, view, params = {}) {
@@ -81,4 +85,106 @@ export function createFilePlacer(part, view, fileParams, drawnNames) {
   }
 
   return { base, matricesAt, apply };
+}
+
+/** The fractions of a key's [min, max] range previewHandles probes. */
+export const PREVIEW_HANDLE_SAMPLES = [0, 0.25, 0.5, 0.75, 1];
+
+const finite = (v) => typeof v === "number" && Number.isFinite(v);
+
+// One sub-part's build as the build-scope probe sees it, as a comparable string, or
+// null when the probe cannot be believed (preview-animation.js's buildIdentity).
+function buildIdentity(part, name, view, p, d) {
+  const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d }, { scope: "build" });
+  return probe.trusted ? JSON.stringify([probe.baseHash, probe.pose]) : null;
+}
+
+/**
+ * Which of the editor's handles a kernel-free preview may show against its file: a
+ * handle shows only when every param one drag of it can write moves pieces by
+ * placement alone, proven geometry-free. Each key is sampled at
+ * PREVIEW_HANDLE_SAMPLES of its range (the file value alone when the range is not
+ * finite), the other params at the file values; at every sample the view's sub-part
+ * set is unchanged, every drawn sub-part has a rigid placement, and every view
+ * sub-part's build identity equals the file's. A one-function derive over-reports
+ * reads, so identity across samples is the test, not reads. Fails closed.
+ *
+ * @returns {{ shown: string[], hidden: Record<string, string> }} shown keeps
+ *   handlesShownInView's order; hidden maps a handle id to why it is hidden.
+ */
+export function previewHandles(part, view, fileParams, meshNames) {
+  const handles = part?.handles;
+  if (!handles || typeof handles !== "object") return { shown: [], hidden: {} };
+  const file = { ...part.defaults, ...fileParams };
+  const candidates = handlesShownInView(part, view, file);
+  const shown = [];
+  const hidden = {};
+  if (!candidates.length) return { shown, hidden };
+
+  // The file side, computed once (lazily, so a throw lands on a handle).
+  let fileSide;
+  const fileFacts = () => {
+    if (fileSide) return fileSide;
+    const names = viewSubParts(part, view, file);
+    const drawnSet = new Set(meshNames);
+    const drawn = names.filter((n) => drawnSet.has(n));
+    const r0 = resolveParams(part, file);
+    let bad = null; // a reason every handle shares
+    const ids = new Map();
+    for (const n of names) {
+      const id = buildIdentity(part, n, view, r0.p, r0.d);
+      if (id == null) { bad ??= `${n}'s build cannot be read`; continue; }
+      ids.set(n, id);
+    }
+    for (const n of drawn) if (!bad && placeMatrix(part.parts[n], view, r0.p, r0.d) == null) bad = `${n} has no rigid placement`;
+    fileSide = { key: names.join("\u0000"), names, drawn, ids, bad };
+    return fileSide;
+  };
+
+  // One verdict per (key, value): a reason, or null when place-only there.
+  const verdicts = new Map();
+  const verdictAt = (key, value) => {
+    const memo = `${key}\u0000${value}`;
+    if (verdicts.has(memo)) return verdicts.get(memo);
+    const { key: setKey, drawn, names, ids } = fileFacts();
+    const params = { ...file, [key]: value };
+    let reason = null;
+    if (viewSubParts(part, view, params).join("\u0000") !== setKey) reason = `${key} changes which sub-parts the view shows`;
+    else {
+      const { p, d } = resolveParams(part, params);
+      for (const n of drawn) {
+        if (placeMatrix(part.parts[n], view, p, d) == null) { reason = `${n} has no rigid placement`; break; }
+      }
+      if (!reason) for (const n of names) {
+        const id = buildIdentity(part, n, view, p, d);
+        if (id == null) { reason = `${n}'s build cannot be read`; break; }
+        if (id !== ids.get(n)) { reason = `${key} rebuilds ${n}`; break; }
+      }
+    }
+    verdicts.set(memo, reason);
+    return reason;
+  };
+
+  const ranges = rangesOf(part);
+  const all = Object.values(handles);
+  for (const id of candidates) {
+    let reason = null;
+    try {
+      reason = fileFacts().bad;
+      if (!reason) {
+        for (const key of handleKeys(handles[id], all, file)) {
+          const r = ranges.get(key);
+          const values = r && finite(r.min) && finite(r.max)
+            ? [...new Set(PREVIEW_HANDLE_SAMPLES.map((f) => r.min + f * (r.max - r.min)))]
+            : [file[key]];
+          for (const v of values) if ((reason = verdictAt(key, v))) break;
+          if (reason) break;
+        }
+      }
+    } catch {
+      reason = "the handle's point cannot be read";
+    }
+    if (reason) hidden[id] = reason; else shown.push(id);
+  }
+  return { shown, hidden };
 }

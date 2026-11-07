@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { openingParams, createFilePlacer } from "../src/framework/preview-pose.js";
+import { previewHandles, PREVIEW_HANDLE_SAMPLES } from "../src/framework/preview-pose.js";
+import { handlesShownInView } from "../src/framework/pose/handle-views.js";
 import { relativeMatsAt } from "../src/framework/collide/world.js";
 import { resolveParams, viewSubParts } from "../src/framework/part-model.js";
 import gearbox from "../src/parts/gearbox.js";
@@ -69,5 +71,48 @@ describe("createFilePlacer", () => {
     expect(moved.length).toBeGreaterThan(0);
     expect(sent.every(([, m]) => Array.isArray(m) && m.length === 16)).toBe(true);
     expect(placer.apply(viewer, { ...gearbox.defaults, driveAngle: 30 })).toEqual([]); // unchanged: not re-sent
+  });
+});
+
+describe("previewHandles", () => {
+  const all = (part, file = {}) => {
+    const view = defaultView(part);
+    const fileParams = { ...part.defaults, ...file };
+    return previewHandles(part, view, fileParams, viewSubParts(part, view, fileParams));
+  };
+  it("samples 0/25/50/75/100 % of a key's range", () => {
+    expect(PREVIEW_HANDLE_SAMPLES).toEqual([0, 0.25, 0.5, 0.75, 1]);
+  });
+  it("shows every robot-arm, hand and gearbox handle", () => {
+    for (const part of [robotArm, hand, gearbox]) {
+      const out = all(part);
+      expect(out.hidden).toEqual({});
+      expect(out.shown).toEqual(handlesShownInView(part, defaultView(part), part.defaults));
+    }
+  });
+  it("hides the drawer box's corner handle (width/depth rebuild the carcass) and shows its drawers", () => {
+    const out = all(drawerBox);
+    expect(out.shown).toEqual(["drawer1", "drawer2", "drawer3"]);
+    expect(out.hidden.corner).toMatch(/^(width|depth) rebuilds /);
+  });
+  it("a view sub-part missing from the file hides only a handle whose key would give it geometry", () => {
+    const view = defaultView(drawerBox);
+    const names = viewSubParts(drawerBox, view, drawerBox.defaults).filter((n) => n !== "drawer2");
+    const out = previewHandles(drawerBox, view, drawerBox.defaults, names);
+    expect(out.shown).toEqual(["drawer1", "drawer2", "drawer3"]); // drawer2's slide is still place-only
+  });
+  it("a sub-part that comes and goes with a key hides the handle", () => {
+    const part = { ...drawerBox, parts: { ...drawerBox.parts, flag: { ...drawerBox.parts.drawer1, enabled: (p) => p.drawer1Open > 50 } } };
+    expect(all(part).hidden.drawer1).toBe("drawer1Open changes which sub-parts the view shows");
+  });
+  it("a querying build hides the handles that touch it", () => {
+    const part = { ...gearbox, parts: { ...gearbox.parts, plate: { ...gearbox.parts.plate,
+      build: (k, p, d) => { const s = gearbox.parts.plate.build(k, p, d); s.volume(); return s; } } } };
+    const out = all(part);
+    expect(out.shown).toEqual([]);
+    expect(Object.values(out.hidden).every((r) => r === "plate's build cannot be read")).toBe(true);
+  });
+  it("a part without handles answers empty", () => {
+    expect(previewHandles(hingedBox, "box", hingedBox.defaults, ["base", "lid"])).toEqual({ shown: [], hidden: {} });
   });
 });
