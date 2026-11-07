@@ -33,6 +33,7 @@ import { contactShadowMask } from "./contact-shadow.js";
 import { CEL } from "./cel/cel-style.js";
 import { buildCelMaterial } from "./cel/cel-material.js";
 import { createCelInk, CEL_LAYER } from "./cel/cel-ink.js";
+import { createCelGround } from "./cel/cel-ground.js";
 import { buildContactShadowPlane } from "./contact-shadow-plane.js";
 export { srgbEncodeInPlace }; // was exported from here; keep the name importable
 
@@ -280,7 +281,11 @@ export function createViewer(container, part, {
     renderRequested = true;
     if (graceMs > 0) renderUntil = Math.max(renderUntil, performance.now() + graceMs);
   }
-  controls.addEventListener("change", () => requestRender());
+  // performance.now() of the last camera move or pose change, for the cel
+  // ground's map-size schedule (prepareCelGround). Set in every mode: it is
+  // only read in cel, and a stale stamp is simply "settled".
+  let celMovedAt = null;
+  controls.addEventListener("change", () => { celMovedAt = performance.now(); requestRender(); });
 
   // --- lights + grid --------------------------------------------------------
   const liveLights = addViewerLights(scene);
@@ -555,6 +560,7 @@ export function createViewer(container, part, {
     matchGeneration++;
     cutaway.setVisible(effectiveVisible());
     if (realisticRig) { shadowMovedAt = performance.now(); placeGround(); }
+    placeCelGround(); // cel only
   }
   // Shallow, key-by-key: effective displays hold only primitives.
   function sameDisplay(a, b) {
@@ -754,6 +760,9 @@ export function createViewer(container, part, {
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const celMats = new Map();         // name -> the cel band ShaderMaterial (cached like physicalMats)
   let celInk = null;                 // the ink pass, built on the first entry into cel
+  let celGround = null;              // the VSM ground shadow (light, target, plane), built on the first entry into cel
+  let celMapSize = null;             // the ground's current shadow-map size (setMapSize reallocates, so it changes only on a switch)
+  let celShadowWas = null;           // renderer.shadowMap's { enabled, type } from before cel turned it on
   const celField = new THREE.Color(CEL.field.color); // cel's backdrop, which the ink dots
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
@@ -1017,16 +1026,22 @@ export function createViewer(container, part, {
   }
   // Whether `reason` holds the ground — or, with no reason, whether anything does.
   const isGroundHeld = (reason) => (reason === undefined ? groundHolds.size > 0 : groundHolds.has(reason));
+  // The floor for bounds `b` under the hold rule above: a held floor is the
+  // last one, only ever lowered; an unheld one is derived afresh. Realistic and
+  // cel both place by it and both store the result in `lastGround`, so a mode
+  // switch mid-hold lands its floor where the other mode's was.
+  function floorFromBounds(b) {
+    if (groundHolds.size > 0 && lastGround) return { ...lastGround, y: Math.min(lastGround.y, b.min.y) };
+    const center = b.getCenter(new THREE.Vector3());
+    const size = b.getSize(new THREE.Vector3());
+    return { y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2, footprintMm: Math.max(size.x, size.z) };
+  }
   function placeGround({ force = false } = {}) {
     const groundHeld = groundHolds.size > 0;
     if (!realisticRig) { if (!groundHeld) lastGround = null; return; }
     const b = getVisibleWorldBounds(); // shared Box3: read it out before anything else runs
     if (b.isEmpty()) return;
-    const center = b.getCenter(new THREE.Vector3());
-    const size = b.getSize(new THREE.Vector3());
-    lastGround = groundHeld && lastGround
-      ? { ...lastGround, y: Math.min(lastGround.y, b.min.y) }
-      : { y: b.min.y, centerX: center.x, centerZ: center.z, radius: size.length() / 2, footprintMm: Math.max(size.x, size.z) };
+    lastGround = floorFromBounds(b);
     realisticRig.setGround(lastGround);
     shadowMovedAt = null; // this render is the full-resolution one
     renderShadow(undefined, { force });
@@ -1059,6 +1074,53 @@ export function createViewer(container, part, {
     } else if (t - shadowLowResAt >= SHADOW_LOWRES_MS) {
       shadowLowResAt = t;
       renderShadow({ lowRes: true });
+    }
+  }
+  // Cel's ground follows the same floor rules. The plane is fitted to the
+  // visible bounds with their bottom dropped to the HELD floor, so an animation
+  // that lifts the part off its base never lifts the plane into it. The shadow
+  // itself is a live shadow map, re-rendered every frame, so there is no
+  // growHeldShadow twin: whatever the pose reaches, the map sees. Called after
+  // placeGround (which, in cel, forgets an unheld record) so the cel floor is
+  // the one `lastGround` keeps.
+  const _celFloorBox = new THREE.Box3();
+  function placeCelGround() {
+    if (renderMode !== "cel" || !celGround) return;
+    const b = getVisibleWorldBounds();
+    if (b.isEmpty()) return;
+    lastGround = floorFromBounds(b);
+    _celFloorBox.copy(b);
+    _celFloorBox.min.y = lastGround.y;
+    celGround.fit(_celFloorBox);
+  }
+  // Once per live cel frame, before the scene render: casters, the light's
+  // camera-relative aim (aim clamps its world elevation), and the map size.
+  // Like the realistic contact shadow, the map runs small while the camera or
+  // a pose moves and full once it has settled — a 2048² VSM blur every frame of
+  // an orbit is what a phone cannot keep up with. A mountPreview viewer (a
+  // turntable or an animation, always moving) and a coarse pointer stay small.
+  // A small frame asks for the frames that follow it, so the settled full-size
+  // frame lands without further input.
+  const celFullMapSize = () => (frameSwept || framePoses || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize);
+  function prepareCelGround(cam) {
+    celGround.setCasters(castersNow());
+    celGround.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
+    const full = celFullMapSize();
+    const moving = celMovedAt != null && performance.now() - celMovedAt < SHADOW_SETTLE_MS;
+    const want = moving ? CEL.ground.mapSizeSmall : full;
+    if (want !== celMapSize) { celGround.setMapSize(want); celMapSize = want; }
+    if (want !== full) requestRender(SHADOW_SETTLE_MS);
+  }
+  // Out of cel: the ground leaves the scene, the casters stop casting, and the
+  // renderer's shadow map goes back to how cel found it.
+  function leaveCelGround() {
+    if (!celGround) return;
+    scene.remove(celGround.light, celGround.light.target, celGround.plane);
+    celGround.setCasters([]);
+    if (celShadowWas) {
+      renderer.shadowMap.enabled = celShadowWas.enabled;
+      renderer.shadowMap.type = celShadowWas.type;
+      celShadowWas = null;
     }
   }
   // A cutaway turned on or off, or its plane moved, changes what casts the
@@ -1133,6 +1195,7 @@ export function createViewer(container, part, {
     try {
       syncFrames(); // before the swap: the first realistic frame has the export-pose layers and the sheets' burns
       renderMode = "realistic";
+      leaveCelGround();
       syncLineLook(); // a fade clone made in cel would otherwise keep the ink colour
       // A regen can land between the proxy compile and here, while the mode
       // was still CAD, so setSubGeometry skipped the UVs. Idempotent.
@@ -1175,6 +1238,7 @@ export function createViewer(container, part, {
       renderer.toneMappingExposure = 1;
     });
     renderMode = "cad";
+    attempt(leaveCelGround);
     attempt(syncLineLook);
     attempt(() => {
       if (realisticRig) scene.remove(realisticRig.ground, realisticRig.shadow.group, ...(realisticRig.lights ?? []));
@@ -1222,6 +1286,19 @@ export function createViewer(container, part, {
       setSubMaterials(celFor);
       disposeLiveShadow();
       celInk = celInk ?? createCelInk();
+      // The ground's light, target and plane stay on layer 0: the ink prepass
+      // renders with a CEL_LAYER camera, which leaves the light out, so the
+      // shadow map renders once a frame (in the scene pass), not twice.
+      if (!celGround) {
+        celGround = createCelGround({ mapSize: celFullMapSize() });
+        celMapSize = celFullMapSize();
+      }
+      celShadowWas ??= { enabled: renderer.shadowMap.enabled, type: renderer.shadowMap.type };
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.VSMShadowMap;
+      celGround.plane.material.needsUpdate = true;
+      scene.add(celGround.light, celGround.light.target, celGround.plane);
+      placeCelGround();
       if (live) applyPixelRatio("cad");
       syncLineLook();
       refreshFeatureLines();
@@ -2016,6 +2093,7 @@ export function createViewer(container, part, {
     // The contact shadow follows on the render loop's throttle (see
     // updateMovingShadow); the ground itself stays put until showAssembly.
     if (realisticRig) shadowMovedAt = performance.now();
+    celMovedAt = performance.now(); // cel's ground map drops to its small size while posing
   }
 
   // Cache queries for the app's regenerate loop (so it never reaches into subCache).
@@ -2413,6 +2491,7 @@ export function createViewer(container, part, {
     if (frame) frameTo(visibleNames);
     cutaway.setVisible(effectiveVisible());
     placeGround(); // realistic only: the ground comes to the part, and the shadow re-renders
+    placeCelGround(); // cel only: the same floor, for the shadow plane
     if (contactShadow) rebuildLiveShadow(); // CAD only (a no-op in realistic)
     for (const cb of [...assemblyListeners]) {
       try { cb(); } catch (e) { console.warn("partforge: assembly listener failed", e); }
@@ -3219,6 +3298,7 @@ export function createViewer(container, part, {
   const _backdropCam = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
   const _backdropScene = new THREE.Scene();
   function renderWithBackdrop(renderScene, cam) {
+    if (renderMode === "cel" && renderScene === scene && celGround) prepareCelGround(cam);
     const background = renderScene.background;
     if (!cam.isOrthographicCamera || !background?.isTexture) {
       renderer.render(renderScene, cam);
@@ -3360,6 +3440,7 @@ export function createViewer(container, part, {
     // A parked viewer renders no contact shadow (placeGround skips it), so a
     // regen while hidden left it stale.
     placeGround();
+    placeCelGround(); // in cel, placeGround just forgot the floor record: put it back
     lastFrameTime = null; // parked time is not elapsed time — no dt jump on unpark
     renderer.setAnimationLoop(renderFrame);
   }
@@ -3648,6 +3729,8 @@ export function createViewer(container, part, {
     celMats.clear();
     celInk?.dispose();
     celInk = null;
+    celGround?.dispose();
+    celGround = null;
     disposeLiveShadow();
     material.dispose();
     lineMaterial.dispose();

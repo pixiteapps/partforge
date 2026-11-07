@@ -764,6 +764,31 @@ async function checkCelMode() {
     const front = await cornerOf(views?.[0]?.dataUrl);
     if (!near(front, field, 14)) problems.push(`renderViews corner ${JSON.stringify(front)} is not the field`);
 
+    // The ground shadow: pixels on the field-to-shadow line in the lower half.
+    // At full opacity over the field the shadow is (122, 166, 186); the body's
+    // own band tones have g − r near 17, ink and deep tones are far darker, and
+    // the untouched field has g ≈ 217.
+    const shadowPixels = async (dataUrl) => {
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/jpeg")) return 0;
+      const img = new Image();
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const top = Math.floor(canvas.height / 2);
+      const data = ctx.getImageData(0, top, canvas.width, canvas.height - top).data;
+      let count = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if (g < 206 && Math.abs((b - g) - 17.5) <= 4 && Math.abs((g - r) - 50) <= 8) count++;
+      }
+      return count;
+    };
+    const shadow = await shadowPixels(rt.captureCurrent({ size: 256 }));
+    if (shadow < 40) problems.push("no ground shadow in the capture");
+
     const theme = document.getElementById("theme");
     if (theme) {
       theme.click();
