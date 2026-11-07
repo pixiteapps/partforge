@@ -49,7 +49,8 @@
 //  - `turntable: <degrees per second>` (default 0, off) — a file with no
 //    playing animation (a still file, or `animate: false`) turns about the
 //    vertical off the viewer's frame loop. Never under reduced motion; the
-//    first camera grab — a canvas drag or the view cube — stops it (until
+//    first camera grab — a canvas drag or the view cube, or a handle press with
+//    `part` — stops it (until
 //    `motion.restart()`). Dragging an animated model orbits the camera and the
 //    animation plays on.
 //  - `fill: <0 < f <= 1>` — the opening framing (and the viewer's reframe)
@@ -121,6 +122,11 @@
 // edits nothing else. `handle.pose` is mount()'s pose surface plus `onDragEnd`;
 // without `part` it is mount()'s no-op stand-in and `getParams()` is null. A file
 // whose view the part does not declare gets nothing attached (warned once).
+// While a baked animation plays, `getParams()` follows the player (the part's own
+// animation at the player's t), so the handles ride the moving meshes; a press
+// pauses it there and the drag starts from that pose (cancel returns to it). A
+// press stops a turntable as a camera grab does. `motion.restart()` puts the
+// params, and every mesh, back where the file put them first.
 //
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
@@ -147,6 +153,7 @@ import { raycastViewer } from "./selection/raycast.js";
 import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { normalizeCollisions } from "./collide/declaration.js";
+import { viewAnimations, evaluate } from "./animation.js";
 
 // A value the option does not know is a host bug: say so at the call rather
 // than quietly showing the default.
@@ -213,13 +220,15 @@ function createTurntable(viewer, container, degPerSec, onChange) {
     try { viewer.orbitBy(dx, 0); } finally { turning = false; }
   }
   function halt() { offFrame?.(); offFrame = null; }
+  // Stopped for good, until restart(): by a camera grab, or a handle press.
+  function stop() { halt(); set("stopped"); }
   const offGrab = viewer.onCameraStart(() => {
     if (turning || phase === "stopped") return;
-    halt();
-    set("stopped");
+    stop();
   });
   return {
     phase: () => phase,
+    stop,
     start() {
       if (phase !== "waiting") return;
       offFrame = viewer.onFrame(step);
@@ -238,12 +247,40 @@ function createTurntable(viewer, container, degPerSec, onChange) {
 // meshes, its params the preview's own and every write re-posing by matrix. Pushes its
 // teardown onto `cleanups`, pose mode's detach FIRST so it runs LAST (they pop LIFO),
 // and every effect is a no-op once `isDisposed()`. Fills `preview` as it decides.
-function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip, chrome, drawn, cleanups, isDisposed, cueBlocked, onDragEnd, preview }) {
+function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip, chrome, drawn, cleanups, isDisposed, cueBlocked, onDragEnd, preview, player, turntable, reducedMotion }) {
   const drawnNames = decoded.meshes.map((m) => m.name).filter((n) => Object.hasOwn(part.parts, n));
   const params = { ...(part.defaults ?? {}), ...(decoded.params ?? {}) };
   const fileParams = Object.freeze({ ...params });
   const placer = createFilePlacer(part, view, fileParams, drawnNames);
   const live = (fn) => (...args) => (isDisposed() ? undefined : fn(...args));
+
+  // The params follow the player (spec §5). While the baked animation plays (or tweens
+  // to its intro view) the meshes sit at the player's matrices, so getParams answers the
+  // part's own animation at the player's t — Pose mode draws its dots from it, and a
+  // press's session snapshots it, locates its pins and builds its guard from it, all
+  // BEFORE hold(true). Nothing is written while it plays. Once it stops — paused by a
+  // press (hold), by its button, or done — the preview's own params take those values,
+  // so getParams keeps answering what the meshes show.
+  const anim = player && decoded.animation ? viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null : null;
+  const following = () => {
+    if (!player || !anim || reducedMotion || !player.started()) return false;
+    const { status } = player.state();
+    return status === "playing" || status === "intro";
+  };
+  const atPlayer = (t) => ({ ...fileParams, ...evaluate(anim, t).values });
+  const getParams = () => (following() ? atPlayer(player.state().t) : params);
+  let holding = false; // the pause hold() makes writes its own params
+  // A press: a turning model stops; a playing animation pauses where it is, its params
+  // written, so the placer's next apply finds every matrix where the player left it.
+  const hold = live((on) => {
+    if (!on) return;
+    turntable?.stop();
+    if (!following()) return;
+    const { t } = player.state();
+    holding = true;
+    try { player.pause(); } finally { holding = false; }
+    Object.assign(params, atPlayer(t));
+  });
   // The session snaps on release (and the chip wraps), so a write takes values as given.
   const write = live((values) => {
     Object.assign(params, values);
@@ -265,7 +302,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   const poseMode = createPoseMode(viewer, {
     part,
     orbitControls: viewer.orbitControls,
-    getParams: () => params,
+    getParams,
     write,
     restore: write,
     // onDragEnd's listeners are pose mode's own; this only keeps the __lastDragEnd hook.
@@ -273,9 +310,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     staleSubParts: () => [], // nothing rebuilds: a shown handle is place-only
     ghost() {},
     unghost() {},
-    // Seam for the following task — a no-op for now: hold (pausing playback while a
-    // drag holds, Task 8).
-    hold: () => {},
+    hold,
     collide: (args) => poseCollide?.guardFor(args) ?? null,
     onBlocked: live((pair) => poseCollide?.tint(pair)),
     visibleHandles: () => preview.visible?.shown ?? [],
@@ -283,6 +318,14 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     cueBlocked,
   });
   cleanups.push(() => poseMode.detach());
+  // A pause from the button (or the end of a one-time animation) writes the player's
+  // params, so a later press finds them in place; hold's own pause writes them itself.
+  if (anim) {
+    cleanups.push(player.onChange(({ status, t }) => {
+      if (holding || isDisposed() || reducedMotion) return;
+      if (status === "paused" || status === "done") Object.assign(params, atPlayer(t));
+    }));
+  }
   viewer.domElement.addEventListener("pointermove", onMove);
   cleanups.push(() => viewer.domElement.removeEventListener("pointermove", onMove));
   cleanups.push(poseMode.onDragEnd((e) => { lastDragEnd = e; onDragEnd(e); }));
@@ -293,7 +336,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     const pill = readout = attachDragReadout(poseMode, { viewbar: toolbar });
     cleanups.push(() => pill.detach());
   }
-  const chip = attachReadoutChip(viewer, poseMode, { stage: container }, { part, getParams: () => params, apply: (values) => write(values) });
+  const chip = attachReadoutChip(viewer, poseMode, { stage: container }, { part, getParams, apply: (values) => write(values) });
   cleanups.push(() => chip.detach());
 
   // Every mesh the file draws is in its own canonical frame — the placer poses each by a
@@ -301,7 +344,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   // (and before pose mode's detach), since its tint highlights live in the viewer's scene.
   if (normalizeCollisions(part)?.pose) {
     const pc = createPoseCollide({
-      part, viewer, fastPath: placer, getView: () => view, getParams: () => params,
+      part, viewer, fastPath: placer, getView: () => view, getParams,
       isLive: () => poseMode.isLive(), frameOf: () => "canonical", createHighlight: createFeatureHighlight,
     });
     poseCollide = pc;
@@ -323,6 +366,9 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   Object.assign(preview, { params, fileParams, placer, poseMode, poseCollide });
   return {
     poseMode,
+    getParams,
+    // motion.restart(): every mesh back where the file put it (pins stay).
+    resetParams: live(() => write(fileParams)),
     dragReadout: () => readout?.text() ?? null,
     lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
   };
@@ -496,6 +542,7 @@ export function mountPreview(container, options = {}) {
       },
       restart() {
         if (disposed) return;
+        posing?.resetParams(); // a posed preview's params back to the file's first
         viewer.cancelCameraTween();
         viewer.setCameraState(opening);
         if (player) player.restart(); // nothing under reduced motion: the pose is already t = 0
@@ -519,6 +566,7 @@ export function mountPreview(container, options = {}) {
           onDragEnd: relay(dragEndListeners),
           // the resting cue waits out a playing animation
           cueBlocked: () => (player ? motionState() === "playing" : false),
+          player, turntable, reducedMotion,
         });
         if (!poseEnabled) posing.poseMode.setEnabled(false);
       }
@@ -566,7 +614,7 @@ export function mountPreview(container, options = {}) {
     },
     getView: () => live?.view ?? null,
     // A copy of the preview's params (with `part`); null before ready, without part and once disposed.
-    getParams: () => (posing && preview.params ? { ...preview.params } : null),
+    getParams: () => (posing && preview.params ? { ...posing.getParams() } : null),
     // mount()'s pose surface on the file's meshes; the no-op stand-in without `part`.
     pose: part ? {
       isEnabled: () => posing?.poseMode.isEnabled() ?? false,

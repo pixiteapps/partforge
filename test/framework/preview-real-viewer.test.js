@@ -747,17 +747,25 @@ import drawerBox from "../../src/parts/drawer-box.js";
 import { viewSubParts, resolveParams } from "../../src/framework/part-model.js";
 import { placeMatrix } from "../../src/framework/collide/place.js";
 import { snapValues } from "../../src/framework/pose/param-solve.js";
+import { samplePreviewAnimation } from "../../src/framework/preview-animation.js";
+import { viewAnimations, evaluate } from "../../src/framework/animation.js";
 
-async function partGlb(part, view, params) {
+async function partGlb(part, view, params, animation = null) {
   const { p, d } = resolveParams(part, params);
   const meshes = viewSubParts(part, view, params).map((name) => {
     const m = placeMatrix(part.parts[name], view, p, d);
     const o = m ? [m[12], m[13], m[14]] : [0, 0, 0];
     return boxSoup(name, o.map((c) => c - 5), o.map((c) => c + 5));
   });
-  return encodePreviewGlb({ meshes, part, view, params });
+  return encodePreviewGlb({ meshes, part, view, params, animation });
 }
-const gearboxGlb = ({ params = gearbox.defaults } = {}) => partGlb(gearbox, "gearbox", { ...gearbox.defaults, ...params });
+const gearboxGlb = ({ params = gearbox.defaults, animation = false, cues = null } = {}) => {
+  const all = { ...gearbox.defaults, ...params };
+  if (!animation) return partGlb(gearbox, "gearbox", all);
+  // An empty read set: no build reads a tracked key (true of the gearbox), so the spin bakes.
+  const sampled = samplePreviewAnimation(gearbox, "gearbox", all, { buildReads: () => new Set() });
+  return partGlb(gearbox, "gearbox", all, cues ? { ...sampled, anim: { ...sampled.anim, cues } } : sampled);
+};
 // The fake renderer draws only when its loop is driven: one frame lands `drawn`.
 async function drawn(handle) {
   await handle.ready;
@@ -1003,4 +1011,115 @@ test("with chrome, the Release pins action and the readout pill sit in the viewb
   handle.dispose();
   expect(stage.querySelector(".pf-pose-actions")).toBeNull();
   expect(stage.querySelector(".pf-pose-readout")).toBeNull();
+});
+
+// --- mountPreview({ part }) on a playing animation: the params follow the player -------
+const spin = viewAnimations(gearbox).get("gearbox").find((a) => a.autoplay);
+const maxAbsDiff = (a, b) => Math.max(...[...a].map((x, i) => Math.abs(x - b[i])));
+// Advance the player to about `t` (the spin lasts 6 s; runFrames's 0.1 s frames).
+const playTo = (t) => runFrames(t * spin.totalDuration - 0.1);
+
+test("while the animation plays, getParams follows the player", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  expect(handle.animation.state().status).toBe("playing");
+  const { t } = handle.animation.state();
+  expect(t).toBeGreaterThan(0.3);
+  const got = handle.getParams();
+  expect(got.driveAngle).toBeCloseTo(evaluate(spin, t).values.driveAngle, 6);
+  expect(got).toEqual({ ...handle.__preview.fileParams, ...evaluate(spin, t).values });
+  expect(handle.__preview.params.driveAngle).toBe(handle.__preview.fileParams.driveAngle); // nothing written
+  // the placer's matrices at those params are the player's pose
+  const { p, d } = resolveParams(gearbox, got);
+  const want = handle.__preview.placer.matricesAt(p, d);
+  const v = viewers.at(-1);
+  for (const name of ["gear1", "gear2", "gear3", "crank"]) {
+    expect(maxAbsDiff(v._subMeshes[name].matrix.elements, want.get(name))).toBeLessThan(1e-3);
+  }
+  handle.dispose();
+});
+
+test("a press pauses the player and writes its params; cancel restores them, not t = 0", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  const { t } = handle.animation.state();
+  const v = viewers.at(-1);
+  const before = Object.fromEntries(["gear1", "gear2", "gear3", "crank"].map((n) => [n, [...v._subMeshes[n].matrix.elements]]));
+  const { poseMode } = handle.__preview;
+  const start = handle.getParams();
+  poseMode.session.begin("crank");
+  expect(handle.animation.state().status).toBe("paused");
+  const held = handle.getParams().driveAngle;
+  expect(held).toBeCloseTo(evaluate(spin, t).values.driveAngle, 9);
+  expect(handle.__preview.params.driveAngle).toBe(held); // written into the preview's own params
+  poseMode.session.frame(crankTarget(start, 30));
+  expect(handle.getParams().driveAngle).toBeCloseTo(held + 30, 0);
+  poseMode.session.cancel();
+  expect(handle.getParams().driveAngle).toBeCloseTo(held, 9);
+  // every mesh back at the paused pose
+  for (const [name, m] of Object.entries(before)) expect(maxAbsDiff(v._subMeshes[name].matrix.elements, m)).toBeLessThan(1e-3);
+  expect(handle.animation.state().status).toBe("paused"); // stays paused
+  handle.dispose();
+});
+
+test("a press during the intro pauses it and writes the file params", async () => {
+  const cues = [{ t: 0, view: "front", sweep: null }];
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true, cues }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.animation.state().status).toBe("intro");
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams);
+  handle.__preview.poseMode.session.begin("crank");
+  expect(handle.animation.state().status).toBe("paused");
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams);
+  handle.dispose();
+});
+
+test("a pause from the button writes the player's params, so a later press finds them", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  handle.animation.pause();
+  const { t } = handle.animation.state();
+  expect(handle.__preview.params.driveAngle).toBeCloseTo(evaluate(spin, t).values.driveAngle, 9);
+  runFrames(1);
+  expect(handle.getParams().driveAngle).toBeCloseTo(evaluate(spin, t).values.driveAngle, 9);
+  handle.dispose();
+});
+
+test("under reduced motion the params are the file params and handles show at once", async () => {
+  vi.stubGlobal("matchMedia", (query) => ({ matches: query === "(prefers-reduced-motion: reduce)", media: query }));
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  runFrames(1);
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams);
+  expect(handle.pose.isLive()).toBe(true);
+  handle.dispose();
+});
+
+test("a press stops the turntable", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox, turntable: 30 });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.motion.state).toBe("playing");
+  handle.__preview.poseMode.session.begin("crank");
+  expect(handle.motion.state).toBe("stopped");
+  handle.__preview.poseMode.session.end();
+  handle.motion.restart();
+  expect(handle.motion.state).toBe("playing"); // restart re-arms it
+  handle.dispose();
+});
+
+test("motion.restart puts the params back to the file's", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.2);
+  turnCrank(handle, 60);
+  handle.__preview.poseMode.session.end();
+  expect(handle.getParams().driveAngle).not.toBeCloseTo(handle.__preview.fileParams.driveAngle, 0);
+  handle.motion.restart();
+  expect(handle.__preview.params).toEqual(handle.__preview.fileParams);
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams); // playing again from t = 0
+  expect(handle.animation.state().status).toBe("playing");
+  handle.dispose();
 });
