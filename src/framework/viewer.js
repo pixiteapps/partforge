@@ -1082,15 +1082,19 @@ export function createViewer(container, part, {
   // itself is a live shadow map, re-rendered every frame, so there is no
   // growHeldShadow twin: whatever the pose reaches, the map sees. Called after
   // placeGround (which, in cel, forgets an unheld record) so the cel floor is
-  // the one `lastGround` keeps.
+  // the one `lastGround` keeps. A borrowed capture (`live: false`) fits the
+  // plane at the held floor but never writes the record: the ground only moves
+  // on showAssembly, never because a capture happened, and a pose since then
+  // would hand the next hold a floor derived from the capture's bounds.
   const _celFloorBox = new THREE.Box3();
-  function placeCelGround() {
+  function placeCelGround({ live = true } = {}) {
     if (renderMode !== "cel" || !celGround) return;
     const b = getVisibleWorldBounds();
     if (b.isEmpty()) return;
-    lastGround = floorFromBounds(b);
+    const floor = floorFromBounds(b);
+    if (live) lastGround = floor;
     _celFloorBox.copy(b);
-    _celFloorBox.min.y = lastGround.y;
+    _celFloorBox.min.y = floor.y;
     celGround.fit(_celFloorBox);
   }
   // Once per live cel frame, before the scene render: casters, the light's
@@ -1101,7 +1105,7 @@ export function createViewer(container, part, {
   // turntable or an animation, always moving) and a coarse pointer stay small.
   // A small frame asks for the frames that follow it, so the settled full-size
   // frame lands without further input.
-  const celFullMapSize = () => (frameSwept || framePoses || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize);
+  const celFullMapSize = () => (frameSwept || framePoses?.length || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize);
   function prepareCelGround(cam) {
     celGround.setCasters(castersNow());
     celGround.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
@@ -1298,7 +1302,7 @@ export function createViewer(container, part, {
       renderer.shadowMap.type = THREE.VSMShadowMap;
       celGround.plane.material.needsUpdate = true;
       scene.add(celGround.light, celGround.light.target, celGround.plane);
-      placeCelGround();
+      placeCelGround({ live });
       if (live) applyPixelRatio("cad");
       syncLineLook();
       refreshFeatureLines();
