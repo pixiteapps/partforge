@@ -749,6 +749,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The host loaded the part's source from somewhere with no folder to resolve `./…` against — a `data:` or `blob:` URL, or one bundled module made from a part's file tree — so `import.meta.url` is not a hierarchical base and the `URL` constructor throws.
 - **Fix:** Declare the source in a form that needs no base: a vector document as the parsed object itself — `import plate from "./assets/plate.vector.json" with { type: "json" }`, then `vectors: { plate }`, where a bundler inlines that import (an unbundled `data:`/`blob:` module cannot import `./…` either, so write the object in the part) — or, for a file the host stores, the host's own asset token. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" ("A source may also be the parsed file itself").
 
+## kernel-chunk-import-failed
+
+- **Symptom:** `Failed to fetch dynamically imported module:` followed by a kernel chunk's URL (`manifold-3d`, `manifold-backend`, `replicad`, `replicad_single`), on a build or export, and on every later job in that worker.
+- **Cause:** The download of a JavaScript chunk the kernel boot imports was cut off. The worker boots again on each job ([KERNEL-CONTRACT.md](KERNEL-CONTRACT.md) § "Worker rebind"), but the browser's module map remembers the failed import, so the retry never reaches the network. A failed `.wasm` download does not do this: it recovers on the next job.
+- **Fix:** Replace the worker (a host-level retire, or a page reload). A new worker has its own module map and fetches the chunk again.
+
 ## vector-unknown-name
 
 - **Symptom:** `vector2d: unknown vector "` followed by the name and — declare it in the part's `vectors` field — thrown from a build calling `k.vector2d(name)`.
