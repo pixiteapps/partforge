@@ -32,6 +32,7 @@ export function handleOnPiece(handle, name, { point = null, bounds = null, slack
   if (on != null) return Array.isArray(on) ? on.includes(name) : on === name;
   if (!point || !bounds) return false;
   for (let i = 0; i < 3; i++) {
+    if (!Number.isFinite(point[i])) return false; // NaN passes both comparisons below
     if (point[i] < bounds.min[i] - slack || point[i] > bounds.max[i] + slack) return false;
   }
   return true;

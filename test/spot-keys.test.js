@@ -23,4 +23,6 @@ test("handleOnPiece: showOn wins, else the point inside the grown bounds", () =>
   expect(handleOnPiece({}, "x", { point: [11.5, 5, 5], bounds })).toBe(true);
   expect(handleOnPiece({}, "x", { point: [13, 5, 5], bounds })).toBe(false);
   expect(handleOnPiece({}, "x", { point: null, bounds })).toBe(false);
+  expect(handleOnPiece({}, "x", { point: [NaN, 5, 5], bounds })).toBe(false);
+  expect(handleOnPiece({}, "x", { point: [5, 5, Infinity], bounds })).toBe(false);
 });
