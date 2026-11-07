@@ -33,8 +33,29 @@ const meshes = () => [
 const nodeNamed = (doc, name) => doc.getRoot().listNodes().find((n) => n.getName() === name);
 const materialOf = (doc, name) => nodeNamed(doc, name).getMesh().listPrimitives()[0].getMaterial();
 
-test("PREVIEW_ENCODER_VERSION is 5 (more forges bake: same format as 4)", () => {
-  expect(PREVIEW_ENCODER_VERSION).toBe(5);
+test("PREVIEW_ENCODER_VERSION is 6 (the file carries the params its meshes sit at)", () => {
+  expect(PREVIEW_ENCODER_VERSION).toBe(6);
+});
+
+test("params ride along as partforgeParams, primitives only; omitted writes no extra", async () => {
+  const font = new Uint8Array([1, 2, 3]);
+  const withParams = await readGlb(await encodePreviewGlb({
+    meshes: meshes(), part, view: "assembly",
+    params: { width: 40, label: "A", lid: true, font, nested: { a: 1 }, nan: NaN, nothing: null },
+  }));
+  expect(withParams.getRoot().getExtras().partforgeParams).toEqual({ width: 40, label: "A", lid: true });
+  const without = await readGlb(await encodePreviewGlb({ meshes: meshes(), part, view: "assembly" }));
+  expect(without.getRoot().getExtras()).not.toHaveProperty("partforgeParams");
+  const empty = await readGlb(await encodePreviewGlb({ meshes: meshes(), part, view: "assembly", params: { font } }));
+  expect(empty.getRoot().getExtras()).not.toHaveProperty("partforgeParams");
+});
+
+test("the same params write the same bytes, and params change the bytes", async () => {
+  const a = await encodePreviewGlb({ meshes: meshes(), part, view: "assembly", params: { width: 40 } });
+  const b = await encodePreviewGlb({ meshes: meshes(), part, view: "assembly", params: { width: 40 } });
+  const c = await encodePreviewGlb({ meshes: meshes(), part, view: "assembly", params: { width: 41 } });
+  expect(Buffer.compare(a, b)).toBe(0);
+  expect(Buffer.compare(a, c)).not.toBe(0);
 });
 
 test("one node, mesh and primitive per sub-part, named by key, under one Y-up root", async () => {
