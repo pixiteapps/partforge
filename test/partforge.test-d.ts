@@ -347,15 +347,16 @@ expectType<void>(runtime.setHostPane(null));
 expectType<AnimationRuntime | null>(runtime.animation);
 expectType<void | undefined>(runtime.animation?.play("open"));
 expectType<AnimationState | undefined>(runtime.animation?.state());
-// Realistic render mode and environments.
-expectType<"cad" | "realistic">(runtime.renderMode.get());
-expectType<Promise<"cad" | "realistic">>(runtime.renderMode.set("realistic"));
+// Realistic and cel render modes, and environments.
+expectType<"cad" | "realistic" | "cel">(runtime.renderMode.get());
+expectType<Promise<"cad" | "realistic" | "cel">>(runtime.renderMode.set("realistic"));
+expectType<Promise<"cad" | "realistic" | "cel">>(runtime.renderMode.set("cel"));
 expectType<() => void>(runtime.renderMode.onChange((e) => void [e.mode, e.busy, e.error]));
 expectType<Promise<string>>(runtime.environment.set("workshop"));
 expectType<Array<{ id: string; label: string }>>(runtime.environment.list());
 expectType<boolean>(runtime.declaresMaterials);
 expectType<Promise<Array<{ view: string; dataUrl: string }>>>(runtime.renderViews(["iso"], { renderMode: "realistic" }));
-expectType<"cad" | "realistic" | undefined>(runtime.getViewerState().renderMode);
+expectType<"cad" | "realistic" | "cel" | undefined>(runtime.getViewerState().renderMode);
 expectType<SelectionRuntime | null>(runtime.selection);
 expectType<{ subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" } | undefined>(runtime.getViewerState().selection);
 
