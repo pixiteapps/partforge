@@ -64,26 +64,51 @@ line. The constants below are the ones the user dialled in on real parts.
    fill). The spike's hand-assigned "sci-fi" roles (body / accent / dark per
    sub-part) are not a product feature: an author who wants a red gripper
    colours the gripper.
-3. **The frame is fixed.** The field colour, halftone and ink colour are part
-   of the style and do not follow the light / dark theme or
-   `meta.background`. The theme toggle keeps changing the chrome. A
+3. **The frame is fixed, except the field's colour follows the theme**
+   (amended 2026-11-08; 0.186.0 shipped one field). The halftone's strength
+   and cell and the ink colour are part of the style; the field is
+   `CEL.field.color` (pale cyan) in the light theme and `CEL.field.darkColor`
+   (a slate) in the dark theme, with the halftone dot darkened on the light
+   field and lightened on the dark one (`celField(theme)`), and the ink stays
+   dark on both — the dark field is chosen light enough for the outer
+   contour to read on it. `meta.background` is still ignored. A
    `transparent` viewer (the preview's `background: "transparent"`) in cel
    draws no field and no halftone; the part, its ink and its ground shadow
    draw over the host page.
-4. **The key light is camera-relative** (azimuth −35°, elevation 38° in view
-   space), as in the spike: the lit side is always up-left of the viewer, the
-   way a drawn figure is lit, and the ground shadow falls down-right from it.
-   CAD's world-fixed lights stay as they are. **The ground light follows the
-   key** (same azimuth, 60° elevation in view space), so the shadow always
-   falls away from the lit side; a world-fixed ground light would put the
-   shadow under the lit side at some angles, which reads wrong. Consequence,
-   accepted: the shadow map re-renders on every frame the camera moves (an
-   orbit, a view-cube tween, a turntable), so the performance budget is met
-   by map size and a moving / settled schedule (Performance, below), never by
-   skipping frames. *Reviewer's question; my call.* At steep cameras the
-   light's WORLD elevation is clamped to at least 40° (a top view would
-   otherwise drop it to ~24° and throw a tall part's shadow off the plane);
-   from below the floor the plane is single-sided and simply not drawn.
+4. **The key light is camera-relative in a capture and world-fixed on the
+   canvas** (amended 2026-11-08; shipped camera-relative everywhere in
+   0.186.0). The direction is azimuth −35°, elevation 38° in view space, as
+   in the spike: the lit side up-left of the viewer, the way a drawn figure
+   is lit, and the ground shadow falling down-right from it. Held in view
+   space on the live canvas it turned with the camera, and an orbit swept the
+   band edges across the part — every face flipped tone as it crossed one,
+   which read as unstable shading. So the LIVE view reads that view-space
+   direction once at the viewer's DEFAULT camera pose (`CEL.light.at`:
+   position (18, 12, 18) looking at the origin, about 25° up) and holds the
+   resulting WORLD direction still (`celLightWorld`), the way CAD's live key
+   is world-fixed: a face keeps its tone through an orbit, and the default
+   framing looks exactly as before. The pose matters: read at a pure iso
+   (35° up) the world key steepens to 61° and a box's front face drops just
+   under the lit band, so every wall sat in the cool shadow and the base
+   colour showed only on top faces, reading as an added highlight. Orbit far enough and the shadow side
+   faces the viewer, the cost CAD already pays. Every capture (canonical
+   views, `captureCurrent`, the popover thumbnails) keeps the camera-relative
+   key, so each canonical view is lit the same way — CAD's capture lights do
+   the same swap. The band shaders light by ONE shared uniform
+   (`aimCelLight` / `restCelLight`), re-aimed per frame in
+   `prepareCelGround` by whether a render target is bound. **The ground
+   light follows the key** (same azimuth, 60° elevation: in world space on the
+   canvas, `celGroundLightWorld`; in view space in a capture), so the shadow
+   always falls away from the lit side; a ground light in the other frame
+   would put the shadow under the lit side at some angles, which reads wrong.
+   The shadow map still re-renders every frame (three's default), so the
+   moving / settled map-size schedule (Performance, below) stays; skipping
+   the re-render on camera-only frames, now that the live shadow holds
+   still, is a follow-up. *Reviewer's question; my call.* At steep cameras
+   the light's WORLD elevation is clamped to at least 40° (a top view would
+   otherwise drop a camera-relative light to ~24° and throw a tall part's
+   shadow off the plane); from below the floor the plane is single-sided and
+   simply not drawn.
 5. **The ground shadow is live, and it is in captures.** A shadow-map light
    and a shadow-only plane, blurred (three's VSM shadow maps), so a posed
    piece casts where it is now. It is part of the look, so `captureCurrent`,
@@ -128,7 +153,7 @@ line. The constants below are the ones the user dialled in on real parts.
 - Authoring keys for the cel look (`display.cel`, per-part palettes, per-part
   line weight). Colour is the only author-facing input, and it already exists.
 - A cel capture STYLE (`renderStyles.js`) or a CPU port. See decision 9.
-- Dark-theme or host-tinted frames. The field is one colour.
+- Host-tinted frames (`meta.background`). The field has one colour per theme and no more.
 - Halftone or ink on the realistic or CAD looks.
 - Shadow catching on the part itself (a gear shading the plate under it).
   The ground plane is the only receiver; a sub-part's own banding is its only
@@ -331,22 +356,22 @@ constant above) or further if a frame budget of twice CAD's is exceeded.
 | | lit edge / deep edge (n·l) | 0.45 / 0.05 |
 | | softness | 0.015 |
 | Shadow tone | darken | 0.74 |
-| | tint / amount | `#6f86b4` / 0.5 |
+| | tint / amount | `#6f86b4` / 0.25 (the spike's 0.5 pulled a warm part's shadow to mauve, so its lit faces read as a highlight of another colour; lowered 2026-11-08) |
 | | deep darken | 0.7 |
 | Highlight | strength / size / shininess | 0.85 / 0.6 / 60 |
 | Rim | strength / width | 0.6 / 0.18 |
-| Key light | azimuth / elevation (view space) | −35° / 38° |
+| Key light | azimuth / elevation (view space; held in world on the canvas, read at the default camera pose (18, 12, 18)) | −35° / 38° |
 | Ink | colour | `#161a24` |
 | | thick / thin (CSS px) | 0.7 / 0.3 |
 | | outer contour boost | ×1.4 |
 | | depth threshold / normal threshold | 0.004 / 0.3 |
 | | kernel lines | on, opacity 0.55, ink colour |
-| Field | colour | `#9fd9ea` |
-| | halftone strength / cell (CSS px) | 0.1 / 7, 45°, dot colour field × 0.82 |
+| Field | colour, light / dark theme | `#9fd9ea` / `#273648` |
+| | halftone strength / cell (CSS px) | 0.1 / 7, 45°, dot colour field × 0.82 (light) or × 1.3 (dark) |
 | Body default | colour | `#eef1f4` |
 | Ground | shadow opacity / colour | 0.3 / `#24304a` |
 | | penumbra | 8 % of R |
-| | light elevation | 60° (azimuth = key's) |
+| | light elevation | 60° (azimuth = key's; same frame as the key) |
 | | map / bias | 2048² (1024² coarse pointer) / −0.0015 |
 
 The shader math for each is in the spike and is the reference: the view-space

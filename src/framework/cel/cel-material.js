@@ -5,7 +5,7 @@
 // live on every clone (`wireCelOpacity`) because three's clone() copies data
 // properties, not the accessors the fade and cap code read and write.
 import * as THREE from "three";
-import { CEL, celBase, celTones } from "./cel-style.js";
+import { CEL, celBase, celTones, celLightView, celLightWorld } from "./cel-style.js";
 
 const CEL_VERT = /* glsl */`
 #include <clipping_planes_pars_vertex>
@@ -53,12 +53,25 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-// The light, in view space, so it never needs a per-frame update.
-const lightDirection = () => {
-  const az = THREE.MathUtils.degToRad(CEL.light.azimuthDeg);
-  const el = THREE.MathUtils.degToRad(CEL.light.elevationDeg);
-  return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
-};
+// The light, in view space. ONE Vector3 shared by every band material and every
+// clone of one (wireCelOpacity re-points a clone's copy at it, since three's
+// clone() deep-copies uniform values), so aiming it once a frame reaches them
+// all. It rests at the camera-relative key (what a capture lights by); the live
+// frame aims it at the world-fixed key's view-space image (aimCelLight).
+const REST = new THREE.Vector3(...celLightView());
+const WORLD = new THREE.Vector3(...celLightWorld());
+const sharedLight = REST.clone();
+const _q = new THREE.Quaternion();
+
+/** Point the band shaders' key at the world-fixed direction, as `camera` sees it. */
+export function aimCelLight(camera) {
+  camera.getWorldQuaternion(_q).invert();
+  sharedLight.copy(WORLD).applyQuaternion(_q);
+}
+/** Back to the camera-relative key (captures; the rest state). */
+export function restCelLight() { sharedLight.copy(REST); }
+/** The direction the band shaders light by right now (view space; read-only). */
+export function celLightNow() { return sharedLight; }
 
 /**
  * Keeps `opacity` (-> uOpacity), `color` (-> uLit) and `clone()` consistent on a cel
@@ -73,6 +86,7 @@ export function wireCelOpacity(material) {
     set: (v) => { u.uOpacity.value = v; },
   });
   Object.defineProperty(material, "color", { configurable: true, enumerable: false, get: () => u.uLit.value });
+  u.uLight.value = sharedLight;
   material.clone = function clone() {
     const c = THREE.ShaderMaterial.prototype.clone.call(this);
     wireCelOpacity(c);
@@ -92,7 +106,7 @@ export function buildCelMaterial(display) {
       uShadow: { value: new THREE.Color(tones.shadow) },
       uDeep: { value: new THREE.Color(tones.deep) },
       uOpacity: { value: 1 },
-      uLight: { value: lightDirection() },
+      uLight: { value: sharedLight },
       uBands: { value: bands.count }, uEdgeLit: { value: bands.lit }, uEdgeDeep: { value: bands.deep }, uSoft: { value: bands.softness },
       uSpecStr: { value: highlight.strength }, uSpecSize: { value: highlight.size }, uShininess: { value: highlight.shininess },
       uRim: { value: rim.strength }, uRimWidth: { value: rim.width },

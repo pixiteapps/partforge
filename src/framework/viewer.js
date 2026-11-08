@@ -30,8 +30,8 @@ import { CANONICAL_VIEWS, cameraPoseForView, cameraCueForPose } from "./view-ang
 import { srgbEncodeInPlace, RENDER_STYLES, getRenderStyle, CAD_LIGHT_THEME, CAD_DARK_THEME } from "./renderStyles.js";
 import { stylePose, modelToWorld } from "./style-camera.js";
 import { contactShadowMask } from "./contact-shadow.js";
-import { CEL } from "./cel/cel-style.js";
-import { buildCelMaterial } from "./cel/cel-material.js";
+import { CEL, celGroundLightWorld, celField } from "./cel/cel-style.js";
+import { buildCelMaterial, aimCelLight, restCelLight } from "./cel/cel-material.js";
 import { createCelInk, CEL_LAYER } from "./cel/cel-ink.js";
 import { createCelGround } from "./cel/cel-ground.js";
 import { buildContactShadowPlane } from "./contact-shadow-plane.js";
@@ -765,7 +765,9 @@ export function createViewer(container, part, {
   let celGround = null;              // the VSM ground shadow (light, target, plane), built on the first entry into cel
   let celMapSize = null;             // the ground's current shadow-map size (setMapSize reallocates, so it changes only on a switch)
   let celShadowWas = null;           // renderer.shadowMap's { enabled, type } from before cel turned it on
-  const celField = new THREE.Color(CEL.field.color); // cel's backdrop, which the ink dots
+  // Cel's backdrop and the ink pass's dot on it, for the theme in effect (the
+  // field follows the light / dark theme; the ink colour does not).
+  const celFieldNow = () => { const f = celField(currentTheme); return { color: new THREE.Color(f.color), dot: new THREE.Color(f.dot) }; };
   const rigCache = new Map();        // environment id -> Promise<Rig>
   const loadedRigs = new Map();      // environment id -> Rig, once its load has landed (synchronous captures)
   const borrowedRigRefs = new Map();  // environment id -> count of in-flight captures (thumbnails, renderViews) borrowing it
@@ -1108,10 +1110,15 @@ export function createViewer(container, part, {
     placeGround(opts);
     placeCelGround(opts);
   }
-  // Once per live cel frame, before the scene render: casters, the light's
-  // camera-relative aim (aim clamps its world elevation), and the map size.
-  // Like the realistic contact shadow, the map runs small while the camera or
-  // a pose moves and full once it has settled — a 2048² VSM blur every frame of
+  // Once per cel frame, before the scene render: casters, the key and ground
+  // lights' aim, and the map size. On the CANVAS the key is world-fixed (the
+  // band shaders' shared uniform is re-aimed from this frame's camera, and the
+  // ground light sits still at the key's world azimuth), so a face keeps its
+  // tone through an orbit; a CAPTURE (a target bound) lights camera-relative —
+  // the key up-left of the viewer, the ground light following it, its world
+  // elevation clamped by aim — so every canonical view is lit the same way, as
+  // CAD's capture lights do. Like the realistic contact shadow, the map runs
+  // small while the camera or a pose moves and full once it has settled — a 2048² VSM blur every frame of
   // an orbit is what a phone cannot keep up with. A mountPreview viewer (a
   // turntable or an animation, always moving) and a coarse pointer stay small.
   // A small frame asks for the frames that follow it, so the settled full-size
@@ -1119,6 +1126,7 @@ export function createViewer(container, part, {
   // Decided once: the mount options and the pointer kind do not change in a session.
   const celFullMap = frameSwept || framePoses?.length || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize;
   const celFullMapSize = () => celFullMap;
+  const _celGroundLight = celGroundLightWorld();
   function prepareCelGround(cam) {
     // Casters are the ink prepass's members: exactly the sub-parts drawn
     // opaque (subPartVisibility's `inked`), so an authored ghost, a user
@@ -1129,12 +1137,18 @@ export function createViewer(container, part, {
     // renderer.render updates matrixWorld only later in the frame; aim off
     // this frame's camera, not the last one.
     cam.updateMatrixWorld();
-    celGround.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
+    const onCanvas = renderer.getRenderTarget() === null;
+    if (onCanvas) {
+      aimCelLight(cam);
+      celGround.aimWorld(_celGroundLight);
+    } else {
+      restCelLight();
+      celGround.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
+    }
     const full = celFullMapSize();
     // Only the live canvas runs the moving schedule: a capture (a target bound)
     // takes the full map, so its shadow never depends on how recently the user
     // orbited.
-    const onCanvas = renderer.getRenderTarget() === null;
     const moving = onCanvas && celMovedAt != null && performance.now() - celMovedAt < SHADOW_SETTLE_MS;
     const want = moving ? CEL.ground.mapSizeSmall : full;
     if (want !== celMapSize) { celGround.setMapSize(want); celMapSize = want; }
@@ -1293,8 +1307,9 @@ export function createViewer(container, part, {
     if (live) invalidateMaterialThumbnails();
     if (firstError) throw firstError;
   }
-  // Cel is lit by its own band shader (CEL.light, fixed to the camera), so the
-  // scene's lights, environment and tone mapping all stand aside; the backdrop
+  // Cel is lit by its own band shader (CEL.light: world-fixed on the canvas,
+  // camera-relative in a capture — prepareCelGround), so the scene's lights,
+  // environment and tone mapping all stand aside; the backdrop
   // is the flat field the ink pass dots, never the theme's. It keeps CAD's
   // pixel ratio and draws the kernel's feature lines in ink, under the ink
   // pass's own outlines.
@@ -1307,7 +1322,7 @@ export function createViewer(container, part, {
       realisticRig = null;
       shadowMovedAt = null;
       scene.environment = null;
-      scene.background = transparent ? null : celField.clone();
+      scene.background = transparent ? null : celFieldNow().color;
       scene.backgroundBlurriness = 0;
       scene.backgroundIntensity = 1;
       scene.backgroundRotation.set(0, 0, 0);
@@ -2622,8 +2637,10 @@ export function createViewer(container, part, {
     const t = THEME[mode] ?? THEME.dark;
     // Realistic mode's backdrop belongs to the environment and its grid is off;
     // enterCad puts the theme's background back on the way out.
-    // Cel's field is the look's own, not the theme's: it stays put too.
-    if (renderMode === "cad") scene.background = cadBackground(THEME[mode] ? mode : "dark");
+    // Cel's field has a colour per theme (celField); its ink stays the look's own.
+    const theme = THEME[mode] ? mode : "dark";
+    if (renderMode === "cad") scene.background = cadBackground(theme);
+    else if (renderMode === "cel") scene.background = transparent ? null : new THREE.Color(celField(theme).color);
     scene.remove(grid);
     grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, t.grid[0], t.grid[1]);
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps
@@ -2779,8 +2796,11 @@ export function createViewer(container, part, {
     // Restored to what they WERE, not to true: realistic mode keeps them off.
     const keyWas = liveLights.key.visible, fillWas = liveLights.fill.visible;
     // Cel lights itself (its band shader ignores scene lights), so it takes no
-    // capture lights either.
+    // capture lights either; its key goes camera-relative for the capture
+    // (prepareCelGround does the same for the live scene, and the next canvas
+    // frame re-aims it world-fixed).
     const lit = !realistic && renderMode !== "cel";
+    if (renderMode === "cel") restCelLight();
     if (lit) {
       const poses = captureLightPoses({ position, up, target });
       capKey.position.set(poses.key[0], poses.key[1], poses.key[2]);
@@ -3423,7 +3443,7 @@ export function createViewer(container, part, {
     const plane = cutaway.getPlane?.(_inkClipPlane) ?? null;
     celInk.render(renderer, scene, cam, {
       pixelScale,
-      field: transparent ? null : { color: celField, dots: true },
+      field: transparent ? null : { ...celFieldNow(), dots: true },
       clippingPlanes: plane ? [plane] : [],
     });
   }

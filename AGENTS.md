@@ -312,7 +312,17 @@ the installed package, so let the publish finish before bumping the dep there.
   so captures get it and throwaway scenes do not. The ground shadow has two VSM
   pitfalls: the plane must sit strictly inside the shadow map's xy bounds, and
   the depth slab must be thin; the light's world elevation is clamped to 40°.
-  Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
+  The key light is WORLD-FIXED on the canvas and camera-relative in a capture
+  (0.186.1): `CEL.light` is a view-space direction read at the viewer's
+  DEFAULT camera pose, `CEL.light.at` = (18, 12, 18) — NOT a pure iso, which
+  steepens the world key until no wall of a box is lit
+  (`celLightWorld`); every band material and clone lights by ONE shared
+  uniform, and `prepareCelGround` aims it per frame — `aimCelLight(cam)` plus
+  the ground's `aimWorld` with no render target bound, `restCelLight()` plus
+  the camera-relative `aim` with one — so a face keeps its tone through an
+  orbit while canonical captures stay lit the same way, as CAD's capture
+  lights do. The field follows the theme (`celField(theme)`: pale cyan, or a
+  slate in dark, each with its own halftone dot); the ink does not. Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
   `renderViews(…, { renderMode: "cel" })` always work; `captureViews` stays CAD.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
