@@ -72,6 +72,18 @@
 //     cabinet's corner across its top plane is a shape drag on a CHEAP part, so it
 //     rebuilds live — `generate` jobs during the drag — while the host sees no onBuild
 //     until release and exactly one after (checkDrawerBox).
+//   preview-pose.html (required, dev-only) — Pose mode on a CACHED PREVIEW (spec 2026-11-07
+//     interactive previews): the page builds the robot arm in an off-screen editor, encodes
+//     it (runtime.exportPreview()) and mounts the file with mountPreview({ glb, part }); the
+//     check reads `window.__pfPreview` where the others read `window.__pfRuntime`. A 20-move
+//     drag of the `tool` handle shows the readout slot mid-drag and clears it on release,
+//     fires onDragEnd exactly once (the app pushes each to `window.__pfDragEnds`) with changed
+//     keys, leaves getParams() off the defaults on every changed key, and constructs no Worker
+//     after the preview mounted (`window.__pfWorkersAfterPreview`) (checkPreviewPose). The
+//     `?part=hand` entry makes checkHandContact's index-into-middle drag on the hand's file,
+//     pushed on to 1.5x so it ends held: its drag end's `blocked.b` is a middle-finger piece
+//     and the pose has no overlap (checkPreviewContact). A PAGES entry
+//     may carry a `query`, appended to its URL.
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
@@ -227,9 +239,13 @@ async function openPoseApp(page, url) {
 
 const canvasCursor = (page) => page.evaluate((sel) => document.querySelector(sel).style.cursor, VIEWER_CANVAS);
 
-/** The first handle point inside the canvas that the canvas itself receives a press on. */
-async function pickHandle(page, box, preferId) {
-  const points = await page.evaluate(() => window.__pfRuntime.pose.handlePoints());
+/**
+ * The first handle point inside the canvas that the canvas itself receives a press on.
+ * `host` names the window global whose `pose` to read: the editor's runtime, or
+ * "__pfPreview" for a cached preview (checkPreviewPose).
+ */
+async function pickHandle(page, box, preferId, host = "__pfRuntime") {
+  const points = await page.evaluate((h) => window[h].pose.handlePoints(), host);
   const ordered = preferId ? [...points.filter((p) => p.handleId === preferId), ...points.filter((p) => p.handleId !== preferId)] : points;
   for (const p of ordered) {
     const x = box.x + p.x, y = box.y + p.y;
@@ -240,8 +256,12 @@ async function pickHandle(page, box, preferId) {
   throw new Error(`no handle point is pressable on the canvas (handlePoints: ${JSON.stringify(points)})`);
 }
 
-/** Press on the handle and move DRAG_MOVES times, a frame apart. Does not release. */
-async function dragFrom(page, h, box, onMidDrag) {
+/**
+ * Press on the handle and move DRAG_MOVES times, a frame apart. Does not release. A
+ * cached preview (`host` "__pfPreview") has no __isDragging hook: its drag has started
+ * when the readout slot shows it.
+ */
+async function dragFrom(page, h, box, onMidDrag, host = "__pfRuntime") {
   // Head for the canvas centre, ~120 px of travel: some direction the handle can move.
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
   const len = Math.hypot(cx - h.px, cy - h.py) || 1;
@@ -257,7 +277,7 @@ async function dragFrom(page, h, box, onMidDrag) {
     await page.mouse.move(h.px + dx * i, h.py + dy * i);
     await sleep(20); // let the rAF-coalesced frame run
     if (i === Math.floor(DRAG_MOVES / 2)) {
-      if (!(await page.evaluate(() => window.__pfRuntime.pose.__isDragging()))) {
+      if (!(await page.evaluate((hs) => window[hs].pose.__isDragging?.() ?? window[hs].pose.__dragReadout() != null, host))) {
         await page.mouse.up();
         throw new Error(`a drag from handle ${h.handleId}:${h.at} never started (pose.isDragging() false mid-drag)`);
       }
@@ -801,7 +821,7 @@ async function dragPath(page, from, to, n, onHeld) {
   return held;
 }
 
-const handlePoint = async (page, id) => (await page.evaluate(() => window.__pfRuntime.pose.handlePoints())).find((p) => p.handleId === id) ?? null;
+const handlePoint = async (page, id, host = "__pfRuntime") => (await page.evaluate((h) => window[h].pose.handlePoints(), host)).find((p) => p.handleId === id) ?? null;
 
 // The hand's contact pose: the index spread 15° into the middle finger while it bends (the
 // drag test/pose-param-solve-collide.test.js makes, and bench-pose's dragContact).
@@ -1197,12 +1217,139 @@ async function checkDrawerBox(page, url, errors) {
   };
 }
 
+// ---- the cached preview ---------------------------------------------------------
+
+const PREVIEW = "__pfPreview";
+
+/**
+ * Load preview-pose.html and wait for the preview to be drawn and its handles decided
+ * (handlePoints() non-empty, idle time after `drawn`), then for the points to hold still
+ * across two frames. Returns the canvas box.
+ */
+async function openPreviewApp(page, url) {
+  await page.goto(url, { waitUntil: "load", timeout: 30000 });
+  await page.waitForFunction(() => window.__pfPreview || window.__pfPreviewError, null, { timeout: 90000 });
+  const failure = await page.evaluate(() => window.__pfPreviewError ?? null);
+  if (failure) throw new Error(`the preview page failed to start: ${failure}`);
+  await page.evaluate(() => window.__pfPreview.drawn);
+  await page.waitForFunction(() => new Promise((resolve) => {
+    const read = () => JSON.stringify(window.__pfPreview.pose.handlePoints().map((p) => [p.handleId, Math.round(p.x * 10), Math.round(p.y * 10)]));
+    const a = read();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      resolve(window.__pfPreview.pose.handlePoints().length > 0 && read() === a);
+    }));
+  }), null, { timeout: 15000, polling: 50 });
+  return page.locator(VIEWER_CANVAS).boundingBox();
+}
+
+/** What every preview drag must leave: no Worker made since the preview mounted, no `generate` job since `t0`. */
+async function checkNoKernel(page, t0, label, errors) {
+  const { workers, jobs } = await page.evaluate((t) => ({
+    workers: window.__pfWorkersAfterPreview,
+    jobs: window.__pfWorkerLog.filter((e) => e.dir === "out" && e.type === "generate" && e.at > t).length,
+  }), t0);
+  if (workers !== 0) errors.push(`${workers} Worker(s) constructed after the preview mounted (${label}): a preview drag needs no kernel`);
+  if (jobs) errors.push(`${jobs} generate job(s) posted during ${label}`);
+  return workers;
+}
+
+/**
+ * preview-pose.html (spec 2026-11-07 interactive previews): the robot arm's file, posed
+ * with no kernel. A 20-move drag of the `tool` handle, as checkReference makes it: the
+ * readout slot shows it mid-drag and clears on release, onDragEnd fires exactly once with
+ * changed keys, the preview's params differ from the part's defaults on every changed key,
+ * and no Worker is made after the preview mounts.
+ */
+async function checkPreviewPose(page, url, errors) {
+  const box = await openPreviewApp(page, url);
+  const h = await pickHandle(page, box, "tool", PREVIEW);
+  if (h.handleId !== "tool") errors.push(`no pressable "tool" handle point on the preview (picked ${h.handleId})`);
+  const t0 = await page.evaluate(() => performance.now());
+  let readout = null;
+  await dragFrom(page, h, box, async () => { readout = await page.evaluate(() => window.__pfPreview.pose.__dragReadout()); }, PREVIEW);
+  if (!readout) errors.push(`no live readout in the viewbar slot while dragging ${h.handleId}:${h.at} on the preview`);
+  await page.mouse.up();
+  await sleep(600);
+  const after = await page.evaluate(() => ({
+    readout: window.__pfPreview.pose.__dragReadout(),
+    ends: window.__pfDragEnds,
+    params: window.__pfPreview.getParams(),
+    defaults: window.__pfPart.defaults,
+  }));
+  if (after.readout) errors.push(`the live readout stayed up after the preview drag ended (${JSON.stringify(after.readout)})`);
+  const workers = await checkNoKernel(page, t0, "the preview tool drag", errors);
+  const changed = after.ends?.[0]?.changed;
+  if (!Array.isArray(after.ends) || after.ends.length !== 1) errors.push(`${after.ends?.length ?? "no"} onDragEnd calls for one preview drag, expected exactly 1`);
+  else if (!Array.isArray(changed) || changed.length === 0) errors.push(`the preview drag's onDragEnd lists no changed keys (${JSON.stringify(after.ends[0])})`);
+  else if (!after.params) errors.push("getParams() is null on a preview mounted with its part");
+  else {
+    const same = changed.filter((k) => Object.is(after.params[k], after.defaults[k]));
+    if (same.length) errors.push(`getParams() still holds the defaults for changed key(s) ${same.join(", ")} after the preview drag`);
+  }
+  return { handle: `${h.handleId}:${h.at}`, readout, dragEnds: after.ends?.length ?? null, changed: changed ?? null, workersAfterPreview: workers };
+}
+
+/**
+ * preview-pose.html?part=hand: the hand's contact drag (checkHandContact's) on the file —
+ * the wrist held (thumbLock), the index tip dragged toward where it would sit spread 15°
+ * into the middle finger, PREVIEW_CONTACT_REACH of the way. checkHandContact's 1.15 lets
+ * the slide carry the tip clear by release (on the editor too — its contact reads
+ * blocked null), so this pushes on to 1.5, where the drag ends held: the drag end's
+ * `blocked.b` names a middle-finger piece, and the pose it leaves has no overlap
+ * (assemblyOverlaps in Node, as checkHandContact runs it). The preview has no
+ * setParams, so the lock and the probe of where the contact pose puts the tip are written
+ * to the preview's own params through its test hook (`__preview.params`); neither moves
+ * a mesh (the lock is a flag, and the probe is restored before the press).
+ */
+const PREVIEW_CONTACT_REACH = 1.5;
+
+async function checkPreviewContact(page, url, errors) {
+  const box = await openPreviewApp(page, url);
+  const canvas = (p) => ({ x: box.x + p.x, y: box.y + p.y });
+  // The collision index is built in idle time once posing is live, and a drag that starts
+  // before it guards only the pieces already indexed (pose-collide.js): wait for all of them.
+  await page.waitForFunction(() => {
+    const st = window.__pfPreview.__preview.poseCollide?.state();
+    return !!st && st.queued === 0 && st.indexed.length >= 2;
+  }, null, { timeout: 30000 }).catch(() => errors.push("the preview's collision index never finished building"));
+  const goal = await page.evaluate((pose) => {
+    const pv = window.__pfPreview.__preview;
+    pv.params.thumbLock = true;
+    const rest = Object.fromEntries(Object.keys(pose).map((k) => [k, pv.params[k]]));
+    Object.assign(pv.params, pose);
+    pv.poseMode.refresh();
+    const at = window.__pfPreview.pose.handlePoints().find((p) => p.handleId === "index") ?? null;
+    Object.assign(pv.params, rest);
+    pv.poseMode.refresh();
+    return at;
+  }, CONTACT_POSE);
+  await frames(page);
+  const start = await handlePoint(page, "index", PREVIEW);
+  if (!goal || !start) { errors.push("preview hand contact: no index handle point"); return null; }
+  const t0 = await page.evaluate(() => performance.now());
+  const k = PREVIEW_CONTACT_REACH;
+  const from = canvas(start), past = canvas({ x: start.x + (goal.x - start.x) * k, y: start.y + (goal.y - start.y) * k });
+  await dragPath(page, from, past, 20);
+  const ends = await page.evaluate(() => window.__pfDragEnds);
+  const params = await page.evaluate(() => window.__pfPreview.getParams());
+  const workers = await checkNoKernel(page, t0, "the preview contact drag", errors);
+  if (ends.length !== 1) errors.push(`${ends.length} onDragEnd calls for the preview contact drag, expected exactly 1`);
+  const blocked = ends.at(-1)?.blocked ?? null;
+  if (!blocked?.b?.startsWith("middle")) errors.push(`the preview's index drag into the middle finger ended blocked by ${JSON.stringify(blocked)}, not a middle-finger piece`);
+  const overlaps = params ? await overlapsAt("hand.js", params) : null;
+  if (!params) errors.push("getParams() is null on the hand's preview");
+  else if (overlaps.length) errors.push(`the preview's contact pose overlaps: ${overlaps.join(", ")}`);
+  return { blocked, overlaps: overlaps?.length ?? null, workersAfterPreview: workers };
+}
+
 const PAGES = [
   { entry: "pose-smoke.html", run: checkSmoke, required: true },
   { entry: "robot-arm.html", run: checkRobotArm, required: true },
   { entry: "hand.html", run: checkHand, required: true },
   { entry: "gearbox.html", run: checkGearbox, required: true },
   { entry: "drawer-box.html", run: checkDrawerBox, required: true },
+  { entry: "preview-pose.html", run: checkPreviewPose, required: true },
+  { entry: "preview-pose.html", query: "?part=hand", run: checkPreviewContact, required: true },
 ];
 
 let failed = false;
@@ -1218,8 +1365,8 @@ try {
     startVite();
     await waitForVite(`http://localhost:${PORT}/${present[0].entry}`);
     browser = await chromium.launch();
-    for (const { entry, run } of present) {
-      const url = `http://localhost:${PORT}/${entry}`;
+    for (const { entry, query, run } of present) {
+      const url = `http://localhost:${PORT}/${entry}${query ?? ""}`;
       const errors = [];
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
       await page.addInitScript(instrument);

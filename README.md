@@ -184,6 +184,8 @@ viewerState })` is the kernel-free form — the same viewer, view cube, view sty
 and theme, with no part, no worker and no rail — for a page that only shows a
 model (CAD look exact; realistic mode uses each sub-part's display only — no sheet
 stock, no layer-line frames). Previews carry no edge lines, textures or patterns.
+`part` (0.186.0+) hands it the part module, and the editor's place-only handles —
+IK and collisions included — work on the file.
 `resolveDefaultView(part)` (main entry and `partforge/testing`) names the view
 `mount()` opens on, so a preview built headlessly matches it.
 
