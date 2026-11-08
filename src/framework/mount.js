@@ -150,7 +150,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // realistic restore or switch still loading reads "realistic", so a
       // remount mid-load (the cloud remounts on every edit) doesn't drop it.
       // A failed load settles back to "cad".
-      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.getRenderMode?.() ?? "cad",
+      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.isCelPending?.() ? "cel" : viewer.getRenderMode?.() ?? "cad",
       // Only an environment someone CHOSE: carrying the one merely seeded
       // from meta.environment (or the default) would outrank the part's own
       // meta.environment on the next mount, masking an edit to it.
@@ -1017,7 +1017,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     for (const [name, override] of Object.entries(pruneOverrides(viewerState?.display, part))) {
       viewer.setSubPartDisplay(name, override);
     }
-    // Realistic mode by the same precedence, requested HERE rather than on the
+    // Realistic (or cel) mode by the same precedence, requested HERE rather than on the
     // first accepted build: every mount has a fresh renderer, so the
     // environment loads again, and starting now runs that alongside the build
     // instead of showing CAD until the build lands and only then waiting on
@@ -1026,8 +1026,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // shown, and showAssembly brings the ground to the part when it arrives.
     // While it loads the viewer reports it pending, which is what
     // getViewerState carries; an explicit mode change supersedes it, and a
-    // failed load settles to CAD.
-    if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
+    // failed load settles to CAD. Cel has no assets to load, only its programs
+    // to compile, and comes back the same way.
+    const initialMode = viewerState?.renderMode ?? loadRenderMode() ?? "cad";
+    if (initialMode !== "cad") viewer.setRenderMode(initialMode);
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });
     cleanup.defer(() => viewcube.detach());
     // The view style button + popover (the style grid). With a #viewbar

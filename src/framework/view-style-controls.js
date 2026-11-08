@@ -203,8 +203,8 @@ export function attachViewStyleControls(viewer, { stage, toolbar = null, anchor 
     pendingStyle = id;
     render();
     try {
-      if (id === "cad") {
-        saveRenderMode(await viewer.setRenderMode("cad"));
+      if (id === "cad" || id === "cel") {
+        saveRenderMode(await viewer.setRenderMode(id));
       } else {
         saveEnvironment(await viewer.setEnvironment(id));
         saveRenderMode(await viewer.setRenderMode("realistic"));
