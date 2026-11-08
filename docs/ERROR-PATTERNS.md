@@ -743,6 +743,18 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** A STEP import used on the Manifold backend needs OCCT-tessellated triangles first (the "crossover" described in [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Importing geometry (STEP/STL/3MF)"). This hop is meant to self-heal — the browser worker requests a `tessellate-imports` job from the OCCT worker, Node hops through a `node:worker_threads` isolate (the two WASM kernels may never share a process) — but it surfaces here when the tessellation either delivered a mesh whose digest didn't match what Manifold now expects (a genuinely broken state, not a retry loop) or the worker/thread exited without completing.
 - **Fix:** This should be rare and self-resolving on the next build; if it persists, confirm the STEP file parses under OCCT on its own (e.g. `meta.backend: "occt"` temporarily, or `npx partforge measure` against an OCCT-routed copy of the part) to rule out a malformed STEP file, and check the console/thread output for the underlying tessellation error being wrapped.
 
+## asset-url-no-module-base
+
+- **Symptom:** `Failed to construct 'URL': Invalid URL` (Node: `TypeError: Invalid URL`) as the part module loads — before any build runs — on a part that declares a `vectors`, `fonts`, `imports` or `images` source as `new URL("./…", import.meta.url)`.
+- **Cause:** The host loaded the part's source from somewhere with no folder to resolve `./…` against — a `data:` or `blob:` URL, or one bundled module made from a part's file tree — so `import.meta.url` is not a hierarchical base and the `URL` constructor throws.
+- **Fix:** Declare the source in a form that needs no base: a vector document as the parsed object itself — `import plate from "./assets/plate.vector.json" with { type: "json" }`, then `vectors: { plate }`, where a bundler inlines that import (an unbundled `data:`/`blob:` module cannot import `./…` either, so write the object in the part) — or, for a file the host stores, the host's own asset token. See [AUTHORING-PARTS.md](AUTHORING-PARTS.md) § "Vector geometry" ("A source may also be the parsed file itself").
+
+## kernel-chunk-import-failed
+
+- **Symptom:** `Failed to fetch dynamically imported module:` followed by a kernel chunk's URL (`manifold-3d`, `manifold-backend`, `replicad`, `replicad_single`), on a build or export, and on every later job in that worker.
+- **Cause:** The download of a JavaScript chunk the kernel boot imports was cut off. The worker boots again on each job ([KERNEL-CONTRACT.md](KERNEL-CONTRACT.md) § "Worker rebind"), but the browser's module map remembers the failed import, so the retry never reaches the network. A failed `.wasm` download does not do this: it recovers on the next job.
+- **Fix:** Replace the worker (a host-level retire, or a page reload). A new worker has its own module map and fetches the chunk again.
+
 ## vector-unknown-name
 
 - **Symptom:** `vector2d: unknown vector "` followed by the name and — declare it in the part's `vectors` field — thrown from a build calling `k.vector2d(name)`.
