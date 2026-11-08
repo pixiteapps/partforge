@@ -53,13 +53,20 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
   function aim(camera, { azimuthDeg, elevationDeg }) {
     const az = THREE.MathUtils.degToRad(azimuthDeg), el = THREE.MathUtils.degToRad(elevationDeg);
     dir.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).transformDirection(camera.matrixWorld);
+    place(camera);
+  }
+  /** Point the light along a WORLD direction (the live view's still key), same clamp. */
+  function aimWorld([x, y, z]) {
+    dir.set(x, y, z).normalize();
+    place(null);
+  }
+  function place(camera) {
     const minY = Math.sin(THREE.MathUtils.degToRad(G.minWorldElevationDeg));
     if (dir.y < minY) {
       let x = dir.x, z = dir.z;
       let h = Math.hypot(x, z);
       if (h < 1e-9) {
-        right.setFromMatrixColumn(camera.matrixWorld, 0);
-        x = right.x; z = right.z; h = Math.hypot(x, z);
+        if (camera) { right.setFromMatrixColumn(camera.matrixWorld, 0); x = right.x; z = right.z; h = Math.hypot(x, z); }
         if (h < 1e-9) { x = 1; z = 0; h = 1; }
       }
       const k = Math.sqrt(1 - minY * minY) / h;
@@ -69,6 +76,12 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
     light.target.position.copy(centre);
     light.updateMatrixWorld();
     light.target.updateMatrixWorld();
+  }
+
+  /** The shadow's colour and opacity over the field (celField(theme).shadow). */
+  function setLook({ color, opacity }) {
+    plane.material.color.set(color);
+    plane.material.opacity = opacity;
   }
 
   function setMapSize(n) {
@@ -91,5 +104,5 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
     light.shadow.dispose();
   }
 
-  return { light, plane, fit, aim, setMapSize, setCasters, dispose };
+  return { light, plane, fit, aim, aimWorld, setLook, setMapSize, setCasters, dispose };
 }

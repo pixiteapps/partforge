@@ -572,8 +572,11 @@ not CAD blue-grey), with the shadow tones derived automatically. A preset's
 metalness, roughness, textures and finish overrides do not change it, and
 `opacity` still ghosts. Ink runs on silhouettes and creases, plus the kernel's
 feature edges. The field is flat and faintly halftoned, with a soft ground
-shadow under the part that follows a pose. There is nothing to author and it
-needs no assets.
+shadow under the part that follows a pose. The light holds still in the
+part's world as you orbit (a face keeps its tone), and a capture is lit from
+up-left of the camera, like CAD's. The backdrop is a pale cyan in the light
+theme and a slate in the dark theme; the ink is the same on both. There is
+nothing to author and it needs no assets.
 
 **Viewers can change a sub-part's look.** The View style popover's Parts
 section lets a user pick a material and colour per sub-part, fade it, or hide
