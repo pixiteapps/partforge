@@ -73,12 +73,18 @@ describe("handles in the measure report", () => {
   });
 
   it("reports which handles a cached preview would show, and why the rest are hidden", () => {
-    const r = measure(k, drawerBox, Object.keys(drawerBox.views)[0]);
+    const r = measure(k, drawerBox, Object.keys(drawerBox.views)[0], {}, { previewHandles: true });
     expect(r.previewHandles.shown).toEqual(["drawer1", "drawer2", "drawer3"]);
     expect(r.previewHandles.hidden.corner).toMatch(/rebuilds/);
   });
 
   it("a part without handles reports no previewHandles either", () => {
-    expect("previewHandles" in measure(k, demo, "spacer")).toBe(false);
+    expect("previewHandles" in measure(k, demo, "spacer", {}, { previewHandles: true })).toBe(false);
+  });
+
+  it("previewHandles is opt-in: absent without the flag", () => {
+    const r = measure(k, drawerBox, Object.keys(drawerBox.views)[0]);
+    expect(r.handles.length).toBeGreaterThan(0);
+    expect("previewHandles" in r).toBe(false);
   });
 });

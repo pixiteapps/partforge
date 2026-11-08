@@ -555,11 +555,16 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const handles = opts.handles !== false ? handlesReport(part, view, params) : undefined;
   // Which of those a kernel-free cached preview of this view would show (and why the
   // rest are hidden), against the sub-parts a GLB of this view would hold: the ones
-  // with triangles.
-  const previewHandlesReport = handles
-    ? previewHandles(part, view, { ...part.defaults, ...params },
-      subparts.filter((s) => s.triangleCount > 0).map((s) => s.name))
-    : undefined;
+  // with triangles. OPT-IN (`opts.previewHandles: true`, the CLI's measure verb): it
+  // probes every handle's range, too slow for the worker's inspect path. Like
+  // handlesReport it never fails the measurement — a throw leaves it out.
+  let previewHandlesReport;
+  if (handles && opts.previewHandles === true) {
+    try {
+      previewHandlesReport = previewHandles(part, view, { ...part.defaults, ...params },
+        subparts.filter((s) => s.triangleCount > 0).map((s) => s.name));
+    } catch { previewHandlesReport = undefined; }
+  }
 
   // Pair surface distances from the meshes already built — no kernel dependency,
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that

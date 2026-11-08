@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openingParams, createFilePlacer } from "../src/framework/preview-pose.js";
-import { previewHandles, PREVIEW_HANDLE_SAMPLES } from "../src/framework/preview-pose.js";
+import { previewHandles, previewHandlesStepper, PREVIEW_HANDLE_SAMPLES } from "../src/framework/preview-pose.js";
 import { handlesShownInView } from "../src/framework/pose/handle-views.js";
 import { relativeMatsAt } from "../src/framework/collide/world.js";
 import { resolveParams, viewSubParts } from "../src/framework/part-model.js";
@@ -26,6 +26,10 @@ describe("openingParams", () => {
   it("is defaults + params for a view without an autoplay animation", () => {
     const view = defaultView(drawerBox);
     expect(openingParams(drawerBox, view, { drawer1Open: 40 })).toEqual({ ...drawerBox.defaults, drawer1Open: 40 });
+  });
+  it("with anim null (the file bakes no animation) ignores the autoplay animation", () => {
+    expect(openingParams(hingedBox, "box", { lidAngle: 50 }, null)).toEqual({ ...hingedBox.defaults, lidAngle: 50 });
+    expect(openingParams(gearbox, defaultView(gearbox), { driveAngle: 90 }, null).driveAngle).toBe(90);
   });
 });
 
@@ -119,6 +123,23 @@ describe("previewHandles", () => {
   });
   it("a part without handles answers empty", () => {
     expect(previewHandles(hingedBox, "box", hingedBox.defaults, ["base", "lid"])).toEqual({ shown: [], hidden: {} });
+  });
+  it("the stepper decides one handle per step and ends at previewHandles' answer (hand, drawer box)", () => {
+    for (const part of [hand, drawerBox]) {
+      const view = defaultView(part);
+      const names = viewSubParts(part, view, part.defaults);
+      const candidates = handlesShownInView(part, view, part.defaults);
+      const stepper = previewHandlesStepper(part, view, part.defaults, names);
+      let steps = 0;
+      for (let done = false; !done; steps++) {
+        done = stepper.step();
+        const { shown, hidden } = stepper.result();
+        expect(shown.length + Object.keys(hidden).length).toBe(steps + 1);
+      }
+      expect(steps).toBe(candidates.length);
+      expect(stepper.step()).toBe(true); // done stays done
+      expect(stepper.result()).toEqual(previewHandles(part, view, part.defaults, names));
+    }
   });
 });
 

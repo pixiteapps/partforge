@@ -320,7 +320,7 @@ const commands = {
       // The CLI is the place to run sweeps the inspect's report share cannot fit (a
       // hand's full set is ~17 s), so they get a budget of their own here.
       const sweepDeadline = Date.now() + CLI_SWEEP_BUDGET_MS;
-      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline });
+      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline, previewHandles: true });
       if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has
       // attached report.verify. If verify throws (unknown metric, per-case build

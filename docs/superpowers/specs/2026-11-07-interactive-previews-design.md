@@ -327,10 +327,13 @@ drawn from the params the animation writes each frame, and a drag pauses
 it):
 
 - **The params follow the player.** While the player is started and not
-  paused or done, the preview's `getParams()` answers `{ ...fileParams,
-  ...evaluate(anim, player.t).values }`, where `anim` is
-  `viewAnimations(part).get(view)`'s autoplay animation, the one the file
-  baked. Pose mode then re-reads its limbs once per frame while the
+  paused or done, the preview's `getParams()` answers `{ ...params,
+  ...evaluate(anim, player.t).values }` — the live params with the
+  animation's values over them, so a dragged key the animation does not track
+  survives — where `anim` is `viewAnimations(part).get(view)`'s autoplay
+  animation, the one the file baked (its name must match the file's
+  animation's; otherwise the preview does not follow, is a still for params,
+  and warns once). Pose mode then re-reads its limbs once per frame while the
   animation plays, as it does in the editor during playback; a `derive`
   per frame is the price, and it is the price the editor already pays.
   Nothing is written: the player keeps posing the meshes by its own
@@ -338,8 +341,9 @@ it):
   mesh is what the baker sampled.
 - **A press pauses.** On `hold(true)` with a player started: read its `t`,
   pause it (`player.pause()` cancels any camera tween, as it does from the
-  button), and write `{ ...fileParams, ...evaluate(anim, t).values }` into
-  the preview's own params, so `getParams()` keeps answering the same
+  button), and write `{ ...params, ...evaluate(anim, t).values }` — the live
+  params with the animation's values over them — into the preview's own
+  params, so `getParams()` keeps answering the same
   values once the player no longer drives them. The placer's `apply` finds
   every matrix unchanged. No visible change; the drag proceeds from there.
   The session's snapshot, the pins' held points and the guard's start pose
@@ -347,8 +351,9 @@ it):
   pose, not to t = 0.
 - **Intro and paused states.** During the intro tween the player's t is 0
   and the rule above holds trivially. A player paused from its button (not
-  by a press) already has its params written by the same path, in the
-  player's `onChange` handler, so a later press finds them in place.
+  by a press) already has its params written by the same path — the live
+  params with the animation's values over them — in the player's `onChange`
+  handler, so a later press finds them in place.
 
 The animation stays paused afterwards. Play resumes it on its own track
 from `t`: the drag's pose is dropped, since the animation's matrices are

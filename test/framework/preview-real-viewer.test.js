@@ -527,13 +527,18 @@ test("exportPreview carries no animation when a tracked param is read by build()
   const part = {
     ...hingedBox,
     views: { box: { ...hingedBox.views.box, animations: {
-      ...animations, cycle: { ...animations.cycle, tracks: { width: [[0, 60], [1, 80]] } },
+      // the cycle keeps its lidAngle track (t = 0 value 0) and gains one build() reads
+      ...animations, cycle: { ...animations.cycle, tracks: { ...animations.cycle.tracks, width: [[0, 60], [1, 80]] } },
     } } },
   };
   const runtime = await mountHingedBox(part);
+  runtime.setParams({ lidAngle: 50 });
   const out = await decodePreviewGlb(await runtime.exportPreview());
   expect(out.view).toBe("box");
   expect(out.animation).toBeNull();
+  // No animation baked, so no t = 0 override: the file sits at the live params.
+  expect(out.params.lidAngle).toBe(50); // not the unbaked cycle's t = 0 value, 0
+  expect(out.params.width).toBe(hingedBox.defaults.width);
   runtime.dispose();
 });
 
@@ -1121,5 +1126,89 @@ test("motion.restart puts the params back to the file's", async () => {
   expect(handle.__preview.params).toEqual(handle.__preview.fileParams);
   expect(handle.getParams()).toEqual(handle.__preview.fileParams); // playing again from t = 0
   expect(handle.animation.state().status).toBe("playing");
+  handle.dispose();
+});
+
+test("a part that throws while posing attaches is ignored: drawn resolves and the handle answers as without part", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const part = { ...gearbox, derive: () => { throw new Error("derive broke"); } };
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part });
+  await drawn(handle); // resolves: the meshes are on screen
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(warn.mock.calls.some(([m]) => typeof m === "string" && m.startsWith("partforge: preview part ignored"))).toBe(true);
+  handle.dispose();
+});
+
+// The gearbox plus one numeric param no animation tracks, written by a place-only
+// axis handle that moves nothing.
+const liftGearbox = {
+  ...gearbox,
+  defaults: { ...gearbox.defaults, lift: 0 },
+  handles: {
+    ...gearbox.handles,
+    lifter: { point: (p) => [30, 0, 10 + p.lift], params: ["lift"], drag: "axis", direction: [0, 0, 1], label: "Lift", views: ["gearbox"] },
+  },
+};
+async function liftGlb() {
+  const all = { ...liftGearbox.defaults };
+  const sampled = samplePreviewAnimation(liftGearbox, "gearbox", all, { buildReads: () => new Set() });
+  return partGlb(liftGearbox, "gearbox", all, sampled);
+}
+
+test("a dragged untracked key survives the player: following and the next press keep it", async () => {
+  const handle = mountPreview(makeStage(), { glb: await liftGlb(), part: liftGearbox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.__preview.visible.shown).toContain("lifter");
+  playTo(0.2);
+  const { poseMode } = handle.__preview;
+  poseMode.session.begin("lifter"); // pauses the player
+  poseMode.session.frame([30, 0, 17]);
+  poseMode.session.end();
+  const lift = handle.__preview.params.lift;
+  expect(lift).toBeCloseTo(7, 0);
+  handle.animation.resume();
+  runFrames(0.3);
+  expect(handle.animation.state().status).toBe("playing");
+  const { t } = handle.animation.state();
+  expect(handle.getParams()).toEqual({ ...handle.__preview.params, ...evaluate(spin, t).values });
+  expect(handle.getParams().lift).toBe(lift); // the live params under the player, not the file's
+  poseMode.session.begin("crank"); // a press pauses there and writes the player's values
+  expect(handle.__preview.params.lift).toBe(lift);
+  poseMode.session.cancel();
+  expect(handle.getParams().lift).toBe(lift);
+  handle.dispose();
+});
+
+test("a file whose animation is not the part's autoplay animation does not follow it, and says so once", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { spin: spec, ...rest } = gearbox.views.gearbox.animations;
+  const part = { ...gearbox, views: { ...gearbox.views, gearbox: { ...gearbox.views.gearbox, animations: { ...rest, turn: spec } } } };
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  expect(handle.animation.state().status).toBe("playing");
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams); // a still, for params
+  expect(warn.mock.calls.filter(([m]) => /preview animation/.test(m))).toEqual([
+    ['partforge: preview animation "spin" is not the part\'s autoplay animation "turn"'],
+  ]);
+  handle.dispose();
+});
+
+test("motion.restart during a drag cancels it, then puts the params back to the file's", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  const ends = [];
+  handle.pose.onDragEnd((e) => ends.push(e));
+  const { poseMode } = handle.__preview;
+  const start = { ...handle.getParams() };
+  poseMode.session.begin("crank");
+  poseMode.session.frame(crankTarget(start, 60));
+  expect(handle.getParams().driveAngle).not.toBeCloseTo(start.driveAngle, 0);
+  handle.motion.restart();
+  expect(poseMode.session.isActive()).toBe(false);
+  expect(handle.__preview.params).toEqual(handle.__preview.fileParams);
+  expect(ends).toEqual([]); // cancelled, never released
   handle.dispose();
 });

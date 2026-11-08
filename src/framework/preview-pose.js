@@ -10,7 +10,8 @@
 //
 // openingParams is the params a file's meshes sit at: in a file with a baked
 // autoplay animation every tracked mesh decodes at that animation's first frame, so
-// its t = 0 values win over the live params.
+// its t = 0 values win over the live params; a file that bakes none sits at the live
+// params.
 //
 // Rules: matricesAt never derives (it takes a resolved p, d); apply never re-sends a
 // matrix equal to the one last applied (pose-fast-path.js's setPose rule —
@@ -23,16 +24,22 @@ import { placeMatrix } from "./collide/place.js";
 import { invertRigid, mulMat4 } from "./geometry/pose.js";
 import { resolveParams, viewSubParts } from "./part-model.js";
 import { viewAnimations, evaluate } from "./animation.js";
-import { probeSubPartPose } from "./pose-probe-core.js";
+import { buildIdentity } from "./preview-animation.js";
 import { handlesShownInView } from "./pose/handle-views.js";
 import { handleKeys } from "./pose/pose-collide.js";
 import { rangesOf } from "./pose/param-solve.js";
 
-/** The params a preview file's meshes sit at: live params under the autoplay animation's t = 0 values. */
-export function openingParams(part, view, params = {}) {
+/**
+ * The params a preview file's meshes sit at: the live params under the t = 0 values of
+ * the animation the file BAKES. `anim` is that animation (normalized, as
+ * samplePreviewAnimation returns it), or null when the file bakes none — then the live
+ * params alone. Omitted (undefined), it is looked up as the view's autoplay animation.
+ */
+export function openingParams(part, view, params = {}, anim) {
   const live = { ...part.defaults, ...params };
-  let anim;
-  try { anim = viewAnimations(part).get(view)?.find((a) => a.autoplay); } catch { anim = undefined; }
+  if (anim === undefined) {
+    try { anim = viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null; } catch { anim = null; }
+  }
   return anim ? { ...live, ...evaluate(anim, 0).values } : live;
 }
 
@@ -92,13 +99,6 @@ export const PREVIEW_HANDLE_SAMPLES = [0, 0.25, 0.5, 0.75, 1];
 
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
 
-// One sub-part's build as the build-scope probe sees it, as a comparable string, or
-// null when the probe cannot be believed (preview-animation.js's buildIdentity).
-function buildIdentity(part, name, view, p, d) {
-  const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d }, { scope: "build" });
-  return probe.trusted ? JSON.stringify([probe.baseHash, probe.pose]) : null;
-}
-
 /**
  * Which of the editor's handles a kernel-free preview may show against its file: a
  * handle shows only when every param one drag of it can write moves pieces by
@@ -113,13 +113,25 @@ function buildIdentity(part, name, view, p, d) {
  *   handlesShownInView's order; hidden maps a handle id to why it is hidden.
  */
 export function previewHandles(part, view, fileParams, meshNames) {
-  const handles = part?.handles;
-  if (!handles || typeof handles !== "object") return { shown: [], hidden: {} };
-  const file = { ...part.defaults, ...fileParams };
-  const candidates = handlesShownInView(part, view, file);
+  const stepper = previewHandlesStepper(part, view, fileParams, meshNames);
+  while (!stepper.step());
+  return stepper.result();
+}
+
+/**
+ * previewHandles one handle at a time, for a caller that spreads the decision over
+ * idle slices: each step() decides ONE candidate handle (the file side and the
+ * per-(key, value) verdicts are memoized across steps) and returns true once every
+ * handle is decided; result() is previewHandles' answer so far.
+ */
+export function previewHandlesStepper(part, view, fileParams, meshNames) {
   const shown = [];
   const hidden = {};
-  if (!candidates.length) return { shown, hidden };
+  const result = () => ({ shown: [...shown], hidden: { ...hidden } });
+  const handles = part?.handles;
+  if (!handles || typeof handles !== "object") return { step: () => true, result };
+  const file = { ...part.defaults, ...fileParams };
+  const candidates = handlesShownInView(part, view, file);
 
   // The file side, computed once (lazily, so a throw lands on a handle).
   let fileSide;
@@ -132,7 +144,7 @@ export function previewHandles(part, view, fileParams, meshNames) {
     let bad = null; // a reason every handle shares
     const ids = new Map();
     for (const n of names) {
-      const id = buildIdentity(part, n, view, r0.p, r0.d);
+      const id = buildIdentity(part, view, r0, n);
       if (id == null) { bad ??= `${n}'s build cannot be read`; continue; }
       ids.set(n, id);
     }
@@ -156,7 +168,7 @@ export function previewHandles(part, view, fileParams, meshNames) {
         if (placeMatrix(part.parts[n], view, p, d) == null) { reason = `${n} has no rigid placement`; break; }
       }
       if (!reason) for (const n of names) {
-        const id = buildIdentity(part, n, view, p, d);
+        const id = buildIdentity(part, view, { p, d }, n);
         if (id == null) { reason = `${n}'s build cannot be read`; break; }
         if (id !== ids.get(n)) { reason = `${key} rebuilds ${n}`; break; }
       }
@@ -165,9 +177,12 @@ export function previewHandles(part, view, fileParams, meshNames) {
     return reason;
   };
 
-  const ranges = rangesOf(part);
+  const ranges = candidates.length ? rangesOf(part) : null;
   const all = Object.values(handles);
-  for (const id of candidates) {
+  let next = 0;
+  function step() {
+    if (next >= candidates.length) return true;
+    const id = candidates[next++];
     let reason = null;
     try {
       reason = fileFacts().bad;
@@ -185,6 +200,7 @@ export function previewHandles(part, view, fileParams, meshNames) {
       reason = "the handle's point cannot be read";
     }
     if (reason) hidden[id] = reason; else shown.push(id);
+    return next >= candidates.length;
   }
-  return { shown, hidden };
+  return { step, result };
 }

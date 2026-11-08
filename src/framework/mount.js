@@ -49,6 +49,7 @@ import { attachDragReadout } from "./pose/drag-readout.js";
 import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { parsePinId } from "./pose/pose-session.js";
+import { NOOP_POSE } from "./pose/noop-pose.js";
 import { handleParamKeys } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
@@ -73,8 +74,8 @@ const NOOP_ANNOTATE = {
   strokeCount: () => 0, send: () => false,
   onInkChange: () => () => {}, onModeChange: () => () => {},
 };
-// Same stance again for Pose mode: a part with no `handles` has no mode to drive.
-export const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
+// Same stance again for Pose mode: a part with no `handles` has no mode to drive
+// (NOOP_POSE, pose/noop-pose.js).
 // A shape drag (spec 2026-11-02 §4) rebuilds live while it holds only on a part whose
 // last real build took under this many milliseconds; a slower one waits for release.
 export const LIVE_REBUILD_MS = 120;
@@ -2209,8 +2210,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // view's autoplay animation rides along as channels when every track is
     // place-only (samplePreviewAnimation decides; otherwise the file is still).
     // The file also carries the params its meshes sit at: the live ones, with the
-    // autoplay animation's t = 0 values over them (openingParams) — a baked
-    // animation's tracked meshes decode at its first frame.
+    // BAKED animation's t = 0 values over them (openingParams) — a baked
+    // animation's tracked meshes decode at its first frame; a still file, the live ones.
     // The encoder loads on first use: a host that never exports never pays for it.
     async function exportPreview({ view: wanted } = {}) {
       if (disposed) throw new Error("exportPreview: this mount is disposed");
@@ -2231,7 +2232,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         buildReads: (name) => (cache.hasStamp(name) ? cache.readsOf(name) : null),
       });
       const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
-      return encodePreviewGlb({ meshes, part, view: current, params: openingParams(part, current, params), ...(animation ? { animation } : {}) });
+      return encodePreviewGlb({ meshes, part, view: current, params: openingParams(part, current, params, animation?.anim ?? null), ...(animation ? { animation } : {}) });
     }
 
     return makeHandle({

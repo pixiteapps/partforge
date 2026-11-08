@@ -142,8 +142,8 @@ import { isFaceAlignedState } from "./projection.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
 import { createPreviewPlayer, animationPoses } from "./preview-player.js";
 import { attachPreviewPlayButton } from "./preview-play-button.js";
-import { NOOP_POSE } from "./mount.js";
-import { createFilePlacer, previewHandles } from "./preview-pose.js";
+import { NOOP_POSE } from "./pose/noop-pose.js";
+import { createFilePlacer, previewHandlesStepper } from "./preview-pose.js";
 import { createPoseMode } from "./pose/pose-mode.js";
 import { attachPoseControls } from "./pose/pose-controls.js";
 import { attachDragReadout } from "./pose/drag-readout.js";
@@ -256,18 +256,25 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
 
   // The params follow the player (spec §5). While the baked animation plays (or tweens
   // to its intro view) the meshes sit at the player's matrices, so getParams answers the
-  // part's own animation at the player's t — Pose mode draws its dots from it, and a
-  // press's session snapshots it, locates its pins and builds its guard from it, all
-  // BEFORE hold(true). Nothing is written while it plays. Once it stops — paused by a
-  // press (hold), by its button, or done — the preview's own params take those values,
-  // so getParams keeps answering what the meshes show.
-  const anim = player && decoded.animation ? viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null : null;
+  // live params with the part's own animation at the player's t over them — Pose mode
+  // draws its dots from it, and a press's session snapshots it, locates its pins and
+  // builds its guard from it, all BEFORE hold(true). Nothing is written while it plays.
+  // Once it stops — paused by a press (hold), by its button, or done — the preview's own
+  // params take those values, so getParams keeps answering what the meshes show. The
+  // live params (not the file's) are the base, so a dragged untracked key survives.
+  // Only the animation the file baked is followed: a part whose autoplay animation is
+  // another one (renamed, or changed since the file was written) is a still for params.
+  let anim = player && decoded.animation ? viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null : null;
+  if (anim && decoded.animation.name !== anim.name) {
+    console.warn(`partforge: preview animation "${decoded.animation.name}" is not the part's autoplay animation "${anim.name}"`);
+    anim = null;
+  }
   const following = () => {
     if (!player || !anim || reducedMotion || !player.started()) return false;
     const { status } = player.state();
     return status === "playing" || status === "intro";
   };
-  const atPlayer = (t) => ({ ...fileParams, ...evaluate(anim, t).values });
+  const atPlayer = (t) => ({ ...params, ...evaluate(anim, t).values });
   const getParams = () => (following() ? atPlayer(player.state().t) : params);
   let holding = false; // the pause hold() makes writes its own params
   // A press: a turning model stops; a playing animation pauses where it is, its params
@@ -354,21 +361,37 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     pc.delivered(drawnNames); // showAssembly drew them: the one delivery a preview gets
   }
 
-  // Which handles may show is decided off the first frame's path: in idle time once drawn.
-  const idle = (cb) => (typeof requestIdleCallback === "function" ? requestIdleCallback(cb) : setTimeout(cb, 0));
-  drawn.then(() => idle(() => {
+  // Which handles may show is decided off the first frame's path: in idle slices once
+  // drawn, one handle per step while the slice has time (at least one per slice; the
+  // timeout keeps a busy page from starving it), published once every handle is decided.
+  const idle = (cb) => (typeof requestIdleCallback === "function" ? requestIdleCallback(cb, { timeout: 1000 }) : setTimeout(cb, 0));
+  let stepper = null;
+  const slice = (deadline) => {
     if (isDisposed()) return;
-    preview.visible = previewHandles(part, view, fileParams, drawnNames);
+    let done;
+    try {
+      stepper ??= previewHandlesStepper(part, view, fileParams, drawnNames);
+      do done = stepper.step(); while (!done && (deadline?.timeRemaining?.() ?? 0) > 2);
+    } catch {
+      stepper = null; done = true; // fails closed: no handle shows
+    }
+    if (!done) { idle(slice); return; }
+    preview.visible = stepper?.result() ?? { shown: [], hidden: {} };
     poseMode.refresh();
     viewer.requestRender();
-  }), () => {});
+  };
+  drawn.then(() => idle(slice), () => {});
 
   Object.assign(preview, { params, fileParams, placer, poseMode, poseCollide });
   return {
     poseMode,
     getParams,
-    // motion.restart(): every mesh back where the file put it (pins stay).
-    resetParams: live(() => write(fileParams)),
+    // motion.restart(): a drag in flight is cancelled first, then every mesh goes back
+    // where the file put it (pins stay).
+    resetParams: live(() => {
+      if (poseMode.isDragging() || poseMode.session.isActive()) poseMode.session.cancel();
+      write(fileParams);
+    }),
     dragReadout: () => readout?.text() ?? null,
     lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
   };
@@ -560,15 +583,23 @@ export function mountPreview(container, options = {}) {
       if (!Object.hasOwn(part.views ?? {}, view)) {
         if (decoded.view != null) console.warn(`partforge: preview part ignored — the file shows view "${decoded.view}", which the part does not declare`);
       } else {
-        posing = attachPosing({
-          viewer, part, view, decoded, container, toolbar, tooltip, chrome: opts.chrome, drawn, cleanups, preview,
-          isDisposed: () => disposed,
-          onDragEnd: relay(dragEndListeners),
-          // the resting cue waits out a playing animation
-          cueBlocked: () => (player ? motionState() === "playing" : false),
-          player, turntable, reducedMotion,
-        });
-        if (!poseEnabled) posing.poseMode.setEnabled(false);
+        // A part that throws here (its derive at the file params, say) is ignored: the
+        // meshes are already on screen, so ready and drawn still resolve and the handle
+        // answers as without `part`.
+        try {
+          posing = attachPosing({
+            viewer, part, view, decoded, container, toolbar, tooltip, chrome: opts.chrome, drawn, cleanups, preview,
+            isDisposed: () => disposed,
+            onDragEnd: relay(dragEndListeners),
+            // the resting cue waits out a playing animation
+            cueBlocked: () => (player ? motionState() === "playing" : false),
+            player, turntable, reducedMotion,
+          });
+          if (!poseEnabled) posing.poseMode.setEnabled(false);
+        } catch (error) {
+          console.warn(`partforge: preview part ignored — ${error?.message ?? error}`);
+          posing = null;
+        }
       }
     }
   });
@@ -637,6 +668,8 @@ export function mountPreview(container, options = {}) {
       __lastDragEnd: () => posing?.lastDragEnd() ?? null,
     } : NOOP_PREVIEW_POSE,
     // Test hook only: what posing decided (params, fileParams, placer, poseMode, poseCollide, visible); null without part.
+    // `params` is the LIVE object Pose mode writes: a direct write through this hook
+    // (scripts/check-pose.mjs does one) changes the params but does not re-pose a mesh.
     __preview: preview,
     // null before ready, for a still file, with animate: false, and once disposed.
     get animation() {
