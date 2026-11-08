@@ -1346,6 +1346,7 @@ export function createViewer(container, part, {
       celShadowWas ??= { enabled: renderer.shadowMap.enabled, type: renderer.shadowMap.type };
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.VSMShadowMap;
+      celGround.setLook(celField(currentTheme).shadow); // the theme may have changed while in another mode
       celGround.plane.material.needsUpdate = true;
       scene.add(celGround.light, celGround.light.target, celGround.plane);
       placeCelGround({ live });
@@ -2637,10 +2638,15 @@ export function createViewer(container, part, {
     const t = THEME[mode] ?? THEME.dark;
     // Realistic mode's backdrop belongs to the environment and its grid is off;
     // enterCad puts the theme's background back on the way out.
-    // Cel's field has a colour per theme (celField); its ink stays the look's own.
+    // Cel's field and ground shadow have a colour per theme (celField); its ink
+    // stays the look's own.
     const theme = THEME[mode] ? mode : "dark";
     if (renderMode === "cad") scene.background = cadBackground(theme);
-    else if (renderMode === "cel") scene.background = transparent ? null : new THREE.Color(celField(theme).color);
+    else if (renderMode === "cel") {
+      const f = celField(theme);
+      scene.background = transparent ? null : new THREE.Color(f.color);
+      celGround?.setLook(f.shadow);
+    }
     scene.remove(grid);
     grid = new THREE.GridHelper(GRID_SIZE, GRID_DIVS, t.grid[0], t.grid[1]);
     grid.position.y = floorY; // keep the floor at the bbox bottom across theme swaps

@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { buildCelMaterial, aimCelLight, restCelLight, celLightNow } from "../src/framework/cel/cel-material.js";
 import { createCelInk, CEL_LAYER } from "../src/framework/cel/cel-ink.js";
 import { createCelGround } from "../src/framework/cel/cel-ground.js";
-import { CEL, celTones, celLightView, celLightWorld } from "../src/framework/cel/cel-style.js";
+import { CEL, celTones, celField, celLightView, celLightWorld } from "../src/framework/cel/cel-style.js";
 
 describe("buildCelMaterial", () => {
   it("is a clipping-capable ShaderMaterial that writes sRGB and exposes its lit colour", () => {
@@ -145,6 +145,15 @@ describe("createCelInk render", () => {
   });
 });
 describe("createCelGround", () => {
+  it("setLook recolours the plane's material in place, so a capture floor sharing it follows", () => {
+    const g = createCelGround({ mapSize: 1024 });
+    expect(g.plane.material.color.getHex()).toBe(CEL.ground.color);
+    expect(g.plane.material.opacity).toBe(CEL.ground.opacity);
+    const shared = new THREE.Mesh(g.plane.geometry, g.plane.material);
+    g.setLook(celField("dark").shadow);
+    expect(shared.material.color.getHex()).toBe(CEL.ground.darkColor);
+    expect(shared.material.opacity).toBe(CEL.ground.darkOpacity);
+  });
   it("fit ignores an empty box", () => {
     const g = createCelGround({ mapSize: 1024 });
     g.fit(new THREE.Box3(new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 2, 1)));

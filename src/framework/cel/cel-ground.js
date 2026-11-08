@@ -78,6 +78,12 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
     light.target.updateMatrixWorld();
   }
 
+  /** The shadow's colour and opacity over the field (celField(theme).shadow). */
+  function setLook({ color, opacity }) {
+    plane.material.color.set(color);
+    plane.material.opacity = opacity;
+  }
+
   function setMapSize(n) {
     applyMapSize(n);
     // three reallocates a map at the new size the next time the light renders
@@ -98,5 +104,5 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
     light.shadow.dispose();
   }
 
-  return { light, plane, fit, aim, aimWorld, setMapSize, setCasters, dispose };
+  return { light, plane, fit, aim, aimWorld, setLook, setMapSize, setCasters, dispose };
 }

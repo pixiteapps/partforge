@@ -64,7 +64,7 @@ line. The constants below are the ones the user dialled in on real parts.
    fill). The spike's hand-assigned "sci-fi" roles (body / accent / dark per
    sub-part) are not a product feature: an author who wants a red gripper
    colours the gripper.
-3. **The frame is fixed, except the field's colour follows the theme**
+3. **The frame is fixed, except the field's colour, and the ground shadow's, follow the theme**
    (amended 2026-11-08; 0.186.0 shipped one field). The halftone's strength
    and cell and the ink colour are part of the style; the field is
    `CEL.field.color` (pale cyan) in the light theme and `CEL.field.darkColor`
@@ -369,7 +369,7 @@ constant above) or further if a frame budget of twice CAD's is exceeded.
 | Field | colour, light / dark theme | `#9fd9ea` / `#273648` |
 | | halftone strength / cell (CSS px) | 0.1 / 7, 45°, dot colour field × 0.82 (light) or × 1.3 (dark) |
 | Body default | colour | `#eef1f4` |
-| Ground | shadow opacity / colour | 0.3 / `#24304a` |
+| Ground | shadow opacity / colour, light / dark theme | 0.3 / `#24304a`, 0.5 / `#0a0e16` (the light pair is nearly the slate itself) |
 | | penumbra | 8 % of R |
 | | light elevation | 60° (azimuth = key's; same frame as the key) |
 | | map / bias | 2048² (1024² coarse pointer) / −0.0015 |

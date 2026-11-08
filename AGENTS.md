@@ -322,7 +322,8 @@ the installed package, so let the publish finish before bumping the dep there.
   the camera-relative `aim` with one — so a face keeps its tone through an
   orbit while canonical captures stay lit the same way, as CAD's capture
   lights do. The field follows the theme (`celField(theme)`: pale cyan, or a
-  slate in dark, each with its own halftone dot); the ink does not. Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
+  slate in dark, each with its own halftone dot and its own ground-shadow colour
+  and opacity, applied through the ground's `setLook`); the ink does not. Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
   `renderViews(…, { renderMode: "cel" })` always work; `captureViews` stays CAD.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one

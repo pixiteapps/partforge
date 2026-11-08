@@ -27,8 +27,12 @@ export const CEL = Object.freeze({
   // `darkColor` the dark theme's slate; the halftone dot is the field darkened
   // (light) or lightened (dark) by `dotDarken` / `dotLighten`. celField() picks.
   field: Object.freeze({ color: 0x9fd9ea, darkColor: 0x273648, dots: 0.1, dotCellPx: 7, dotDarken: 0.82, dotLighten: 1.3 }),
+  // The ground shadow's colour and opacity per theme: `color` / `opacity` on the
+  // light field, `darkColor` / `darkOpacity` on the slate (the light pair is
+  // invisible there — it is nearly the slate itself). celField() picks these too.
   ground: Object.freeze({
-    opacity: 0.3, color: 0x24304a, penumbra: 0.08, elevationDeg: 60, minWorldElevationDeg: 40,
+    opacity: 0.3, color: 0x24304a, darkOpacity: 0.5, darkColor: 0x0a0e16,
+    penumbra: 0.08, elevationDeg: 60, minWorldElevationDeg: 40,
     mapSize: 2048, mapSizeSmall: 1024, bias: -0.0015, lightDistanceR: 30, nearR: 26, farR: 34,
     frustumR: 4, planeFill: 0.98,
   }),
@@ -57,15 +61,17 @@ const pack = (c) => c.reduce((acc, v) => (acc << 8) | Math.round(Math.min(1, Mat
 const scaleHex = (hex, k) => pack(channels(hex).map((c) => c * k));
 
 /**
- * The field for a theme: `{ color, dot }` sRGB hexes — the backdrop and the
- * halftone dot drawn on it. "dark" gets the slate field with a lightened dot;
+ * The field for a theme: `{ color, dot, shadow }` — the backdrop and the halftone
+ * dot drawn on it as sRGB hexes, and the ground shadow's `{ color, opacity }` over
+ * it. "dark" gets the slate field with a lightened dot and a deep, denser shadow;
  * anything else the light theme's pale cyan with a darkened dot.
  */
 export function celField(theme) {
   const { color, darkColor, dotDarken, dotLighten } = CEL.field;
+  const G = CEL.ground;
   return theme === "dark"
-    ? { color: darkColor, dot: scaleHex(darkColor, dotLighten) }
-    : { color, dot: scaleHex(color, dotDarken) };
+    ? { color: darkColor, dot: scaleHex(darkColor, dotLighten), shadow: { color: G.darkColor, opacity: G.darkOpacity } }
+    : { color, dot: scaleHex(color, dotDarken), shadow: { color: G.color, opacity: G.opacity } };
 }
 
 /** Lit / shadow / deep-shadow sRGB hexes for a base colour (shadow leans toward the cool tint). */

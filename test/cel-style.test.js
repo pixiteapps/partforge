@@ -52,16 +52,23 @@ describe("celTones", () => {
 
 describe("celField", () => {
   const luma = (hex) => 0.2126 * ((hex >> 16) & 255) + 0.7152 * ((hex >> 8) & 255) + 0.0722 * (hex & 255);
-  it("the light theme is the pale cyan with a darker dot", () => {
+  it("the light theme is the pale cyan with a darker dot and the spec's ground shadow", () => {
     const f = celField("light");
     expect(f.color).toBe(CEL.field.color);
     expect(luma(f.dot)).toBeLessThan(luma(f.color));
+    expect(f.shadow).toEqual({ color: CEL.ground.color, opacity: CEL.ground.opacity });
   });
   it("the dark theme is the slate with a lighter dot, and darker than the ink is not", () => {
     const f = celField("dark");
     expect(f.color).toBe(CEL.field.darkColor);
     expect(luma(f.dot)).toBeGreaterThan(luma(f.color));
     expect(luma(f.color)).toBeGreaterThan(luma(CEL.ink.color) + 20); // the outer contour still reads on it
+  });
+  it("the dark theme's ground shadow is far darker than the slate and denser than the light one", () => {
+    const f = celField("dark");
+    expect(f.shadow).toEqual({ color: CEL.ground.darkColor, opacity: CEL.ground.darkOpacity });
+    expect(luma(f.shadow.color)).toBeLessThan(luma(f.color) - 25); // the light pair is nearly the slate itself
+    expect(f.shadow.opacity).toBeGreaterThan(celField("light").shadow.opacity);
   });
   it("anything but \"dark\" is the light field", () => {
     expect(celField(undefined)).toEqual(celField("light"));
