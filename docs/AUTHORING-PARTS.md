@@ -1759,10 +1759,13 @@ for a lead-in chamfer. For a bolt, build the head as its own solid — that is w
 **`src/parts/screw.js`** does, the worked example for this recipe: an ISO-style
 metric bolt, periodic thread plus a hex head, presets and all.
 
-Cost scales with `turns` (= `length / pitch`), and steeply: the section is
-resampled every 5° of the twist, so an M10×1.5 shank costs ~10.5k triangles per
-turn. A 30 mm shank is 20 turns and about half a second on Manifold; hundreds of
-turns is millions of triangles and minutes behind the STEP button. Bound the
+Cost scales with `turns` (= `length / pitch`). The sampling is automatic and
+there is no option for it: the step is the fewest that keep the surface within
+0.01 mm of the exact thread at its largest radius — the print tolerance every
+circle is held to — and never finer than 5°, so small threads are cheap and large
+ones keep full detail. An M10×1.5 shank costs ~5.2k triangles per turn, an M3 ~1.6k.
+A 30 mm M10 shank is 20 turns and well under a second on Manifold; hundreds of
+turns is still millions of triangles and minutes behind the STEP button. Bound the
 `length` and `pitch` your schema exposes accordingly.
 
 **Internal threads: use `k.tappedBore`, not a bore plus a `screwSweep`.** The
