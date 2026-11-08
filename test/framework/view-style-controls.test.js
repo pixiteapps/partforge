@@ -65,7 +65,7 @@ test("opening shows a tile per style with thumbnails, the current one pressed", 
   expect(stage.querySelector("#view-style").getAttribute("aria-expanded")).toBe("true");
   await flush(); await flush();
   expect([...stage.querySelectorAll(".pf-view-style-tile")].map((t) => t.dataset.style))
-    .toEqual(["cad", "studio", "workshop", "print-bed", "outdoor"]);
+    .toEqual(["cad", "cel", "studio", "workshop", "print-bed", "outdoor"]);
   expect(tile("cad").getAttribute("aria-pressed")).toBe("true");
   expect(tile("workshop").querySelector("img").src).toBe("data:workshop");
 });
@@ -75,12 +75,12 @@ test("thumbnails render once, and again only on the next open after the part cha
   const c = attachViewStyleControls(v, { stage, anchor });
   c.open(); await flush(); await flush();
   c.close(); c.open(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
   c.close();
   v._fire.asm.forEach((cb) => cb());
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5); // not while closed
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6); // not while closed
   c.open(); await flush(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(12);
 });
 
 test("a cutaway change (on, off, or the plane moving) re-renders the thumbnails on the next open", async () => {
@@ -90,10 +90,10 @@ test("a cutaway change (on, off, or the plane moving) re-renders the thumbnails 
   const c = attachViewStyleControls(v, { stage, anchor });
   c.open(); await flush(); await flush();
   c.close();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
   v._fire.cutaway.forEach((cb) => cb());
   c.open(); await flush(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(12);
   c.detach();
   expect(v._fire.cutaway.size).toBe(0); // unsubscribed
 });
@@ -114,11 +114,11 @@ test("an empty or failed thumbnail is not cached: the tile blanks and the next o
   c.close();
   fail = false;
   c.open(); await flush(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10); // retried, with nothing else changing
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(12); // retried, with nothing else changing
   expect(tile("studio").querySelector("img").src).toBe("data:studio");
   expect(tile("studio").querySelector("img").hidden).toBe(false);
   c.close(); c.open(); await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10); // all good now: cached
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(12); // all good now: cached
 });
 
 test("a tile switches style: an environment then realistic, or back to CAD", async () => {
@@ -194,11 +194,11 @@ test("a part change while open (a playing animation) keeps filling the tiles, th
   v.renderStyleThumbnail = vi.fn(async (s) => { v._fire.asm.forEach((cb) => cb()); return `data:${s}`; });
   c.open();
   for (let i = 0; i < 6; i += 1) await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(5);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
   expect([...stage.querySelectorAll(".pf-view-style-tile img")].every((i) => !i.hidden)).toBe(true);
   c.close(); c.open();
   for (let i = 0; i < 6; i += 1) await flush();
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(10);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(12);
 });
 
 test("closing mid-render stops the thumbnail loop; the next open resumes", async () => {
@@ -215,7 +215,7 @@ test("closing mid-render stops the thumbnail loop; the next open resumes", async
   c.open(); await flush();
   expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(2); // resumed on open
   while (gates.length) { gates.shift()(); await flush(); await flush(); }
-  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(6);
+  expect(v.renderStyleThumbnail).toHaveBeenCalledTimes(7);
   expect(tile("outdoor").querySelector("img").src).toBe("data:outdoor");
 });
 

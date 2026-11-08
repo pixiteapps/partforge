@@ -37,12 +37,28 @@ beforeEach(() => {
 
 afterEach(() => { vi.useRealTimers(); });
 
+describe("view style popover: cel tile", () => {
+  it("has a Cel tile after CAD that sets the cel render mode and persists it", async () => {
+    const set = vi.fn(async (m) => m);
+    const vs = attachViewStyleControls({ ...viewerStub(), setRenderMode: set, getRenderMode: () => "cel" }, { stage, toolbar });
+    vs.open();
+    const tiles = [...vs.popover.querySelectorAll(".pf-view-style-tile")];
+    expect(tiles.map((t) => t.dataset.style).slice(0, 2)).toEqual(["cad", "cel"]);
+    expect(tiles[1].querySelector(".pf-view-style-label").textContent).toBe("Cel");
+    expect(tiles[1].getAttribute("aria-pressed")).toBe("true");
+    tiles[1].click(); await Promise.resolve(); await Promise.resolve();
+    expect(set).toHaveBeenCalledWith("cel");
+    expect(localStorage.getItem("partforge:renderMode")).toBe("cel");
+    vs.detach();
+  });
+});
+
 describe("view style popover: parts section", () => {
   it("renders nothing new without a `parts` option (the cloud scaffold contract)", () => {
     const vs = attachViewStyleControls(viewerStub(), { stage, toolbar });
     vs.open();
     expect(vs.popover.querySelector(".pf-parts-list")).toBeNull();
-    expect(vs.popover.querySelectorAll(".pf-view-style-tile").length).toBe(5);
+    expect(vs.popover.querySelectorAll(".pf-view-style-tile").length).toBe(6);
     expect(vs.openCard("body")).toBe(false);
     vs.close();
     // No pages without the seam: no data-page, and the style nodes untouched.
@@ -155,9 +171,9 @@ describe("view style popover: parts section", () => {
     expect(vs.popover.querySelector('.pf-parts-row[data-name="body"]').classList.contains("hidden")).toBe(true);
     vs.detach();
   });
-  it("the style grid is five across", () => {
+  it("the style grid is three across (six tiles: CAD, Cel, four environments)", () => {
     const vs = attachViewStyleControls(viewerStub(), { stage, toolbar });
-    expect(vs.popover.querySelector(".pf-view-style-grid").children.length).toBe(5);
+    expect(vs.popover.querySelector(".pf-view-style-grid").children.length).toBe(6);
     vs.detach();
   });
   it("a swatch opens the card page; Back returns; openCard() from outside opens the popover on the card", () => {

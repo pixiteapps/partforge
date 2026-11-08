@@ -302,6 +302,19 @@ the installed package, so let the publish finish before bumping the dep there.
   sheets beside an unburnt twin that differs only by the burn;
   `scripts/capture-contact-sheet.mjs` renders both in every environment and
   diffs them) - to check by eye after any preset or shader change.
+- **`src/framework/cel/`** - the cel-shaded render mode (spec
+  `docs/superpowers/specs/2026-11-07-cel-shading-design.md`, whose table the
+  constants follow): `cel-style.js` (the constants and the tone maths, pure),
+  `cel-material.js` (band materials per sub-part), `cel-ink.js` (the ink pass)
+  and `cel-ground.js` (the live VSM ground shadow). `cel-style.js` is three-free
+  and DOM-free, and `test/cel-layering.test.js` holds that and keeps `cel/` out of
+  the worker graph; the other three import three.js and only the viewer loads
+  them. The ink pass runs only for the live scene, inside `renderWithBackdrop`,
+  so captures get it and throwaway scenes do not. The ground shadow has two VSM
+  pitfalls: the plane must sit strictly inside the shadow map's xy bounds, and
+  the depth slab must be thin; the light's world elevation is clamped to 40°.
+  Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
+  `renderViews(…, { renderMode: "cel" })` always work; `captureViews` stays CAD.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
   view's POSED meshes as a GLB (one node/mesh per sub-part under a single

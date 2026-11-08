@@ -36,11 +36,13 @@
 //    tooltips, no play button and no `elements.chrome` wiring. A one-time
 //    animation still holds its end pose; there is just no replay button.
 //  - `background: "transparent"` — the canvas clears to alpha 0 with no theme
-//    background and no grid, so the host page shows through. CAD mode ONLY:
+//    background and no grid, so the host page shows through. CAD and cel modes:
 //    realistic mode draws its own environment backdrop (pair it with
-//    `renderMode: "cad"` to open transparent).
+//    `renderMode: "cad"` or `"cel"` to open transparent). Cel keeps the part,
+//    its ink and its ground shadow, and draws no field or halftone.
 //  - `contactShadow: true` — the product shot's soft contact shadow under the
-//    part. CAD mode ONLY: realistic mode draws its own ground and shadow. Cast
+//    part. CAD mode ONLY: realistic and cel modes draw their own ground shadow
+//    (cel ignores this option). Cast
 //    once, at showAssembly, from the meshes as the file stores them (the rest
 //    pose, before a player applies its first pose); a playing animation does
 //    not move it.
@@ -72,7 +74,7 @@
 //  - `camera: "default"` — the camera and projection of `viewerState` and of
 //    every setViewerState are dropped: the mount opens, and stays, at the
 //    file's own default framing. Their render mode and environment still apply.
-//  - `renderMode: "cad" | "realistic"` — the OPENING mode: applied at mount,
+//  - `renderMode: "cad" | "realistic" | "cel"` — the OPENING mode: applied at mount,
 //    over any carried render mode. After that it is an ordinary mode —
 //    setViewerState, renderMode.set and the view style control change it.
 //    Unset, the carried state decides, as before.
@@ -145,7 +147,7 @@ const KNOWN_OPTIONS = new Set([
   "autostart", "edgeWidth", "edgeOpacity",
 ]);
 
-function presentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode, autostart, edgeWidth, edgeOpacity }) {
+export function validatePresentation({ chrome, background, contactShadow, zoom, pan, turntable, fill, camera, renderMode, autostart, edgeWidth, edgeOpacity }) {
   if (edgeWidth !== undefined && !(typeof edgeWidth === "number" && edgeWidth > 0 && edgeWidth <= 8)) {
     throw new TypeError("mountPreview: edgeWidth must be a number of CSS pixels above 0 and at most 8");
   }
@@ -167,7 +169,7 @@ function presentation({ chrome, background, contactShadow, zoom, pan, turntable,
     turntable: turntable ?? 0,
     fill: fill ?? null,
     defaultCamera: oneOf("camera", camera, ["carry", "default"], "carry") === "default",
-    renderMode: oneOf("renderMode", renderMode, ["cad", "realistic"], null),
+    renderMode: oneOf("renderMode", renderMode, ["cad", "realistic", "cel"], null),
     autostart: flag("autostart", autostart, true),
     edgeWidth: edgeWidth ?? 1,
     edgeOpacity: edgeOpacity ?? 1,
@@ -239,7 +241,7 @@ export function mountPreview(container, options = {}) {
     if (!KNOWN_OPTIONS.has(key)) throw new TypeError(`mountPreview: unknown option "${key}"`);
   }
   const { glb, elements = {}, viewerState = null, animate = true } = options ?? {};
-  const opts = presentation(options ?? {});
+  const opts = validatePresentation(options ?? {});
   // A carried state as this mount applies it: under camera: "default" without
   // its camera and projection (render mode and environment still carry).
   const carry = (state) => {
@@ -274,7 +276,7 @@ export function mountPreview(container, options = {}) {
     if (!opts.defaultCamera) viewer.setProjection(s.projection === "orthographic" && isFaceAlignedState(s.camera) ? "orthographic" : "perspective");
     if (s.camera) viewer.setCameraState(s.camera);
     if (typeof s.environment === "string") viewer.setEnvironment(s.environment);
-    if ((s.renderMode === "cad" || s.renderMode === "realistic") && s.renderMode !== viewer.getRenderMode()) {
+    if (["cad", "realistic", "cel"].includes(s.renderMode) && s.renderMode !== viewer.getRenderMode()) {
       viewer.setRenderMode(s.renderMode);
     }
   }
@@ -392,7 +394,7 @@ export function mountPreview(container, options = {}) {
       camera: v.getCameraState(),
       projection: v.getProjection?.() ?? "perspective",
       cutaway: null, // a preview has no live solid to section
-      renderMode: v.isRealisticPending?.() ? "realistic" : v.getRenderMode?.() ?? "cad",
+      renderMode: v.isRealisticPending?.() ? "realistic" : v.isCelPending?.() ? "cel" : v.getRenderMode?.() ?? "cad",
       ...(v.isEnvironmentChosen?.() ? { environment: v.getEnvironment() } : {}),
     };
   }

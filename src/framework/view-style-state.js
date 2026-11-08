@@ -3,13 +3,15 @@
 // cache's freshness. No DOM, no three — view-style-controls.js is the DOM.
 import { ENVIRONMENTS } from "./materials/environments.js";
 
-// CAD first, then the environments in their declared order.
+// CAD, then Cel, then the environments in their declared order.
 export const STYLES = [
   { id: "cad", label: "CAD" },
+  { id: "cel", label: "Cel" },
   ...Object.values(ENVIRONMENTS).map(({ id, label }) => ({ id, label })),
 ];
 
-export const styleFor = (renderMode, environmentId) => (renderMode === "realistic" ? environmentId : "cad");
+export const styleFor = (renderMode, environmentId) =>
+  renderMode === "realistic" ? environmentId : renderMode === "cel" ? "cel" : "cad";
 
 // Thumbnails are rendered on OPEN and cached. `invalidate` (a part, theme or
 // cutaway change, or a render that came back empty) only marks them stale — the next open re-renders. A render already

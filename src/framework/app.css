@@ -802,7 +802,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-view-style-popover[hidden] { display: none; }
 .pf-view-style-heading { margin: 0; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pf-muted-2); }
-.pf-view-style-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.pf-view-style-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .pf-view-style-tile {
   display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0;
   background: none; color: var(--pf-muted-2); cursor: pointer; font: inherit; text-align: center;

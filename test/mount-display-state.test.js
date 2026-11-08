@@ -38,6 +38,15 @@ describe("mount handle display hops", () => {
     expect(h.listSubParts()).toEqual([{ name: "lid", view: undefined }]);
     expect(h.listSubParts({ view: "body" })).toEqual([{ name: "lid", view: "body" }]);
   });
+  it("getViewerState reports the mode headed for while a realistic or cel switch is in flight", () => {
+    const base = () => ({ ...viewerStub(), getRenderMode: () => "cad" });
+    const cel = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer: { ...base(), isCelPending: () => true } });
+    expect(cel.getViewerState().renderMode).toBe("cel");
+    const realistic = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer: { ...base(), isRealisticPending: () => true } });
+    expect(realistic.getViewerState().renderMode).toBe("realistic");
+    const settled = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer: { ...base(), isCelPending: () => false } });
+    expect(settled.getViewerState().renderMode).toBe("cad");
+  });
   it("openAppearance and setDisplaySaveState default to no-ops with fixed return shapes", () => {
     const h = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer: viewerStub() });
     expect(h.openAppearance("lid")).toBe(false);
