@@ -2,7 +2,7 @@
 // mesh format like STL but supports units and multiple named objects in one file,
 // so a multi-part view exports as a single .3mf. Built from indexed meshes.
 // Each object may carry an optional colour (0xRRGGBB).
-import { zipSync, strToU8 } from "fflate";
+import { Zip, ZipDeflate, strToU8 } from "fflate";
 
 const CONTENT_TYPES =
   '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -75,6 +75,8 @@ function weld(positions, indices) {
 const DEFAULT_DISPLAY_COLOR = 0x9fb4cc;
 // Base-material group id: outside the object id range (objects are 1..n).
 const BASE_MATERIALS_ID = 1000;
+// Characters of model XML gathered before each push into the deflate stream.
+const CHUNK_CHARS = 1 << 20;
 const hexColor = (c) => `#${c.toString(16).padStart(6, "0").toUpperCase()}FF`;
 
 // parts: [{ name, positions, indices, color? }] → ArrayBuffer of the .3mf zip.
@@ -94,36 +96,72 @@ export function meshTo3MF(parts) {
   };
   const pindex = colored ? parts.map((p) => pindexOf(p.color)) : [];
 
-  const out = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
-    "<resources>",
-  ];
+  // The model XML is written straight into the zip in chunks, never joined
+  // into one string. A print-quality mesh writes ~45 characters per vertex and
+  // per triangle, so about 6M triangles is already past V8's ~536M-character
+  // string limit ("Invalid string length", feedback #244) — and the one string
+  // plus its UTF-8 copy were two full-size buffers alive at once. Chunking keeps
+  // the peak near the compressed output, which is ~10x smaller.
+  const chunks = [];
+  let failed = null;
+  const zip = new Zip((err, data) => {
+    if (err) failed = err;
+    else chunks.push(data);
+  });
+  const addFile = (name, text) => {
+    const f = new ZipDeflate(name, { level: 6 }); // 3MF XML is highly repetitive — compresses ~10×
+    zip.add(f);
+    f.push(strToU8(text), true);
+  };
+  addFile("[Content_Types].xml", CONTENT_TYPES);
+  addFile("_rels/.rels", RELS);
+
+  const model = new ZipDeflate("3D/3dmodel.model", { level: 6 });
+  zip.add(model);
+  let buf = [];
+  let size = 0;
+  const write = (s) => {
+    buf.push(s);
+    size += s.length;
+    if (size >= CHUNK_CHARS) flush();
+  };
+  const flush = () => {
+    if (buf.length) model.push(strToU8(buf.join("")));
+    buf = [];
+    size = 0;
+  };
+
+  write('<?xml version="1.0" encoding="UTF-8"?>');
+  write('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">');
+  write("<resources>");
   if (colored) {
-    out.push(`<basematerials id="${BASE_MATERIALS_ID}">`);
-    palette.forEach((c, i) => out.push(`<base name="color-${i + 1}" displaycolor="${hexColor(c)}"/>`));
-    out.push("</basematerials>");
+    write(`<basematerials id="${BASE_MATERIALS_ID}">`);
+    palette.forEach((c, i) => write(`<base name="color-${i + 1}" displaycolor="${hexColor(c)}"/>`));
+    write("</basematerials>");
   }
   parts.forEach((p, i) => {
     const mat = colored ? ` pid="${BASE_MATERIALS_ID}" pindex="${pindex[i]}"` : "";
-    out.push(`<object id="${i + 1}" type="model" name="${xmlEsc(p.name)}"${mat}><mesh><vertices>`);
+    write(`<object id="${i + 1}" type="model" name="${xmlEsc(p.name)}"${mat}><mesh><vertices>`);
     const { verts: v, tris: t } = weld(p.positions, p.indices);
-    for (let k = 0; k < v.length; k += 3) out.push(`<vertex x="${v[k]}" y="${v[k + 1]}" z="${v[k + 2]}"/>`);
-    out.push("</vertices><triangles>");
-    for (let k = 0; k < t.length; k += 3) out.push(`<triangle v1="${t[k]}" v2="${t[k + 1]}" v3="${t[k + 2]}"/>`);
-    out.push("</triangles></mesh></object>");
+    for (let k = 0; k < v.length; k += 3) write(`<vertex x="${v[k]}" y="${v[k + 1]}" z="${v[k + 2]}"/>`);
+    write("</vertices><triangles>");
+    for (let k = 0; k < t.length; k += 3) write(`<triangle v1="${t[k]}" v2="${t[k + 1]}" v3="${t[k + 2]}"/>`);
+    write("</triangles></mesh></object>");
   });
-  out.push("</resources><build>");
-  parts.forEach((p, i) => out.push(`<item objectid="${i + 1}"/>`));
-  out.push("</build></model>");
+  write("</resources><build>");
+  parts.forEach((p, i) => write(`<item objectid="${i + 1}"/>`));
+  write("</build></model>");
+  flush();
+  model.push(new Uint8Array(0), true);
+  zip.end();
+  // fflate's synchronous ZipDeflate reports through the callback before end()
+  // returns, so the archive is complete here.
+  if (failed) throw failed;
 
-  const zip = zipSync(
-    {
-      "[Content_Types].xml": strToU8(CONTENT_TYPES),
-      "_rels/.rels": strToU8(RELS),
-      "3D/3dmodel.model": strToU8(out.join("")),
-    },
-    { level: 6 } // 3MF XML is highly repetitive — compresses ~10×
-  );
-  return zip.buffer;
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out.buffer;
 }
