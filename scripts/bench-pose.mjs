@@ -320,7 +320,7 @@ async function benchPage(browser, base, entry) {
   const dot = (await page.evaluate(() => window.__pfPose().__jointRings?.() ?? [])).find((p) => p.limb === limb && p.joint === joint);
   if (dot) {
     await hoverOnto(page, at(dot));
-    const g = await page.evaluate(() => window.__pfPose().__jointGizmo());
+    const g = await page.evaluate(() => window.__pfPose().__jointGizmo?.() ?? null);
     const ring = g && Object.values(g.rings)[0];
     if (ring?.ahead) {
       const from = at(ring), to = at(ring.ahead);

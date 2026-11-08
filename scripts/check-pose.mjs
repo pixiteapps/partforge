@@ -81,8 +81,9 @@
 //     keys, leaves getParams() off the defaults on every changed key, and constructs no Worker
 //     after the preview mounted (`window.__pfWorkersAfterPreview`) (checkPreviewPose). The
 //     `?part=hand` entry makes checkHandContact's index-into-middle drag on the hand's file,
-//     pushed on to 1.5x so it ends held: its drag end's `blocked.b` is a middle-finger piece
-//     and the pose has no overlap (checkPreviewContact). A PAGES entry
+//     whose contact is asserted while the pointer is down (the tint or "Stopped at" readout
+//     names a middle-finger piece in some sample); a drag that ends held names one in its
+//     `blocked.b`, and the pose has no overlap (checkPreviewContact). A PAGES entry
 //     may carry a `query`, appended to its URL.
 //
 // What it observes, and how:
@@ -806,13 +807,14 @@ async function resetParams(page, extra = {}) {
   await settle(page);
 }
 
-/** Press on canvas point `from`, move in `n` steps to `to`, `onHeld` before the release. */
-async function dragPath(page, from, to, n, onHeld) {
+/** Press on canvas point `from`, move in `n` steps to `to` (`onMove` after each), `onHeld` before the release. */
+async function dragPath(page, from, to, n, onHeld, onMove) {
   await hoverHandle(page, from, "the handle");
   await page.mouse.down();
   for (let i = 1; i <= n; i++) {
     await page.mouse.move(from.x + ((to.x - from.x) * i) / n, from.y + ((to.y - from.y) * i) / n);
     await sleep(20);
+    await onMove?.();
   }
   await sleep(80);
   const held = await onHeld?.();
@@ -1263,7 +1265,7 @@ async function checkNoKernel(page, t0, label, errors) {
 async function checkPreviewPose(page, url, errors) {
   const box = await openPreviewApp(page, url);
   const h = await pickHandle(page, box, "tool", PREVIEW);
-  if (h.handleId !== "tool") errors.push(`no pressable "tool" handle point on the preview (picked ${h.handleId})`);
+  if (h.handleId !== "tool") { errors.push(`no pressable "tool" handle point on the preview (picked ${h.handleId})`); return null; }
   const t0 = await page.evaluate(() => performance.now());
   let readout = null;
   await dragFrom(page, h, box, async () => { readout = await page.evaluate(() => window.__pfPreview.pose.__dragReadout()); }, PREVIEW);
@@ -1291,18 +1293,18 @@ async function checkPreviewPose(page, url, errors) {
 
 /**
  * preview-pose.html?part=hand: the hand's contact drag (checkHandContact's) on the file —
- * the wrist held (thumbLock), the index tip dragged toward where it would sit spread 15°
- * into the middle finger, PREVIEW_CONTACT_REACH of the way. checkHandContact's 1.15 lets
- * the slide carry the tip clear by release (on the editor too — its contact reads
- * blocked null), so this pushes on to 1.5, where the drag ends held: the drag end's
- * `blocked.b` names a middle-finger piece, and the pose it leaves has no overlap
- * (assemblyOverlaps in Node, as checkHandContact runs it). The preview has no
+ * the wrist held (thumbLock), the index tip dragged 1.15x of the way to where it would sit
+ * spread 15° into the middle finger. The drag meets the middle finger and slides along it,
+ * so it may end clear of it: the contact is asserted WHILE the pointer is down — sampled
+ * after every move and once more before release, some sample must show the index held
+ * against a middle-finger piece (the collision tint, `__preview.poseCollide.state()
+ * .tinted`, or the readout "Stopped at <its label>"). As in checkHandContact, a drag that
+ * does end held names a middle-finger piece in its drag end's `blocked.b`, and the pose it
+ * leaves has no overlap (assemblyOverlaps in Node). The preview has no
  * setParams, so the lock and the probe of where the contact pose puts the tip are written
  * to the preview's own params through its test hook (`__preview.params`); neither moves
  * a mesh (the lock is a flag, and the probe is restored before the press).
  */
-const PREVIEW_CONTACT_REACH = 1.5;
-
 async function checkPreviewContact(page, url, errors) {
   const box = await openPreviewApp(page, url);
   const canvas = (p) => ({ x: box.x + p.x, y: box.y + p.y });
@@ -1327,19 +1329,26 @@ async function checkPreviewContact(page, url, errors) {
   const start = await handlePoint(page, "index", PREVIEW);
   if (!goal || !start) { errors.push("preview hand contact: no index handle point"); return null; }
   const t0 = await page.evaluate(() => performance.now());
-  const k = PREVIEW_CONTACT_REACH;
-  const from = canvas(start), past = canvas({ x: start.x + (goal.x - start.x) * k, y: start.y + (goal.y - start.y) * k });
-  await dragPath(page, from, past, 20);
+  const from = canvas(start), past = canvas({ x: start.x + (goal.x - start.x) * 1.15, y: start.y + (goal.y - start.y) * 1.15 });
+  const samples = [];
+  const sample = async () => samples.push(await page.evaluate(() => ({
+    tinted: window.__pfPreview.__preview.poseCollide?.state().tinted ?? null,
+    readout: window.__pfPreview.pose.__dragReadout(),
+  })));
+  await dragPath(page, from, past, 20, sample, sample);
+  const middleLabels = await page.evaluate(() => Object.entries(window.__pfPart.parts).filter(([n]) => n.startsWith("middle")).map(([n, sp]) => sp.label ?? n));
+  const heldAt = samples.find((x) => x.tinted?.b?.startsWith("middle") || middleLabels.some((l) => x.readout?.includes(`Stopped at ${l}`))) ?? null;
+  if (!heldAt) errors.push(`the preview's index drag into the middle finger was never held against a middle-finger piece while the pointer was down (last sample ${JSON.stringify(samples.at(-1) ?? null)})`);
   const ends = await page.evaluate(() => window.__pfDragEnds);
   const params = await page.evaluate(() => window.__pfPreview.getParams());
   const workers = await checkNoKernel(page, t0, "the preview contact drag", errors);
   if (ends.length !== 1) errors.push(`${ends.length} onDragEnd calls for the preview contact drag, expected exactly 1`);
   const blocked = ends.at(-1)?.blocked ?? null;
-  if (!blocked?.b?.startsWith("middle")) errors.push(`the preview's index drag into the middle finger ended blocked by ${JSON.stringify(blocked)}, not a middle-finger piece`);
+  if (blocked?.b && !blocked.b.startsWith("middle")) errors.push(`the preview's index drag into the middle finger ended blocked by ${JSON.stringify(blocked)}, not a middle-finger piece`);
   const overlaps = params ? await overlapsAt("hand.js", params) : null;
   if (!params) errors.push("getParams() is null on the hand's preview");
   else if (overlaps.length) errors.push(`the preview's contact pose overlaps: ${overlaps.join(", ")}`);
-  return { blocked, overlaps: overlaps?.length ?? null, workersAfterPreview: workers };
+  return { heldMidDrag: heldAt, blocked, overlaps: overlaps?.length ?? null, workersAfterPreview: workers };
 }
 
 const PAGES = [
