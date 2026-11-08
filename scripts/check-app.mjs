@@ -711,6 +711,119 @@ async function checkCaptureCurrent() {
   }
 }
 
+// Cel mode (viewer.setRenderMode("cel")): the band materials compile and the ink
+// pass composites a field behind the part, live and in every capture path, which
+// only real GL can show. The field colour is read off a frame corner (no part
+// reaches a corner at the default framing): CAD's background is far from it, so a
+// capture that silently fell back to CAD — or an ink pass that painted into the
+// wrong target — reads wrong. A theme toggle must leave the field alone, a faded
+// sub-part (dropped from the ink prepass) must not break a capture, and leaving
+// cel must put the CAD canvas back pixel for pixel.
+async function checkCelMode() {
+  if (!await page.evaluate(() => Boolean(window.__pfRuntime?.renderMode))) return;
+  const frames = (n) => page.evaluate((count) => new Promise((resolve) => {
+    let i = 0;
+    const tick = () => (++i >= count ? resolve() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  }), n);
+  const before = await page.locator(VIEWER_CANVAS).screenshot();
+  const FIELD = [159, 217, 234];
+  const result = await page.evaluate(async (field) => {
+    const rt = window.__pfRuntime;
+    const problems = [];
+    const cornerOf = async (dataUrl) => {
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/jpeg")) return null;
+      const img = new Image();
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      return [...ctx.getImageData(2, 2, 1, 1).data.slice(0, 3)];
+    };
+    const near = (a, b, tol) => Boolean(a) && Math.max(...a.map((v, i) => Math.abs(v - b[i]))) <= tol;
+    const frames = (count) => new Promise((resolve) => {
+      let i = 0;
+      const tick = () => (++i >= count ? resolve() : requestAnimationFrame(tick));
+      requestAnimationFrame(tick);
+    });
+    const liveCorner = () => cornerOf(rt.captureCurrent({ size: 128 }));
+
+    const mode = await rt.renderMode.set("cel");
+    if (mode !== "cel") { problems.push(`set("cel") resolved "${mode}"`); return problems; }
+    if (rt.getViewerState().renderMode !== "cel") {
+      problems.push(`getViewerState().renderMode is "${rt.getViewerState().renderMode}"`);
+    }
+    await frames(30);
+    const live = await liveCorner();
+    if (!near(live, field, 14)) problems.push(`live capture corner ${JSON.stringify(live)} is not the field`);
+    const cad = await cornerOf(rt.captureCurrent({ size: 128, renderMode: "cad" }));
+    if (!cad || near(cad, field, 60)) problems.push(`renderMode "cad" capture corner ${JSON.stringify(cad)} is the field`);
+    const views = await rt.renderViews(["front"], { renderMode: "cel" });
+    const front = await cornerOf(views?.[0]?.dataUrl);
+    if (!near(front, field, 14)) problems.push(`renderViews corner ${JSON.stringify(front)} is not the field`);
+
+    // The ground shadow: pixels on the field-to-shadow line in the lower half.
+    // At full opacity over the field the shadow is (122, 166, 186); the body's
+    // own band tones have g − r near 17, ink and deep tones are far darker, and
+    // the untouched field has g ≈ 217.
+    const shadowPixels = async (dataUrl) => {
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/jpeg")) return 0;
+      const img = new Image();
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = dataUrl; });
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const top = Math.floor(canvas.height / 2);
+      const data = ctx.getImageData(0, top, canvas.width, canvas.height - top).data;
+      let count = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if (g < 206 && Math.abs((b - g) - 17.5) <= 4 && Math.abs((g - r) - 50) <= 8) count++;
+      }
+      return count;
+    };
+    const shadow = await shadowPixels(rt.captureCurrent({ size: 256 }));
+    if (shadow < 40) problems.push("no ground shadow in the capture");
+
+    const theme = document.getElementById("theme");
+    if (theme) {
+      theme.click();
+      await frames(5);
+      const toggled = await liveCorner();
+      if (!near(toggled, field, 14)) problems.push(`corner ${JSON.stringify(toggled)} after a theme toggle is not the field`);
+      theme.click();
+      await frames(5);
+      const back = await liveCorner();
+      if (!near(back, field, 14)) problems.push(`corner ${JSON.stringify(back)} after toggling the theme back is not the field`);
+    }
+
+    const first = rt.listSubParts()[0]?.name;
+    if (first) {
+      rt.setSubPartDisplay(first, { opacity: 0.5 });
+      await frames(5);
+      const faded = rt.captureCurrent({ size: 128 });
+      if (typeof faded !== "string" || !faded.startsWith("data:image/jpeg")) {
+        problems.push(`capture with a faded sub-part returned ${String(faded).slice(0, 40)}`);
+      }
+      rt.clearSubPartDisplay({ viewing: true });
+    }
+
+    const back = await rt.renderMode.set("cad");
+    if (back !== "cad") problems.push(`set("cad") resolved "${back}"`);
+    return problems;
+  }, FIELD);
+  for (const problem of result) errors.push(`cel: ${problem}`);
+  await frames(30);
+  await sleep(100);
+  if (!before.equals(await page.locator(VIEWER_CANVAS).screenshot())) {
+    errors.push("cel: live canvas differs after returning to cad");
+  }
+}
+
 // Cutaway section caps are stencil-masked, and a WebGLRenderTarget does not get
 // a stencil buffer unless it asks for one — so an offscreen capture taken with
 // cutaway enabled used to come back with each cap flooding its ENTIRE plane with
@@ -875,6 +988,7 @@ try {
     if (viewport) await page.setViewportSize(viewport);
   }
   await checkCaptureCurrent(); // before checkDebugOverlay — that one navigates away
+  await checkCelMode(); // after the captureCurrent baseline; puts cad back
   await checkCutawayCapture(); // cutaway is still enabled from the toggle above
 
   // Annotate's actions row (Undo/Clear/Send) is the widest of the viewbar's

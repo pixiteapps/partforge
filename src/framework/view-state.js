@@ -66,11 +66,11 @@ export function saveTheme(mode) {
 // null = nothing (valid) stored — the caller falls back to "cad".
 export function loadRenderMode() {
   const raw = read(KEY.renderMode);
-  return raw === "realistic" || raw === "cad" ? raw : null;
+  return raw === "realistic" || raw === "cad" || raw === "cel" ? raw : null;
 }
 
 export function saveRenderMode(mode) {
-  if (mode === "cad" || mode === "realistic") write(KEY.renderMode, mode);
+  if (mode === "cad" || mode === "realistic" || mode === "cel") write(KEY.renderMode, mode);
 }
 
 // null = nothing stored, or an id this version doesn't know — the caller falls
