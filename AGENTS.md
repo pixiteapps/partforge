@@ -302,6 +302,30 @@ the installed package, so let the publish finish before bumping the dep there.
   sheets beside an unburnt twin that differs only by the burn;
   `scripts/capture-contact-sheet.mjs` renders both in every environment and
   diffs them) - to check by eye after any preset or shader change.
+- **`src/framework/cel/`** - the cel-shaded render mode (spec
+  `docs/superpowers/specs/2026-11-07-cel-shading-design.md`, whose table the
+  constants follow): `cel-style.js` (the constants and the tone maths, pure),
+  `cel-material.js` (band materials per sub-part), `cel-ink.js` (the ink pass)
+  and `cel-ground.js` (the live VSM ground shadow). `cel-style.js` is three-free
+  and DOM-free, and `test/cel-layering.test.js` holds that and keeps `cel/` out of
+  the worker graph; the other three import three.js and only the viewer loads
+  them. The ink pass runs only for the live scene, inside `renderWithBackdrop`,
+  so captures get it and throwaway scenes do not. The ground shadow has two VSM
+  pitfalls: the plane must sit strictly inside the shadow map's xy bounds, and
+  the depth slab must be thin; the light's world elevation is clamped to 40°.
+  The key light is WORLD-FIXED on the canvas and camera-relative in a capture
+  (0.186.1): `CEL.light` is a view-space direction read at the viewer's
+  DEFAULT camera pose, `CEL.light.at` = (18, 12, 18) — NOT a pure iso, which
+  steepens the world key until no wall of a box is lit
+  (`celLightWorld`); every band material and clone lights by ONE shared
+  uniform, and `prepareCelGround` aims it per frame — `aimCelLight(cam)` plus
+  the ground's `aimWorld` with no render target bound, `restCelLight()` plus
+  the camera-relative `aim` with one — so a face keeps its tone through an
+  orbit while canonical captures stay lit the same way, as CAD's capture
+  lights do. The field follows the theme (`celField(theme)`: pale cyan, or a
+  slate in dark, each with its own halftone dot and its own ground-shadow colour
+  and opacity, applied through the ground's `setLook`); the ink does not. Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
+  `renderViews(…, { renderMode: "cel" })` always work; `captureViews` stays CAD.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
   view's POSED meshes as a GLB (one node/mesh per sub-part under a single
@@ -411,6 +435,17 @@ the installed package, so let the publish finish before bumping the dep there.
   vertices of the pose shown — never every vertex at every pose, which a dense
   model would make too slow. The first pose is then smaller than `fill`, by
   design. A turntable mount ignores it (no animation plays there).
+  Since 0.187.0 the file carries `partforgeParams` (encoder 6) and
+  `mountPreview({ part })` runs Pose mode on it: `preview-pose.js` (pure; never
+  imports `collide/world.js`) is the placer — `place(p, d) · base⁻¹` over the
+  file's meshes, the pose ladder's rung 1 with the file as the delivery — and
+  `previewHandles` decides which handles are place-only against the file
+  (`handlesShownInView` ∩ the baker's identity test over
+  `PREVIEW_HANDLE_SAMPLES`; mount-preview steps it one handle per idle slice,
+  `previewHandlesStepper`); `measure()` reports it as `previewHandles` only when
+  asked (`previewHandles: true`, which the CLI's measure verb passes — the inspect
+  path never pays for it). While a baked animation plays, `getParams()` follows the
+  player (the live params under its values); a press pauses it and writes them.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

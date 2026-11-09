@@ -52,11 +52,13 @@ import { attachDragReadout } from "./pose/drag-readout.js";
 import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { parsePinId } from "./pose/pose-session.js";
+import { NOOP_POSE } from "./pose/noop-pose.js";
 import { handleParamKeys, locateHandle } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
 import { samplePreviewAnimation } from "./preview-animation.js";
+import { openingParams } from "./preview-pose.js";
 import { observeViewbarClear } from "./viewbar-clear.js";
 
 // The mount handle, factored out so its shape is unit-testable without booting
@@ -75,8 +77,8 @@ const NOOP_ANNOTATE = {
   strokeCount: () => 0, send: () => false,
   onInkChange: () => () => {}, onModeChange: () => () => {},
 };
-// Same stance again for Pose mode: a part with no `handles` has no mode to drive.
-const NOOP_POSE = { isEnabled: () => false, setEnabled: () => {}, isLive: () => false, pinCount: () => 0, releasePins: () => {}, handlePoints: () => [] };
+// Same stance again for Pose mode: a part with no `handles` has no mode to drive
+// (NOOP_POSE, pose/noop-pose.js).
 // A shape drag (spec 2026-11-02 §4) rebuilds live while it holds only on a part whose
 // last real build took under this many milliseconds; a slower one waits for release.
 export const LIVE_REBUILD_MS = 120;
@@ -153,7 +155,7 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // realistic restore or switch still loading reads "realistic", so a
       // remount mid-load (the cloud remounts on every edit) doesn't drop it.
       // A failed load settles back to "cad".
-      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.getRenderMode?.() ?? "cad",
+      renderMode: viewer.isRealisticPending?.() ? "realistic" : viewer.isCelPending?.() ? "cel" : viewer.getRenderMode?.() ?? "cad",
       // Only an environment someone CHOSE: carrying the one merely seeded
       // from meta.environment (or the default) would outrank the part's own
       // meta.environment on the next mount, masking an edit to it.
@@ -1020,7 +1022,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     for (const [name, override] of Object.entries(pruneOverrides(viewerState?.display, part))) {
       viewer.setSubPartDisplay(name, override);
     }
-    // Realistic mode by the same precedence, requested HERE rather than on the
+    // Realistic (or cel) mode by the same precedence, requested HERE rather than on the
     // first accepted build: every mount has a fresh renderer, so the
     // environment loads again, and starting now runs that alongside the build
     // instead of showing CAD until the build lands and only then waiting on
@@ -1029,8 +1031,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // shown, and showAssembly brings the ground to the part when it arrives.
     // While it loads the viewer reports it pending, which is what
     // getViewerState carries; an explicit mode change supersedes it, and a
-    // failed load settles to CAD.
-    if ((viewerState?.renderMode ?? loadRenderMode() ?? "cad") === "realistic") viewer.setRenderMode("realistic");
+    // failed load settles to CAD. Cel has no assets to load, only its programs
+    // to compile, and comes back the same way.
+    const initialMode = viewerState?.renderMode ?? loadRenderMode() ?? "cad";
+    if (initialMode !== "cad") viewer.setRenderMode(initialMode);
     const viewcube = attachViewcubeControls(viewer, { stage: els.viewer });
     cleanup.defer(() => viewcube.detach());
     // The view style button + popover (the style grid). With a #viewbar
@@ -2278,6 +2282,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // first build and an edit still rebuilding), never a cached preview. The
     // view's autoplay animation rides along as channels when every track is
     // place-only (samplePreviewAnimation decides; otherwise the file is still).
+    // The file also carries the params its meshes sit at: the live ones, with the
+    // BAKED animation's t = 0 values over them (openingParams) — a baked
+    // animation's tracked meshes decode at its first frame; a still file, the live ones.
     // The encoder loads on first use: a host that never exports never pays for it.
     async function exportPreview({ view: wanted } = {}) {
       if (disposed) throw new Error("exportPreview: this mount is disposed");
@@ -2298,7 +2305,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         buildReads: (name) => (cache.hasStamp(name) ? cache.readsOf(name) : null),
       });
       const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
-      return encodePreviewGlb({ meshes, part, view: current, ...(animation ? { animation } : {}) });
+      return encodePreviewGlb({ meshes, part, view: current, params: openingParams(part, current, params, animation?.anim ?? null), ...(animation ? { animation } : {}) });
     }
 
     return makeHandle({

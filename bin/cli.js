@@ -320,7 +320,7 @@ const commands = {
       // The CLI is the place to run sweeps the inspect's report share cannot fit (a
       // hand's full set is ~17 s), so they get a budget of their own here.
       const sweepDeadline = Date.now() + CLI_SWEEP_BUDGET_MS;
-      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline });
+      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline, previewHandles: true });
       if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has
       // attached report.verify. If verify throws (unknown metric, per-case build
@@ -642,6 +642,10 @@ function printMeasure(r) {
     for (const h of r.handles) {
       const at = h.point ? `[${h.point.map((n) => n.toFixed(1)).join(", ")}]` : `unreadable (${h.error})`;
       console.log(`    ${h.label} (${h.kind}${h.group ? `, group ${h.group}` : ""}) at ${at} → ${h.params.join(", ")}`);
+    }
+    if (r.previewHandles) {
+      console.log(`  preview handles: ${r.previewHandles.shown.length ? r.previewHandles.shown.join(", ") : "none"}`);
+      for (const [id, why] of Object.entries(r.previewHandles.hidden)) console.log(`    hidden in a preview: ${id} — ${why}`);
     }
   }
   if (r.probes) {

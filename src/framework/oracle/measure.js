@@ -20,6 +20,7 @@ import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverha
 import { summarizeContours } from "./shape-probe.js";
 import { DOMAINS } from "../domains/registry.js";
 import { handlesReport } from "./handles.js";
+import { previewHandles } from "../preview-pose.js";
 import { runSweeps } from "./sweep.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { normalizeCollisions } from "../collide/declaration.js";
@@ -552,6 +553,18 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // params measured. Absent on a part with none, so those reports are unchanged; it
   // never fails the measurement (a handle that cannot be read is listed with an error).
   const handles = opts.handles !== false ? handlesReport(part, view, params) : undefined;
+  // Which of those a kernel-free cached preview of this view would show (and why the
+  // rest are hidden), against the sub-parts a GLB of this view would hold: the ones
+  // with triangles. OPT-IN (`opts.previewHandles: true`, the CLI's measure verb): it
+  // probes every handle's range, too slow for the worker's inspect path. Like
+  // handlesReport it never fails the measurement — a throw leaves it out.
+  let previewHandlesReport;
+  if (handles && opts.previewHandles === true) {
+    try {
+      previewHandlesReport = previewHandles(part, view, { ...part.defaults, ...params },
+        subparts.filter((s) => s.triangleCount > 0).map((s) => s.name));
+    } catch { previewHandlesReport = undefined; }
+  }
 
   // Pair surface distances from the meshes already built — no kernel dependency,
   // so this reads on OCCT too. nearMisses = the issue-#29 signal: pairs that
@@ -661,6 +674,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // a probe error stays inside its own entry and never reaches `ok` below.
     ...(probes ? { probes } : {}),
     ...(handles ? { handles } : {}),
+    ...(previewHandlesReport ? { previewHandles: previewHandlesReport } : {}),
     ...(sweeps ? { sweeps } : {}),
     ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };

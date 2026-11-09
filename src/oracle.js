@@ -20,6 +20,9 @@ export { buildView } from "./framework/oracle/build.js";
 // Preview animation — whether a view's autoplay animation is place-only, and its
 // sampled place() matrices, for the cached preview GLB (partforge/gltf) to bake.
 export { samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP } from "./framework/preview-animation.js";
+// The params a preview file's meshes sit at (the live params under its baked
+// animation's t = 0 values), for a host that writes or checks a file's partforgeParams.
+export { openingParams } from "./framework/preview-pose.js";
 export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
 // A handle drag played headlessly (derive only): which params a handle writes, and whether it reaches.

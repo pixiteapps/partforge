@@ -565,6 +565,19 @@ the viewer's blue-grey.
 maple table), `print-bed` (a dim, hard-lit enclosure over a standard-size PEI build plate (180, 220, 256 or 350 mm) marked with its size), `outdoor` (overcast sky,
 concrete).
 
+**Cel shaded.** The View style popover's third look, after CAD and
+realistic: every sub-part is drawn in flat bands of its effective `color` (or
+its material's colour; a sub-part with neither is drawn body-white `#eef1f4`,
+not CAD blue-grey), with the shadow tones derived automatically. A preset's
+metalness, roughness, textures and finish overrides do not change it, and
+`opacity` still ghosts. Ink runs on silhouettes and creases, plus the kernel's
+feature edges. The field is flat and faintly halftoned, with a soft ground
+shadow under the part that follows a pose. The light holds still in the
+part's world as you orbit (a face keeps its tone), and a capture is lit from
+up-left of the camera, like CAD's. The backdrop is a pale cyan in the light
+theme and a slate in the dark theme; the ink is the same on both. There is
+nothing to author and it needs no assets.
+
 **Viewers can change a sub-part's look.** The View style popover's Parts
 section lets a user pick a material and colour per sub-part, fade it, or hide
 it, live and without a rebuild (`runtime.setSubPartDisplay` below). Material
@@ -2754,6 +2767,14 @@ import outside a Vite build, so `partforge lint`/`measure`/`render` can't resolv
 source must resolve to the `.vector.json`, never to a raw `.svg` — `k.vector2d` does no
 SVG parsing at all.
 
+The `new URL` form needs the part to load from a real file path. A host that loads part
+source as one bundled module, or from a `data:`/`blob:` URL, has no folder to resolve
+`./…` against, and the module fails to load with `Invalid URL`
+([ERROR-PATTERNS.md#asset-url-no-module-base](ERROR-PATTERNS.md#asset-url-no-module-base)).
+There, use the parsed-object form below or the host's own asset token. The JSON import
+that form shows needs a bundler too; in an unbundled `data:`/`blob:` module, write the
+object in the part.
+
 **A source may also be the parsed file itself.** Alongside bytes, a URL and a thunk, a
 `vectors` entry accepts the **contents** of a `.vector.json` — the object a JSON import
 yields, or anything else that already holds it:
@@ -3552,6 +3573,18 @@ Offer few handles, and use `showOn` so each appears where the user is already lo
 Ten dots on screen at once is a failure of the part, not of the user: lint warns
 (`handle-crowded`) when more than 5 handles show in one view without a `showOn`, a
 group counting once.
+
+### Handles in the cached preview
+
+A page that mounts a cached preview with the part (`mountPreview({ glb, part })`) poses it
+without a kernel. A handle shows there when it would show in the editor AND every parameter
+it writes only moves pieces by their placement — the sub-parts it touches keep the same
+geometry over the parameter's range. A handle that reshapes anything (the drawer box's
+corner handle, which writes `width` and `depth`) is hidden in the preview, never shown
+half-working. `partforge measure` prints a `preview handles:` line naming which show and why
+the rest are hidden. IK handles pass as long as their links are placed by `d.<limb>.place`;
+collisions and pins work as in the editor. A drag edits the preview's own copy of the
+parameters, never the part.
 
 ### Handle groups
 
@@ -4361,8 +4394,12 @@ For an embedder driving realistic mode from its own UI instead of (or in
 addition to) the generated view style button above:
 
 - `runtime.renderMode` — `{ get(), set(mode), onChange(cb) }` where `mode` is
-  `"cad"` or `"realistic"`. `set()` resolves to the mode actually in effect —
-  `"cad"` if the realistic environment's assets fail to load — and
+  `"cad"`, `"realistic"` or `"cel"`. `set()` resolves to the mode actually in effect —
+  `"cad"` if the realistic environment's assets fail to load. `"cel"` loads no
+  assets, so it does not fall back to CAD the way realistic can: if its shaders
+  fail to compile, the previous mode stays and `onChange` reports an `error`
+  (a failure while the look is being swapped in rolls back to CAD, with the
+  same `error`) — and
   `onChange` receives `{ mode, busy, error }` so a host can show its own
   loading/error state. Same shape as `runtime.projection`. It drives the live
   view, and `runtime.captureCurrent()` follows it by default (a "capture from
@@ -4374,7 +4411,8 @@ addition to) the generated view style button above:
   instead of following the live view. `"cad"` always works. `"realistic"` from
   a CAD view works only once the current environment's assets have loaded
   (the call is synchronous and can't wait for them); before that it falls
-  back to the live look. Use `renderViews` when realistic must be guaranteed.
+  back to the live look. `"cel"` always works, from any view, since it needs no
+  assets. Use `renderViews` when realistic must be guaranteed.
 - `runtime.environment` — `{ get(), set(id), onChange(cb), list() }` for the
   realistic environment (`"studio"` | `"workshop"` | `"print-bed"` |
   `"outdoor"`, per "Materials and appearance" above). `list()` returns every
@@ -4388,7 +4426,7 @@ addition to) the generated view style button above:
   stock — "Sheet parts default to their stock"), so use this to decide
   whether to surface your own realistic control at all, not whether it works.
   Feature lines are not a preference: they draw whenever `runtime.renderMode`
-  reads `"cad"` and never while it reads `"realistic"` — there is no switch
+  reads `"cad"` or `"cel"` and never while it reads `"realistic"` — there is no switch
   to drive independently of it.
 - `await runtime.renderViews(viewNames, { renderMode? })` — the appearance-aware
   sibling of `runtime.captureViews` (canonical angles, framed to the visible
@@ -4396,16 +4434,19 @@ addition to) the generated view style button above:
   `captureViews` — CAD whatever the live view shows — and `{ renderMode: "realistic" }` borrows the realistic look
   for the capture — waiting on the chosen environment's assets — **without**
   switching the live view. Rejects if the realistic assets fail to load.
+  `{ renderMode: "cel" }` borrows the cel look the same way and never rejects
+  for assets.
 
 Both preferences round-trip through `mount()`'s `viewerState`: a previous
-mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`
-or `"realistic"`) and, only when the viewer's environment was actually CHOSEN
+mount's `runtime.getViewerState()` carries `viewerState.renderMode` (`"cad"`,
+`"realistic"` or `"cel"`) and, only when the viewer's environment was actually CHOSEN
 rather than merely defaulted from `meta.environment`, `viewerState.environment`.
 `renderMode` reports the mode the user is **headed for**, not only the one on
 screen: a realistic restore or switch that's still loading reports
-`"realistic"`, so a host that remounts on every edit (as an embedder applying
-edits by remounting typically does) doesn't drop the in-flight choice — a
-load that ultimately fails still settles back to `"cad"`. Pass `viewerState`
+`"realistic"`, and a cel switch still compiling its programs reports `"cel"`,
+so a host that remounts on every edit (as an embedder applying edits by
+remounting typically does) doesn't drop the in-flight choice — a load that
+ultimately fails still settles back to the mode it left. Pass `viewerState`
 back into the next `mount()` call to resume both where the previous mount
 left them; omit it on a first mount and the viewer restores its own persisted
 choice instead, the same way it does for the camera.
