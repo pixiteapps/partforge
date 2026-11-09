@@ -211,6 +211,11 @@ export interface LimbIkInfo {
   /** A hinge's world rotation axis (the direction a positive value turns about); none for a ball. */
   axes: Record<string, Point3>;
   /**
+   * Each joint's posed frame in part coordinates, after its own turn: `x` the bend axis, `z`
+   * the spread axis, `y` along the bone it turns. Orthonormal (Pose mode's ball-joint rings).
+   */
+  frames: Record<string, { x: Point3; y: Point3; z: Point3 }>;
+  /**
    * Each ball joint's rotation axes in part coordinates: the direction a positive bend,
    * spread and twist turn about (bend and spread in the frame before the ball turns, twist
    * about the swung segment). Absent when the limb has no ball joint.

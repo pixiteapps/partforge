@@ -9,7 +9,7 @@ import { createPoseMode } from "../src/framework/pose/pose-mode.js";
 import { createAimGizmo, createJointGizmo, JOINT_RING_PX } from "../src/framework/pose/aim-gizmo.js";
 import { PIN_LIFT_PX } from "../src/framework/pose/pose-scene.js";
 import { worldPerPx } from "../src/framework/measure/dim3-scene.js";
-import { limbInfo } from "../src/framework/pose/param-solve.js";
+import { limbInfo, planarDragNormal } from "../src/framework/pose/param-solve.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { limb } from "../src/framework/domains/kinematics/index.js";
 import hand from "../src/parts/hand.js";
@@ -164,6 +164,12 @@ function setup(part, over = {}, limbKey = "arm", opts = {}) {
   return { viewer, scene, orbit, params, log, mode, fire, info, hover, screenOf, ringPoint, dragRing, joint: () => jointGizmo, aim: () => aimGizmo };
 }
 
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+function expectOrthonormal(axes) {
+  for (const a of axes) expect(Math.hypot(...a)).toBeCloseTo(1, 2);
+  for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) expect(Math.abs(dot3(axes[i], axes[j]))).toBeLessThan(2e-3);
+}
+
 afterEach(() => { for (const m of live.splice(0)) m.detach(); document.body.innerHTML = ""; });
 
 describe("joint rings in Pose mode", () => {
@@ -233,18 +239,46 @@ describe("joint rings in Pose mode", () => {
     expect(t.joint().state.visible).toBe(false);
   });
 
-  it("a ball joint shows three rings: bend, spread and twist", () => {
+  it("a ball joint shows three rings square to each other, on the ball's own posed frame", () => {
     const BALL = limb("arm", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: [{ name: "shoulder", type: "ball", cone: 90 }, { name: "elbow", range: [0, 120] }], lengths: [60, 50] });
     const part = {
       ...anglesPart({ shoulder: { bend: "sh", spread: "gp", twist: "gyaw" } }),
       derive: (p) => ({ arm: BALL.pose({ bend: { shoulder: { bend: p.sh, spread: p.gp, twist: p.gyaw }, elbow: p.el } }) }),
     };
-    const t = setup(part);
+    // swung and twisted, so the ball's own bend/spread/twist axes are no longer square
+    const t = setup(part, { sh: 30, gp: 25, gyaw: 40 });
+    const skew = t.info().ballAxes.shoulder;
+    expect(Math.abs(dot3(skew.bend, skew.twist))).toBeGreaterThan(0.1);
     t.hover("shoulder");
     const g = t.joint().state;
-    const axes = t.info().ballAxes.shoulder;
-    expect(g.axes).toEqual([axes.bend, axes.spread, axes.twist]);
+    const f = t.info().frames.shoulder;
+    expect(g.axes).toEqual([f.x, f.z, f.y]);
+    expectOrthonormal(g.axes);
     expect(Object.keys(t.mode.jointGizmoPoints().rings).sort()).toEqual(["bend", "spread", "twist"].sort());
+  });
+
+  it("a ball ring turns the ball's frame about that ring's axis, every component solved together, one commit", () => {
+    const BALL = limb("arm", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: [{ name: "shoulder", type: "ball", cone: 90 }, { name: "elbow", range: [0, 120] }], lengths: [60, 50] });
+    const part = {
+      ...anglesPart({ shoulder: { bend: "sh", spread: "gp", twist: "gyaw" } }),
+      derive: (p) => ({ arm: BALL.pose({ bend: { shoulder: { bend: p.sh, spread: p.gp, twist: p.gyaw }, elbow: p.el } }) }),
+    };
+    const t = setup(part, { sh: 30, gp: 25, gyaw: 40 });
+    const f0 = t.info().frames.shoulder;
+    t.hover("shoulder");
+    const pts = t.mode.jointGizmoPoints();
+    const r = pts.rings.twist;
+    t.fire("pointermove", r.x, r.y);
+    expect(t.joint().state.hovered).toBe("twist");
+    t.fire("pointerdown", r.x, r.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", r.x + ((r.ahead.x - r.x) * i) / 6, r.y + ((r.ahead.y - r.y) * i) / 6);
+    t.fire("pointerup", r.ahead.x, r.ahead.y);
+    expect(t.log.commit).toHaveLength(1);
+    const f1 = t.info().frames.shoulder;
+    // a twist ring turns about the bone: the bone (y) stays put, x and z turn about it
+    expect(dot3(f1.y, f0.y)).toBeGreaterThan(0.999);
+    const turned = Math.acos(Math.min(1, dot3(f1.x, f0.x))) * 180 / Math.PI;
+    expect(turned).toBeGreaterThan(3);
   });
 
   it("goal mode: the first seeded joint is a ring-only dot, a joint it moves is a grab; a ring turns its joint and the goal follows, no spring-back", () => {
@@ -360,17 +394,18 @@ describe("joint rings in Pose mode", () => {
     expect(t.joint().state.visible).toBe(false);
   });
 
-  it("joints at one point share one gizmo: the arm's wrist pitch, yaw and roll, each its own ring", () => {
+  it("joints at one point share one gizmo: the arm's wrist pitch, yaw and roll, as three square rings on the wrist's frame", () => {
     const t = setup(robotArm);
     const wrist = t.screenOf(t.info().points.wristRoll);
     t.fire("pointermove", wrist.x, wrist.y);
     const g = t.joint().state;
     expect(g.visible).toBe(true);
-    const info = t.info();
-    expect(g.axes).toEqual([info.axes.wristPitch, info.axes.wristYaw, info.axes.wristRoll]);
+    const f0 = t.info().frames.wristRoll;
+    expect(g.axes).toEqual([f0.x, f0.z, f0.y]);
+    expectOrthonormal(g.axes);
     const pts = t.mode.jointGizmoPoints();
     expect(Object.keys(pts.rings).sort()).toEqual(["bend", "spread", "twist"]);
-    // the spread ring turns the wrist yaw
+    // the spread ring turns the wrist's frame about its own z
     const r = pts.rings.spread;
     t.fire("pointermove", r.x, r.y);
     expect(t.joint().state.hovered).toBe("spread");
@@ -378,9 +413,58 @@ describe("joint rings in Pose mode", () => {
     for (let i = 1; i <= 4; i++) t.fire("pointermove", r.x + ((r.ahead.x - r.x) * i) / 4, r.y + ((r.ahead.y - r.y) * i) / 4);
     t.fire("pointerup", r.ahead.x, r.ahead.y);
     expect(t.log.commit).toHaveLength(1);
-    expect(t.log.commit[0]).toContain("wristYaw");
-    expect(t.log.commit[0]).not.toContain("wristPitch");
-    expect(t.params.wristYaw).not.toBe(robotArm.defaults.wristYaw);
+    const f1 = t.info().frames.wristRoll;
+    expect(dot3(f1.z, f0.z)).toBeGreaterThan(0.99);
+    expect(dot3(f1.x, f0.x)).toBeLessThan(0.9995); // it turned
+  });
+
+  it("hinges stacked at one point (a thumb ball of four zero-length hinges, one fixed) get three square rings on the bone's frame; the twist ring turns about the bone", () => {
+    // as feedback #245's hand: derive keys the limb apart from its name, and the ball's last
+    // step (twist) has no ring, yet it turns the bone the rings must line up with
+    const THUMB = limb("thumb", {
+      toward: [1, 0, 0], bendToward: [0, 0, -1],
+      joints: [
+        { name: "swing", range: [0, 120] },
+        { name: "yaw", axis: "spread", range: [-180, 180] },
+        { name: "roll", axis: "twist", range: [-180, 180] },
+        { name: "twist", range: [-180, 180] },
+        { name: "mcp", range: [0, 120] },
+      ],
+      lengths: [0, 0, 0, 40, 30],
+    });
+    const part = {
+      ...base,
+      parameters: [{ id: "p", title: "P", controls: ["sw", "yw", "rl", "tw", "mc"].map((k) => control(k, k === "sw" || k === "mc" ? 0 : -180, k === "sw" || k === "mc" ? 120 : 180)) }],
+      defaults: { sw: 50, yw: 30, rl: 60, tw: -30, mc: 20 },
+      derive: (p) => ({ limbThumb: THUMB.pose({ bend: { swing: p.sw, yaw: p.yw, roll: p.rl, twist: p.tw, mcp: p.mc } }) }),
+      handles: { thumb: { on: "limbThumb", drag: "angles", params: ["sw", "yw", "rl", "mc"], joints: { swing: "sw", yaw: "yw", roll: "rl", mcp: "mc" } } },
+    };
+    const t = setup(part, {}, "limbThumb");
+    const info = t.info();
+    // the four steps' own axes are skewed at this pose
+    expect(Math.abs(dot3(info.axes.swing, info.axes.roll))).toBeGreaterThan(0.1);
+    t.hover("swing");
+    const g = t.joint().state;
+    expect(g.visible).toBe(true);
+    const f0 = info.frames.twist;
+    expect(g.axes).toEqual([f0.x, f0.z, f0.y]);
+    expectOrthonormal(g.axes);
+    // round the twist ring itself, 40 degrees in 5-degree steps
+    const p0 = t.ringPoint("swing", g.axes[2], 60);
+    t.fire("pointermove", p0.x, p0.y);
+    expect(t.joint().state.hovered).toBe("twist");
+    t.fire("pointerdown", p0.x, p0.y);
+    let p = p0;
+    for (let i = 1; i <= 8; i++) { p = t.ringPoint("swing", g.axes[2], 60 + 5 * i); t.fire("pointermove", p.x, p.y); }
+    t.fire("pointerup", p.x, p.y);
+    expect(t.log.commit).toHaveLength(1);
+    expect(t.log.commit[0]).not.toContain("mc"); // the ring turns the ball, not the knuckle past it
+    expect(t.log.commit[0]).not.toContain("tw"); // ...nor the fixed step
+    const f1 = t.info().frames.twist;
+    expect(dot3(f1.y, f0.y)).toBeGreaterThan(0.999); // the metacarpal keeps its line
+    const turned = (Math.acos(Math.min(1, dot3(f1.x, f0.x))) * 180) / Math.PI;
+    expect(turned).toBeGreaterThan(36); // about the 40 degrees dragged (to the release snap)
+    expect(turned).toBeLessThan(44);
   });
 
   it("zoomed out, where the knuckles crowd, a dot's own centre always reaches that dot's rings", () => {
@@ -477,6 +561,73 @@ describe("joint rings in Pose mode", () => {
 
 // A pin on any dot: a click on a joint (a goal handle's ring-only joint too) pins it, the
 // scene badges that point, and an IK drag of the goal holds it.
+describe("planar dot drags", () => {
+  // A finger of three parallel hinges, its bend axis tilted 45 degrees off the view
+  // (the camera looks along part +Y): every point on it can only move in one plane.
+  const FINGER = limb("finger", {
+    at: [0, 0, 0], toward: [0, 0, 1], bendToward: [1, 1, 0],
+    joints: [{ name: "mcp", range: [-90, 90] }, { name: "pip", range: [0, 120] }, { name: "dip", range: [0, 120] }],
+    lengths: [40, 30, 20],
+  });
+  const fingerPart = (spread = false) => ({
+    ...base,
+    parameters: [{ id: "p", title: "P", controls: [control("m", -90, 90), control("pp", 0, 120), control("dp", 0, 120), control("sp", -30, 30)] }],
+    defaults: { m: 10, pp: 30, dp: 20, sp: 0 },
+    derive: (p) => {
+      const f = spread
+        ? limb("finger", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [1, 1, 0], joints: [{ name: "spr", axis: "spread", range: [-30, 30] }, { name: "mcp", range: [-90, 90] }, { name: "pip", range: [0, 120] }, { name: "dip", range: [0, 120] }], lengths: [0, 40, 30, 20] })
+          .pose({ bend: { spr: p.sp, mcp: p.m, pip: p.pp, dip: p.dp } })
+        : FINGER.pose({ bend: { mcp: p.m, pip: p.pp, dip: p.dp } });
+      return { finger: f };
+    },
+    handles: { finger: { on: "finger", drag: "angles", params: spread ? ["sp", "m", "pp", "dp"] : ["m", "pp", "dp"] } },
+  });
+
+  it("planarDragNormal: parallel hinges give their common axis; a spread joint, or the base joint grabbed, gives none", () => {
+    const part = fingerPart();
+    const h = part.handles.finger;
+    const info = limbInfo(part, part.defaults, h);
+    const n = planarDragNormal({ part, params: part.defaults, handle: h, grab: "tip" });
+    expect(n).not.toBeNull();
+    expect(Math.abs(dot3(n, info.axes.mcp))).toBeCloseTo(1, 3);
+    expect(planarDragNormal({ part, params: part.defaults, handle: h, grab: "pip" })).not.toBeNull();
+    expect(planarDragNormal({ part, params: part.defaults, handle: h, grab: "mcp" })).toBeNull();
+    const sp = fingerPart(true);
+    expect(planarDragNormal({ part: sp, params: sp.defaults, handle: sp.handles.finger, grab: "tip" })).toBeNull();
+  });
+
+  it("dragging a planar finger's tip puts the target on the finger's own plane, not one facing the camera", () => {
+    const part = fingerPart();
+    const t = setup(part, {}, "finger");
+    const info0 = t.info();
+    const axis = info0.axes.mcp;
+    const tip0 = info0.points.tip;
+    expect(Math.abs(axis[1])).toBeGreaterThan(0.5); // tilted against the view, not edge-on
+    expect(Math.abs(axis[1])).toBeLessThan(0.9);
+    // across the finger in its own plane (a curl it can follow), 30% of the way to the screen
+    // point 40 mm from the tip along axis x limb. Along the limb itself would not tell the two
+    // planes apart: both hold the limb's line.
+    const along = info0.points.tip.map((v, c) => v - info0.points.mcp[c]);
+    const w = [axis[1] * along[2] - axis[2] * along[1], axis[2] * along[0] - axis[0] * along[2], axis[0] * along[1] - axis[1] * along[0]];
+    const wl = Math.hypot(...w);
+    const m = t.screenOf(tip0.map((v, c) => v + (w[c] / wl) * 40));
+    const s = t.hover("tip");
+    const at = (k) => ({ x: s.x + (m.x - s.x) * 0.3 * k, y: s.y + (m.y - s.y) * 0.3 * k });
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 8; i++) { const q = at(i / 8); t.fire("pointermove", q.x, q.y); }
+    expect(t.mode.isDragging()).toBe(true);
+    const target = t.scene.calls.setActive.filter((a) => a?.target).at(-1).target;
+    const off = [0, 1, 2].map((c) => target[c] - tip0[c]);
+    expect(Math.hypot(...off)).toBeGreaterThan(3); // it moved
+    expect(Math.abs(dot3(off, axis))).toBeLessThan(1e-6); // ...in the finger's plane
+    // and the finger reaches it: a target on its plane is one the hinges can meet
+    const last = t.scene.calls.setActive.filter((a) => a?.target).at(-1);
+    expect(last.missed).toBe(false);
+    t.fire("pointerup", at(1).x, at(1).y);
+    expect(t.log.commit).toHaveLength(1);
+  });
+});
+
 describe("joint pins", () => {
   const elbowOf = (part, params) => resolveParams(part, params).d.arm.world("elbow").origin;
 

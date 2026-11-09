@@ -8,6 +8,9 @@
 //   jointFrame(ring, slot, deg)  a joint ring: turn that one joint by deg from where the
 //                          drag began (clamped to its range) — forward kinematics; a goal
 //                          handle's goal follows the turned pose (param-solve's jointRingValues)
+//   compoundFrame(compound, axis, deg)  a ball's (or a hinge stack's) ring on its own
+//                          orthogonal frame: turn that frame by deg about axis, every value
+//                          of the joint solved together (param-solve's compoundRingValues)
 //   end()                  write the snapped values, hold(false), commit(changed) once;
 //                          returns { handleId, changed, moved, held, blocked } (null with no drag):
 //                          moved — some frame wrote a value that, snapped, left the start;
@@ -62,7 +65,7 @@
 // Every IK drag holds them: angles mode through solveAngles (any limb), goal mode through
 // solveGoalPinned (the goal handle's own limb) once a pin is on that limb. Joint rings and
 // a goal drag with no pin on its limb do not.
-import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, snapValuesToward, linearBlend, withBlend, jointRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
+import { limbInfo, solveAngles, solveGoalPinned, solveHandle, goalValues, seedValues, snapValues, snapValuesToward, linearBlend, withBlend, jointRingValues, compoundRingValues, posedJointValue, parseJointKey } from "./param-solve.js";
 import { handleKind, handleAt, locateHandle } from "./handle-source.js";
 import { resolveParams } from "../part-model.js";
 
@@ -385,6 +388,20 @@ export function createPoseSession({
     return apply({ values: result.values, error: 0, clamped: value !== want || result.clamped });
   }
 
+  /**
+   * A compound joint ring's frame (a ball, or hinges stacked at one point: param-solve's
+   * compoundRingValues): the joint's frame at begin turned `deltaDeg` about the world
+   * `axis`, every one of its values solved together, warm-started from the last frame.
+   * Pins are not held, as for a single joint ring.
+   */
+  function compoundFrame(compound, axis, deltaDeg) {
+    if (!drag || !compound || !isNum(deltaDeg)) return null;
+    const result = compoundRingValues({ part, params: { ...drag.snapshot }, compound, axis, deg: deltaDeg, warm: drag.compoundWarm });
+    if (!result) return null;
+    drag.compoundWarm = result.joints;
+    return apply({ values: result.values, error: 0, clamped: result.clamped });
+  }
+
   function end() {
     if (!drag) return null;
     const ending = drag;
@@ -493,6 +510,7 @@ export function createPoseSession({
     frame,
     ringFrame,
     jointFrame,
+    compoundFrame,
     end,
     cancel,
     externalWrite: cancel,
