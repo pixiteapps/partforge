@@ -164,7 +164,9 @@ export function createCelInk() {
       u.uOrtho.value = camera.isOrthographicCamera ? 1 : 0;
       u.uPx.value = pixelScale;
       u.uBgDots.value = field && field.dots ? F.dots : 0;
-      if (field) u.uBgDot.value.copy(field.color).multiplyScalar(F.dotDarken);
+      // The dot: the caller's (celField's, per theme), else the field darkened.
+      if (field?.dot) u.uBgDot.value.copy(field.dot);
+      else if (field) u.uBgDot.value.copy(field.color).multiplyScalar(F.dotDarken);
       renderer.autoClear = false;
       renderer.render(quadScene, quadCam);
     } finally {

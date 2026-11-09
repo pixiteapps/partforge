@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import * as THREE from "three";
-import { buildCelMaterial } from "../src/framework/cel/cel-material.js";
+import { buildCelMaterial, aimCelLight, restCelLight, celLightNow } from "../src/framework/cel/cel-material.js";
 import { createCelInk, CEL_LAYER } from "../src/framework/cel/cel-ink.js";
 import { createCelGround } from "../src/framework/cel/cel-ground.js";
-import { CEL, celTones } from "../src/framework/cel/cel-style.js";
+import { CEL, celTones, celField, celLightView, celLightWorld } from "../src/framework/cel/cel-style.js";
 
 describe("buildCelMaterial", () => {
   it("is a clipping-capable ShaderMaterial that writes sRGB and exposes its lit colour", () => {
@@ -31,6 +31,43 @@ describe("buildCelMaterial", () => {
     c.opacity = 0.4;
     expect(c.uniforms.uOpacity.value).toBe(0.4);
     expect(c.color.getHex()).toBe(m.color.getHex());
+  });
+});
+describe("the shared key light", () => {
+  afterEach(() => restCelLight());
+  it("every band material and every clone light by ONE vector, so one aim reaches them all", () => {
+    const a = buildCelMaterial({ color: 0x3366cc }), b = buildCelMaterial({ color: 0xe8442c }), c = a.clone();
+    expect(a.uniforms.uLight.value).toBe(celLightNow());
+    expect(b.uniforms.uLight.value).toBe(celLightNow());
+    expect(c.uniforms.uLight.value).toBe(celLightNow());
+  });
+  it("rests at the camera-relative key", () => {
+    restCelLight();
+    expect(celLightNow().toArray()).toEqual(celLightView());
+  });
+  it("aimed from the viewer's default camera (18, 12, 18), the world key reads as the resting view key (the default view is unchanged)", () => {
+    const cam = new THREE.PerspectiveCamera();
+    cam.position.set(18, 12, 18).multiplyScalar(4); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+    aimCelLight(cam);
+    const now = celLightNow().toArray(), rest = celLightView();
+    for (let i = 0; i < 3; i++) expect(now[i]).toBeCloseTo(rest[i], 6);
+  });
+  it("aimed from another camera, it is the world key in that camera's view space — the part's lit side stays put", () => {
+    const cam = new THREE.PerspectiveCamera();
+    cam.position.set(-60, 20, 30); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+    aimCelLight(cam);
+    const back = celLightNow().clone().transformDirection(cam.matrixWorld).toArray();
+    const world = celLightWorld();
+    for (let i = 0; i < 3; i++) expect(back[i]).toBeCloseTo(world[i], 6);
+    expect(celLightNow().length()).toBeCloseTo(1, 6);
+    expect(celLightNow().toArray()).not.toEqual(celLightView());
+  });
+  it("from the default camera a box shows top and front lit and the side in shadow (the key is not so steep that no wall is lit)", () => {
+    const [x, y, z] = celLightWorld();
+    const { lit } = CEL.bands;
+    expect(y).toBeGreaterThan(lit);               // the top face
+    expect(Math.max(x, z)).toBeGreaterThan(lit + 0.05); // one wall facing the default camera, with margin
+    expect(Math.min(x, z)).toBeLessThan(lit);     // the other wall
   });
 });
 describe("createCelInk", () => {
@@ -108,6 +145,15 @@ describe("createCelInk render", () => {
   });
 });
 describe("createCelGround", () => {
+  it("setLook recolours the plane's material in place, so a capture floor sharing it follows", () => {
+    const g = createCelGround({ mapSize: 1024 });
+    expect(g.plane.material.color.getHex()).toBe(CEL.ground.color);
+    expect(g.plane.material.opacity).toBe(CEL.ground.opacity);
+    const shared = new THREE.Mesh(g.plane.geometry, g.plane.material);
+    g.setLook(celField("dark").shadow);
+    expect(shared.material.color.getHex()).toBe(CEL.ground.darkColor);
+    expect(shared.material.opacity).toBe(CEL.ground.darkOpacity);
+  });
   it("fit ignores an empty box", () => {
     const g = createCelGround({ mapSize: 1024 });
     g.fit(new THREE.Box3(new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 2, 1)));
@@ -143,6 +189,23 @@ describe("createCelGround", () => {
         expect(Math.abs(p.x)).toBeLessThan(1); expect(Math.abs(p.y)).toBeLessThan(1); expect(Math.abs(p.z)).toBeLessThan(1);
       }
     }
+  });
+  it("aimWorld points the light along a world direction and clamps a low one to 40°", () => {
+    const g = createCelGround({ mapSize: 1024 });
+    g.fit(bounds);
+    g.aimWorld([0.3, 0.8, -0.5]);
+    const d = g.light.position.clone().sub(g.light.target.position).normalize();
+    const want = new THREE.Vector3(0.3, 0.8, -0.5).normalize();
+    expect(d.distanceTo(want)).toBeLessThan(1e-6);
+    expect(g.light.position.distanceTo(g.light.target.position)).toBeCloseTo(R * CEL.ground.lightDistanceR, 5);
+    g.aimWorld([1, 0.1, 0]);
+    const low = g.light.position.clone().sub(g.light.target.position).normalize();
+    expect(Math.asin(low.y) * 180 / Math.PI).toBeCloseTo(CEL.ground.minWorldElevationDeg, 6);
+    expect(low.x).toBeGreaterThan(0.7); expect(Math.abs(low.z)).toBeLessThan(1e-6);
+    g.aimWorld([0, -1, 0]); // from below, with no camera to borrow a sideways from: lifted to the clamp along +x
+    const lifted = g.light.position.clone().sub(g.light.target.position).normalize();
+    expect(Math.asin(lifted.y) * 180 / Math.PI).toBeCloseTo(CEL.ground.minWorldElevationDeg, 6);
+    expect(lifted.x).toBeGreaterThan(0.7);
   });
   it("clamps the light's world elevation to 40° from a top-down camera", () => {
     const g = createCelGround({ mapSize: 1024 });
