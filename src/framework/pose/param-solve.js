@@ -990,3 +990,171 @@ export function snapValues(part, values) {
   }
   return out;
 }
+
+// ---- planar dot drags ----------------------------------------------------------------
+
+const vdot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const vlen = (a) => Math.hypot(a[0], a[1], a[2]);
+const vcross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+/** Two hinge axes this close to parallel (|a x b| of unit axes) turn a point in one plane. */
+const PARALLEL_SIN = 1e-3;
+
+/**
+ * The plane a limb dot drag is confined to: the unit normal when every joint above the
+ * grabbed point that the drag's parameters move is a hinge, and all of them turn about one
+ * axis (a finger's mcp, pip and dip), with that axis held still by the drag (nothing above
+ * the limb moves it). The grabbed point then can only travel in the plane through it square
+ * to that axis, so the pointer belongs on that plane, not on one facing the camera. Null for
+ * anything else: a ball, a spread or twist hinge among the moving joints, a parent that
+ * moves, the base joint grabbed, or a derive that throws. Each parameter is nudged once
+ * (one derive each) to see which joints it moves, so call it once per press.
+ */
+export function planarDragNormal({ part, params, handle, grab, allHandles = [handle] }) {
+  if (!handle || typeof handle !== "object") return null;
+  const base = { ...part?.defaults, ...params };
+  const keys = handle.drag === "goal"
+    ? (Array.isArray(handle.seed) ? handle.seed.filter((k) => typeof k === "string") : [])
+    : dofsOf(handle, allHandles, base);
+  if (!keys.length) return null;
+  // Each hinge's axis unrounded (ikInfo rounds to 0.001): its posed frame's bend (x),
+  // spread (z) or twist (y) axis; a vector axis falls back to ikInfo's.
+  const LOCAL = { bend: "x", spread: "z", twist: "y" };
+  const read = (p) => {
+    const posed = resolveParams(part, p).d[handle.on];
+    const info = posed.ikInfo();
+    const exact = {};
+    for (const j of info.joints) {
+      const k = LOCAL[j.axisKind];
+      exact[j.name] = k && typeof posed.ikForward === "function" ? posed.ikForward({}, j.name)[k] : info.axes?.[j.name];
+    }
+    return { ...info, axes: exact };
+  };
+  let info0;
+  try { info0 = read(base); } catch { return null; }
+  const gi = grab === "tip" ? info0.joints.length : info0.joints.findIndex((j) => j.name === grab);
+  if (!(gi > 0)) return null;
+  const ranges = rangesOf(part);
+  const moved = new Set();
+  const nudged = [];
+  for (const k of keys) {
+    const v = base[k];
+    if (!isNum(v)) continue;
+    const r = ranges.get(k);
+    const span = r && isNum(r.min) && isNum(r.max) && r.max > r.min ? r.max - r.min : 1;
+    const step = Math.max(1e-6, span * 0.01);
+    const to = r && isNum(r.max) && v + step > r.max ? v - step : v + step;
+    let info;
+    try { info = read({ ...base, [k]: to }); } catch { return null; }
+    nudged.push(info);
+    for (let i = 0; i < gi; i++) {
+      const a = info0.values[i], b = info.values[i];
+      const differs = typeof a === "number" ? a !== b : ["bend", "spread", "twist"].some((c) => a?.[c] !== b?.[c]);
+      if (differs) moved.add(i);
+    }
+  }
+  if (!moved.size) return null;
+  const order = [...moved].sort((a, b) => a - b);
+  const first = info0.joints[order[0]];
+  const axis = info0.axes?.[first.name];
+  if (!Array.isArray(axis) || !(vlen(axis) > 0)) return null;
+  const n = axis.map((c) => c / vlen(axis));
+  for (const i of order) {
+    const j = info0.joints[i];
+    if (j.type === "ball") return null;
+    for (const info of [info0, ...nudged]) {
+      const a = info.axes?.[j.name];
+      if (!Array.isArray(a) || !(vlen(a) > 0)) return null;
+      if (vlen(vcross(n, a)) / vlen(a) > PARALLEL_SIN) return null;
+    }
+  }
+  // the first moving joint stays put (a parent limb the params also move would carry it)
+  for (const info of nudged) {
+    const p = info.points[first.name], q = info0.points[first.name];
+    if (!Array.isArray(p) || vlen([p[0] - q[0], p[1] - q[1], p[2] - q[2]]) > 1e-3) return null;
+  }
+  return n;
+}
+
+// ---- compound (ball) joint rings -----------------------------------------------------
+
+/** A rotation of `deg` degrees about the unit `axis` applied to `v` (Rodrigues). */
+function rotateAbout(v, axis, deg) {
+  const l = vlen(axis) || 1;
+  const k = [axis[0] / l, axis[1] / l, axis[2] / l];
+  const th = (deg * Math.PI) / 180, c = Math.cos(th), s = Math.sin(th);
+  const kv = vcross(k, v), kd = vdot(k, v) * (1 - c);
+  return [0, 1, 2].map((i) => v[i] * c + kv[i] * s + k[i] * kd);
+}
+/** The compound solve's stop: a frame axis this close (unitless, about radians) is met. */
+const COMPOUND_TOL = 1e-7;
+/** Farther than this (about 0.3°) off the turned frame, the ring reads as held by a limit. */
+const COMPOUND_CLAMP = 5e-3;
+
+/**
+ * A compound joint ring's frame (a ball joint, or hinges stacked at one point with three or
+ * more turns between them — pose-mode's jointTarget): the joint's frame at `params` turned
+ * `deg` about the world `axis`, and the joint values that reach it. The rings sit on the
+ * joint's own orthogonal frame rather than on each Euler step's axis, so a ring's turn
+ * generally moves every one of the joint's values; they are solved together (damped least
+ * squares over the frame's x, y and z directions, in radians, inside each value's joint
+ * range and its parameter's schema range), warm-started from `warm` — the last frame's
+ * values — so a drag stays on one branch.
+ *
+ * `compound` is `{ limb, frame (the joint whose frame turns: the stack's last), mode,
+ * handleId, vars: [{ joint, component, param, scale, range }] }`. Returns `{ values (param
+ * writes; a goal handle's seeds and goal too), joints (the solved joint values, for `warm`),
+ * clamped }`, or null when the limb cannot be posed.
+ */
+export function compoundRingValues({ part, params, compound, axis, deg, warm = null }) {
+  if (!compound || !Array.isArray(compound.vars) || !compound.vars.length || !isNum(deg)) return null;
+  const posed = posedLimb(part, params, compound.limb);
+  if (!posed || typeof posed.ikForward !== "function") return null;
+  let info, F0;
+  try { info = posed.ikInfo(); F0 = posed.ikForward({}, compound.frame); } catch { return null; }
+  const want = [F0.x, F0.y, F0.z].map((v) => rotateAbout(v, axis, deg));
+  const ranges = rangesOf(part);
+  const idx = compound.vars.map((v) => info.joints.findIndex((j) => j.name === v.joint));
+  if (idx.some((i) => i < 0)) return null;
+  const rad = Math.PI / 180;
+  const lo = [], hi = [], x0 = [];
+  compound.vars.forEach((v, n) => {
+    let a = isNum(v.range?.[0]) ? v.range[0] : -Infinity, b = isNum(v.range?.[1]) ? v.range[1] : Infinity;
+    const r = ranges.get(v.param);
+    if (r && isNum(r.min) && isNum(r.max) && isNum(v.scale) && v.scale !== 0) {
+      const p0 = r.min * v.scale, p1 = r.max * v.scale;
+      a = Math.max(a, Math.min(p0, p1));
+      b = Math.min(b, Math.max(p0, p1));
+    }
+    lo.push(a * rad); hi.push(b * rad);
+    const start = isNum(warm?.[n]) ? warm[n] : valueAt(posed.values, idx[n], v.component);
+    x0.push((isNum(start) ? start : 0) * rad);
+  });
+  const overridesOf = (x) => {
+    const o = {};
+    compound.vars.forEach((v, n) => {
+      const value = x[n] / rad;
+      if (v.component) o[v.joint] = { ...o[v.joint], [v.component]: value };
+      else o[v.joint] = value;
+    });
+    return o;
+  };
+  const residuals = (x) => {
+    const r = new Float64Array(9);
+    let F;
+    try { F = posed.ikForward(overridesOf(x), compound.frame); } catch { return r.fill(FAILED); }
+    [F.x, F.y, F.z].forEach((v, a) => { for (let c = 0; c < 3; c++) r[3 * a + c] = v[c] - want[a][c]; });
+    return r;
+  };
+  const { x, error } = solveDLS({ x0, lo, hi, residuals, iterations: 16, lambda: 0.05, h: 1e-6, tol: COMPOUND_TOL });
+  const joints = Array.from(x, (u) => u / rad);
+  const clamped = error > COMPOUND_CLAMP;
+  if (compound.mode === "goal") {
+    const handle = part.handles?.[compound.handleId];
+    const out = handle && goalFromForward({ part, params, handle, posed, info, overrides: overridesOf(x), ranges });
+    if (!out) return null;
+    return { values: out.values, joints, clamped: clamped || out.goalClamped };
+  }
+  const values = {};
+  compound.vars.forEach((v, n) => { values[v.param] = joints[n] / (isNum(v.scale) && v.scale !== 0 ? v.scale : 1); });
+  return { values, joints, clamped };
+}
