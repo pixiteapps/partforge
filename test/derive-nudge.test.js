@@ -18,7 +18,7 @@ test("hand: the index finger's pose never depends on the thumb", () => {
 });
 
 test("budget, grouped derives and throws", () => {
-  const slow = { derive: (p) => { const t = Date.now(); while (Date.now() - t < 20) {} return { a: p.x }; } };
+  const slow = { derive: (p) => { const t = Date.now(); while (Date.now() - t < 20) { /* spin */ } return { a: p.x }; } };
   expect(nudgeAttribution(slow, { x: 1 }, { budgetMs: 10 })).toBeNull();
   expect(nudgeAttribution({ derive: { g: (p) => ({ a: p.x }) } }, { x: 1 })).toBeNull();
   const throws = { derive: (p) => { if (p.x > 1) throw new Error("no"); return { a: p.x, b: p.y }; } };
