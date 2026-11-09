@@ -108,6 +108,19 @@ export function samplePreviewAnimation(
   options?: { buildReads: (name: string) => ReadonlySet<string> | null },
 ): PreviewAnimationInput | null;
 
+/**
+ * The params a preview file's meshes sit at: `{ ...part.defaults, ...params }` with
+ * the t = 0 values of the animation the file bakes over them. `anim` is that
+ * animation (`samplePreviewAnimation(...)?.anim`), or `null` when the file bakes none
+ * (the live params alone); omitted, the view's autoplay animation is assumed baked.
+ */
+export function openingParams(
+  part: PartDefinition,
+  view: string,
+  params?: Record<string, ParamValue>,
+  anim?: NormalizedAnimation | null,
+): Record<string, ParamValue>;
+
 /** What `dragHandle` plays: one handle, a target, and where the drag starts. */
 export interface DragRequest {
   /** The handle id (a key of the part's `handles`). */

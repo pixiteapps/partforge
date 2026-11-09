@@ -37,6 +37,13 @@ export interface PreviewMesh {
 export interface EncodePreviewInput {
   /** At least one; a zero-length mesh gets no node. */
   meshes: PreviewMesh[];
+  /**
+   * The params the meshes sit at (encoder version 6): `{ ...defaults, ...live, ...autoplay t = 0 values }`
+   * as `exportPreview` passes them. Only finite numbers, strings and booleans are written, as the
+   * top-level extra `partforgeParams`; omitted (or nothing primitive) writes no extra, which a reader
+   * takes as "posed at the part's defaults".
+   */
+  params?: Record<string, unknown> | null;
   /** Read for `parts[name].display` (materials) and `meta.background` / `meta.environment`. */
   part?: PreviewPart | null;
   /** The view these meshes show; names the scene and lands in the file's extras as `partforgeView`. */
@@ -53,7 +60,7 @@ export interface EncodePreviewInput {
   animation?: PreviewAnimationInput | null;
 }
 
-/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras). */
+/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras; 6: partforgeParams). */
 export const PREVIEW_ENCODER_VERSION: number;
 
 /** Encode one view's posed meshes as a welded, quantized, meshopt-compressed GLB (Y-up, millimetres). Deterministic. */

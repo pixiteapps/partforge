@@ -96,7 +96,8 @@ function placePoses(part, view, { p, d }, shown) {
 
 // One sub-part's build as the probe sees it, reduced to a comparable string, or
 // null when the probe cannot be believed (a query, a function argument, a throw).
-function buildIdentity(part, view, { p, d }, name) {
+// Shared with preview-pose.js's previewHandles.
+export function buildIdentity(part, view, { p, d }, name) {
   const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d }, { scope: "build" });
   return probe.trusted ? JSON.stringify([probe.baseHash, probe.pose]) : null;
 }

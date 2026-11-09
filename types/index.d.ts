@@ -910,6 +910,13 @@ export interface MountPreviewOptions {
   camera?: "carry" | "default";
   /** The opening render mode (0.168.0+): applied at mount, over any carried render mode; afterwards `setViewerState`, `renderMode.set` and the view style control change it as usual. Unset, the carried state decides. */
   renderMode?: RenderMode;
+  /**
+   * 0.187.0+: the part the file was written from. Pose mode then runs on the file: every
+   * handle the editor would show in this view that moves pieces by placement alone (never
+   * one that rebuilds geometry) can be dragged, IK included; drags write the preview's own
+   * params (`getParams`) and edit nothing else.
+   */
+  part?: PartDefinition;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
@@ -926,6 +933,16 @@ export interface PreviewRuntime {
   dispose(): void;
   /** The view the file was written for (`null` until drawn, or when the file names none). */
   getView(): string | null;
+  /** 0.187.0+: a copy of the preview's params (seeded from the file's, moved by drags); `null` before `ready`, without `part`, and once disposed. */
+  getParams(): Record<string, unknown> | null;
+  /**
+   * 0.187.0+: Pose mode on the file, as `PartRuntime.pose` (with `part`); without `part`, the
+   * no-op stand-in. Every method is safe before `ready` and once disposed.
+   */
+  pose: PoseRuntime & {
+    /** Each released (not cancelled) drag. Returns an unsubscribe. */
+    onDragEnd(cb: (e: { handleId: string; changed: string[]; pinHeld: boolean; blocked: { a: string; b: string } | null }) => void): () => void;
+  };
   /** Camera, projection, render mode and environment; `cutaway` is always `null`. */
   getViewerState(): ViewerState;
   /** Apply a state (camera, projection, render mode, environment) now, or once drawn. */

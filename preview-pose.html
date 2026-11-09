@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Preview pose — handles on a cached preview</title>
+    <!-- Dev/CI-only page (not in vite.config.js's rollupOptions.input) for Pose mode on a
+         cached preview: src/app-preview-pose.js builds the robot arm (or ?part=hand) in a
+         hidden editor, encodes it with runtime.exportPreview(), and mounts the file with
+         mountPreview({ glb, part }) here. scripts/check-pose.mjs drives it. Structural
+         markup only — the chrome CSS comes from the framework. -->
+  </head>
+  <body class="pf-shell">
+    <div id="app" class="pf-stage">
+      <div id="viewbar" class="pf-float-viewbar">
+        <button id="theme" title="Toggle light/dark">◐</button>
+      </div>
+    </div>
+
+    <!-- The editor that writes the file: built off screen, disposed once encoded. -->
+    <div id="editor" class="pf-stage" style="position: fixed; left: -10000px; top: 0; width: 800px; height: 600px;" aria-hidden="true">
+      <div class="seg" id="editor-tabs"></div>
+      <div id="editor-busy"><div class="ring"></div><div class="phase" id="editor-phase"></div></div>
+      <div id="editor-controls"></div>
+      <div id="editor-status"></div>
+    </div>
+
+    <script type="module" src="/src/app-preview-pose.js"></script>
+  </body>
+</html>

@@ -34,7 +34,9 @@
 //    and each node's extras carrying the sub-part's own `display` block, so a
 //    part-less viewer (mountPreview) can rebuild the exact look, realistic too
 //  - top-level extras { partforgeView, partforgeEncoder, partforgeMeta?,
-//    partforgeAnimation? }
+//    partforgeParams?, partforgeAnimation? }; partforgeParams (version 6) is the
+//    params the meshes sit at — finite numbers, strings and booleans only
+//    (paramsExtras) — absent when none were given
 //  - an `animation` (samplePreviewAnimation's output, version 4) adds:
 //      * every sampled sub-part node's rest TRS = rel(0), where
 //        rel(t) = M(t) · base⁻¹ carries the mesh from the pose baked into its
@@ -89,8 +91,9 @@ import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
 
 // 2: feature edges as a LINES primitive; 3: sharing the surface's vertices;
 // 4: animation channels + partforgeAnimation extras; 5: same format, but a forge
-// whose tracked param reaches build() only through derive now bakes its animation
-export const PREVIEW_ENCODER_VERSION = 5;
+// whose tracked param reaches build() only through derive now bakes its animation;
+// 6: partforgeParams extra — the params the meshes sit at
+export const PREVIEW_ENCODER_VERSION = 6;
 
 // −90° about X as [x, y, z, w]: model (x, y, z) → glTF (x, z, −y), the viewer's pivot.
 const Z_UP_TO_Y_UP = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
@@ -119,6 +122,16 @@ function metaExtras(meta) {
   const out = {};
   if (Number.isInteger(meta.background)) out.background = meta.background;
   if (typeof meta.environment === "string") out.environment = meta.environment;
+  return Object.keys(out).length ? out : null;
+}
+
+// The params the meshes sit at, as plain data: finite numbers, strings and booleans.
+function paramsExtras(params) {
+  if (!params || typeof params !== "object") return null;
+  const out = {};
+  for (const [key, v] of Object.entries(params)) {
+    if (typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v))) out[key] = v;
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -442,7 +455,7 @@ function animationExtras(animation, animated, drawn) {
   };
 }
 
-export async function encodePreviewGlb({ meshes, part = null, view = null, animation = null } = {}) {
+export async function encodePreviewGlb({ meshes, part = null, view = null, params = null, animation = null } = {}) {
   if (!Array.isArray(meshes) || meshes.length === 0) throw new TypeError("encodePreviewGlb: meshes must be a non-empty array");
   const seen = new Set();
   for (const m of meshes) checkMesh(m, seen);
@@ -463,6 +476,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, anima
   const root = doc.createNode("partforge").setRotation(Z_UP_TO_Y_UP);
   scene.addChild(root);
   const meta = metaExtras(part?.meta);
+  const fileParams = paramsExtras(params);
 
   const pending = []; // { mesh, surface, edges } — line primitives to add after quantize()
   const nodesByName = new Map();
@@ -503,6 +517,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, anima
     partforgeView: viewName,
     partforgeEncoder: PREVIEW_ENCODER_VERSION,
     ...(meta ? { partforgeMeta: meta } : {}),
+    ...(fileParams ? { partforgeParams: fileParams } : {}),
     ...(tracks ? { partforgeAnimation: animationExtras(animation, animated, drawn) } : {}),
   });
 

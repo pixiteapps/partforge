@@ -434,6 +434,17 @@ the installed package, so let the publish finish before bumping the dep there.
   vertices of the pose shown — never every vertex at every pose, which a dense
   model would make too slow. The first pose is then smaller than `fill`, by
   design. A turntable mount ignores it (no animation plays there).
+  Since 0.187.0 the file carries `partforgeParams` (encoder 6) and
+  `mountPreview({ part })` runs Pose mode on it: `preview-pose.js` (pure; never
+  imports `collide/world.js`) is the placer — `place(p, d) · base⁻¹` over the
+  file's meshes, the pose ladder's rung 1 with the file as the delivery — and
+  `previewHandles` decides which handles are place-only against the file
+  (`handlesShownInView` ∩ the baker's identity test over
+  `PREVIEW_HANDLE_SAMPLES`; mount-preview steps it one handle per idle slice,
+  `previewHandlesStepper`); `measure()` reports it as `previewHandles` only when
+  asked (`previewHandles: true`, which the CLI's measure verb passes — the inspect
+  path never pays for it). While a baked animation plays, `getParams()` follows the
+  player (the live params under its values); a press pauses it and writes them.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
