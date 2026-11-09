@@ -112,3 +112,28 @@ test("in a mixed export, an uncoloured object gets the viewer's default colour",
   expect(model).toContain('displaycolor="#9FB4CCFF"');
   expect(model).toMatch(/name="b" pid="1000" pindex="1"/);
 });
+
+// Feedback #244: the model used to be one joined string, and a ~7.7M-triangle
+// print mesh is past V8's string limit ("Invalid string length"). The writer
+// now streams the XML in chunks; this grid writes several chunks' worth and
+// checks the document arrives whole and in order.
+test("meshTo3MF streams a model larger than one chunk without losing or reordering anything", () => {
+  const n = 200; // (n+1)² vertices, 2n² triangles: ~80k triangles, ~7 MB of XML
+  const positions = new Float32Array((n + 1) * (n + 1) * 3);
+  for (let y = 0, k = 0; y <= n; y++)
+    for (let x = 0; x <= n; x++, k += 3) { positions[k] = x; positions[k + 1] = y; positions[k + 2] = 0; }
+  const indices = new Uint32Array(n * n * 6);
+  for (let y = 0, k = 0; y < n; y++)
+    for (let x = 0; x < n; x++, k += 6) {
+      const a = y * (n + 1) + x, b = a + 1, c = a + n + 1, d = c + 1;
+      indices.set([a, b, d, a, d, c], k);
+    }
+  const model = modelOf(meshTo3MF([{ name: "grid", positions, indices }, { name: "tail", ...tri() }]));
+  expect(model.length).toBeGreaterThan(3 * (1 << 20));
+  expect(model.startsWith('<?xml version="1.0" encoding="UTF-8"?><model ')).toBe(true);
+  expect(model.endsWith('<item objectid="1"/><item objectid="2"/></build></model>')).toBe(true);
+  expect((model.match(/<vertex /g) || []).length).toBe((n + 1) * (n + 1) + 4);
+  expect((model.match(/<triangle /g) || []).length).toBe(2 * n * n + 4);
+  const triangles = [...model.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"\/>/g)];
+  expect(triangles.at(2 * n * n - 1).slice(1).map(Number).every((v) => v < (n + 1) * (n + 1))).toBe(true);
+});

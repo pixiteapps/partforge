@@ -3577,6 +3577,18 @@ Ten dots on screen at once is a failure of the part, not of the user: lint warns
 (`handle-crowded`) when more than 5 handles show in one view without a `showOn`, a
 group counting once.
 
+### Handles in the cached preview
+
+A page that mounts a cached preview with the part (`mountPreview({ glb, part })`) poses it
+without a kernel. A handle shows there when it would show in the editor AND every parameter
+it writes only moves pieces by their placement — the sub-parts it touches keep the same
+geometry over the parameter's range. A handle that reshapes anything (the drawer box's
+corner handle, which writes `width` and `depth`) is hidden in the preview, never shown
+half-working. `partforge measure` prints a `preview handles:` line naming which show and why
+the rest are hidden. IK handles pass as long as their links are placed by `d.<limb>.place`;
+collisions and pins work as in the editor. A drag edits the preview's own copy of the
+parameters, never the part.
+
 ### Handle groups
 
 Give handles the same `group` when a part has many of one kind close together — one per

@@ -13,7 +13,7 @@ import type { KitOptions } from "./index.js";
 export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid };
 // Declared in oracle.d.ts (its own surface); testing.js re-exports all of oracle.js.
 export {
-  samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP,
+  samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP, openingParams,
   type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
   type NormalizedAnimationStep, type NormalizedAnimationCue,
   dragHandle, type DragRequest, type DragResult,
@@ -663,6 +663,12 @@ export interface MeasureReport {
    */
   handles?: HandleFacts[];
   /**
+   * Which of `handles` a kernel-free cached preview of this view would let a visitor
+   * drag (`mountPreview({ part })`), and why each other one is hidden. Present only
+   * when the run passed `previewHandles: true` and the part declares handles.
+   */
+  previewHandles?: { shown: string[]; hidden: Record<string, string> };
+  /**
    * Declared sweeps for this view, in declaration order: `[]` when none moves anything in
    * it, absent when the part declares none or the run passed `sweeps: false`. Never
    * folded into `ok` (`sweepContacts` gates it).
@@ -727,6 +733,12 @@ export function measure(
      * call's start.
      */
     deadline?: number;
+    /**
+     * Also report `previewHandles` (default false): it probes every handle's param
+     * range geometry-free, which costs a part with many handles a few hundred ms, so
+     * only a caller that prints it (the CLI's `measure` verb) asks.
+     */
+    previewHandles?: boolean;
   },
 ): MeasureReport;
 

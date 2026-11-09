@@ -207,3 +207,18 @@ test("lines with an endpoint outside the surface's bounds round-trip in the mode
   expect(segmentMismatch(out.meshes[0].edges, edges, 1e-3)).toBeNull();
   expect(out.meshes[0].triangles).toBe(12);
 });
+
+test("params come back as written; a file without them answers null", async () => {
+  const withParams = await decodePreviewGlb(await encodePreviewGlb({
+    meshes: [boxSoup("base")], part, view: "assembly", params: { width: 40, label: "A", lid: true, font: new Uint8Array(2) },
+  }));
+  expect(withParams.params).toEqual({ width: 40, label: "A", lid: true });
+  expect((await decodePreviewGlb(await encode())).params).toBeNull();
+});
+
+test("version 1 and 2 fixtures decode with params: null", async () => {
+  for (const name of ["preview-v1.glb", "preview-v2.glb"]) {
+    const bytes = new Uint8Array(readFileSync(fileURLToPath(new NodeURL(`../fixtures/${name}`, import.meta.url))));
+    expect((await decodePreviewGlb(bytes)).params).toBeNull();
+  }
+});
