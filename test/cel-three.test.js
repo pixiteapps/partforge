@@ -133,7 +133,24 @@ describe("createCelInk render", () => {
     // The same capture size again reuses the capture target rather than reallocating.
     ink.render(stubRenderer([800, 600], bound), scene, cam, { pixelScale: 1, field: null });
     expect(u.tNormal.value).toBe(captureTex);
-    expect(ink.prepassMaterial.isMeshNormalMaterial).toBe(true);
+    ink.dispose();
+  });
+  it("the prepass draws a clipped mesh's exposed inside as the cutaway cap: plane normal at plane depth", () => {
+    const ink = createCelInk();
+    const m = ink.prepassMaterial;
+    expect(m.isShaderMaterial && m.clipping).toBe(true);
+    expect(m.side).toBe(THREE.DoubleSide);
+    expect(m.fragmentShader).toContain("#include <clipping_planes_fragment>");
+    expect(m.fragmentShader).toContain("if (!gl_FrontFacing)");
+    expect(m.fragmentShader).toContain("gl_FragDepth = depth");
+    const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 50);
+    ink.render(stubRenderer([64, 48]), scene, ortho, { clippingPlanes: [new THREE.Plane(new THREE.Vector3(1, 0, 0), 0)] });
+    expect(m.uniforms.uOrtho.value).toBe(1);
+    expect(m.uniforms.uProj.value.equals(ortho.projectionMatrix)).toBe(true);
+    expect(m.clippingPlanes).toHaveLength(1);
+    ink.render(stubRenderer([64, 48]), scene, cam, {});
+    expect(m.uniforms.uOrtho.value).toBe(0);
+    expect(m.clippingPlanes).toEqual([]);
     ink.dispose();
   });
   it("skips a 1x1 drawing buffer entirely", () => {
