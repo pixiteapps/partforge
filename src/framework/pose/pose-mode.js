@@ -188,6 +188,8 @@ export function aimAxes(toward, angles) {
  *   handle whose `showOn` names it.
  * @param opts.cueBlocked () => true while the resting cue must wait (mount: the opening
  *   view's autoplay is pending or playing). Default: never.
+ * @param opts.animating () => true while any animation plays (mount: the transport's
+ *   status). The cue never shows over a playing animation. Default: never.
  * Session effects, passed through to createPoseSession: getParams, write, commit,
  * restore, staleSubParts, ghost, unghost, hold. Optional: collide (the drag guard factory)
  * and onBlocked (the pair a held drag stopped at, or null), passed through as the session's
@@ -216,6 +218,7 @@ export function createPoseMode(viewer, {
   // true while the cue must wait: mount's, while the opening view's autoplay is
   // pending or playing (the cue starts once it ends; a loop nobody stops: never)
   cueBlocked = () => false,
+  animating = () => false,
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
   createJointRings = createJointGizmo,
@@ -269,8 +272,13 @@ export function createPoseMode(viewer, {
   const paths = new Map(); // handleId -> { key, guide } (handle-guides' sweepPath, cached)
   // the resting cue: "pending" until the first live frame with the part on screen (and
   // no opening autoplay pending or playing — cueBlocked), then { start, touch } while it
-  // shows, then "done" (once per mount)
+  // shows, then "done" (once per mount, but for the touch-only flash after a camera grab,
+  // { start, flash: true }, which hides on the next grab, drag or playing animation)
   let cue = Object.keys(handles).length ? "pending" : "done";
+  // A camera grab (OrbitControls' start..end): the cue hides while it runs, and on a
+  // touch-only device a grab that moved the camera flashes the cue again on lift.
+  let orbiting = false;
+  let orbitMoved = false;
 
   // The pair the held drag stopped at (the session's blockedChange), or null: while set, a
   // limb drag reads "Stopped at <b>" rather than "Out of reach", and draws no miss line.
@@ -1041,11 +1049,14 @@ export function createPoseMode(viewer, {
     if (cue === "pending") {
       if (!partsFrame()) return; // nothing built yet: the handles have nowhere to show
       if (cueBlocked()) return;  // the opening autoplay has the stage until it ends
+      if (orbiting || isAnimating()) return; // a camera grab or a playing animation has it
       cue = { start: now(), touch: hoverNone() };
       syncCue();
       return;
     }
-    if (typeof cue !== "object" || cue.touch) return;
+    if (typeof cue !== "object") return;
+    if (isAnimating()) { endCue(); return; } // the cue never shows over a playing animation
+    if (cue.touch) return;
     const o = cueOpacity();
     if (o <= 0) { endCue(); return; }
     if (o < CUE_OPACITY) {
@@ -1053,6 +1064,35 @@ export function createPoseMode(viewer, {
       viewer.requestRender?.();
     }
   }
+  function isAnimating() {
+    try { return !!animating(); } catch { return false; }
+  }
+  /**
+   * Touch-only: flash the cue again (its hold and fade, from now) once a camera grab that
+   * moved the camera lifts — a finger has no hover to find the handles by. Never while a
+   * handle drags, an animation plays, or before the opening cue has had its turn.
+   */
+  function flashCue() {
+    if (cue === "pending" || !live || press || !hoverNone() || isAnimating()) return;
+    if (!Object.keys(handles).length) return;
+    cue = { start: now(), touch: false, flash: true };
+    syncCue();
+    viewer.requestRender?.();
+  }
+  function onOrbitStart() {
+    orbiting = true;
+    orbitMoved = false;
+    if (typeof cue === "object") endCue(); // a new grab hides a cue still showing
+  }
+  function onOrbitChange() { if (orbiting) orbitMoved = true; }
+  function onOrbitEnd() {
+    if (!orbiting) return;
+    orbiting = false;
+    if (orbitMoved) flashCue(); // a tap that never moved the camera is no rotate
+  }
+  orbitControls?.addEventListener?.("start", onOrbitStart);
+  orbitControls?.addEventListener?.("change", onOrbitChange);
+  orbitControls?.addEventListener?.("end", onOrbitEnd);
   function endCue() {
     if (cue === "done") return;
     cue = "done";
@@ -1155,7 +1195,8 @@ export function createPoseMode(viewer, {
     const grabName = hit.kind === "ring" ? "ring" : hit.kind === "jring" ? `ring:${hit.joint}` : hit.at;
     if (!session.begin(hit.handleId, grabName)) { finishPress(); return false; }
     press.started = true;
-    if (cue?.touch) endCue(); // touch: the first drag ends the cue
+    if (cue?.touch || cue?.flash) endCue(); // touch: a drag ends the cue (the first, or a flash)
+    orbitMoved = false; // a handle drag inside a camera grab is no rotate: no flash on lift
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
     const ray = press.ray;
@@ -1209,7 +1250,8 @@ export function createPoseMode(viewer, {
     } catch { finishPress(); return false; }
     if (!session.begin(s.handleId, handleAt(s.handle))) { finishPress(); return false; }
     press.started = true;
-    if (cue?.touch) endCue(); // touch: the first drag ends the cue
+    if (cue?.touch || cue?.flash) endCue(); // touch: a drag ends the cue (the first, or a flash)
+    orbitMoved = false; // a handle drag inside a camera grab is no rotate: no flash on lift
     press.drag = drag;
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
@@ -1800,6 +1842,9 @@ export function createPoseMode(viewer, {
       window.removeEventListener("keydown", onKeyDown, true);
       offFrame();
       offTheme();
+      orbitControls?.removeEventListener?.("start", onOrbitStart);
+      orbitControls?.removeEventListener?.("change", onOrbitChange);
+      orbitControls?.removeEventListener?.("end", onOrbitEnd);
       scene?.dispose();
       scene = null;
       gizmo?.dispose();

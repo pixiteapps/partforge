@@ -55,6 +55,11 @@ export function startDrag(kind, { point, axis, ray, screen, maxDist = FAR }) {
     state.axis = { origin: [...axis.origin], direction: a };
     state.angleDeg = angleAbout(point, state.axis);
     const rel = sub(point, axis.origin);
+    // The pointer is read on the plane the grabbed point turns in: square to the axis,
+    // through the point — not through the axis origin, which may sit far along the axis
+    // (a crank knob above its gear's plane), where the cursor's hit would not track the
+    // handle on screen. `centre` is where the axis pierces that plane.
+    state.centre = add(axis.origin, scale(a, dot(rel, a)));
     const radius = len(sub(rel, scale(a, dot(rel, a))));
     state.radius = radius > 1e-9 ? radius : 1;
     state.last = rotaryRead(state, ray, screen);
@@ -115,11 +120,12 @@ function axisParam(state, ray, screen) {
   return (b * dot(d, w) - dot(a, w)) / den;
 }
 
-// The pointer's angle about the axis: read on the axis plane, or by screen turn about
-// the projected centre when the plane is edge-on or the hit is within CENTRE_PX of it.
+// The pointer's angle about the axis: read on the grabbed point's rotation plane (square
+// to the axis through the point), or by screen turn about the projected centre when the plane is edge-on or the hit is within CENTRE_PX of it.
 // null when no stable reading exists (the caller holds).
 function rotaryRead(state, ray, screen) {
-  const { origin, direction } = state.axis;
+  const { direction } = state.axis;
+  const origin = state.centre;
   const fwd = unit(ray.forward);
   const facing = dot(direction, fwd);
   const centre = screen?.project ? screen.project(origin) : null;

@@ -891,6 +891,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // the resting cue waits out the opening view's autoplay (animCtl is assigned
         // below; the cue first asks once a build is on screen)
         cueBlocked: () => !!animCtl?.openingAutoplay(),
+        // ...and never shows over any playing animation
+        animating: () => { const st = animCtl?.runtime.state().status; return st === "playing" || st === "intro"; },
       });
       cleanup.defer(() => poseMode.detach());
       // Pins are viewer state, carried across a remount (getViewerState().pose).
