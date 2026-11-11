@@ -86,9 +86,68 @@ void main() {
   discard;
 }`;
 
+// The prepass: view-space normals packed to RGB, plus depth, double-sided. A
+// cutaway clips the meshes, and the cap that closes the cut is drawn by
+// stencil in the scene pass only; here, through the opening, the clipped mesh
+// would show its own inside, and the ink would outline the inside faces'
+// edges straight across the cap. So a BACK face that survives the clip, which
+// is exactly where the cap sits on a closed mesh, is written as the cap: the
+// plane's normal (turned toward the camera) at the plane's depth, found by
+// casting the fragment's view ray onto the plane.
+const PREPASS_VERT = /* glsl */`
+#include <clipping_planes_pars_vertex>
+varying vec3 vNormalV;
+varying vec3 vViewPos;
+void main() {
+  vNormalV = normalize(normalMatrix * normal);
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  vViewPos = mvPosition.xyz;
+  gl_Position = projectionMatrix * mvPosition;
+  #include <clipping_planes_vertex>
+}`;
+
+const PREPASS_FRAG = /* glsl */`
+#include <packing>
+#include <clipping_planes_pars_fragment>
+uniform mat4 uProj;
+uniform float uOrtho;
+varying vec3 vNormalV;
+varying vec3 vViewPos;
+void main() {
+  #include <clipping_planes_fragment>
+  vec3 n = normalize(vNormalV) * (gl_FrontFacing ? 1.0 : -1.0);
+  float depth = gl_FragCoord.z;
+  #if NUM_CLIPPING_PLANES > 0
+  if (!gl_FrontFacing) {
+    // three's clip test keeps dot(-p, plane.xyz) <= plane.w (view space),
+    // so the plane itself is dot(p, plane.xyz) = -plane.w.
+    vec4 plane = clippingPlanes[0];
+    vec3 origin = uOrtho > 0.5 ? vec3(vViewPos.xy, 0.0) : vec3(0.0);
+    vec3 dir = uOrtho > 0.5 ? vec3(0.0, 0.0, -1.0) : normalize(vViewPos);
+    float den = dot(dir, plane.xyz);
+    if (abs(den) > 1e-6) {
+      float t = (-plane.w - dot(origin, plane.xyz)) / den;
+      vec4 clip = uProj * vec4(origin + dir * t, 1.0);
+      depth = clamp((clip.z / clip.w) * 0.5 + 0.5, 0.0, 1.0);
+      n = normalize(plane.xyz) * (den > 0.0 ? -1.0 : 1.0);
+    }
+  }
+  #endif
+  gl_FragDepth = depth;
+  gl_FragColor = vec4(packNormalToRGB(n), 1.0);
+}`;
+
+function createPrepassMaterial() {
+  return new THREE.ShaderMaterial({
+    vertexShader: PREPASS_VERT, fragmentShader: PREPASS_FRAG,
+    side: THREE.DoubleSide, clipping: true,
+    uniforms: { uProj: { value: new THREE.Matrix4() }, uOrtho: { value: 0 } },
+  });
+}
+
 export function createCelInk() {
   const { ink: I, field: F } = CEL;
-  const normalMat = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
+  const normalMat = createPrepassMaterial();
   const inkMat = new THREE.ShaderMaterial({
     vertexShader: INK_VERT, fragmentShader: INK_FRAG, transparent: true, depthTest: false, depthWrite: false,
     uniforms: {
@@ -142,6 +201,8 @@ export function createCelInk() {
     try {
       // 1. normals + depth of the sub-parts alone
       normalMat.clippingPlanes = clippingPlanes ?? [];
+      normalMat.uniforms.uProj.value.copy(camera.projectionMatrix);
+      normalMat.uniforms.uOrtho.value = camera.isOrthographicCamera ? 1 : 0;
       camera.layers.set(CEL_LAYER);
       scene.overrideMaterial = normalMat;
       scene.background = null;
