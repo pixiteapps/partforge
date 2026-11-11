@@ -41,8 +41,8 @@ export const AIM_BALL_HIT_PX = 14;
 /** ...and for a finger. */
 export const AIM_BALL_TOUCH_HIT_PX = 24;
 
-/** A joint ring's radius, CSS px: a little inside the aim rings (joints sit closer together). */
-export const JOINT_RING_PX = 30;
+/** A joint ring's radius, CSS px: wide enough that its arc is easy to grab and turn. */
+export const JOINT_RING_PX = 45;
 
 /** The joint gizmo's rings: a hinge shows the one its axis kind names (a vector axis: bend). */
 export const JOINT_GIZMO_PARTS = ["bend", "spread", "twist"];
