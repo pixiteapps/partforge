@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
+import { queryingLid } from "./fixtures/querying-lid.js";
 
 const partWith = (collisions) => ({
   meta: { title: "T" },
@@ -123,6 +124,12 @@ test("sweep-rebuilds samples the whole motion, as the engine does, not only its 
   };
   const f = sweepFindings({ s: { param: "swing" } }, { parts });
   expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);
+});
+
+test("sweep-rebuilds stays quiet for an untrusted build that does not read the swept param", () => {
+  const rules = (part) => { const r = lintPart(part); return [...r.errors, ...r.warnings, ...r.notes].map((f) => f.rule); };
+  expect(rules(queryingLid())).not.toContain("sweep-rebuilds");
+  expect(rules(queryingLid({ readsOpen: true }))).toContain("sweep-rebuilds");
 });
 
 test("sweep-rebuilds counts a placement that is no rigid transform", () => {

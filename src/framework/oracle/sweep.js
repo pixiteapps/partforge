@@ -17,9 +17,10 @@
 // is bounded. The one assumption left: between two samples the relative motion of a and b
 // is close to a screw motion. A single joint between them, any translation and a constant-
 // axis spin are exactly that; a coupled chain, a derive or an IK solve can break it.
-// REBUILD (some sub-part's build changes, or its placement is untrusted): those sub-parts
-// are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps, checked at the steps
-// only (a rebuilt mesh has no placement to bound its motion by).
+// REBUILD (some sub-part's build changes, or its placement is untrusted; a build the probe
+// cannot trust only when it reads a param the motion moves, collide/untrusted-reads.js):
+// those sub-parts are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps, checked
+// at the steps only (a rebuilt mesh has no placement to bound its motion by).
 //
 // A step SWEEP_MAX_STEPS forces past the travel bound marks the row `capped: true`; the
 // advancement above still holds each pair across it, under the same screw-motion

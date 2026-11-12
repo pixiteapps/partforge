@@ -16,6 +16,7 @@ import { CONTACT_EPS } from "./pairs.js";
 import { sameMat } from "./motion.js";
 import { poseMatrices } from "./place.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
+import { untrustedRebuilds } from "./untrusted-reads.js";
 import { rangesOf, dofsOf } from "../pose/param-solve.js";
 import { locateHandle } from "../pose/handle-source.js";
 import { desugar } from "../panel/legacy.js";
@@ -86,25 +87,34 @@ const extraSamples = (s) => (s.kind === "path" ? s.waypoints.map((_, i) => i / (
 
 /**
  * What a motion moves in `view`: `moving` (sub-parts whose placement changes, rigidly) and
- * `rebuild` (sub-parts whose build-scope probe hash changes, whose build or place is
- * untrusted at some sample). Throws when a sample cannot be resolved.
+ * `rebuild` (sub-parts whose build-scope probe hash changes, or whose placement is missing
+ * or not rigid, at some sample). A build the probe cannot trust is judged by what it reads
+ * (untrusted-reads.js): it rebuilds only when it reads a param the motion changes, or its
+ * reads cannot be obtained. Throws when a sample cannot be resolved.
  */
 export function scanMotion(part, view, motion, extra = []) {
-  const vs = motionSamples(motion, extra);
+  const qs = motionSamples(motion, extra).map((v) => motion.at(v));
+  // the params the motion changes: a key whose value differs from the first sample's
+  const changed = new Set();
+  for (const q of qs.slice(1)) for (const k of Object.keys(q)) if (!Object.is(q[k], qs[0][k])) changed.add(k);
   const names = new Set();
-  const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement and hash
+  const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement, first trusted hash
   const moving = new Set(), rebuild = new Set();
-  for (const v of vs) {
-    const q = motion.at(v);
+  for (const q of qs) {
     const { p, d } = resolveParams(part, q);
     const mats = poseMatrices(part, view, p, d);
     const hashes = probePoses(part, view, q, { scope: "build" });
     // the union over every sample: a sub-part enabled part of the way still counts
     for (const name of viewSubParts(part, view, p)) {
       const m = mats.get(name), h = hashes.get(name);
-      if (!names.has(name)) { names.add(name); mats0.set(name, m); hash0.set(name, h?.baseHash); }
-      if (m === null || m === undefined || !h?.trusted || h.baseHash !== hash0.get(name)) rebuild.add(name);
-      else if (!sameMat(m, mats0.get(name))) moving.add(name);
+      if (!names.has(name)) { names.add(name); mats0.set(name, m); }
+      if (rebuild.has(name)) continue;
+      if (m === null || m === undefined) { rebuild.add(name); continue; }
+      if (h?.trusted) {
+        if (!hash0.has(name)) hash0.set(name, h.baseHash);
+        else if (h.baseHash !== hash0.get(name)) { rebuild.add(name); continue; }
+      } else if (untrustedRebuilds(part, name, q, changed)) { rebuild.add(name); continue; }
+      if (!sameMat(m, mats0.get(name))) moving.add(name);
     }
   }
   const order = Object.keys(part.parts).filter((n) => names.has(n));

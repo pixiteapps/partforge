@@ -18,6 +18,7 @@ import frameKnuckles from "./fixtures/hinge-frame-knuckles.js";
 import buriedAxis from "./fixtures/hinge-buried-axis.js";
 import detent from "./fixtures/hinge-detent.js";
 import { buttingKnuckles } from "./fixtures/hinge-butting-knuckles.js";
+import { queryingLid } from "./fixtures/querying-lid.js";
 import { readFileSync } from "node:fs";
 
 const SLOW = 120_000;
@@ -242,6 +243,24 @@ describe("sweep engine", () => {
     expect(row.steps).toBeLessThanOrEqual(24);
     expect(row.steps).toBeGreaterThan(1);
     expect(row.clear).toBe(true);
+  }, SLOW);
+
+  // A build the probe cannot trust (it queries its solid) is judged by what it reads, the
+  // rule motion coverage uses (collide/untrusted-reads.js): one that never reads the swept
+  // param is moved by matrix, so a contact between two of the 24 fixed rebuild steps is found.
+  it("an untrusted build that does not read the param is moved rigidly, not rebuilt", () => {
+    const [row] = runSweeps(k, queryingLid(), "assembly", {});
+    expect(row.rebuilds).toBe(false);
+    expect(row.clear).toBe(false);
+    const blocking = row.contacts.filter((c) => c.allowed === false);
+    expect(blocking.map((c) => [c.a, c.b].sort().join("×"))).toEqual(["bar×post"]);
+    const { from } = blocking[0];
+    expect(from).toBeGreaterThan(180 / SWEEP_REBUILD_STEPS);
+    expect(from).toBeLessThan(2 * 180 / SWEEP_REBUILD_STEPS);
+    // the build that reads the param still rebuilds, and its fixed steps miss the post
+    const [rebuilt] = runSweeps(k, queryingLid({ readsOpen: true }), "assembly", {});
+    expect(rebuilt.rebuilds).toBe(true);
+    expect(rebuilt.clear).toBe(true);
   }, SLOW);
 
   it("a rebuilt sub-part's contact is bisected", () => {

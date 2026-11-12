@@ -3972,7 +3972,10 @@ always with `clearance: 0` —
 - **Rebuild** (a param the motion moves changes some build): those sub-parts are rebuilt on
   24 evenly spaced steps (`SWEEP_REBUILD_STEPS`) and checked at the steps only, since a
   rebuilt mesh has no placement to bound its motion by. Slower and coarser; the row says
-  `rebuilds: true`, and lint's `sweep-rebuilds` warns.
+  `rebuilds: true`, and lint's `sweep-rebuilds` warns. A build that queries its own solid
+  (`volume()`, `boundingBox()`) cannot be compared step to step without building it, so it
+  is judged by what it reads: one that never reads a param the motion moves is moved
+  rigidly; one that reads one, or throws, is rebuilt.
 
 ### What a sweep reports
 

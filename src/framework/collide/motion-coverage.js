@@ -16,16 +16,11 @@
 // in place does not.
 //
 // A build the probe cannot TRUST (it queried its solid, or passed a function) is judged by
-// what it READS, per sub-part: a build is a function of its inputs, so one that never reads
-// a param (directly or through the `derive` outputs it reads) cannot rebuild when that param
-// moves. Its reads are recorded on the probe kernel (geometry/probe.js answers queries with
-// stand-ins), so, like param-deps.js's prediction, they miss a param read only inside a
-// branch the real query result would take. A build that throws there, or reads the param,
-// rebuilds.
-import { exportSubParts, resolveParams, resolveParamsAttributed, recordedParams, viewSubParts } from "../part-model.js";
+// what it READS, per sub-part (collide/untrusted-reads.js, the rule the engine's own
+// scanMotion uses, so a motion found here is swept rigidly): one that never reads the param
+// cannot rebuild when it moves; one that throws, runs away, or reads it, rebuilds.
+import { exportSubParts, resolveParams } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
-import { newReadSink, expandReads } from "../read-recorder.js";
-import { createValidatingProbe, MAX_PROBE_OPS } from "../geometry/probe.js";
 import { viewAnimations } from "../animation.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { rangesOf } from "../pose/param-solve.js";
@@ -36,6 +31,7 @@ import { sameMat, IDENTITY } from "./motion.js";
 import { CONTACT_EPS } from "./pairs.js";
 import { poseMatrices } from "./place.js";
 import { MOTION_SAMPLES, readSweep, scanMotion } from "./sweep-targets.js";
+import { untrustedBuildReads, untrustedRebuilds } from "./untrusted-reads.js";
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -53,34 +49,6 @@ function placementsAt(part, view, q) {
   const mats = poseMatrices(part, view, p, d);
   const pieces = new Map(exportSubParts(part, view, p).map((name) => [name, mats.get(name) ?? null]));
   return { pieces, shown: [...mats.keys()].join("\n"), mats };
-}
-
-/**
- * One sub-part's build reads at params q, recorded on the probe kernel (derive reads
- * expanded), or null when the build throws there. For a build the probe cannot trust.
- *
- * The re-run is capped at MAX_PROBE_OPS kernel calls, the pose probe's cap: a loop that
- * ends only on a real query answer (`while (s.volume() < v) s = s.union(…)`) never ends on
- * the probe's stand-ins, and its runaway reads as null, like a throw. Like the pose probe,
- * a pure-JS loop that makes no kernel call cannot be capped from here.
- */
-function untrustedBuildReads(part, name, q) {
-  try {
-    const resolved = resolveParamsAttributed(part, q);
-    const sink = newReadSink();
-    sink.attribution = resolved.attribution;
-    const rec = recordedParams(resolved, sink);
-    part.parts[name].build(createValidatingProbe({ maxOps: MAX_PROBE_OPS }).kernel, rec.p, rec.d);
-    return new Set(expandReads(sink));
-  } catch {
-    return null;
-  }
-}
-
-/** An untrusted build of `name` at q rebuilds for `param` when it reads it, or cannot be read. */
-function untrustedRebuilds(part, name, q, param) {
-  const reads = untrustedBuildReads(part, name, q);
-  return !reads || reads.has(param);
 }
 
 /**
@@ -116,24 +84,16 @@ function placeReadsAt(part, view, full) {
 /**
  * Whether stepping `param` over the params `qs` rebuilds a shown sub-part, decided per
  * sub-part: a trusted build by its build-scope hash (differing from the first one seen),
- * an untrusted one by its reads (untrustedRebuilds). Over lo, mid and hi it is the cheap
- * proof (3 probes rather than 17; false there is no proof of the opposite). With
- * `placements` it is scanMotion's rule over every sample, a placement that is missing or
- * not rigid also rebuilding, except that an untrusted build rebuilds only when it reads
- * the param.
+ * an untrusted one by its reads (untrusted-reads.js, the rule scanMotion uses). Over lo,
+ * mid and hi it is the cheap proof (3 probes rather than 17; false there is no proof of
+ * the opposite: scanMotion's full scan decides).
  */
-function rebuildsAt(part, view, qs, param, { placements = false } = {}) {
+function rebuildsAt(part, view, qs, param) {
   const first = new Map();
   for (const q of qs) {
-    let mats = null;
-    if (placements) {
-      const { p, d } = resolveParams(part, q);
-      mats = poseMatrices(part, view, p, d);
-      for (const name of viewSubParts(part, view, p)) if (mats.get(name) == null) return true;
-    }
     for (const [name, e] of probePoses(part, view, q, { scope: "build" })) {
       if (!e.trusted) {
-        if (untrustedRebuilds(part, name, q, param)) return true;
+        if (untrustedRebuilds(part, name, q, [param])) return true;
         continue;
       }
       if (!first.has(name)) first.set(name, e.baseHash);
@@ -283,14 +243,12 @@ function scanView(part, view, full, stop = () => false) {
       const rel = relativeMotion(vs, sample);
       if (!rel) continue;
       // rule (a): a param that rebuilds anything shown is a size, not a motion. A param no
-      // shown build reads cannot rebuild one, so only the others pay for the full scan
-      // (the engine's own, so lint and the engine agree on what rebuilds). The engine marks
-      // every untrusted build as rebuilding; when it names any, the same samples are read
-      // again per sub-part, an untrusted build rebuilding only if it reads the param.
+      // shown build reads cannot rebuild one, so only the others pay for the full scan:
+      // the engine's own (scanMotion), so coverage, lint and the engine agree on what
+      // rebuilds, an untrusted build included.
       if (buildRead || rel.shownChanges) {
-        const at = (v) => ({ ...full, [param]: v });
-        const scan = scanMotion(part, view, { lo, hi, at });
-        if (scan.rebuild.length && rebuildsAt(part, view, vs.map(at), param, { placements: true })) continue;
+        const scan = scanMotion(part, view, { lo, hi, at: (v) => ({ ...full, [param]: v }) });
+        if (scan.rebuild.length) continue;
       }
       out.push({ param, range: finite ? [r.min, r.max] : null, moving: rel.moving, against: rel.against });
     } catch {
