@@ -24,7 +24,7 @@
 import { exportSubParts, resolveParams, resolveParamsAttributed, recordedParams, viewSubParts } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { newReadSink, expandReads } from "../read-recorder.js";
-import { createProbeKernel } from "../geometry/probe.js";
+import { createValidatingProbe, MAX_PROBE_OPS } from "../geometry/probe.js";
 import { viewAnimations } from "../animation.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { rangesOf } from "../pose/param-solve.js";
@@ -57,6 +57,11 @@ function placementsAt(part, view, q) {
 /**
  * One sub-part's build reads at params q, recorded on the probe kernel (derive reads
  * expanded), or null when the build throws there. For a build the probe cannot trust.
+ *
+ * The re-run is capped at MAX_PROBE_OPS kernel calls, the pose probe's cap: a loop that
+ * ends only on a real query answer (`while (s.volume() < v) s = s.union(…)`) never ends on
+ * the probe's stand-ins, and its runaway reads as null, like a throw. Like the pose probe,
+ * a pure-JS loop that makes no kernel call cannot be capped from here.
  */
 function untrustedBuildReads(part, name, q) {
   try {
@@ -64,7 +69,7 @@ function untrustedBuildReads(part, name, q) {
     const sink = newReadSink();
     sink.attribution = resolved.attribution;
     const rec = recordedParams(resolved, sink);
-    part.parts[name].build(createProbeKernel().kernel, rec.p, rec.d);
+    part.parts[name].build(createValidatingProbe({ maxOps: MAX_PROBE_OPS }).kernel, rec.p, rec.d);
     return new Set(expandReads(sink));
   } catch {
     return null;
@@ -192,7 +197,7 @@ function relativeMotion(vs, sample) {
 
 /**
  * Params that can never be a motion, read off the declaration alone (no probing):
- * - a goal handle's target (its position and aim, or a list `params`): a target, not a
+ * - a goal handle's target (`params: { position, aim? }`): a target, not a
  *   motion, never swept (sweep-targets.js readSweep, lint's sweep-goal-handle);
  * - a param nobody can move: no statically visible control (lint's controlBoundKeys with
  *   `excludeHidden`, the control-default-not-literal population) and no handle writes it.

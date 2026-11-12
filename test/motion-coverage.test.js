@@ -431,6 +431,20 @@ describe("a build the probe cannot trust", () => {
     part.parts.tag = { views: { assembly: (s) => s.translate([30, 0, 0]) }, build: (k) => { box(k).boundingBox(); throw new Error("no"); } };
     expect(motions(part)).toEqual([]);
   });
+
+  // A loop that ends only on a real query answer never ends on the probe kernel's stand-in
+  // (volume() is a constant 1 there): the re-run is op-capped, and a runaway counts as a
+  // build that throws, so the base rebuilds and `open` is not reported.
+  test("a querying build that runs away on the probe's stand-ins counts as rebuilding", { timeout: 2000 }, () => {
+    const part = hinge();
+    part.parts.base.build = (k) => {
+      let s = box(k);
+      while (s.volume() < 1e9) s = s.union(k.box({ size: [1, 1, 1] }));
+      return s;
+    };
+    expect(motions(part)).toEqual([]);
+    expect(brief(motions(hinge()))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+  });
 });
 
 test("the memo rescans when part.parameters is replaced on the same object", () => {
