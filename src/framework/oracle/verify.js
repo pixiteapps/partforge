@@ -309,12 +309,22 @@ function sweepNotices(rows) {
 // the view the motion is in. Geometry-free, so a quick lap reports it too. Coverage is the
 // DECLARATION (decision 4): a declared sweep that stopped short keeps sweepNotices' warning
 // and adds no check here. A part whose motion cannot be probed gets no check, never a throw.
-function sweepCoverage(part) {
-  let motions = [];
-  try { motions = uncoveredMotions(part); } catch { /* unprobeable: lint reports what it can */ }
-  return motions.map((entry) => ({ scope: "view", subpart: null, metric: "sweepCoverage", expr: entry.param,
+// A scan that ran out of its time budget adds one VOLUNTEERED warning (it never moves ok):
+// the motions it found are still withheld, and it says nothing about the ones it did not reach.
+const MOTION_SCAN_PARTIAL_HINT = "the scan for moving pieces with no sweep stopped at its time budget, so params it did not reach were not checked — this says nothing about whether they move a piece; declare a sweep in verify.sweeps for every param that poses one piece against another";
+// `budgetMs`: verify's `motionBudgetMs` (the CLI hands it its sweep budget, so the verify
+// golden, which runs that without a deadline, never depends on the machine); unset, the
+// scan's own default.
+function sweepCoverage(part, budgetMs) {
+  let scan = { motions: [], partial: false };
+  try { scan = uncoveredMotions(part, undefined, undefined, budgetMs === undefined ? {} : { budgetMs }); } catch { /* unprobeable: lint reports what it can */ }
+  const out = scan.motions.map((entry) => ({ scope: "view", subpart: null, metric: "sweepCoverage", expr: entry.param,
     actual: null, status: "skip", pass: null, unevaluated: true,
     message: `no sweep declared for "${entry.param}"`, hint: MOTION_HINT(entry) }));
+  if (scan.partial) out.push({ scope: "view", subpart: null, metric: "sweepCoverage", kind: "warn", expr: "finished",
+    actual: null, status: "warn", pass: null, message: "the motion check did not finish in its time budget",
+    hint: MOTION_SCAN_PARTIAL_HINT, volunteered: true });
+  return out;
 }
 
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
@@ -483,7 +493,7 @@ function flexChecks(facts, flex) {
 // supports and MEASURE NOTHING. What that leaves unchecked is reported as
 // `unevaluated` rather than quietly downgraded, and one unevaluated gate withholds
 // `ok` — a fast lap yields facts, never a verdict.
-export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline } = {}) {
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline, motionBudgetMs } = {}) {
   view = view ?? Object.keys(part.views)[0];
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
@@ -657,7 +667,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     return { name, params, checks };
   });
   // Appended once per verify, to the first case, as sweepNotices are.
-  const coverage = sweepCoverage(part);
+  const coverage = sweepCoverage(part, motionBudgetMs);
   if (coverage.length && caseResults.length) caseResults[0].checks = [...caseResults[0].checks, ...coverage];
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader

@@ -12,7 +12,9 @@ import { exportSubParts, resolveParams } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { viewAnimations } from "../animation.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
-import { rangesOf } from "../pose/param-solve.js";
+import { rangesOf, dofsOf } from "../pose/param-solve.js";
+import { handleParamKeys } from "../pose/handle-source.js";
+import { controlBoundKeys } from "../lint/rules-schema.js";
 import { normalizeCollisions } from "./declaration.js";
 import { sameMat, IDENTITY } from "./motion.js";
 import { CONTACT_EPS } from "./pairs.js";
@@ -106,25 +108,56 @@ function relativeMotion(part, view, full, param, vs) {
 }
 
 /**
- * Params that, stepped over their control range with the others at `full`, rebuild no
- * sub-part shown in `view` and move at least one exportable sub-part relative to another
- * exportable sub-part shown there: `[{ param, range, moving, against }]`. `range` is
- * `[min, max]`, or null for a numeric control with no finite range that a placement reads.
+ * Params that can never be a motion, read off the declaration alone (no probing):
+ * - a goal handle's target (its position and aim, or a list `params`): a target, not a
+ *   motion, never swept (sweep-targets.js readSweep, lint's sweep-goal-handle);
+ * - a param nobody can move: no statically visible control (lint's controlBoundKeys with
+ *   `excludeHidden`, the control-default-not-literal population) and no handle writes it.
+ * Nothing here throws on a malformed handle or schema: what cannot be read excludes nothing.
  */
-export function motionParams(part, view, full = part?.defaults ?? {}) {
+function unmovableParams(part, full) {
+  const out = new Set();
+  const handles = isPlainObject(part?.handles) ? Object.values(part.handles) : [];
+  const written = new Set();
+  for (const h of handles) {
+    try {
+      for (const k of handleParamKeys(h)) written.add(k);
+      if (h?.drag !== "goal") continue;
+      const p = h.params;
+      const targets = Array.isArray(p) ? dofsOf(h, handles, full)
+        : [...(Array.isArray(p?.position) ? p.position : []), ...(Array.isArray(p?.aim) ? p.aim : [])];
+      for (const k of targets) if (typeof k === "string") out.add(k);
+    } catch { /* a malformed handle excludes nothing */ }
+  }
+  let visible = null;
+  try { visible = controlBoundKeys(part, { excludeHidden: true }); } catch { /* unreadable schema: keep every param */ }
+  if (visible) for (const k of rangesOf(part).keys()) if (!visible.has(k) && !written.has(k)) out.add(k);
+  return out;
+}
+
+/**
+ * One view's motions: `{ motions, partial }`. `stop()` is asked before each candidate
+ * param; once it answers true the scan ends there with `partial: true` and the motions
+ * found so far.
+ */
+function scanView(part, view, full, stop = () => false) {
   const out = [];
-  let ranges, p0, buildReads;
+  let ranges, p0, buildReads, skip;
   try {
     ranges = rangesOf(part);
     p0 = resolveParams(part, full).p;
-    if (exportSubParts(part, view, p0).length < 2) return out;
+    if (exportSubParts(part, view, p0).length < 2) return { motions: out, partial: false };
+    skip = unmovableParams(part, full);
+    if (stop()) return { motions: out, partial: true };
     buildReads = buildReadsAt(part, view, full);
   } catch {
-    return out;
+    return { motions: out, partial: false };
   }
   for (const [param, r] of ranges) {
+    if (skip.has(param)) continue;
     const v0 = p0[param];
     if (!isNum(v0)) continue;
+    if (stop()) return { motions: out, partial: true };
     const finite = isNum(r.min) && isNum(r.max) && r.max > r.min;
     const lo = finite ? r.min : v0 - NOMINAL_STEPS.at(-1), hi = finite ? r.max : v0 + NOMINAL_STEPS.at(-1);
     const probes = finite ? [lo, (lo + hi) / 2, hi] : [v0, ...NOMINAL_STEPS.flatMap((s) => [v0 - s, v0 + s])];
@@ -146,7 +179,45 @@ export function motionParams(part, view, full = part?.defaults ?? {}) {
       continue; // a motion that cannot be probed is skipped
     }
   }
-  return out;
+  return { motions: out, partial: false };
+}
+
+/**
+ * Params that, stepped over their control range with the others at `full`, rebuild no
+ * sub-part shown in `view` and move at least one exportable sub-part relative to another
+ * exportable sub-part shown there: `[{ param, range, moving, against }]`. `range` is
+ * `[min, max]`, or null for a numeric control with no finite range that a placement reads.
+ * A goal handle's target and a param nobody can move (unmovableParams) are never motions.
+ */
+export function motionParams(part, view, full = part?.defaults ?? {}) {
+  return scanView(part, view, full).motions;
+}
+
+// The scan of every view, memoized per part object: the last (params, budget) it ran with
+// and its result, so lint and verify in one apply share one scan. Coverage is not cached:
+// it reads the sweeps, which a caller may hand in, and costs no probing.
+const SCANS = new WeakMap();
+const sortedJson = (v) => JSON.stringify(v, (_, x) => (isPlainObject(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+
+/** `{ views: [[view, motions]], partial }` over every view, within `budgetMs`. */
+function scanViews(part, full, budgetMs, now) {
+  const views = Object.keys(part.views);
+  let key = null;
+  if (now === Date.now) {
+    try { key = `${budgetMs}|${sortedJson(full)}`; } catch { /* unkeyable params: scan uncached */ }
+    const hit = key != null && SCANS.get(part);
+    if (hit && hit.key === key) return hit.result;
+  }
+  const t0 = now();
+  const stop = () => now() - t0 >= budgetMs;
+  const result = { views: [], partial: false };
+  for (const view of views) {
+    const { motions, partial } = scanView(part, view, full, stop);
+    result.views.push([view, motions]);
+    if (partial) { result.partial = true; break; }
+  }
+  if (key != null) SCANS.set(part, { key, result });
+  return result;
 }
 
 /**
@@ -197,26 +268,27 @@ export function coveredParams(part, view, full = part?.defaults ?? {}, reads = r
 
 /**
  * Every view's motion params that no sweep covers there, one entry per param (the first
- * view it is uncovered in): `[{ view, param, range, moving, against }]`. Empty for a part
- * with no `views` map. `reads`: as for `coveredParams`; by default the sweeps are read once,
- * on the first view with a motion.
+ * view it is uncovered in): `{ motions: [{ view, param, range, moving, against }], partial }`.
+ * Empty for a part with no `views` map. `reads`: as for `coveredParams`; by default the
+ * sweeps are read once, on the first view with a motion. The scan stops at `budgetMs`
+ * (`now` is the clock, for tests): `partial` then says some (view, param) candidates were
+ * never looked at, so the list names what was found, never that the rest is clear.
  */
-export function uncoveredMotions(part, full = part?.defaults ?? {}, reads) {
-  const views = part?.views;
-  if (!isPlainObject(views)) return [];
-  const out = [], seen = new Set();
-  for (const view of Object.keys(views)) {
-    const motions = motionParams(part, view, full);
-    if (!motions.length) continue;
+export function uncoveredMotions(part, full = part?.defaults ?? {}, reads, { budgetMs = 250, now = Date.now } = {}) {
+  if (!isPlainObject(part?.views)) return { motions: [], partial: false };
+  const scan = scanViews(part, full, budgetMs, now);
+  const motions = [], seen = new Set();
+  for (const [view, list] of scan.views) {
+    if (!list.length) continue;
     reads ??= readSweeps(part, full);
     const covered = coveredParams(part, view, full, reads);
-    for (const m of motions) {
+    for (const m of list) {
       if (covered.has(m.param) || seen.has(m.param)) continue;
       seen.add(m.param);
-      out.push({ view, ...m });
+      motions.push({ view, ...m });
     }
   }
-  return out;
+  return { motions, partial: scan.partial };
 }
 
 /**

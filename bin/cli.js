@@ -338,7 +338,9 @@ const commands = {
       if (!flags["no-verify"]) {
         // Seeded with the report above, as the inspect job seeds it: verify reuses the
         // measurement where it can and its sweep rows always, so nothing sweeps twice.
-        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline });
+        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline,
+          // the unswept-motion scan gets the sweeps' budget too: the CLI is where they run in full
+          motionBudgetMs: CLI_SWEEP_BUDGET_MS });
         if (!flags.json) printVerify(v);
         report.verify = v;
         // Tri-state: `null` is a withheld verdict (nothing declared, or a check

@@ -156,7 +156,7 @@ describe("coveredParams and uncoveredMotions", () => {
   };
 
   test("an uncovered hinge is reported", () => {
-    expect(uncoveredMotions(hinge(), hinge().defaults)).toEqual([
+    expect(uncoveredMotions(hinge(), hinge().defaults).motions).toEqual([
       { view: "assembly", param: "open", range: [0, 110], moving: ["lid"], against: ["base"] },
     ]);
   });
@@ -165,14 +165,14 @@ describe("coveredParams and uncoveredMotions", () => {
     test(`a ${kind} sweep covers the motion`, () => {
       const part = covered(sweep);
       expect(coveredParams(part, "assembly", part.defaults).has("open")).toBe(true);
-      expect(uncoveredMotions(part, part.defaults)).toEqual([]);
+      expect(uncoveredMotions(part, part.defaults).motions).toEqual([]);
     });
   }
 
   test("a sweep limited to another view does not cover this one", () => {
     const part = covered({ param: "open", views: ["print"] });
     expect(coveredParams(part, "assembly", part.defaults).has("open")).toBe(false);
-    expect(uncoveredMotions(part, part.defaults).map((m) => m.param)).toEqual(["open"]);
+    expect(uncoveredMotions(part, part.defaults).motions.map((m) => m.param)).toEqual(["open"]);
   });
 
   test("a path covers only the keys its waypoints change", () => {
@@ -188,7 +188,7 @@ describe("coveredParams and uncoveredMotions", () => {
     for (const [name, sp] of Object.entries(part.parts)) {
       sp.views = { ...sp.views, print: (s) => s.translate([name === "lid" ? 30 : 0, 0, 0]), flat: (s) => s.translate([0, name === "lid" ? 30 : 0, 0]) };
     }
-    expect(uncoveredMotions(part, part.defaults)).toEqual([
+    expect(uncoveredMotions(part, part.defaults).motions).toEqual([
       { view: "assembly", param: "open", range: [0, 110], moving: ["lid"], against: ["base"] },
     ]);
   });
@@ -196,10 +196,10 @@ describe("coveredParams and uncoveredMotions", () => {
   test("no views map, or one exportable piece, gives nothing", () => {
     const part = hinge();
     delete part.views;
-    expect(uncoveredMotions(part, part.defaults)).toEqual([]);
+    expect(uncoveredMotions(part, part.defaults).motions).toEqual([]);
     const ghost = hinge();
     ghost.parts.base.exportable = false;
-    expect(uncoveredMotions(ghost, ghost.defaults)).toEqual([]);
+    expect(uncoveredMotions(ghost, ghost.defaults).motions).toEqual([]);
   });
 });
 
@@ -228,7 +228,7 @@ test("the hand reference part: the scan's work is bounded by the params a placem
   scanMotion.mockClear();
   poseMatrices.mockClear();
   const t0 = performance.now();
-  uncoveredMotions(hand, hand.defaults);
+  uncoveredMotions(hand, hand.defaults, undefined, { budgetMs: Infinity });
   const ms = performance.now() - t0;
 
   // A full scan only ever runs for a param some placement reads in that view.
@@ -275,9 +275,85 @@ describe("readSweeps", () => {
   test("reads each declared sweep once, by name, and a caller's reads are honoured", () => {
     const part = hinge({ verify: { sweeps: { open: { param: "open" } } } });
     expect([...readSweeps(part).keys()]).toEqual(["open"]);
-    expect(uncoveredMotions(part)).toEqual([]);
+    expect(uncoveredMotions(part).motions).toEqual([]);
     // reads handed in are used as given: none means nothing is covered
-    expect(uncoveredMotions(part, part.defaults, new Map()).map((m) => m.param)).toEqual(["open"]);
+    expect(uncoveredMotions(part, part.defaults, new Map()).motions.map((m) => m.param)).toEqual(["open"]);
     expect(readSweeps(hinge()).size).toBe(0);
+  });
+});
+
+describe("params that are never motions", () => {
+  test("a goal handle's target (position and aim) is not a motion; its seed may be", () => {
+    // the lid follows `open`, which a goal handle writes as its target
+    const part = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: ["open"], aim: [] }, seed: [] } } });
+    expect(motions(part)).toEqual([]);
+    const listed = hinge({ handles: { aim: { on: "arm", drag: "goal", params: ["open"] } } });
+    expect(motions(listed)).toEqual([]);
+    // a goal handle's seed is not its target
+    const seeded = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: [] }, seed: ["open"] } } });
+    expect(brief(motions(seeded))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+  });
+
+  test("a malformed goal handle excludes nothing and never throws", () => {
+    const part = hinge({ handles: { aim: { drag: "goal", params: { position: "open" } }, bad: null } });
+    expect(brief(motions(part))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+  });
+
+  test("a param with a statically hidden control and no handle is not a motion", () => {
+    const part = hinge();
+    part.parameters[0].controls[0].hidden = true;
+    expect(motions(part)).toEqual([]);
+    const sectionHidden = hinge();
+    sectionHidden.parameters[0].hidden = true;
+    expect(motions(sectionHidden)).toEqual([]);
+  });
+
+  test("the same hidden param a handle writes is a motion", () => {
+    const part = hinge({ handles: { hinge: { point: () => [0, 5, 10], drag: "rotary", axis: [1, 0, 0], params: ["open"] } } });
+    part.parameters[0].controls[0].hidden = true;
+    expect(brief(motions(part))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+  });
+});
+
+describe("uncoveredMotions: memo and budget", () => {
+  test("a second call with the same part and params does no probing", () => {
+    const part = hinge();
+    const first = uncoveredMotions(part, part.defaults);
+    expect(first.motions.map((m) => m.param)).toEqual(["open"]);
+    poseMatrices.mockClear();
+    scanMotion.mockClear();
+    const second = uncoveredMotions(part, { ...part.defaults });
+    expect(second).toEqual(first);
+    expect(poseMatrices).not.toHaveBeenCalled();
+    expect(scanMotion).not.toHaveBeenCalled();
+    // other params scan again
+    uncoveredMotions(part, { ...part.defaults, open: 10 });
+    expect(poseMatrices).toHaveBeenCalled();
+  });
+
+  test("an expired budget stops the scan and says so", () => {
+    expect(uncoveredMotions(hinge(), undefined, undefined, { budgetMs: 0 })).toEqual({ motions: [], partial: true });
+    let t = 0;
+    const late = uncoveredMotions(hinge(), undefined, undefined, { budgetMs: 5, now: () => (t += 10) });
+    expect(late.partial).toBe(true);
+  });
+
+  test("motions found before the cutoff are kept", () => {
+    // two views each with one motion; the clock runs out after the first view's param
+    const part = hinge();
+    part.parameters[0].controls.push(ctl("slide", 0, 20));
+    part.defaults.slide = 0;
+    part.parts.lid.views.side = (s, p) => s.translate([20 + p.slide, 0, 0]);
+    part.parts.base.views.side = (s) => s;
+    part.views.side = { label: "Side" };
+    let calls = 0;
+    // stop() is asked once per view before the probe, then once per candidate param
+    const r = uncoveredMotions(part, part.defaults, undefined, { budgetMs: 1, now: () => (calls++ < 4 ? 0 : 10) });
+    expect(r.partial).toBe(true);
+    expect(r.motions.map((m) => m.param)).toEqual(["open"]);
+  });
+
+  test("a complete scan is not partial", () => {
+    expect(uncoveredMotions(hinge(), undefined, undefined, { budgetMs: Infinity }).partial).toBe(false);
   });
 });

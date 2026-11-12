@@ -1,7 +1,7 @@
 // verify's sweepCoverage check (spec 2026-11-12-moving-fits-swept-design.md, A, decisions 2
 // and 4): a motion no declared sweep covers holds verify.ok at null, on full and quick laps,
 // whatever view is verified; a declared sweep satisfies it even when it ran out of time.
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { verify } from "../src/framework/oracle/verify.js";
 import { MOTION_HINT, uncoveredMotions } from "../src/framework/collide/motion-coverage.js";
@@ -35,7 +35,7 @@ const hinge = (v = watertight) => twoBox({
   verify: v,
 });
 const coverage = (r) => r.cases.flatMap((c) => c.checks).filter((c) => c.metric === "sweepCoverage");
-const hingeHint = () => MOTION_HINT(uncoveredMotions(hinge())[0]);
+const hingeHint = () => MOTION_HINT(uncoveredMotions(hinge()).motions[0]);
 
 describe("verify sweepCoverage", () => {
   test("an unswept hinge holds the verdict", () => {
@@ -91,6 +91,33 @@ describe("verify sweepCoverage", () => {
     // and still hears that it declares nothing else
     expect(r.warnings).toEqual([expect.objectContaining({ scope: "part", message: "no expectations declared" })]);
   }, SLOW);
+
+  describe("a scan that runs out of time", () => {
+    afterEach(() => vi.restoreAllMocks());
+    test("adds one volunteered warning and does not withhold ok", () => {
+      // a clock that jumps a second per read: the scan's budget is spent before its first param
+      let t = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => (t += 1000));
+      const r = verify(k, hinge({ expect: { base: { watertight: true } } }));
+      vi.restoreAllMocks();
+      expect(r.ok).toBe(true);
+      expect(r.unevaluated).toEqual([]);
+      expect(r.warnings.filter((w) => w.metric === "sweepCoverage")).toEqual([expect.objectContaining({
+        kind: "warn", status: "warn", volunteered: true, message: "the motion check did not finish in its time budget",
+      })]);
+      expect(r.declared).toBe(1);
+    }, SLOW);
+
+    test("motionBudgetMs sets the scan's budget (the CLI passes its sweep budget)", () => {
+      expect(verify(k, hinge(), { motionBudgetMs: 0 }).warnings.map((w) => w.metric)).toContain("sweepCoverage");
+      let t = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => (t += 1000));
+      const r = verify(k, hinge(), { motionBudgetMs: Infinity });
+      vi.restoreAllMocks();
+      expect(r.ok).toBe(null);
+      expect(coverage(r).map((c) => c.expr)).toEqual(["open"]);
+    }, SLOW);
+  });
 
   describe("no motion, no check", () => {
     const size = () => twoBox({

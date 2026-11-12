@@ -71,7 +71,7 @@ export const COLLISION_RULES = [
       // the sweeps as the other sweep rules read them, so each is read once per pass
       let reads;
       try { reads = new Map(sweepsOf(ctx).map(({ name, read }) => [name, read])); } catch { /* read again below */ }
-      return uncoveredMotions(ctx.part, ctx.p, reads).map(unsweptFinding);
+      return uncoveredMotions(ctx.part, ctx.p, reads).motions.map(unsweptFinding);
     },
   },
   {
