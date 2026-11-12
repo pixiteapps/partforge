@@ -6,7 +6,9 @@
 // `readsOpen` the build reads `open` and the sweep rebuilds it at the fixed steps.
 const POST = { r: 35, deg: 11.25, half: 0.5 };
 
-export function queryingLid({ readsOpen = false } = {}) {
+// `selector`: the build also passes a FUNCTION to a kernel op (a fillet edge selector) that
+// reads `open`; the probe never calls it, so its reads cannot be seen.
+export function queryingLid({ readsOpen = false, selector = false } = {}) {
   const a = (POST.deg * Math.PI) / 180;
   const c = [POST.r * Math.cos(a), POST.r * Math.sin(a)];
   return {
@@ -27,7 +29,7 @@ export function queryingLid({ readsOpen = false } = {}) {
           if (readsOpen) void p.open;
           const b = k.box({ min: [0, -0.5, 0], max: [40, 0.5, 5] });
           b.boundingBox(); // a query: the probe answers with a stand-in
-          return b;
+          return selector ? b.fillet({ r: 0.2, edges: (e) => (p.open > 90 ? e.parallel([0, 0, 1]) : e.parallel([1, 0, 0])) }) : b;
         },
         views: { assembly: (s, p) => s.rotate(p.open, [0, 0, 0], [0, 0, 1]) },
       },

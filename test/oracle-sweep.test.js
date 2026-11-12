@@ -263,6 +263,14 @@ describe("sweep engine", () => {
     expect(rebuilt.clear).toBe(true);
   }, SLOW);
 
+  it("an untrusted build that passes a function to a kernel op is rebuilt: its reads are unseen", () => {
+    const [s] = normalizeSweeps(queryingLid({ selector: true }), "assembly", {});
+    expect(s.rebuild).toEqual(["bar"]);
+    expect(s.moving).toEqual([]);
+    const [plain] = normalizeSweeps(queryingLid(), "assembly", {});
+    expect(plain).toMatchObject({ moving: ["bar"], rebuild: [] });
+  });
+
   it("a rebuilt sub-part's contact is bisected", () => {
     // a bar that grows toward a block at x = 30: it touches once its length reaches 30
     const part = boxPart({

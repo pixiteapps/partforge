@@ -6,9 +6,16 @@
 // A build is a function of its inputs, so one that never reads a param the motion changes
 // (directly or through the `derive` outputs it reads) cannot rebuild as the motion runs. Its
 // reads are recorded on the probe kernel (geometry/probe.js answers queries with
-// stand-ins), so, like param-deps.js's prediction, they miss a param read only inside a
-// branch the real query result would take. A build that throws there, or runs away on the
-// stand-ins, cannot be read, and rebuilds.
+// stand-ins). A build whose reads cannot be obtained rebuilds: one that throws on the
+// stand-ins, one that runs past MAX_PROBE_OPS kernel calls, and one that hands a kernel op a
+// FUNCTION (an edge selector, a per-point callback), which the probe never calls, so a read
+// inside it is invisible.
+//
+// The blind spots that remain, in one place:
+// - a read inside a branch the real query result would take and the stand-in does not
+//   (`if (s.volume() > 100) … p.open …`), as param-deps.js's prediction misses it too;
+// - a pure-JS loop that makes no kernel call, which the op cap cannot stop (it hangs the
+//   probe, as it would the pose probe).
 //
 // A BVH-free leaf: the probe kernel and the read recorder only, never the collision world or
 // the native core (test/worker-layering.test.js).
@@ -18,7 +25,8 @@ import { createValidatingProbe, MAX_PROBE_OPS } from "../geometry/probe.js";
 
 /**
  * One sub-part's build reads at params q, recorded on the probe kernel (derive reads
- * expanded), or null when the build throws there.
+ * expanded), or null when they cannot be obtained: the build throws there, or passes a
+ * function to a kernel op.
  *
  * The re-run is capped at MAX_PROBE_OPS kernel calls, the pose probe's cap: a loop that
  * ends only on a real query answer (`while (s.volume() < v) s = s.union(…)`) never ends on
@@ -31,7 +39,9 @@ export function untrustedBuildReads(part, name, q) {
     const sink = newReadSink();
     sink.attribution = resolved.attribution;
     const rec = recordedParams(resolved, sink);
-    part.parts[name].build(createValidatingProbe({ maxOps: MAX_PROBE_OPS }).kernel, rec.p, rec.d);
+    const probe = createValidatingProbe({ maxOps: MAX_PROBE_OPS });
+    part.parts[name].build(probe.kernel, rec.p, rec.d);
+    if (probe.passedFunction()) return null; // a callback's reads are never seen
     return new Set(expandReads(sink));
   } catch {
     return null;
