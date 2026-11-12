@@ -5675,7 +5675,7 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 | `strain` — the root strain (%) a one-time snap may reach (an advisory) | 1.5 | 3 | 2 |
 | `flexTilt` — the steepest a flexing member may stand off the bed, degrees (a cost, `standing`) | 45 | 45 | — |
 
-`fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`).
+`fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`). A bore that is horizontal as printed is drawn `holeUndersize` larger, so it reads half of fit + holeUndersize: declare the band there (`fits.moving` 0.35 + 0.25 → `"0.25..0.35"`, as "A hinge that opens" does).
 
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
