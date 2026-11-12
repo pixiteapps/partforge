@@ -3811,7 +3811,11 @@ sweep does. What is **not** a motion: a param that rebuilds a piece (a size), a 
 moves every piece together, a goal handle's target and seed (`params: { position, aim }` and
 `seed`: the solver poses the limb, and a seed is only its starting guess; a seed param that a
 non-goal handle also writes is still a motion), a param with no visible control and no
-handle, and a param under which the set of exportable pieces changes. A sub-part whose build
+handle, a param set only by a discrete control (select, radio, checkbox, text, custom:
+a few fixed poses, which presets and cases check; only slider and number controls, and
+params a non-goal handle writes, are candidates), and a param under which the set of
+exportable pieces changes. One known gap follows: a motion that exists only while a
+checkbox that is off by default is on is not detected, so sweep it yourself. A sub-part whose build
 cannot be probed is judged by what its build reads. To check a goal-posed limb, sweep a path
 between presets or an animation.
 

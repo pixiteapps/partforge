@@ -62,6 +62,22 @@ describe("motionParams", () => {
     expect(brief(motions(part))).toEqual([{ param: "explode", moving: ["lid"], against: ["base"] }]);
   });
 
+  // A discrete control picks one of a few poses: those are checked by presets and cases,
+  // never swept (a select cannot take the min and max the hint would ask for).
+  test("a select that flips the lid between two poses is no motion; a slider doing it is", () => {
+    const flip = (control) => twoBox({ controls: [control], defaults: { pose: 0 },
+      lid: (s, p) => s.rotateAbout({ axis: "X", deg: p.pose, through: [0, 5, 10] }) });
+    const select = { key: "pose", type: "select", label: "Pose", description: "Lid pose.",
+      options: [{ value: 0, label: "Closed" }, { value: 90, label: "Open" }] };
+    expect(motions(flip(select))).toEqual([]);
+    expect(motions(flip({ ...select, type: "radio" }))).toEqual([]);
+    expect(motions(flip({ key: "pose", type: "text", label: "Pose", description: "Lid pose." }))).toEqual([]);
+    expect(brief(motions(flip({ ...ctl("pose", 0, 90), type: "slider" }))))
+      .toEqual([{ param: "pose", moving: ["lid"], against: ["base"] }]);
+    expect(brief(motions(flip({ ...ctl("pose", 0, 90), type: "number" }))))
+      .toEqual([{ param: "pose", moving: ["lid"], against: ["base"] }]);
+  });
+
   test("size: a param the base's build reads is no motion", () => {
     const part = twoBox({
       controls: [ctl("height", 5, 40)], defaults: { height: 10 },

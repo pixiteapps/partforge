@@ -24,6 +24,8 @@ import { probePoses } from "../pose-probe.js";
 import { viewAnimations } from "../animation.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { rangesOf } from "../pose/param-solve.js";
+import { controlNodes } from "../panel/model.js";
+import { desugar } from "../panel/legacy.js";
 import { handleParamKeys } from "../pose/handle-source.js";
 import { controlBoundKeys } from "../lint/rules-schema.js";
 import { normalizeCollisions } from "./declaration.js";
@@ -35,6 +37,10 @@ import { untrustedBuildReads, untrustedRebuilds } from "./untrusted-reads.js";
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+
+// The control types that set a value along a travel, so can pose a motion (a legacy
+// control desugars to "slider" unless it names another `control`).
+const CONTINUOUS = new Set(["slider", "number"]);
 
 // A control with no finite range is probed this far either side of its value: a placement
 // that reads it is a motion with no range to sweep (the hint asks for a min and max).
@@ -166,7 +172,10 @@ function relativeMotion(vs, sample) {
  *   report. A seed param some non-goal handle also writes is still a motion: that handle
  *   moves it as a joint;
  * - a param nobody can move: no statically visible control (lint's controlBoundKeys with
- *   `excludeHidden`, the control-default-not-literal population) and no handle writes it.
+ *   `excludeHidden`, the control-default-not-literal population) and no handle writes it;
+ * - a DISCRETE param: its controls are none of them continuous (a slider or a number —
+ *   select, radio, text, custom and the rest pick values, not a travel) and no non-goal
+ *   handle writes it. Discrete poses are checked by presets and cases, never swept.
  * Nothing here throws on a malformed handle or schema: what cannot be read excludes nothing.
  */
 function unmovableParams(part) {
@@ -195,6 +204,11 @@ function unmovableParams(part) {
   let visible = null;
   try { visible = controlBoundKeys(part, { excludeHidden: true }); } catch { /* unreadable schema: keep every param */ }
   if (visible) for (const k of rangesOf(part).keys()) if (!visible.has(k) && !written.has(k)) out.add(k);
+  let continuous = null;
+  try {
+    continuous = new Set(controlNodes(desugar(part?.parameters)).filter((c) => CONTINUOUS.has(c.type)).map((c) => c.key));
+  } catch { /* unreadable schema: keep every param */ }
+  if (continuous) for (const k of rangesOf(part).keys()) if (!continuous.has(k) && !jointWritten.has(k)) out.add(k);
   return out;
 }
 

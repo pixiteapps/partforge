@@ -818,7 +818,10 @@ the installed package, so let the publish finish before bumping the dep there.
   (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
   through it alone), and `motion-coverage.js` (`motion-unswept` and verify's `sweepCoverage`:
   the place-only params that move one exportable piece against another in any view and that
-  no declared sweep moves there - never a goal handle's target or seed; geometry-free, memoized per part+params, a 1000 ms budget,
+  no declared sweep moves there - only slider/number controls and params a non-goal handle
+  writes are candidates, never a goal handle's target or seed or a discrete control; an
+  untrusted build is judged by its reads through `untrusted-reads.js`, which the engine's
+  `scanMotion` shares; geometry-free, memoized per part+params, a 1000 ms budget,
   `motionBudgetMs`). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
   frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
   guard: `settle`, sub-stepped to `SETTLE_STEP_MM` of travel, at most `MAX_SUBSTEPS`, bisecting
