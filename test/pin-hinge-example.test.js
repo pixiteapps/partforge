@@ -1,8 +1,9 @@
 // The pin hinge in docs/AUTHORING-PARTS.md "A hinge that opens" is test/fixtures/pin-hinge.js,
-// copied from its `const W` line to the end. This holds the guide's copy equal to the
-// fixture, and the fixture to what the guide says it does: lint clean, the swing clear at
-// clearance 0, verify true.
+// copied from its first `// Interfaces:` line to the end. This holds the guide's copy equal
+// to the fixture, and the fixture to what the guide says it does: lint clean, the swing clear
+// at clearance 0, every fit inside its band, and verify true under fdm-pla with no cost.
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/framework/oracle/measure.js";
@@ -11,13 +12,14 @@ import { lintPart } from "../src/framework/lint/index.js";
 import part from "./fixtures/pin-hinge.js";
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+const SLOW = 120_000;
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
-test("the guide carries the fixture verbatim, from its `const W` line to the end", () => {
+test("the guide carries the fixture verbatim, from its first `// Interfaces:` line to the end", () => {
   const src = read("./fixtures/pin-hinge.js");
-  const snippet = src.slice(src.indexOf("const W = ")).trimEnd();
+  const snippet = src.slice(src.indexOf("// Interfaces: ")).trimEnd();
   expect(read("../docs/AUTHORING-PARTS.md")).toContain("```js\n" + snippet + "\n```");
 });
 
@@ -27,11 +29,28 @@ test("the pin hinge lints clean, with no motion-unswept", () => {
   expect(r.warnings).toEqual([]);
 });
 
-test("the pin hinge swings clear at clearance 0 and verifies true", () => {
+test("the pin hinge is three pieces, the pin its own, printed under fdm-pla", () => {
+  expect(Object.keys(part.parts)).toEqual(["base", "lid", "pin"]);
+  expect(part.verify.process).toBe("fdm-pla");
+  expect(Object.keys(part.views)).toEqual(["assembly", "print"]);
+});
+
+test("the pin hinge swings clear at clearance 0 and verifies true under fdm-pla, with no cost", () => {
   const [row] = measure(k, part, "assembly").sweeps;
-  expect(row).toMatchObject({ name: "open", clear: true, contacts: [] });
+  expect(row).toMatchObject({ name: "open", clear: true, contacts: [], freeRange: [0, 180] });
   expect(row.minClearance.distance).toBeGreaterThan(0.15);
   const v = verify(k, part);
   expect(v.ok).toBe(true);
   expect(v.unevaluated).toEqual([]);
-});
+  expect(v.failures).toEqual([]);
+  expect(v.costs.filter((c) => c.status === "cost")).toEqual([]);
+  const clearance = Object.fromEntries(v.cases[0].checks.filter((c) => c.metric === "clearance").map((c) => [c.subpart, c.status]));
+  expect(clearance).toEqual({ "lid×pin": "pass", "base×pin": "pass", "base×lid": "pass" });
+}, SLOW);
+
+test("the CLI prints the line the guide quotes", () => {
+  const out = execFileSync(process.execPath, ["bin/cli.js", "measure", "test/fixtures/pin-hinge.js"], { encoding: "utf8" });
+  expect(out.split("\n").find((l) => l.startsWith("  sweeps:"))).toBe("  sweeps: open clear (min 0.20mm base×lid)");
+  expect(read("../docs/AUTHORING-PARTS.md")).toContain("`sweeps: open clear (min 0.20mm base×lid)`");
+  expect(out).toContain("result: all gates passed");
+}, SLOW);
