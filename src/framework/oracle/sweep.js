@@ -457,9 +457,9 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
       for (const c of merged) {
         if (timedOut) { out.push({ ...c, depth: null, depthUnread: true }); continue; }
         const w = rigid
-          ? walkDepth(c, { depthAt, allowance, tol, deadline, now, stepOk: (vl, vr) => {
+          ? walkDepth(c, { depthAt, allowance, tol, deadline, now, stepOk: (vl, vr, limit) => {
               const { T, theta } = pairTravel(shared, c.a, c.b, matsOf(motion.at(vl)), matsOf(motion.at(vr)), clearance);
-              return T <= DEPTH_STEP_MM && theta <= MAX_TURN;
+              return T <= limit && theta <= MAX_TURN;
             } })
           : walkDepth(c, { depthAt, allowance, tol, deadline, now, grid: rebuildGrid(lo, hi) });
         if (w.deep && (!deepest || w.deep.depth > deepest.depth)) deepest = { ...w.deep, a: c.a, b: c.b };
@@ -516,13 +516,21 @@ function rebuildGrid(lo, hi) {
 
 /**
  * Read contact `c`'s depth along [c.from, c.to] with `depthAt(v, a, b)` and split it into
- * stretches past `allowance` (`over`) and within it. Readings are spaced by `stepOk(vl, vr)`
- * (true when the step is short enough; halved until it is, down to a floor), or, given
+ * stretches past `allowance` (`over`) and within it. Readings are spaced by
+ * `stepOk(vl, vr, limit)` (true when the pair moves at most `limit` mm over the step;
+ * halved until it is, down to a floor), or, given
  * `grid`, at the grid's values inside the interval. A crossing between two readings is
  * bisected to `tol`. Returns `{ stretches: [{ from, to, before, after, depth, over }],
  * deep: { depth, value } | null, unread }`: `unread` when the deadline stopped it, with
  * `deep` the deepest reading so far. `before`/`after` of the first and last stretch are the
  * contact's own; inside, the bisected value on the other side of each crossing.
+ *
+ * `limit` is DEPTH_STEP_MM, or, after a reading d past the allowance, d − allowance when
+ * that is more: depth cannot fall by more than the pair moves, so no point of that step
+ * can come back within the allowance unseen. A pair pressed deep along a whole swing (a
+ * knuckle in the other plate) is then read in a few long steps, not one per 0.2 mm. Its
+ * reported depth is the deepest READING, so there it can be short of the true deepest by
+ * up to half a step's travel; whether it presses in is decided exactly as before.
  */
 function walkDepth(c, { depthAt, allowance, tol, deadline, now, stepOk = null, grid = null }) {
   let deep = null;
@@ -561,18 +569,19 @@ function walkDepth(c, { depthAt, allowance, tol, deadline, now, stepOk = null, g
     }
   } else {
     const floor = tol * ADVANCE_FLOOR;
-    let h = c.to - c.from;
+    let h = c.to - c.from, dLast = d0;
     while (v < c.to) {
       h = Math.min(h * 2, c.to - v);
+      const limit = Math.max(DEPTH_STEP_MM, dLast - allowance);
       let v2;
       for (;;) {
         v2 = h >= c.to - v ? c.to : v + h;
-        if (h <= floor || stepOk(v, v2)) break;
+        if (h <= floor || stepOk(v, v2, limit)) break;
         h /= 2;
       }
       const d = read(v2);
       if (d === null || !visit(v, v2, d)) return { stretches, deep, unread: true };
-      v = v2;
+      v = v2; dLast = d;
     }
   }
   cur.to = c.to; cur.after = c.after;
