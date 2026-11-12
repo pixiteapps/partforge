@@ -261,8 +261,14 @@ const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && !!first
 // A row that answered: it ran (a no-motion animation has nothing to run, so it answers
 // clear), or it stopped with a contact in hand.
 const sweepRan = (s) => !s.skipped || s.skipped === "no-motion" || sweepHit(s);
+// A contact on a sweep that may touch whose depth the clock stopped before it was read end
+// to end: neither clear nor a collision, so it withholds the gate for the whole view.
+const depthUnread = (r) => !!r.sweeps?.some((s) => s.contacts?.some((c) => c.depthUnread));
+const DEPTH_UNREAD_HINT = "these pieces stay in contact along the motion and the time budget ran out before their depth could be read. Give the moving pair a running gap (for example 0.2 mm between knuckle faces, a bore larger than its pin) so the sweep can prove it clear, or run npx partforge measure for the long budget.";
+const SWEEP_WITHHELD_HINT = "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names";
 function sweepContacts(r) {
   if (!r.sweeps) return null;
+  if (depthUnread(r)) return null;
   if (r.sweeps.length && !r.sweeps.some(sweepRan)) return null;
   return r.sweeps.filter(sweepHit).length;
 }
@@ -281,11 +287,13 @@ export const VIEW_METRICS = {
   // volunteered `sweeps` warning instead. When every row stopped short so none ran, there
   // is no reading and the gate is withheld (`withheld`), never a 0; `[]` (no declared sweep
   // moves anything in this view) reads 0. No `sweeps` key (none declared, or a measurement
-  // taken with `sweeps: false`, as verify's other cases are) is a plain skip.
+  // taken with `sweeps: false`, as verify's other cases are) is a plain skip. A contact
+  // whose depth the clock never finished reading (`depthUnread`) withholds it too.
   sweepContacts: { kind: "gate", extract: sweepContacts,
-    withheld: (r) => (r.sweeps?.length && sweepContacts(r) === null
-      ? "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked" : null),
-    withheldHint: "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names",
+    withheld: (r) => (!r.sweeps?.length || sweepContacts(r) !== null ? null
+      : depthUnread(r) ? "not evaluated — a declared sweep stopped before it read how deep a contact presses in"
+      : "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked"),
+    withheldHint: (r) => (depthUnread(r) ? DEPTH_UNREAD_HINT : SWEEP_WITHHELD_HINT),
     hint: "a declared motion comes closer than its clearance to another sub-part (at a clearance of 0 or below: presses in deeper than it allows, by the contact's `depth`) — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
     skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
     pattern: "sweep-contacts",

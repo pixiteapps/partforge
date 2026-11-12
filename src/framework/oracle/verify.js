@@ -161,7 +161,7 @@ function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
     // (sweepContacts when every declared sweep stopped short): unevaluated, as a quick
     // lap's gates are.
     const withheld = reg.withheld?.(factsObj);
-    if (withheld) return { ...base, actual, status: "skip", pass: null, unevaluated: true, message: withheld, hint: partHint ?? reg.withheldHint };
+    if (withheld) return { ...base, actual, status: "skip", pass: null, unevaluated: true, message: withheld, hint: partHint ?? (typeof reg.withheldHint === "function" ? reg.withheldHint(factsObj) : reg.withheldHint) };
     return { ...base, actual, status: "skip", pass: null, message: reg.skipMessage ?? "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);

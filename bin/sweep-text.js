@@ -1,15 +1,16 @@
 // The CLI's `sweeps:` line (bin/cli.js), one row of oracle/sweep.js at a time, as a pure
 // function so a test can hold its wording. A row's `ms` is never printed.
 import { pairKey, sweepContactBlocks } from "../src/framework/collide/pairs.js";
+import { TOUCH_TOL_MM } from "../src/framework/collide/depth.js";
 
 const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 const mm = (d) => `${d.toFixed(2)}mm`;
 
 /**
  * Clear with its tightest pair, then (a sweep that may touch or press in) its first allowed
- * rub with its depth; or a contact with where it starts, its pair (and, on a sweep that
- * may touch, how deep it presses), the param driving it and (a param sweep) the
- * contact-free range; or why it stopped short.
+ * rub deeper than TOUCH_TOL_MM, with its depth; or a contact with where it starts, its pair
+ * (and, on a sweep that may touch, how deep it presses), the param driving it and (a param
+ * sweep) the contact-free range; or why it stopped short.
  */
 export function sweepText(s) {
   if (s.skipped) return `${s.name} skipped (${s.skipped})`;
@@ -17,7 +18,8 @@ export function sweepText(s) {
   const touching = s.clearance <= 0;
   if (s.clear) {
     const m = s.minClearance;
-    const rubs = (s.contacts ?? []).filter((c) => c.allowed);
+    // an allowed stretch that only touches (a lid resting closed) is not a rub
+    const rubs = (s.contacts ?? []).filter((c) => c.allowed && c.depth > TOUCH_TOL_MM);
     const rub = rubs.length
       ? `, rub at ${fmtV(rubs[0].from)} ${pairKey(rubs[0].a, rubs[0].b)} (${mm(rubs[0].depth)}, allowed)${rubs.length > 1 ? ` (+${rubs.length - 1} more)` : ""}`
       : "";

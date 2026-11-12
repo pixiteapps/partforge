@@ -6,7 +6,7 @@ import drawerBox from "../src/parts/drawer-box.js";
 import hand from "../src/parts/hand.js";
 import gearbox from "../src/parts/gearbox.js";
 import { bootManifoldKernel } from "../src/testing.js";
-import { runSweeps, normalizeSweeps, SWEEP_REBUILD_STEPS, SWEEP_MAX_STEPS } from "../src/framework/oracle/sweep.js";
+import { runSweeps, normalizeSweeps, SWEEP_REBUILD_STEPS, SWEEP_MAX_STEPS, DEPTH_STEP_MM } from "../src/framework/oracle/sweep.js";
 import { presetMap } from "../src/framework/oracle/cases.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import { createCollisionWorld, relativeMatsAt } from "../src/framework/collide/world.js";
@@ -17,6 +17,7 @@ import { TOUCH_TOL_MM } from "../src/framework/collide/world.js";
 import frameKnuckles from "./fixtures/hinge-frame-knuckles.js";
 import buriedAxis from "./fixtures/hinge-buried-axis.js";
 import detent from "./fixtures/hinge-detent.js";
+import { buttingKnuckles } from "./fixtures/hinge-butting-knuckles.js";
 import { readFileSync } from "node:fs";
 
 const SLOW = 120_000;
@@ -73,6 +74,7 @@ describe("sweep engine", () => {
   it("exports its step caps", () => {
     expect(SWEEP_REBUILD_STEPS).toBe(24);
     expect(SWEEP_MAX_STEPS).toBe(2000);
+    expect(DEPTH_STEP_MM).toBe(0.2);
   });
 
   it("drawer travel is clear", () => {
@@ -437,9 +439,10 @@ describe("touching and pressing-in sweeps", () => {
     for (const clearance of [0, -0.1]) {
       const [row] = runSweeps(k, detentAt(clearance), "assembly", { open: 0 });
       expect(row.clear, String(clearance)).toBe(false);
-      expect(row.contacts).toHaveLength(1);
-      const [c] = row.contacts;
-      expect(c.allowed).toBe(false);
+      // the rub's shallow ends are allowed stretches; its middle presses in too deep
+      const blocking = row.contacts.filter((x) => !x.allowed);
+      expect(blocking).toHaveLength(1);
+      const [c] = blocking;
       expect(c.from).toBeGreaterThan(38);
       expect(c.to).toBeLessThan(52);
       expect(row.freeRange[1]).toBeLessThanOrEqual(c.from);
@@ -461,26 +464,68 @@ describe("touching and pressing-in sweeps", () => {
   it("a buried axis rests clear closed and presses in as it opens", () => {
     const [row] = runSweeps(k, buriedAxis, "assembly", buriedAxis.defaults);
     expect(row.clear).toBe(false);
-    expect(row.contacts).toHaveLength(1);
-    const [c] = row.contacts;
-    expect(c.from).toBeGreaterThan(0); // resting closed is not the contact
-    expect(c.from).toBeLessThan(20);
+    // resting closed is an allowed touch; the contact starts where the lid presses in
+    // (true onset about 0.23°: the depth reading is a lower bound, so a little later)
+    const [rest, c] = row.contacts;
+    expect(row.contacts).toHaveLength(2);
+    expect(rest).toMatchObject({ from: 0, allowed: true });
+    expect(c.from).toBeGreaterThan(0.2);
+    expect(c.from).toBeLessThan(1);
     expect(c.to).toBe(110);
     expect(c.driver).toBe("open");
     expect(c.allowed).toBe(false);
     expect(c.depth).toBeGreaterThan(1);
   }, SLOW);
 
-  it("a deadline while reading depth marks the row timed out", () => {
-    // the sweep itself fits; the clock runs out once its contacts are being read
+  it("a deadline while reading depth marks the contact unread and the row timed out", () => {
+    // the sweep itself fits; the clock runs out once its contact is being read
     let ticks = 0;
     const part = withSweeps(detent, { open: { param: "open", clearance: -0.3 } });
     const steps = runSweeps(k, part, "assembly", { open: 0 })[0].steps;
-    // one now() per sweep step, plus the row's own readings: stop after the stepping
+    // one now() before the sweep, one at its start and one per step after the first, then
+    // one per depth reading: the deadline lands after three readings
     const [row] = runSweeps(k, part, "assembly", { open: 0 }, { deadline: steps + 3, now: () => ticks++ });
     expect(row.skipped).toBe("timeout");
     expect(row.clear).toBeNull();
     expect(row.contacts).toHaveLength(1);
+    expect(row.contacts[0].depthUnread).toBe(true);
+    expect(row.contacts[0].depth).toBeTypeOf("number"); // the deepest read so far
+    expect("allowed" in row.contacts[0]).toBe(false);
+  }, SLOW);
+
+  it("a dig between two butting knuckles that touch all the way round is found", () => {
+    // knuckles end to end with no axial gap touch at every angle; a thin lid arm passes
+    // through a 0.6 mm post on the base around 30°. Sampled at a few points the long
+    // touching interval read as an allowed rub; read along it, the dig is a contact.
+    const [row] = runSweeps(k, buttingKnuckles(), "assembly", { open: 0 });
+    expect(row.clear).toBe(false);
+    const blocking = row.contacts.filter((c) => !c.allowed);
+    expect(blocking).toHaveLength(1);
+    const [c] = blocking;
+    expect(c.from).toBeGreaterThan(27.5);
+    expect(c.from).toBeLessThan(28.2);
+    expect(c.to).toBeGreaterThan(31.8);
+    expect(c.to).toBeLessThan(32.5);
+    expect(c.depth).toBeGreaterThan(0.25);
+    expect(c.depth).toBeLessThan(0.35);
+    expect(row.freeRange[1]).toBeLessThanOrEqual(c.from);
+    // without the post the knuckles' touch is allowed all the way
+    const [plain] = runSweeps(k, buttingKnuckles(false), "assembly", { open: 0 });
+    expect(plain.clear).toBe(true);
+    expect(plain.freeRange).toEqual([0, 110]);
+  }, SLOW);
+
+  it("a positive clearance's depth never changes its row", () => {
+    // the deadline expires during the depth readings: the row is today's, depth left off
+    const part = withSweeps(collideBar, { swing: { param: "angle", range: [0, 90] } });
+    const [full] = runSweeps(k, part, "assembly", { angle: 0 });
+    let ticks = 0;
+    const [cut] = runSweeps(k, part, "assembly", { angle: 0 }, { deadline: full.steps + 2, now: () => ticks++ });
+    const { ms: _a, ...cutRow } = cut;
+    const { ms: _b, ...fullRow } = full;
+    expect(fullRow.contacts[0].depth).toBeGreaterThan(1);
+    expect(cutRow).toEqual({ ...fullRow, contacts: fullRow.contacts.map(({ depth: _d, ...c }) => c) });
+    expect("depth" in cut.contacts[0]).toBe(false);
   }, SLOW);
 });
 

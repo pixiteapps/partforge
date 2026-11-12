@@ -16,6 +16,8 @@ import { collideBar } from "./fixtures/collide-bar.js";
 import frameKnuckles from "./fixtures/hinge-frame-knuckles.js";
 import buriedAxis from "./fixtures/hinge-buried-axis.js";
 import detent from "./fixtures/hinge-detent.js";
+import buttingKnuckles from "./fixtures/hinge-butting-knuckles.js";
+import { runSweeps } from "../src/framework/oracle/sweep.js";
 import { sweepText } from "../bin/sweep-text.js";
 
 const SLOW = 120_000;
@@ -26,6 +28,7 @@ const withSweeps = (part, sweeps, extra = {}) => ({ ...part, ...extra, verify: {
 // The bar swings 0 → 180° and meets the slab at 60°.
 const barSweep = (extra = {}) => withSweeps(collideBar, { swing: { param: "angle" } }, extra);
 const gated = { verify: { expect: { _view: { sweepContacts: 0 } } } };
+const DEPTH_UNREAD_HINT = "these pieces stay in contact along the motion and the time budget ran out before their depth could be read. Give the moving pair a running gap (for example 0.2 mm between knuckle faces, a bore larger than its pin) so the sweep can prove it clear, or run npx partforge measure for the long budget.";
 // A preset section, so verify has a second case to re-measure.
 const withPreset = (part) => ({
   ...part,
@@ -148,15 +151,32 @@ describe("verify and sweeps", () => {
 
   it("a timed-out sweep that may touch counts only a contact read past its allowance", () => {
     const touching = (contacts) => row("t", { clearance: 0, clear: null, skipped: "timeout", contacts });
-    // an allowed rub, and a contact whose depth the clock never read: neither counts, so
-    // the row has no reading and the gate is withheld, as for any sweep that stopped short
-    const quiet = withRows([touching([{ ...contact, depth: 0, allowed: true }, { ...contact, from: 90, depth: null }])]);
-    expect(gateOf(quiet)).toMatchObject({ status: "skip", actual: null, unevaluated: true });
+    // an allowed rub, and a contact whose depth the clock never finished reading: neither
+    // counts, and the unread one withholds the gate with its own hint
+    const quiet = withRows([touching([{ ...contact, depth: 0, allowed: true }, { ...contact, from: 90, depth: 0.01, depthUnread: true }])]);
+    expect(gateOf(quiet)).toMatchObject({ status: "skip", actual: null, unevaluated: true, hint: DEPTH_UNREAD_HINT });
+    expect(quiet.ok).toBe(null);
     expect(notice(quiet)).toEqual(["1 sweep(s) stopped at the time budget: t"]);
     // one read past it does, and the warning names that one
     const hit = withRows([touching([{ ...contact, depth: 0, allowed: true }, { ...contact, from: 90, depth: 2, allowed: false, at: [4, 5, 6] }])]);
     expect(gateOf(hit)).toMatchObject({ status: "fail", actual: 1, location: [4, 5, 6] });
     expect(notice(hit)).toEqual(["1 sweep(s) stopped at the time budget: t (contact found at 90: bar×palm)"]);
+  }, SLOW);
+
+  it("an unread depth withholds the gate even beside a sweep that finished", () => {
+    // a row that ran clear, and the butting knuckles' row stopped while reading depth
+    const part = { ...buttingKnuckles, verify: { ...buttingKnuckles.verify, expect: { _view: { sweepContacts: 0 } } } };
+    const steps = runSweeps(k, part, "assembly", {})[0].steps;
+    let ticks = 0;
+    const [cut] = runSweeps(k, part, "assembly", {}, { deadline: steps + 5, now: () => ticks++ });
+    expect(cut.skipped).toBe("timeout");
+    expect(cut.contacts.some((c) => c.depthUnread)).toBe(true);
+    const clearRow = row("other", { clearance: 0.5 });
+    const seed = { ...measure(k, part, "assembly", {}, { sweeps: false }), sweeps: [clearRow, cut] };
+    const v = verify(k, part, { view: "assembly", seed: { params: {}, result: seed } });
+    expect(v.ok).toBe(null);
+    const gate = v.unevaluated.find((c) => c.metric === "sweepContacts");
+    expect(gate).toMatchObject({ status: "skip", actual: null, unevaluated: true, hint: DEPTH_UNREAD_HINT });
   }, SLOW);
 
   it("a seed measured without sweeps is not admitted for a part that declares them", () => {
@@ -234,8 +254,8 @@ describe("sweeps that may touch, gated", () => {
   const sweepAt = (part, clearance) => ({ ...part, verify: { ...part.verify, sweeps: { open: { param: "open", clearance } } } });
   const gateOf = (v) => v.cases[0].checks.find((c) => c.metric === "sweepContacts");
 
-  it("knuckles in the other plate, and a buried axis, fail the gate", () => {
-    for (const part of [frameKnuckles, buriedAxis]) {
+  it("knuckles in the other plate, a buried axis, and a dig inside a touch fail the gate", () => {
+    for (const part of [frameKnuckles, buriedAxis, buttingKnuckles]) {
       const v = verify(k, gate(part), { view: "assembly" });
       expect(v.ok, part.meta.title).toBe(false);
       expect(gateOf(v)).toMatchObject({ status: "fail", actual: 1 });
@@ -271,6 +291,12 @@ describe("the CLI sweeps line", () => {
   it("an allowed rub reads clear, with the rub and its depth", () => {
     expect(sweepText(clearRow)).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed)");
     expect(sweepText({ ...clearRow, contacts: [rub, { ...rub, from: 80.5 }] })).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed) (+1 more)");
+  });
+
+  it("a resting touch on a clear row prints nothing extra", () => {
+    const rest = { ...rub, from: 0, to: 2, depth: 0.001 };
+    expect(sweepText({ ...clearRow, clearance: 0, minClearance: { ...clearRow.minClearance, distance: 0 }, contacts: [rest] }))
+      .toBe("open clear (min 0.00mm base×lid)");
   });
 
   it("a contact line names the first contact past the allowance, never an allowed rub", () => {
