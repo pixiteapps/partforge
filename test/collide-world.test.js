@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createCollisionWorld, poseMatrices, relativeMatsAt } from "../src/framework/collide/world.js";
+import { createCollisionWorld, poseMatrices, relativeMatsAt, TOUCH_TOL_MM } from "../src/framework/collide/world.js";
 import { normalizeCollisions } from "../src/framework/collide/declaration.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import drawerBox from "../src/parts/drawer-box.js";
@@ -185,5 +185,107 @@ describe("pose matrices", () => {
     expect(rel.get("drawer1")[13]).toBeCloseTo(0);
     const base = resolveParams(drawerBox, {});
     expect(rel.get("drawer2")[13]).toBeCloseTo(-0.6 * (base.p.depth - 10));
+  });
+});
+
+// An axis-aligned box from min to max, 12 triangles wound outward.
+function box(min, max) {
+  const [x0, y0, z0] = min, [x1, y1, z1] = max;
+  const v = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  const f = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]];
+  return { positions: new Float64Array(v.flat()), indices: new Uint32Array(f.flat()) };
+}
+// A closed cylinder along z: radius r, z from z0 to z1, n segments, `rings` bands, as a soup.
+function cylinder(r, z0, z1, n = 64, rings = 1) {
+  const pos = [];
+  const pt = (i, j) => { const a = (2 * Math.PI * i) / n; return [r * Math.cos(a), r * Math.sin(a), z0 + ((z1 - z0) * j) / rings]; };
+  for (let i = 0; i < n; i++) {
+    const i2 = (i + 1) % n;
+    for (let j = 0; j < rings; j++) pos.push(...pt(i, j), ...pt(i2, j), ...pt(i2, j + 1), ...pt(i, j), ...pt(i2, j + 1), ...pt(i, j + 1));
+    pos.push(0, 0, z0, ...pt(i2, 0), ...pt(i, 0)); // bottom cap, facing -z
+    pos.push(0, 0, z1, ...pt(i, rings), ...pt(i2, rings)); // top cap, facing +z
+  }
+  return { positions: new Float64Array(pos) };
+}
+// A tube along z (a block with a bore): radii rIn < rOut, z from z0 to z1, as a soup.
+function tube(rIn, rOut, z0, z1, n = 64, rings = 1) {
+  const pos = [];
+  const pt = (r, i, j) => { const a = (2 * Math.PI * i) / n; return [r * Math.cos(a), r * Math.sin(a), z0 + ((z1 - z0) * j) / rings]; };
+  for (let i = 0; i < n; i++) {
+    const i2 = (i + 1) % n;
+    for (let j = 0; j < rings; j++) {
+      pos.push(...pt(rOut, i, j), ...pt(rOut, i2, j), ...pt(rOut, i2, j + 1), ...pt(rOut, i, j), ...pt(rOut, i2, j + 1), ...pt(rOut, i, j + 1));
+      pos.push(...pt(rIn, i, j), ...pt(rIn, i2, j + 1), ...pt(rIn, i2, j), ...pt(rIn, i, j), ...pt(rIn, i, j + 1), ...pt(rIn, i2, j + 1));
+    }
+    pos.push(...pt(rIn, i, 0), ...pt(rOut, i2, 0), ...pt(rOut, i, 0), ...pt(rIn, i, 0), ...pt(rIn, i2, 0), ...pt(rOut, i2, 0));
+    pos.push(...pt(rIn, i, rings), ...pt(rOut, i, rings), ...pt(rOut, i2, rings), ...pt(rIn, i, rings), ...pt(rOut, i2, rings), ...pt(rIn, i2, rings));
+  }
+  return { positions: new Float64Array(pos) };
+}
+
+describe("penetration depth", () => {
+  const depthOf = (ma, mb, a = cube(), b = cube()) => {
+    const w = createCollisionWorld({ meshes: new Map([["a", a], ["b", b]]) });
+    const mats = new Map([["a", ma], ["b", mb]]);
+    const d = w.depth("a", "b", mats);
+    expect(w.depth("b", "a", mats)).toBeCloseTo(d, 9); // the same reading either way round
+    w.dispose();
+    return d;
+  };
+  it("names the touching tolerance", () => {
+    expect(TOUCH_TOL_MM).toBe(0.02);
+  });
+  it("two boxes overlapping by 0.3 mm along X read 0.3", () => {
+    const d = depthOf(T(0), T(9.7));
+    expect(d).toBeGreaterThanOrEqual(0.25);
+    expect(d).toBeLessThanOrEqual(0.35);
+  });
+  it("box presses of 0.1 to 2 mm read within 0.05 mm", () => {
+    for (const press of [0.1, 0.5, 1, 2]) expect(Math.abs(depthOf(T(0), T(10 - press)) - press)).toBeLessThanOrEqual(0.05);
+  });
+  it("face-to-face touching reads within the touching tolerance", () => {
+    expect(depthOf(T(0), T(10))).toBeLessThanOrEqual(TOUCH_TOL_MM);
+  });
+  it("1 mm apart reads 0", () => {
+    expect(depthOf(T(0), T(11))).toBe(0);
+  });
+  it("a 3 mm pin in a 2.8 mm bore reads the 0.1 mm radial press", () => {
+    const d = depthOf(T(0), T(0), cylinder(1.5, -5, 15), tube(1.4, 5, 0, 10));
+    expect(d).toBeGreaterThanOrEqual(0.05);
+    expect(d).toBeLessThanOrEqual(0.15);
+  });
+  it("cylinder-in-bore presses of 0.1 to 2 mm read within 0.05 mm", () => {
+    for (const press of [0.1, 0.5, 1, 2]) {
+      const d = depthOf(T(0), T(0), cylinder(3, -5, 15), tube(3 - press, 8, 0, 10));
+      expect(Math.abs(d - press)).toBeLessThanOrEqual(0.05);
+    }
+  });
+  it("a 0.4 mm wall pressed 0.3 mm into a block reads 0.3", () => {
+    const d = depthOf(T(0), T(0), box([3, -5, 9.7], [3.4, 15, 20]), cube(10));
+    expect(d).toBeGreaterThanOrEqual(0.25);
+    expect(d).toBeLessThanOrEqual(0.35);
+  });
+  it("a small cube wholly inside a large one reads at least its distance to the wall", () => {
+    expect(depthOf(T(0), T(2, 4, 4), cube(10), cube(2))).toBeGreaterThanOrEqual(2);
+  });
+  it("two crossed bars with no vertex inside the other read the overlap", () => {
+    // a bar along X and a bar along Y crossing off-centre, overlapping 1 mm in z: no vertex
+    // of either lies inside the other, only the stretch of the edges through it
+    const d = depthOf(T(0), T(0), box([-50, -1, -1], [50, 1, 1]), box([6, -50, 0], [8, 50, 2]));
+    expect(d).toBeGreaterThan(TOUCH_TOL_MM);
+    expect(Math.abs(d - 1)).toBeLessThanOrEqual(0.05);
+  });
+  it("follows the mats contract: null excludes, a missing key is the identity", () => {
+    const w = createCollisionWorld({ meshes: new Map([["a", cube()], ["b", cube()]]) });
+    expect(w.depth("a", "b", new Map([["b", T(9.5)]]))).toBeCloseTo(0.5, 6);
+    expect(w.depth("a", "b", new Map([["a", null], ["b", T(9.5)]]))).toBe(0);
+    expect(w.depth("a", "b", new Map([["b", null]]))).toBe(0);
+    w.dispose();
+  });
+  it("reads a turned placement", () => {
+    // b turned a quarter about z ((x, y) -> (-y, x): x from -10 to 0), then moved 19.6 along
+    // X, so it spans 9.6 to 19.6 and presses 0.4 into a
+    const d = depthOf(T(0), [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 19.6, 0, 0, 1]);
+    expect(Math.abs(d - 0.4)).toBeLessThanOrEqual(0.05);
   });
 });
