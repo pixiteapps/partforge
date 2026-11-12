@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createCollisionWorld, poseMatrices, relativeMatsAt, TOUCH_TOL_MM } from "../src/framework/collide/world.js";
+import { createCollisionWorld, buildIndex, poseMatrices, relativeMatsAt, TOUCH_TOL_MM } from "../src/framework/collide/world.js";
 import { normalizeCollisions } from "../src/framework/collide/declaration.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import drawerBox from "../src/parts/drawer-box.js";
@@ -299,6 +299,42 @@ describe("penetration depth", () => {
     const knuckles = merged(tube(2.9, 6, 0, 5), tube(2.9, 6, 10, 15));
     const d = depthOf(T(0), T(0), cylinder(3, -5, 20), knuckles);
     expect(Math.abs(d - 0.1)).toBeLessThanOrEqual(0.02);
+  });
+  // A mesh moved by (x, y, z), as a soup.
+  const moved = (m, x, y, z) => {
+    const s = merged(m).positions;
+    for (let i = 0; i < s.length; i += 3) { s[i] += x; s[i + 1] += y; s[i + 2] += z; }
+    return { positions: s };
+  };
+  it("a body of one mesh buried in the other with no surface contact reads its depth, whatever its order", () => {
+    // B: a 100 mm box at 0..100. A: two cubes in one mesh, a 10 mm one at x 150..160
+    // (outside B) and a 20 mm one at 40..60 on every axis (buried in B, no surface
+    // contact). The buried cube's vertices, e.g. (40, 40, 40), are 40 mm from B's nearest
+    // faces, and no sample of it is deeper (every point of it is at least 40 from B's
+    // faces); nothing of B is inside A. So 40, with either cube listed first.
+    const outside = moved(cube(10), 150, 45, 45), buried = moved(cube(20), 40, 40, 40);
+    for (const a of [merged(outside, buried), merged(buried, outside)]) {
+      expect(Math.abs(depthOf(T(0), T(0), a, cube(100)) - 40)).toBeLessThanOrEqual(0.05);
+    }
+  });
+  it("a single body wholly nested with no surface contact reads its depth", () => {
+    // a 20 mm cube at 40..60 in a 100 mm box: every vertex 40 from the box's faces
+    expect(Math.abs(depthOf(T(0), T(40, 40, 40), cube(100), cube(20)) - 40)).toBeLessThanOrEqual(0.05);
+  });
+  it("two apart meshes whose boxes overlap read 0 without sampling", () => {
+    // an L of two bars and a cube in its crook: the boxes overlap, the surfaces are 1 mm apart
+    const ell = merged(box([0, 0, 0], [30, 5, 5]), box([0, 5, 0], [5, 30, 5]));
+    const ixA = buildIndex(ell), ixB = buildIndex(moved(cube(10), 6, 6, 0));
+    // the sampler asks closestPoint of every sample; the shortcut (a distance check and one
+    // parity ray per connected component) never does
+    let queries = 0;
+    for (const ix of [ixA, ixB]) { const f = ix.bvh.closestPoint; ix.bvh.closestPoint = (...args) => { queries++; return f(...args); }; }
+    const w = createCollisionWorld({ indexes: new Map([["a", ixA], ["b", ixB]]) });
+    const mats = new Map();
+    expect(w.depth("a", "b", mats)).toBe(0);
+    expect(w.depth("b", "a", mats)).toBe(0);
+    expect(queries).toBe(0); // no sample was looked at
+    w.dispose();
   });
   it("follows the mats contract: null excludes, a missing key is the identity", () => {
     const w = createCollisionWorld({ meshes: new Map([["a", cube()], ["b", cube()]]) });

@@ -23,13 +23,14 @@
 // volume, it is a parity test as world.inside uses.
 //
 // Cost: a pair whose boxes do not overlap costs nothing, and one whose surfaces neither
-// touch nor nest one in the other costs a distance check (0). Otherwise one ray query per
+// touch nor nest one in the other costs a distance check and a parity test per connected
+// component of each (0; components are found once per index). Otherwise one ray query per
 // edge through the other's box, and per sample a nearest-point query capped at the best
 // depth found so far (a sample with surface that near cannot raise it), then, for the rest,
 // the full query and the inside test.
 import { insideShared } from "../oracle/bvh.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
-import { IDENTITY } from "./motion.js";
+import { IDENTITY, applyMat } from "./motion.js";
 
 /** A depth (mm) at or below this is touching, not pressing in. */
 export const TOUCH_TOL_MM = 0.02;
@@ -81,25 +82,30 @@ function tupleSet(k) {
       i = (i + 1) & (table.length - 1);
     }
   };
+  // The tuple's index, in order of first sight; `fresh` says whether this call added it.
+  const id = (src, o) => {
+    const i = slot(src, o);
+    if (table[i] !== -1) return { index: table[i], fresh: false };
+    if (k * n === keys.length) { const g = new Float64Array(2 * keys.length); g.set(keys); keys = g; }
+    for (let j = 0; j < k; j++) keys[k * n + j] = src[o + j];
+    table[i] = n++;
+    if (2 * n > table.length) { // keep the table at most half full
+      table = new Int32Array(2 * table.length).fill(-1);
+      for (let e = 0; e < n; e++) table[slot(keys, k * e)] = e;
+    }
+    return { index: n - 1, fresh: true };
+  };
   return {
-    add(src, o = 0) {
-      const i = slot(src, o);
-      if (table[i] !== -1) return false;
-      if (k * n === keys.length) { const g = new Float64Array(2 * keys.length); g.set(keys); keys = g; }
-      for (let j = 0; j < k; j++) keys[k * n + j] = src[o + j];
-      table[i] = n++;
-      if (2 * n > table.length) { // keep the table at most half full
-        table = new Int32Array(2 * table.length).fill(-1);
-        for (let e = 0; e < n; e++) table[slot(keys, k * e)] = e;
-      }
-      return true;
-    },
+    add: (src, o = 0) => id(src, o).fresh,
+    id: (src, o = 0) => id(src, o).index,
   };
 }
 
 // Ray steps past a hit (in units of the edge's length): past rounding, never past a
 // neighbouring hit that matters (two hits this close bound no stretch worth sampling).
 const STEP_T = 1e-9;
+// Crossings looked for along one edge: past this many, the stretches left collapse into one
+// midpoint (a sample still, never a dropped stretch).
 const MAX_HITS = 256;
 // How finely the depth is resolved (mm): a sample deeper than the best so far by less than
 // this is not looked at again. Far under TOUCH_TOL_MM and any mesh's faceting.
@@ -163,6 +169,38 @@ function windingOf(ix) {
   return w;
 }
 
+// One vertex of each connected component of a JS index (triangles joined through shared
+// vertex positions), as [x, y, z] in its own frame. Read once per index.
+const COMPONENTS = new WeakMap();
+function componentVertices(ix) {
+  let reps = COMPONENTS.get(ix);
+  if (reps) return reps;
+  const V = ix.vertices, corners = V.length / 3;
+  const ids = tupleSet(3), vertexOf = new Int32Array(corners);
+  for (let c = 0; c < corners; c++) vertexOf[c] = ids.id(V, 3 * c);
+  const parent = new Int32Array(corners).map((_, i) => i); // over vertex ids (at most `corners`)
+  const root = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
+  for (let c = 0; c < corners; c += 3) {
+    const r = root(vertexOf[c]);
+    for (const other of [vertexOf[c + 1], vertexOf[c + 2]]) { const o = root(other); if (o !== r) parent[o] = r; }
+  }
+  reps = [];
+  const seen = new Set();
+  for (let c = 0; c < corners; c++) {
+    const r = root(vertexOf[c]);
+    if (!seen.has(r)) { seen.add(r); reps.push([V[3 * c], V[3 * c + 1], V[3 * c + 2]]); }
+  }
+  COMPONENTS.set(ix, reps);
+  return reps;
+}
+
+// Whether any connected component of `src` placed by mSrc lies inside `dst` placed by mDst
+// (a parity test at one vertex of each). insideOf tests only a mesh's first vertex, which
+// misses a buried body when another body of the same mesh comes first.
+function anyComponentInside(src, mSrc, dst, mDst) {
+  return componentVertices(src).some((v) => insideShared(dst, applyMat(mSrc, v), mDst));
+}
+
 // Whether point p, whose nearest surface point is q on triangle `tri` of `dst`, is inside
 // dst. When p - q runs along the triangle's normal (q is p's foot on that face), the side of
 // the face decides it, read against the mesh's winding; otherwise (q on an edge or a corner,
@@ -202,8 +240,10 @@ function deepestInside(src, dst, dstBox, R, floor) {
 export function penetrationDepth(bvhA, boxA, ma, bvhB, boxB, mb) {
   if (!boxA || !boxB || !overlaps(placedBox(boxA, ma), placedBox(boxB, mb))) return 0;
   const A = jsOf(bvhA), B = jsOf(bvhB);
-  // surfaces that neither touch nor cross: apart, unless one is wholly inside the other
-  if (!A.withinDistancePosed(B, ma, mb, 0) && !A.insideOf(B, ma, mb) && !B.insideOf(A, mb, ma)) return 0;
+  // surfaces that neither touch nor cross: apart, unless a body of one is wholly inside the
+  // other
+  // (any connected component of either: one mesh can hold several bodies)
+  if (!A.withinDistancePosed(B, ma, mb, 0) && !anyComponentInside(A, ma, B, mb) && !anyComponentInside(B, mb, A, ma)) return 0;
   const aInB = mulMat4(invertRigid(mb), ma), bInA = mulMat4(invertRigid(ma), mb);
   const ab = deepestInside(A, B, boxB, aInB, 0);
   return deepestInside(B, A, boxA, bInA, ab);
