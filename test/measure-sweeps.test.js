@@ -292,6 +292,12 @@ describe("sweeps that may touch, gated", () => {
 // a part's FIRST view, and a case's hinge turns in its third).
 describe("sweeps run where the motion is, whatever view is verified", () => {
   const gateOf = (v) => v.cases[0].checks.find((c) => c.metric === "sweepContacts");
+  const inspectReport = async (part, msg = {}) => {
+    const posted = [];
+    await handle(k, part, { type: "inspect", params: {}, ...msg }, (m) => posted.push(m));
+    return posted.find((m) => m.type === "report");
+  };
+  const stripMs = (rows) => rows?.map(({ ms: _ms, ...r }) => r);
 
   it("a hinge that turns only in `assembly` is swept when `base` is verified", () => {
     const part = hingeViews("buried");
@@ -301,18 +307,18 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
     expect(v.ok).toBe(false);
     const gate = gateOf(v);
     expect(gate).toMatchObject({ status: "fail", actual: 1 });
-    const row = gate.rows.find((r) => r.view === "assembly");
-    expect(row).toMatchObject({ name: "open", clear: false });
-    expect(row.contacts.some((c) => c.allowed === false)).toBe(true);
     expect(gate.location).toHaveLength(3);
+    expect("rows" in gate).toBe(false);
+    expect(v.sweeps).toHaveLength(1);
+    expect(v.sweeps[0]).toMatchObject({ name: "open", clear: false, view: "assembly" });
+    expect(v.sweeps[0].contacts.some((c) => c.allowed === false)).toBe(true);
   }, SLOW);
 
   it("the working hinge passes from `base`, its row read in `assembly`", () => {
     const v = verify(k, hingeViews("working"), { view: "base" });
     expect(v.ok).toBe(true);
-    const gate = gateOf(v);
-    expect(gate).toMatchObject({ status: "pass", actual: 0 });
-    expect(gate.rows).toEqual([expect.objectContaining({ name: "open", clear: true, view: "assembly" })]);
+    expect(gateOf(v)).toMatchObject({ status: "pass", actual: 0 });
+    expect(v.sweeps).toEqual([expect.objectContaining({ name: "open", clear: true, view: "assembly" })]);
   }, SLOW);
 
   it("an expired deadline stops the other view's sweep: today's warning, the gate withheld", () => {
@@ -320,20 +326,20 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
     expect(v.ok).toBe(null);
     expect(v.warnings.filter((c) => c.metric === "sweeps").map((c) => c.message)).toEqual(["1 sweep(s) stopped at the time budget: open"]);
     expect(gateOf(v)).toMatchObject({ status: "skip", actual: null, unevaluated: true });
-    expect(gateOf(v).rows).toEqual([expect.objectContaining({ name: "open", skipped: "timeout", view: "assembly" })]);
+    expect(v.sweeps).toEqual([expect.objectContaining({ name: "open", skipped: "timeout", view: "assembly" })]);
   }, SLOW);
 
-  it("rows run in the verified view keep their shape: no `view`, no `rows` on the gate", () => {
+  it("rows run in the verified view keep their shape: no `view`, no `sweeps` on verify", () => {
     const single = { ...buriedAxis, verify: { ...buriedAxis.verify, expect: { _view: { sweepContacts: 0 } } } };
     const m = measure(k, single, "assembly");
     expect(m.sweeps.every((r) => !("view" in r))).toBe(true);
-    const one = gateOf(verify(k, single, { view: "assembly" }));
-    expect(one).toMatchObject({ status: "fail", actual: 1 });
-    expect("rows" in one).toBe(false);
+    const one = verify(k, single, { view: "assembly" });
+    expect(gateOf(one)).toMatchObject({ status: "fail", actual: 1 });
+    expect("sweeps" in one).toBe(false);
     // the four-view part verified where it moves runs nothing elsewhere
-    const own = gateOf(verify(k, hingeViews("buried"), { view: "assembly" }));
-    expect(own).toMatchObject({ status: "fail", actual: 1 });
-    expect("rows" in own).toBe(false);
+    const own = verify(k, hingeViews("buried"), { view: "assembly" });
+    expect(gateOf(own)).toMatchObject({ status: "fail", actual: 1 });
+    expect("sweeps" in own).toBe(false);
   }, SLOW);
 
   it("the first view in `part.views` order that moves it is the one swept", () => {
@@ -345,8 +351,30 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
         lid: { ...base.parts.lid, views: { ...base.parts.lid.views, demo: base.parts.lid.views.assembly } } },
       views: { ...base.views, demo: { label: "Demo" } },
     };
-    const gate = gateOf(verify(k, twice, { view: "print" }));
-    expect(gate.rows.map((r) => [r.name, r.view])).toEqual([["open", "assembly"]]);
+    const v = verify(k, twice, { view: "print" });
+    expect(v.sweeps.map((r) => [r.name, r.view])).toEqual([["open", "assembly"]]);
+  }, SLOW);
+
+  it("a handle's DOF that moves only elsewhere runs there, though a sibling DOF moved here", () => {
+    // `slide` moves the lid in `base` (well clear of the base), `open` only in `assembly`:
+    // the handle's two entries are swept in two views, each where it moves something
+    const base = hingeViews("buried", { gated: false });
+    const part = {
+      ...base,
+      parameters: [{ ...base.parameters[0], controls: [...base.parameters[0].controls,
+        { key: "slide", label: "Slide", unit: "mm", min: 0, max: 10, step: 1, description: "Slides the lid aside." }] }],
+      defaults: { open: 0, slide: 0 },
+      handles: { lid: { point: () => [15, 10, 20], params: ["slide", "open"], drag: "plane", normal: [0, 0, 1] } },
+      parts: { ...base.parts,
+        base: { ...base.parts.base },
+        lid: { ...base.parts.lid, views: { ...base.parts.lid.views, base: (s, p) => s.translate([100 + p.slide, 0, 0]) } } },
+      verify: { sweeps: { lid: { handle: "lid", clearance: 0 } } },
+    };
+    const own = measure(k, part, "base").sweeps;
+    expect(own.map((r) => r.name)).toEqual(["lid.slide"]);
+    const v = verify(k, part, { view: "base" });
+    expect(v.sweeps.map((r) => [r.name, r.view])).toEqual([["lid.open", "assembly"]]);
+    expect(v.sweeps[0].clear).toBe(false);
   }, SLOW);
 
   it("a quick lap still never sweeps, in any view", () => {
@@ -354,18 +382,29 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
     const seed = measure(k, part, "base", {}, { sweeps: false });
     const v = verify(k, part, { view: "base", quick: true, seed: { params: {}, result: seed } });
     expect(gateOf(v)).toMatchObject({ unevaluated: true, message: "not measured (quick check)" });
-    expect("rows" in gateOf(v)).toBe(false);
+    expect("sweeps" in v).toBe(false);
   }, SLOW);
 
-  it("the inspect job verifies its first view with the other view's rows", async () => {
-    const posted = [];
-    await handle(k, hingeViews("buried"), { type: "inspect", view: "base", params: {} }, (msg) => posted.push(msg));
-    const report = posted.find((msg) => msg.type === "report");
-    expect(report.measure.sweeps).toEqual([]); // measure keeps its own view
-    expect(report.verify.ok).toBe(false);
-    const gate = gateOf(report.verify);
-    expect(gate).toMatchObject({ status: "fail", actual: 1 });
-    expect(gate.rows.map((r) => r.view)).toEqual(["assembly"]);
+  it("the inspect report's measure.sweeps carries the other view's rows, gate or no gate", async () => {
+    const ungated = await inspectReport(hingeViews("buried", { gated: false }), { view: "base" });
+    expect(ungated.measure.sweeps).toHaveLength(1);
+    const [row] = ungated.measure.sweeps;
+    expect(row).toMatchObject({ name: "open", view: "assembly", clear: false });
+    expect(row.contacts.some((c) => [c.a, c.b].sort().join() === "base,lid" && c.allowed === false)).toBe(true);
+    expect(ungated.verify.cases[0].checks.some((c) => c.metric === "sweepContacts")).toBe(false);
+
+    const gated = await inspectReport(hingeViews("buried"), { view: "base" });
+    expect(stripMs(gated.measure.sweeps)).toEqual(stripMs(ungated.measure.sweeps));
+    expect(gated.verify.ok).toBe(false);
+    expect(gateOf(gated.verify)).toMatchObject({ status: "fail", actual: 1 });
+  }, SLOW);
+
+  it("a single-view part's report has no other-view rows anywhere", async () => {
+    const single = { ...buriedAxis, verify: { ...buriedAxis.verify, expect: { _view: { sweepContacts: 0 } } } };
+    const r = await inspectReport(single, { view: "assembly" });
+    expect(stripMs(r.measure.sweeps)).toEqual(stripMs(measure(k, single, "assembly").sweeps));
+    expect("sweeps" in r.verify).toBe(false);
+    expect(r.measure.sweeps.every((row) => !("view" in row))).toBe(true);
   }, SLOW);
 });
 
@@ -388,6 +427,13 @@ describe("the CLI sweeps line", () => {
   it("an allowed rub reads clear, with the rub and its depth", () => {
     expect(sweepText(clearRow)).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed)");
     expect(sweepText({ ...clearRow, contacts: [rub, { ...rub, from: 80.5 }] })).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed) (+1 more)");
+  });
+
+  it("(+N more) counts the contacts a row's cap left off", () => {
+    const hit = { ...rub, allowed: false, depth: 1 };
+    const row = { ...clearRow, clear: false, clearance: 0, freeRange: null, contacts: [hit, { ...hit, from: 60 }], contactsOmitted: 3 };
+    expect(sweepText(row)).toBe("open CONTACT at 40 base×lid (1.00mm deep) driven by open (+4 more)");
+    expect(sweepText({ ...clearRow, contactsOmitted: 2 })).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed) (+2 more)");
   });
 
   it("a resting touch on a clear row prints nothing extra", () => {

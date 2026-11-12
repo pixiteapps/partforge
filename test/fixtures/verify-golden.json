@@ -15033,6 +15033,104 @@
   "hand.js#print": {
     "ok": null,
     "view": "print",
+    "sweeps": [
+      {
+        "name": "indexKnuckle",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 252,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399992811,
+          "a": "indexKnuckle",
+          "b": "indexProximal",
+          "at": [
+            -21.8821663,
+            1.18108077e-14,
+            157.582779
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          90
+        ],
+        "view": "assembly"
+      },
+      {
+        "name": "indexCurl",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399995822,
+          "a": "indexMiddle",
+          "b": "indexDistal",
+          "at": [
+            -35.5827473,
+            24.9225825,
+            211.372544
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          1
+        ],
+        "view": "assembly"
+      },
+      {
+        "name": "thumbKnuckle",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 67,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399993345,
+          "a": "thumbProximal",
+          "b": "thumbDistal",
+          "at": [
+            -66.4584317,
+            23.109186,
+            137.536955
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          60
+        ],
+        "view": "assembly"
+      },
+      {
+        "name": "thumbCurl",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 66,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399988917,
+          "a": "thumbProximal",
+          "b": "thumbDistal",
+          "at": [
+            -63.4310279,
+            19.7064001,
+            141.241196
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          1
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -32090,6 +32188,32 @@
   "robot-finger.js#print": {
     "ok": true,
     "view": "print",
+    "sweeps": [
+      {
+        "name": "curl",
+        "clear": true,
+        "clearance": 0,
+        "steps": 361,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.400000095,
+          "a": "proximal",
+          "b": "middle",
+          "at": [
+            3.20000005,
+            0.324833453,
+            56.9911995
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          1
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",

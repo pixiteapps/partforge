@@ -1,6 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { runSweeps } from "./sweep.js";
+import { readSweep } from "../collide/sweep-targets.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { sweepContactBlocks } from "../collide/pairs.js";
@@ -293,24 +294,45 @@ const SWEEP_UNREADABLE_HINT = "these sweeps could not run (the error follows eac
 // SWEEPS WHERE THE MOTION IS (spec 2026-11-12-moving-fits-swept-design.md, A: "Every view
 // is scanned, whatever view is being verified"). The hosting app verifies a part's FIRST
 // view, and a hinge often turns only in a later one (`assembly`), so a sweep that moves
-// nothing in the verified view would never run. Each declared sweep with no row of its own
-// here runs in the first other view, in `part.views` order, where it moves something, under
-// the same deadline; its row carries `view`. `ownRows` are the verified view's rows (their
-// names are the sweeps already run). Never throws: a view whose sweeps cannot be read adds
-// nothing.
+// nothing in the verified view would never run. Each declared sweep ENTRY with no row of
+// its own here runs in the first other view, in `part.views` order, where it moves
+// something, under the same deadline; its row carries `view`. Entries, not declarations: a
+// handle expands to one entry per DOF ("<key>.<param>"), and one DOF can move a piece here
+// while another moves one only elsewhere. `ownRows` are the verified view's rows. Only the
+// declarations with an entry still to run are read in each further view, and the walk ends
+// once none is left, so a view with nothing left costs nothing. Past the deadline an entry
+// still costs the motion scan that finds its view (geometry-free), which is what names it
+// in the timed-out warning; nothing else runs. Never throws: a view or declaration that
+// cannot be read adds nothing.
 function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
+  const decl = part.verify?.sweeps;
+  if (!decl || typeof decl !== "object" || Array.isArray(decl)) return [];
   const done = new Set(ownRows.map((r) => r.name));
+  const full = { ...part.defaults, ...params };
+  const pending = new Map(); // declaration key → its entry names (a goal handle has none)
+  for (const [key, spec] of Object.entries(decl)) {
+    let names;
+    try {
+      const r = readSweep(part, key, spec, full);
+      names = r.goal ? [] : r.entries.map((e) => e.name);
+    } catch {
+      continue;
+    }
+    if (names.some((n) => !done.has(n))) pending.set(key, names);
+  }
   const out = [];
   for (const other of Object.keys(part.views ?? {})) {
+    if (!pending.size) break;
     if (other === view) continue;
     let rows;
     try {
-      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, exclude: done });
+      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, only: new Set(pending.keys()), exclude: done });
     } catch {
       continue;
     }
     if (rows.length) kernel.cleanup?.();
     for (const r of rows) { done.add(r.name); out.push({ ...r, view: other }); }
+    for (const [key, names] of pending) if (names.every((n) => done.has(n))) pending.delete(key);
   }
   return out;
 }
@@ -521,6 +543,11 @@ function flexChecks(facts, flex) {
 // supports and MEASURE NOTHING. What that leaves unchecked is reported as
 // `unevaluated` rather than quietly downgraded, and one unevaluated gate withholds
 // `ok` — a fast lap yields facts, never a verdict.
+// `deadline` (an absolute Date.now() reading) bounds every sweep this verify runs, here and
+// in other views; absent, it is the report share counted from the call.
+// The result: { ok, view, sweeps?, cases, failures, warnings, … }. `sweeps` holds the rows
+// of the declared sweeps that move nothing in `view` and were run in the first other view
+// where they move something, each row with that `view`; absent when there are none.
 export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline, motionBudgetMs } = {}) {
   view = view ?? Object.keys(part.views)[0];
   // Every sweep of one verify, in this view and in others, shares ONE deadline: the
@@ -684,10 +711,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // The sweeps that move nothing here, run where they move something; their rows join the
   // one entry that carries this view's (a copy: a seed's result is the caller's object).
   const swept = part.verify?.sweeps && !quick ? entries.find((e) => Array.isArray(e.result?.sweeps)) : null;
-  if (swept) {
-    const elsewhere = sweepsElsewhere(kernel, part, view, swept.params, swept.result.sweeps, sweepDeadline);
-    if (elsewhere.length) swept.result = { ...swept.result, sweeps: [...swept.result.sweeps, ...elsewhere] };
-  }
+  const elsewhere = swept ? sweepsElsewhere(kernel, part, view, swept.params, swept.result.sweeps, sweepDeadline) : [];
+  if (elsewhere.length) swept.result = { ...swept.result, sweeps: [...swept.result.sweeps, ...elsewhere] };
   // The sweep rows reach one case only (the one that ran them, or the reused seed), so
   // their stopped-short notices are raised once, on the first case whose facts carry them.
   let sweepsNoticed = false;
@@ -702,9 +727,6 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
         ? { ...c, unevaluated: true, message: "not measured (quick check)", hint: "sweeps do not run on a quick lap — re-run this check without `quick` to evaluate the declared sweeps" }
         : c));
     }
-    // Rows read in another view are nowhere else in a report (measure keeps to its own
-    // view), so the gate carries every row it read.
-    if (facts.sweeps?.some((r) => r.view)) checks = checks.map((c) => (c.metric === "sweepContacts" ? { ...c, rows: facts.sweeps } : c));
     if (facts.sweeps && !sweepsNoticed) { sweepsNoticed = true; checks = [...checks, ...sweepNotices(facts.sweeps)]; }
     return { name, params, checks };
   });
@@ -766,6 +788,10 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // part on which nothing was evaluated has no verdict to give.
     ok: failures.length ? false : unevaluated.length || evaluated === 0 ? null : true,
     view,
+    // The rows of the sweeps run in another view (sweepsElsewhere), each with its `view`;
+    // absent when none ran elsewhere. measure() keeps to its own view, so this is the only
+    // place they surface (the inspect job appends them to its report's measure.sweeps).
+    ...(elsewhere.length ? { sweeps: elsewhere } : {}),
     cases: caseResults,
     failures,
     warnings,

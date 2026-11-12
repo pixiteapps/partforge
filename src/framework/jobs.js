@@ -720,6 +720,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           deadline: inspectStart + REPORT_SHARE_MS,
         }),
       };
+      // The sweeps verify ran in another view (it verifies this one, and they move nothing
+      // here) join this view's rows, so a consumer reads every sweep row in one list.
+      if (report.verify.sweeps?.length) report.measure = { ...measured, sweeps: [...(measured.sweeps ?? []), ...report.verify.sweeps] };
       // `match` is present only when the caller asked for it AND something scored, so
       // an inspect with no `matchTargets` answers on exactly the shape it always has.
       const match = await scoreMatchTargets(built, msg.matchTargets, onProgress);

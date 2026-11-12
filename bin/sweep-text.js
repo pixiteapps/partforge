@@ -5,6 +5,7 @@ import { TOUCH_TOL_MM } from "../src/framework/collide/depth.js";
 
 const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 const mm = (d) => `${d.toFixed(2)}mm`;
+const moreText = (n) => (n > 0 ? ` (+${n} more)` : "");
 
 /**
  * Clear with its tightest pair, then (a sweep that may touch or press in) its first allowed
@@ -15,20 +16,22 @@ const mm = (d) => `${d.toFixed(2)}mm`;
 export function sweepText(s) {
   if (s.skipped) return `${s.name} skipped (${s.skipped})`;
   const capped = s.capped ? " (capped)" : "";
+  // contacts the row's cap left off (oracle/sweep.js capContacts) are more of them too
+  const omitted = s.contactsOmitted ?? 0;
   const touching = s.clearance <= 0;
   if (s.clear) {
     const m = s.minClearance;
     // an allowed stretch that only touches (a lid resting closed) is not a rub
     const rubs = (s.contacts ?? []).filter((c) => c.allowed && c.depth > TOUCH_TOL_MM);
     const rub = rubs.length
-      ? `, rub at ${fmtV(rubs[0].from)} ${pairKey(rubs[0].a, rubs[0].b)} (${mm(rubs[0].depth)}, allowed)${rubs.length > 1 ? ` (+${rubs.length - 1} more)` : ""}`
+      ? `, rub at ${fmtV(rubs[0].from)} ${pairKey(rubs[0].a, rubs[0].b)} (${mm(rubs[0].depth)}, allowed)${moreText(rubs.length - 1 + omitted)}`
       : "";
     return `${s.name} clear${m ? ` (min ${mm(m.distance)} ${pairKey(m.a, m.b)})` : ""}${rub}${capped}`;
   }
   const blocking = s.contacts.filter((x) => sweepContactBlocks(s, x));
   const c = blocking[0] ?? s.contacts[0];
   const free = s.freeRange ? `, free [${s.freeRange.map(fmtV).join(", ")}]` : "";
-  const more = blocking.length > 1 ? ` (+${blocking.length - 1} more)` : "";
+  const more = moreText(blocking.length - 1 + omitted);
   const deep = touching && c.depth != null ? ` (${mm(c.depth)} deep)` : "";
   return `${s.name} CONTACT at ${fmtV(c.from)} ${pairKey(c.a, c.b)}${deep}${c.unresolved ? " (unresolved)" : ""} driven by ${c.driver ?? "?"}${free}${more}${capped}`;
 }
