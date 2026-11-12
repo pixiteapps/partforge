@@ -185,10 +185,14 @@ test("motion-unswept: a motion with no finite range asks for a min and max", () 
   expect(f[0].hint).toBe('Give the "open" control a min and max, then add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.');
 });
 
-test("motion-unswept: hinged-box as it stands warns for its lid angle", async () => {
+// hinged-box.js declares both its sweeps; without them its two pose params are motions.
+test("motion-unswept: hinged-box is clean, and warns for both pose params with its sweeps taken off", async () => {
   const part = (await import("../src/parts/hinged-box.js")).default;
-  const f = unswept(part);
+  expect(unswept(part)).toEqual([]);
+  const { sweeps: _sweeps, ...verify } = part.verify;
+  const f = unswept({ ...part, verify });
   expect(f.find((x) => x.message.startsWith('"lidAngle" moves lid against base'))).toBeTruthy();
+  expect(f.find((x) => x.message.startsWith('"lidLift" moves lid against base'))).toBeTruthy();
   for (const x of f) expect(x.severity).toBe("warning");
 });
 

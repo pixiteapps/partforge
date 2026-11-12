@@ -28712,7 +28712,7 @@
     "evaluated": 777
   },
   "hinged-box.js#box": {
-    "ok": null,
+    "ok": true,
     "view": "box",
     "cases": [
       {
@@ -28745,6 +28745,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -28858,30 +28869,6 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 10"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid against base in view \"box\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidLift",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidLift\"",
-            "hint": "\"lidLift\" moves lid against base in view \"box\" and no sweep checks that motion. Add verify.sweeps: { lidLift: { param: \"lidLift\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -28889,36 +28876,9 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid against base in view \"box\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      },
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidLift",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidLift\"",
-        "hint": "\"lidLift\" moves lid against base in view \"box\" and no sweep checks that motion. Add verify.sweeps: { lidLift: { param: \"lidLift\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
-    "declared": 13,
-    "evaluated": 11
+    "unevaluated": [],
+    "declared": 12,
+    "evaluated": 12
   },
   "hull-sweep.js#sweep": {
     "ok": null,
@@ -29436,7 +29396,7 @@
     "evaluated": 13
   },
   "lattice-box.js#assembly": {
-    "ok": null,
+    "ok": true,
     "view": "assembly",
     "cases": [
       {
@@ -29469,6 +29429,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29754,18 +29725,6 @@
             "status": "skip",
             "pass": null,
             "message": "unavailable"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -29850,27 +29809,54 @@
       }
     ],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
+    "unevaluated": [],
     "declared": 21,
-    "evaluated": 19
+    "evaluated": 20
   },
   "lattice-box.js#body": {
-    "ok": null,
+    "ok": true,
     "view": "body",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -29902,6 +29888,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29954,18 +29951,6 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 10"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -29973,27 +29958,54 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
+    "unevaluated": [],
     "declared": 7,
-    "evaluated": 6
+    "evaluated": 7
   },
   "lattice-box.js#lid": {
-    "ok": null,
+    "ok": true,
     "view": "lid",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -30025,6 +30037,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -30077,18 +30100,6 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 10"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -30096,27 +30107,54 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
+    "unevaluated": [],
     "declared": 7,
-    "evaluated": 6
+    "evaluated": 7
   },
   "lattice-box.js#mesh": {
-    "ok": null,
+    "ok": true,
     "view": "mesh",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -30148,6 +30186,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -30200,18 +30249,6 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 10"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -30219,27 +30256,54 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
+    "unevaluated": [],
     "declared": 7,
-    "evaluated": 6
+    "evaluated": 7
   },
   "lattice-box.js#plate": {
-    "ok": null,
+    "ok": true,
     "view": "plate",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -30271,6 +30335,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -30323,18 +30398,6 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 10"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -30342,27 +30405,54 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
+    "unevaluated": [],
     "declared": 7,
-    "evaluated": 6
+    "evaluated": 7
   },
   "lattice-box.js#print": {
-    "ok": null,
+    "ok": true,
     "view": "print",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -30394,6 +30484,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -30584,18 +30685,6 @@
             "status": "pass",
             "pass": true,
             "message": "100 >= 10"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "lidAngle",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"lidAngle\"",
-            "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -30603,23 +30692,9 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "lidAngle",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"lidAngle\"",
-        "hint": "\"lidAngle\" moves lid, mesh against body, plate in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { lidAngle: { param: \"lidAngle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
+    "unevaluated": [],
     "declared": 19,
-    "evaluated": 18
+    "evaluated": 19
   },
   "lofted-bottle.js#bottle": {
     "ok": true,
@@ -31777,6 +31852,17 @@
           },
           {
             "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
             "subpart": "turret×upperArm",
             "metric": "clearance",
             "kind": "gate",
@@ -31812,18 +31898,6 @@
             "scope": "view",
             "subpart": null,
             "metric": "sweepCoverage",
-            "expr": "gripper",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"gripper\"",
-            "hint": "\"gripper\" moves fingerL, fingerR against pedestal, turret, upperArm, forearm, hand in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { gripper: { param: \"gripper\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
             "expr": "base",
             "actual": null,
             "status": "skip",
@@ -31831,18 +31905,6 @@
             "unevaluated": true,
             "message": "no sweep declared for \"base\"",
             "hint": "\"base\" moves turret, upperArm, forearm, hand, fingerL, fingerR against pedestal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { base: { param: \"base\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "wristRoll",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"wristRoll\"",
-            "hint": "\"wristRoll\" moves turret, upperArm, forearm, hand, fingerL, fingerR against pedestal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristRoll: { param: \"wristRoll\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -31856,19 +31918,6 @@
         "scope": "view",
         "subpart": null,
         "metric": "sweepCoverage",
-        "expr": "gripper",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"gripper\"",
-        "hint": "\"gripper\" moves fingerL, fingerR against pedestal, turret, upperArm, forearm, hand in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { gripper: { param: \"gripper\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      },
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
         "expr": "base",
         "actual": null,
         "status": "skip",
@@ -31876,23 +31925,10 @@
         "unevaluated": true,
         "message": "no sweep declared for \"base\"",
         "hint": "\"base\" moves turret, upperArm, forearm, hand, fingerL, fingerR against pedestal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { base: { param: \"base\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      },
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "wristRoll",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"wristRoll\"",
-        "hint": "\"wristRoll\" moves turret, upperArm, forearm, hand, fingerL, fingerR against pedestal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristRoll: { param: \"wristRoll\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
       }
     ],
-    "declared": 7,
-    "evaluated": 4
+    "declared": 6,
+    "evaluated": 5
   },
   "robot-finger.js#assembly": {
     "ok": true,

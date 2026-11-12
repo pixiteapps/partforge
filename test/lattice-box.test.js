@@ -21,13 +21,12 @@ test("lidAngle animates without a rebuild (no animation-track-rebuilds note)", (
   expect(notes).not.toContain("animation-track-rebuilds");
 });
 
-// The assembly has no overlaps. The lid's hinge (lidAngle) has no declared sweep, so verify
-// holds its verdict on that alone (sweepCoverage, spec 2026-11-12-moving-fits-swept-design.md).
-test("verify finds no failure: the assembly has no overlaps", () => {
+// The assembly has no overlaps, and the lid's swing (its declared lidAngle sweep, gated by
+// sweepContacts) touches nothing it may not: the closed lid resting on the body is allowed.
+test("verify passes: no overlaps, and the lid swings clear", () => {
   const v = verify(k, part);
-  expect(v.failures).toEqual([]);
-  expect(v.ok).toBe(null);
-  expect(v.unevaluated.map((c) => [c.metric, c.expr])).toEqual([["sweepCoverage", "lidAngle"]]);
+  expect(v.ok).toBe(true);
+  expect(v.unevaluated).toEqual([]);
 });
 
 test("the 3MF of every printed piece lays them out apart", async () => {
