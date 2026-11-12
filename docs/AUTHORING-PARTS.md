@@ -3955,8 +3955,10 @@ Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or anim
 param with no finite min and max; a `range` that is not `[lo, hi]` with lo < hi; a handle
 whose point cannot be read; a `path` of fewer than two param objects; a spec that is not an
 object, or names no motion), `sweep-goal-handle` (a warning: a goal handle is never
-swept), `sweep-rebuilds` (a warning: a build changes along the motion, so the sweep
-rebuilds geometry at every step) and `motion-unswept` (a warning: a param moves one piece
+swept), `sweep-bad-clearance` (a warning: a `clearance` that is present but no finite
+number, which the sweep would replace with the declared default —
+[sweep-bad-clearance](ERROR-PATTERNS.md#sweep-bad-clearance)), `sweep-rebuilds` (a warning: a
+build changes along the motion, so the sweep rebuilds geometry at every step) and `motion-unswept` (a warning: a param moves one piece
 against another in some view and no sweep moves it there; the hint gives the sweep to add,
 always with `clearance: 0` —
 [motion-unswept](ERROR-PATTERNS.md#motion-unswept)).
@@ -4024,7 +4026,10 @@ anything), one row per sweep (per param for a handle sweep):
   interval at its finest width, so it is reported as a contact (conservatively, at most a
   hair inside clearance) rather than dropped.
 - **`freeRange`** (a param sweep): the contact-free span around the param's current value,
-  the suggested joint limit.
+  the suggested joint limit. It is the span the sweep proved, and on a sweep at a clearance
+  of 0 or below depth is read every 0.2 mm of travel (`DEPTH_STEP_MM`), so a dig between two
+  readings can pass the allowance by up to 0.1 mm: take a print margin off it before you
+  write it as the control's range.
 - **`skipped`**: `"timeout"` (the time budget ran out; the row keeps any contact it found),
   `"unreadable"` (with `error`: an unknown target) or `"no-motion"`.
 
@@ -4223,7 +4228,9 @@ is `open CONTACT at 40.19 base×lid (0.30mm deep)`
 ([sweep-contact-detent](ERROR-PATTERNS.md#sweep-contact-detent)). `collisions.allow` is never
 the answer for a detent: it exempts the pair at every depth, so a catch ten times too deep
 would pass. Whether the detent's arm survives the bend is `verify.flex`'s check, not the
-sweep's.
+sweep's. Depth is read as the distance to the other piece's surface, so it is at most about
+half the thinner wall: keep a detent's allowance well under half the thinnest moving wall,
+and keep the `travel` sweep's allowance tight.
 
 ## Probes: measuring geometry into the report
 

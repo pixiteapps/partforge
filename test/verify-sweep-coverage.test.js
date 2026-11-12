@@ -4,7 +4,7 @@
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { verify } from "../src/framework/oracle/verify.js";
-import { MOTION_HINT, uncoveredMotions } from "../src/framework/collide/motion-coverage.js";
+import { motionHint, uncoveredMotions } from "../src/framework/collide/motion-coverage.js";
 
 const SLOW = 120_000;
 let k;
@@ -35,7 +35,7 @@ const hinge = (v = watertight) => twoBox({
   verify: v,
 });
 const coverage = (r) => r.cases.flatMap((c) => c.checks).filter((c) => c.metric === "sweepCoverage");
-const hingeHint = () => MOTION_HINT(uncoveredMotions(hinge()).motions[0]);
+const hingeHint = () => motionHint(uncoveredMotions(hinge()).motions[0]);
 
 describe("verify sweepCoverage", () => {
   test("an unswept hinge holds the verdict", () => {

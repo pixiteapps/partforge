@@ -18,8 +18,8 @@ const SWEEP_SHAPES = "A sweep names one motion: `{ param: \"angle\" }` (a contro
 
 // Every declared sweep read ONCE per lint pass and shared by the three sweep rules (the
 // rules run on one ctx): `{ name, spec, read }`, plus `rebuilds()`, whether some view's
-// motion rebuilds a sub-part — sampled exactly as the engine's scanMotion samples it, an
-// untrusted placement or build included — computed on first ask.
+// motion rebuilds a sub-part — the engine's own scanMotion, an untrusted placement included
+// and an untrusted build judged by its reads — computed on first ask.
 const SWEEPS = new WeakMap();
 function sweepsOf(ctx) {
   let list = SWEEPS.get(ctx);
@@ -53,8 +53,22 @@ export const COLLISION_RULES = [
     id: "sweep-goal-handle",
     run: (ctx) => sweepsOf(ctx).flatMap(({ name, spec, read }) => (read.goal
       ? [warn("sweep-goal-handle", `verify.sweeps.${name} sweeps goal handle "${spec.handle}", which is a target, not a motion, so it is never swept`,
-        "Sweep the limb's joint params (`{ param: \"elbow\" }`), a path between presets (`{ from: \"rest\", to: \"reach\" }`) or an animation instead.", `verify.sweeps.${name}`)]
+        "Sweep a path between presets (`{ from: \"rest\", to: \"reach\" }`) or an animation instead: either moves the limb the way the solver poses it. A joint param a non-goal handle writes can be swept on its own (`{ param: \"elbow\" }`).", `verify.sweeps.${name}`)]
       : [])),
+  },
+  {
+    // A clearance that is present but no finite number: the engine falls back to the
+    // declared default, so the sweep runs at a clearance the author never wrote.
+    id: "sweep-bad-clearance",
+    run: ({ part }) => {
+      const decl = part?.verify?.sweeps;
+      if (!isPlainObject(decl)) return [];
+      return Object.entries(decl).flatMap(([name, spec]) => (isPlainObject(spec) && spec.clearance !== undefined
+        && !(typeof spec.clearance === "number" && Number.isFinite(spec.clearance))
+        ? [warn("sweep-bad-clearance", `verify.sweeps.${name}.clearance is ${typeof spec.clearance === "number" ? spec.clearance : JSON.stringify(spec.clearance) ?? String(spec.clearance)}, not a number of millimetres, so the sweep runs at the declared default instead`,
+          "Write a number: `clearance: 0` (may touch, never press in), a positive gap the pieces must keep, or a negative depth they may press in (a detent's rub, `clearance: -0.3`).", `verify.sweeps.${name}.clearance`)]
+        : []));
+    },
   },
   {
     id: "sweep-rebuilds",

@@ -109,6 +109,22 @@ test("sweep-goal-handle warns: a goal handle is a target, not a motion", () => {
   expect(f[0].severity).toBe("warning");
 });
 
+test("sweep-bad-clearance warns on a clearance that is no finite number", () => {
+  for (const clearance of ["0.2", NaN, null, Infinity, { mm: 1 }]) {
+    const f = sweepFindings({ s: { param: "swing", clearance } });
+    expect(f.map((x) => x.rule), String(clearance)).toEqual(["sweep-bad-clearance"]);
+    expect(f[0].severity).toBe("warning");
+    expect(f[0].path).toBe("verify.sweeps.s.clearance");
+  }
+  expect(sweepFindings({ s: { param: "swing", clearance: NaN } })[0].message).toContain("clearance is NaN");
+  for (const clearance of [0, -0.3, 0.2]) expect(sweepFindings({ s: { param: "swing", clearance } })).toEqual([]);
+});
+
+test("sweep-goal-handle's hint leads with a path between presets or an animation", () => {
+  const [f] = sweepFindings({ s: { handle: "reach" } });
+  expect(f.hint.startsWith("Sweep a path between presets")).toBe(true);
+});
+
 test("sweep-rebuilds warns when the motion changes a build", () => {
   const f = sweepFindings({ s: { param: "size" } });
   expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);

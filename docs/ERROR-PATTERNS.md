@@ -967,6 +967,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The param poses one exportable piece against another (a hinge angle, a slide, an explode offset) without rebuilding anything, and no `verify.sweeps` entry moves it in that view, so nothing checks whether the pieces meet along the motion. A static `overlaps` check only sees the pose the part is in. Verify holds its verdict on it: a `sweepCoverage` entry in `verify.unevaluated`, and `verify.ok` is `null`.
 - **Fix:** Declare the sweep the hint gives: `verify.sweeps: { open: { param: "open", clearance: 0 } }`, and gate it with `verify.expect._view: { sweepContacts: 0 }` ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps"). A handle, path, preset pair or animation sweep that moves the param covers it too. A param whose control has no finite `min` and `max` needs them first, so the sweep has a range. Lint runs no sweep; it reads only which params move which pieces.
 
+## sweep-bad-clearance
+
+- **Symptom:** Lint warns `verify.sweeps.open.clearance is "0.2", not a number of millimetres, so the sweep runs at the declared default instead` (or `NaN`, `null`, `Infinity`, an object). The part loads and the sweep runs.
+- **Cause:** A sweep's `clearance` must be a finite number. Anything else is ignored and the sweep runs at `collisions.clearance` (0.001 mm by default), which is not the gap, the touch or the press-in depth the part declared, so its verdict answers a different question.
+- **Fix:** Write a number: `clearance: 0` for pieces that may touch but never press in (a lid resting closed), a positive gap the pieces must keep, or a negative depth they may press in (a detent's rub, `clearance: -0.3`) ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps").
+
 ## handle-source-unread
 
 - **Symptom:** In an assembly or print view that draws the part unposed, hovering it shows drag dots and bones floating where the posed view holds them. `handle-source-unread` warns, naming the handles, their sources and the views they show in.

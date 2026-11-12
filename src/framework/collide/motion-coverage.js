@@ -393,7 +393,9 @@ export function uncoveredMotions(part, full = part?.defaults ?? {}, reads, { bud
  * a control with no finite range is asked for a min and max first.
  */
 export function motionFinding({ view, param, range, moving, against }) {
-  const sweep = `add verify.sweeps: { ${param}: { param: "${param}", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`;
+  // the param as an object key: bare when it is a JS identifier, else quoted (`"lid-angle"`)
+  const key = /^[A-Za-z_$][\w$]*$/.test(param) ? param : JSON.stringify(param);
+  const sweep = `add verify.sweeps: { ${key}: { param: ${JSON.stringify(param)}, clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`;
   return {
     message: `"${param}" moves ${moving.join(", ")} against ${against.join(", ")} in view "${view}" and no sweep checks that motion`,
     hint: range ? `A${sweep.slice(1)}` : `Give the "${param}" control a min and max, then ${sweep}`,
@@ -401,7 +403,7 @@ export function motionFinding({ view, param, range, moving, against }) {
 }
 
 /** The hint lint and verify both give for one uncovered motion: message and hint joined. */
-export function MOTION_HINT(entry) {
+export function motionHint(entry) {
   const { message, hint } = motionFinding(entry);
   return `${message}. ${hint}`;
 }

@@ -97,6 +97,7 @@ const BASELINE_IDS = [
   "piece-stands-on-nothing",
   "flex-root-sharp",
   "motion-unswept",
+  "sweep-bad-clearance",
 ];
 
 const entries = parsePatterns(doc);

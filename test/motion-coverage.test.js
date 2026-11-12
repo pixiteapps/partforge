@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { motionParams, coveredParams, readSweeps, uncoveredMotions, MOTION_HINT, motionFinding } from "../src/framework/collide/motion-coverage.js";
+import { motionParams, coveredParams, readSweeps, uncoveredMotions, motionHint, motionFinding } from "../src/framework/collide/motion-coverage.js";
 import { MOTION_SAMPLES, scanMotion } from "../src/framework/collide/sweep-targets.js";
 import { poseMatrices } from "../src/framework/collide/place.js";
 import { resolveParams } from "../src/framework/part-model.js";
@@ -223,16 +223,22 @@ describe("coveredParams and uncoveredMotions", () => {
   });
 });
 
-test("MOTION_HINT is the exact text", () => {
+test("motionHint is the exact text", () => {
   const entry = { view: "assembly", param: "open", range: [0, 110], moving: ["lid"], against: ["base", "pin"] };
-  expect(MOTION_HINT(entry)).toBe(
+  expect(motionHint(entry)).toBe(
     `"open" moves lid against base, pin in view "assembly" and no sweep checks that motion. `
     + `Add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`,
   );
-  expect(MOTION_HINT({ ...entry, range: null })).toBe(
+  expect(motionHint({ ...entry, range: null })).toBe(
     `"open" moves lid against base, pin in view "assembly" and no sweep checks that motion. `
     + `Give the "open" control a min and max, then add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`,
   );
+});
+
+test("motionHint quotes a param key that is not a JS identifier", () => {
+  const entry = { view: "assembly", param: "lid-angle", range: [0, 110], moving: ["lid"], against: ["base"] };
+  expect(motionHint(entry)).toContain(`Add verify.sweeps: { "lid-angle": { param: "lid-angle", clearance: 0 } }`);
+  expect(motionHint({ ...entry, param: "lidAngle" })).toContain(`{ lidAngle: { param: "lidAngle", clearance: 0 } }`);
 });
 
 test("the hand reference part: the scan's work is bounded by the params a placement reads", () => {
@@ -286,12 +292,12 @@ test("the hand reference part: the scan's work is bounded by the params a placem
   expect(ms).toBeLessThan(1000); // loose ceiling only: the counts above are the real check
 });
 
-test("motionFinding: the message and the hint, which MOTION_HINT joins", () => {
+test("motionFinding: the message and the hint, which motionHint joins", () => {
   const entry = { view: "assembly", param: "open", range: [0, 110], moving: ["lid"], against: ["base"] };
   const { message, hint } = motionFinding(entry);
   expect(message).toBe(`"open" moves lid against base in view "assembly" and no sweep checks that motion`);
   expect(hint).toBe(`Add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`);
-  expect(MOTION_HINT(entry)).toBe(`${message}. ${hint}`);
+  expect(motionHint(entry)).toBe(`${message}. ${hint}`);
 });
 
 describe("readSweeps", () => {

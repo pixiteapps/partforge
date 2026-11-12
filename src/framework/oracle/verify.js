@@ -13,7 +13,7 @@ import { relevanceHash } from "../param-deps.js";
 import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError, FLEX_ROOT_HINT, worstFlexRoot } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
-import { uncoveredMotions, MOTION_HINT } from "../collide/motion-coverage.js";
+import { uncoveredMotions, motionHint } from "../collide/motion-coverage.js";
 // Re-exported for the callers that read them from here; their one home is sheet/constants.js.
 export { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 
@@ -385,7 +385,7 @@ function sweepCoverage(part, budgetMs) {
   try { scan = uncoveredMotions(part, undefined, undefined, budgetMs === undefined ? {} : { budgetMs }); } catch { /* unprobeable: lint reports what it can */ }
   const out = scan.motions.map((entry) => ({ scope: "view", subpart: null, metric: "sweepCoverage", expr: entry.param,
     actual: null, status: "skip", pass: null, unevaluated: true,
-    message: `no sweep declared for "${entry.param}"`, hint: MOTION_HINT(entry) }));
+    message: `no sweep declared for "${entry.param}"`, hint: motionHint(entry) }));
   if (scan.partial) out.push({ scope: "view", subpart: null, metric: "sweepCoverage", kind: "warn", expr: "finished",
     actual: null, status: "warn", pass: null, message: "the motion check did not finish in its time budget",
     hint: MOTION_SCAN_PARTIAL_HINT, volunteered: true });
