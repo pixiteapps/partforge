@@ -206,17 +206,10 @@ export default {
   // At the default pose the links never interpenetrate, and each keeps its running
   // clearance (GAP) to the neighbour it turns against: those near misses are intended.
   verify: {
-    // The gripper opening and the wrist roll are swept at clearance 0 (the fingers ride on
-    // the palm: touching is allowed, pressing in is not) and gated. The base seed is not
-    // swept: its sweep takes about 10 s, past an inspect's report share, and it finds a real
-    // contact - from a seed past about 158° the goal solve misses (out of range) and leaves
-    // the right finger about 6.5 mm into the forearm. So verify holds its verdict on "base"
-    // (sweepCoverage) until that is fixed; sweep it from the CLI with
-    // base: { param: "base", clearance: 0 } (docs/AUTHORING-PARTS.md "Long sweeps run from the CLI").
-    sweeps: {
-      gripper: { param: "gripper", clearance: 0 },
-      wristRoll: { param: "wristRoll", clearance: 0 },
-    },
+    // The gripper opening is the arm's one motion: swept at clearance 0 (the fingers ride on
+    // the palm: touching is allowed, pressing in is not) and gated. The six joint params are
+    // the goal solve's seed, not motions: the pose comes from the tool goal.
+    sweeps: { gripper: { param: "gripper", clearance: 0 } },
     expect: { _view: { overlaps: 0, sweepContacts: 0, clearance: { "turret×upperArm": ">=0.3", "upperArm×forearm": ">=0.3", "forearm×hand": ">=0.3" } } },
   },
   // The agent's one-line read-out: { at, residual, aimResidual, status }.

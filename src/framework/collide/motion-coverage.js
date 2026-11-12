@@ -1,7 +1,8 @@
 // Which params pose one piece against another (motion params), and which of them a
 // declared `verify.sweeps` entry moves (spec 2026-11-12-moving-fits-swept-design.md, A).
 // Lint's motion-unswept warning and verify's sweepCoverage check both read motions
-// through this one module, so the two name the same params with the same hint.
+// through this one module, so the two name the same params with the same hint. A goal
+// handle's target and seed are never motions (unmovableParams): the solver poses the limb.
 //
 // A BVH-free leaf, like sweep-targets.js, whose probing it reuses: geometry-free probes and
 // the placement rule only, never the collision world, the native core or oracle/, so the
@@ -199,6 +200,11 @@ function relativeMotion(vs, sample) {
  * Params that can never be a motion, read off the declaration alone (no probing):
  * - a goal handle's target (`params: { position, aim? }`): a target, not a
  *   motion, never swept (sweep-targets.js readSweep, lint's sweep-goal-handle);
+ * - a goal handle's `seed` (an array of param keys): the solver's starting guess, not a
+ *   joint motion. The pose comes from the goal; moving the seed alone only changes where
+ *   the solve starts, and a pose it reaches by failing the solve is the `tool` probe's to
+ *   report. A seed param some non-goal handle also writes is still a motion: that handle
+ *   moves it as a joint;
  * - a param nobody can move: no statically visible control (lint's controlBoundKeys with
  *   `excludeHidden`, the control-default-not-literal population) and no handle writes it.
  * Nothing here throws on a malformed handle or schema: what cannot be read excludes nothing.
@@ -207,10 +213,16 @@ function unmovableParams(part) {
   const out = new Set();
   const handles = isPlainObject(part?.handles) ? Object.values(part.handles) : [];
   const written = new Set();
+  const seeds = new Set();
+  const jointWritten = new Set(); // keys a non-goal handle writes
   for (const h of handles) {
     try {
       for (const k of handleParamKeys(h)) written.add(k);
-      if (h?.drag !== "goal") continue;
+      if (h?.drag !== "goal") {
+        for (const k of handleParamKeys(h)) jointWritten.add(k);
+        continue;
+      }
+      if (Array.isArray(h.seed)) for (const k of h.seed) if (typeof k === "string") seeds.add(k);
       // partforge's goal form is `params: { position, aim? }`; anything else names no target
       const p = h.params;
       if (!isPlainObject(p)) continue;
@@ -219,6 +231,7 @@ function unmovableParams(part) {
       }
     } catch { /* a malformed handle excludes nothing */ }
   }
+  for (const k of seeds) if (!jointWritten.has(k)) out.add(k);
   let visible = null;
   try { visible = controlBoundKeys(part, { excludeHidden: true }); } catch { /* unreadable schema: keep every param */ }
   if (visible) for (const k of rangesOf(part).keys()) if (!visible.has(k) && !written.has(k)) out.add(k);
@@ -292,7 +305,8 @@ function scanView(part, view, full, stop = () => false) {
  * sub-part shown in `view` and move at least one exportable sub-part relative to another
  * exportable sub-part shown there: `[{ param, range, moving, against }]`. `range` is
  * `[min, max]`, or null for a numeric control with no finite range that a placement reads.
- * A goal handle's target and a param nobody can move (unmovableParams) are never motions.
+ * A goal handle's target and seed, and a param nobody can move (unmovableParams), are never
+ * motions.
  */
 export function motionParams(part, view, full = part?.defaults ?? {}) {
   return scanView(part, view, full).motions;

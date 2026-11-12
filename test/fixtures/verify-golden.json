@@ -31816,7 +31816,7 @@
     "evaluated": 9
   },
   "robot-arm.js#assembly": {
-    "ok": null,
+    "ok": true,
     "view": "assembly",
     "cases": [
       {
@@ -31893,18 +31893,6 @@
             "status": "pass",
             "pass": true,
             "message": "0.39999961853027344 >= 0.3"
-          },
-          {
-            "scope": "view",
-            "subpart": null,
-            "metric": "sweepCoverage",
-            "expr": "base",
-            "actual": null,
-            "status": "skip",
-            "pass": null,
-            "unevaluated": true,
-            "message": "no sweep declared for \"base\"",
-            "hint": "\"base\" moves turret, upperArm, forearm, hand, fingerL, fingerR against pedestal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { base: { param: \"base\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       }
@@ -31912,22 +31900,8 @@
     "failures": [],
     "warnings": [],
     "costs": [],
-    "unevaluated": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "sweepCoverage",
-        "expr": "base",
-        "actual": null,
-        "status": "skip",
-        "pass": null,
-        "unevaluated": true,
-        "message": "no sweep declared for \"base\"",
-        "hint": "\"base\" moves turret, upperArm, forearm, hand, fingerL, fingerR against pedestal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { base: { param: \"base\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
-      }
-    ],
-    "declared": 6,
+    "unevaluated": [],
+    "declared": 5,
     "evaluated": 5
   },
   "robot-finger.js#assembly": {

@@ -290,13 +290,30 @@ describe("readSweeps", () => {
 });
 
 describe("params that are never motions", () => {
-  test("a goal handle's target (position and aim) is not a motion; its seed may be", () => {
+  test("a goal handle's target (position and aim) is not a motion", () => {
     // the lid follows `open`, which a goal handle writes as its target
     const part = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: ["open"], aim: [] }, seed: [] } } });
     expect(motions(part)).toEqual([]);
-    // a goal handle's seed is not its target
+  });
+
+  test("a goal handle's seed is not a motion: it is the solver's starting guess", () => {
     const seeded = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: [] }, seed: ["open"] } } });
-    expect(brief(motions(seeded))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+    expect(motions(seeded)).toEqual([]);
+  });
+
+  test("a seed param a second, non-goal handle also writes is still a motion", () => {
+    const part = hinge({ handles: {
+      aim: { on: "arm", drag: "goal", params: { position: [] }, seed: ["open"] },
+      lid: { point: () => [0, 0, 10], params: ["open"], drag: "rotary", axis: { origin: [0, 5, 10], direction: [1, 0, 0] } },
+    } });
+    expect(brief(motions(part))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+  });
+
+  test("a malformed seed excludes nothing and never throws", () => {
+    for (const seed of ["open", { open: true }, [null, 3], null]) {
+      const part = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: [] }, seed } } });
+      expect(brief(motions(part)), JSON.stringify(seed)).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+    }
   });
 
   test("a malformed goal handle excludes nothing and never throws", () => {
