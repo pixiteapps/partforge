@@ -67,13 +67,17 @@ function placementChanges(part, view, qs) {
  * The relative motion of the exportable pieces over the samples `vs` of `param`:
  * `{ moving, against, shownChanges }`, or null when there is none (nothing moves, or every
  * moving piece shares one delta and nothing shown stays still) or it cannot be read
- * rigidly. `shownChanges`: the set of shown sub-parts is not the same at every sample.
+ * rigidly, which includes the exportable pieces shown not being the same at every sample.
+ * `shownChanges`: the set of all shown sub-parts is not the same at every sample.
  */
 function relativeMotion(part, view, full, param, vs) {
   const at = vs.map((v) => placementsAt(part, view, { ...full, [param]: v }));
   const shownChanges = at.some((s) => s.shown !== at[0].shown);
   const samples = at.map((s) => s.pieces);
   const names = [...samples[0].keys()];
+  // a piece enabled for only part of the range is unreadable, whichever end it is missing at
+  const key = (s) => [...s.keys()].join("\n");
+  if (samples.some((s) => key(s) !== key(samples[0]))) return null;
   if (names.length < 2) return null;
   // m_i · m_0⁻¹ per piece per sample; a piece missing or not rigid at any sample is unreadable
   const deltas = new Map();

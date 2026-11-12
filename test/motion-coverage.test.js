@@ -58,6 +58,14 @@ describe("motionParams", () => {
     expect(motions(part)).toEqual([]);
   });
 
+  for (const [when, enabled] of [["open > 50", (p) => p.open > 50], ["open < 50", (p) => p.open < 50]]) {
+    test(`a piece enabled only for ${when} makes the motion unreadable, so it is skipped`, () => {
+      const part = hinge();
+      part.parts.flap = { views: { assembly: (s) => s.translate([30, 0, 0]) }, enabled, build: box };
+      expect(motions(part)).toEqual([]);
+    });
+  }
+
   test("together: a param that moves every piece alike is no motion", () => {
     const move = (s, p) => s.translate([p.shift, 0, 0]);
     const part = twoBox({ controls: [ctl("shift", 0, 50)], defaults: { shift: 0 }, lid: move, base: move });
@@ -193,7 +201,7 @@ test("MOTION_HINT is the exact text", () => {
 });
 
 test("the hand reference part scans in under 150 ms", () => {
-  uncoveredMotions(hand, hand.defaults); // warm the caches lint shares with every other rule
+  uncoveredMotions(hand, hand.defaults); // one warm-up call first, mostly for JIT, so the timing is not a cold first call
   const t0 = performance.now();
   uncoveredMotions(hand, hand.defaults);
   expect(performance.now() - t0).toBeLessThan(150);
