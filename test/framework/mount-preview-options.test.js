@@ -199,7 +199,7 @@ test("edgeWidth and edgeOpacity style the edge lines; out-of-range values throw"
   runFrames(1);
   let mats = lineMats(plain);
   expect(mats.length).toBeGreaterThan(0);
-  for (const m of mats) { expect(m.linewidth).toBe(1); expect(m.opacity).toBe(1); expect(m.transparent).toBe(false); }
+  for (const m of mats) { expect(m.linewidth).toBe(1); expect(m.opacity).toBe(1); expect(m.transparent).toBe(true); } // feathered edges always blend
   plain.dispose();
 
   state.renderer = null;

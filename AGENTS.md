@@ -309,7 +309,11 @@ the installed package, so let the publish finish before bumping the dep there.
   and DOM-free, and `test/cel-layering.test.js` holds that and keeps `cel/` out of
   the worker graph; the other three import three.js and only the viewer loads
   them. The ink pass runs only for the live scene, inside `renderWithBackdrop`,
-  so captures get it and throwaway scenes do not. The ground shadow has two VSM
+  so captures get it and throwaway scenes do not. It writes ink and dot MASKS to
+  an offscreen target, then a resolve pass smooths the ink mask (FXAA-style, since
+  the canvas's MSAA never reaches a fullscreen quad) and composites both. CAD's
+  feature lines are anti-aliased separately: `smooth-lines.js` widens each
+  LineMaterial quad a pixel and feathers its sides, so those materials always blend. The ground shadow has two VSM
   pitfalls: the plane must sit strictly inside the shadow map's xy bounds, and
   the depth slab must be thin; the light's world elevation is clamped to 40°.
   The key light is WORLD-FIXED on the canvas and camera-relative in a capture

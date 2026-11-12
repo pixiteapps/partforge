@@ -1,6 +1,6 @@
 // The cel ink pass: outlines (depth silhouettes, normal creases) and the optional
-// halftone field, drawn as a fullscreen quad over the scene the viewer already
-// rendered. Live-scene only: it needs the real canvas and the sub-part layer, and
+// halftone field, found as masks by one fullscreen quad and composited, the ink
+// anti-aliased, over the scene the viewer already rendered by a second. Live-scene only: it needs the real canvas and the sub-part layer, and
 // whatever it borrows from the renderer (clear colour and alpha, camera layers,
 // override material, background, autoClear) it puts back in `finally`.
 import * as THREE from "three";
@@ -69,21 +69,55 @@ void main() {
   }
 
   float ink = max(edgeD, edgeN);
-  if (ink > 0.001) { gl_FragColor = vec4(uInk, ink);
-    #include <colorspace_fragment>
-    return; }
 
   // the halftone screen on the empty frame (uBgDots = 0: transparent field, nothing drawn)
+  float dots = 0.0;
   if (bgC && uBgDots > 0.0) {
     mat2 R = mat2(0.7071, -0.7071, 0.7071, 0.7071);
     vec2 g = (R * gl_FragCoord.xy) / (uBgDotScale * uPx);
     float d = length(fract(g) - 0.5);
-    float dots = 1.0 - smoothstep(0.18, 0.30, d);
-    gl_FragColor = vec4(uBgDot, dots * uBgDots);
-    #include <colorspace_fragment>
-    return;
+    dots = (1.0 - smoothstep(0.18, 0.30, d)) * uBgDots;
   }
-  discard;
+  // Masks, not colours: R the ink's coverage, G the field dot's. The resolve
+  // pass smooths R and colours both.
+  gl_FragColor = vec4(ink, dots, 0.0, 1.0);
+}`;
+
+// The resolve: the ink mask is a hard per-pixel decision (the prepass is
+// NearestFilter and the canvas's MSAA never reaches a fullscreen quad), so its
+// lines stair-step. An FXAA-style filter on the mask alone (R) smooths them
+// along the edge direction; the field dots (G) are already smoothstepped and
+// pass through. Then both are coloured and composited over the frame.
+const RESOLVE_FRAG = /* glsl */`
+uniform sampler2D tInk;
+uniform vec2 uRes;
+uniform vec3 uInk, uBgDot;
+varying vec2 vUv;
+float L(vec2 uv) { return texture2D(tInk, uv).r; }
+void main() {
+  vec2 px = 1.0 / uRes;
+  vec2 m = texture2D(tInk, vUv).rg;
+  float lM = m.r;
+  float lNW = L(vUv + vec2(-1.0, -1.0) * px), lNE = L(vUv + vec2(1.0, -1.0) * px);
+  float lSW = L(vUv + vec2(-1.0, 1.0) * px), lSE = L(vUv + vec2(1.0, 1.0) * px);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  float ink = lM;
+  if (lMax - lMin > 0.05) {
+    vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));
+    float reduce = max((lNW + lNE + lSW + lSE) * (0.25 / 8.0), 1.0 / 128.0);
+    float rcpMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
+    dir = clamp(dir * rcpMin, vec2(-8.0), vec2(8.0)) * px;
+    float a = 0.5 * (L(vUv + dir * (1.0 / 3.0 - 0.5)) + L(vUv + dir * (2.0 / 3.0 - 0.5)));
+    float b = a * 0.5 + 0.25 * (L(vUv - dir * 0.5) + L(vUv + dir * 0.5));
+    ink = (b < lMin || b > lMax) ? a : b;
+  }
+  float dots = m.g;
+  float alpha = ink + dots * (1.0 - ink);
+  if (alpha < 0.002) discard;
+  vec3 col = (uInk * ink + uBgDot * dots * (1.0 - ink)) / alpha;
+  gl_FragColor = vec4(col, alpha);
+  #include <colorspace_fragment>
 }`;
 
 // The prepass: view-space normals packed to RGB, plus depth, double-sided. A
@@ -149,41 +183,57 @@ export function createCelInk() {
   const { ink: I, field: F } = CEL;
   const normalMat = createPrepassMaterial();
   const inkMat = new THREE.ShaderMaterial({
-    vertexShader: INK_VERT, fragmentShader: INK_FRAG, transparent: true, depthTest: false, depthWrite: false,
+    vertexShader: INK_VERT, fragmentShader: INK_FRAG, blending: THREE.NoBlending, depthTest: false, depthWrite: false,
     uniforms: {
       tNormal: { value: null }, tDepth: { value: null }, uRes: { value: new THREE.Vector2(1, 1) },
       uNear: { value: 0.1 }, uFar: { value: 1000 }, uOrtho: { value: 0 }, uPx: { value: 1 },
-      uInk: { value: new THREE.Color(I.color) }, uBgDot: { value: new THREE.Color(F.color).multiplyScalar(F.dotDarken) },
       uThick: { value: I.thickPx }, uThin: { value: I.thinPx }, uOuter: { value: I.outerBoost },
       uDepthT: { value: I.depthThreshold }, uNormalT: { value: I.normalThreshold },
       uBgDots: { value: 0 }, uBgDotScale: { value: F.dotCellPx },
     },
   });
+  const resolveMat = new THREE.ShaderMaterial({
+    vertexShader: INK_VERT, fragmentShader: RESOLVE_FRAG, transparent: true, depthTest: false, depthWrite: false,
+    uniforms: {
+      tInk: { value: null }, uRes: { value: new THREE.Vector2(1, 1) },
+      uInk: { value: new THREE.Color(I.color) }, uBgDot: { value: new THREE.Color(F.color).multiplyScalar(F.dotDarken) },
+    },
+  });
   const quadGeometry = new THREE.PlaneGeometry(2, 2);
-  const quadScene = new THREE.Scene();
+  const quadScene = new THREE.Scene(), resolveScene = new THREE.Scene();
   quadScene.add(new THREE.Mesh(quadGeometry, inkMat));
+  resolveScene.add(new THREE.Mesh(quadGeometry, resolveMat));
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const size = new THREE.Vector2(), clearColor = new THREE.Color();
   // One prepass target for the canvas and one for captures: a capture is
   // rarely the canvas's size, and one shared target would be reallocated (a
   // float depth texture included) around every capture and again on the next
   // live frame.
+  // Each slot also holds the ink mask the resolve reads (linear-filtered: the
+  // smoothing samples between texels).
   const targets = { live: null, capture: null };
+  const masks = { live: null, capture: null };
 
   function ensureTarget(slot, w, h) {
     let target = targets[slot];
     if (!target || target.width !== w || target.height !== h) {
       target?.dispose();
       target?.depthTexture?.dispose();
+      masks[slot]?.dispose();
       const depthTexture = new THREE.DepthTexture(w, h, THREE.FloatType);
       target = new THREE.WebGLRenderTarget(w, h, {
         minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthTexture, depthBuffer: true,
       });
       targets[slot] = target;
+      masks[slot] = new THREE.WebGLRenderTarget(w, h, {
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false,
+      });
     }
     inkMat.uniforms.tNormal.value = target.texture;
     inkMat.uniforms.tDepth.value = target.depthTexture;
     inkMat.uniforms.uRes.value.set(w, h);
+    resolveMat.uniforms.tInk.value = masks[slot].texture;
+    resolveMat.uniforms.uRes.value.set(w, h);
     return target;
   }
 
@@ -194,7 +244,8 @@ export function createCelInk() {
     const bound = renderer.getRenderTarget();
     if (bound) size.set(bound.width, bound.height); else renderer.getDrawingBufferSize(size);
     if (size.x < 2 || size.y < 2) return; // a parked viewer's canvas is 1x1
-    const rt = ensureTarget(bound ? "capture" : "live", size.x, size.y);
+    const slot = bound ? "capture" : "live";
+    const rt = ensureTarget(slot, size.x, size.y);
     const clearWas = renderer.getClearColor(clearColor).clone(), clearAlphaWas = renderer.getClearAlpha();
     const layersWas = camera.layers.mask, overrideWas = scene.overrideMaterial, backgroundWas = scene.background;
     const autoClearWas = renderer.autoClear;
@@ -219,17 +270,21 @@ export function createCelInk() {
       scene.background = backgroundWas;
     }
     try {
-      // 2. ink over the frame
+      // 2. the ink and dot masks
       const u = inkMat.uniforms;
       u.uNear.value = camera.near; u.uFar.value = camera.far;
       u.uOrtho.value = camera.isOrthographicCamera ? 1 : 0;
       u.uPx.value = pixelScale;
       u.uBgDots.value = field && field.dots ? F.dots : 0;
       // The dot: the caller's (celField's, per theme), else the field darkened.
-      if (field?.dot) u.uBgDot.value.copy(field.dot);
-      else if (field) u.uBgDot.value.copy(field.color).multiplyScalar(F.dotDarken);
+      if (field?.dot) resolveMat.uniforms.uBgDot.value.copy(field.dot);
+      else if (field) resolveMat.uniforms.uBgDot.value.copy(field.color).multiplyScalar(F.dotDarken);
       renderer.autoClear = false;
+      renderer.setRenderTarget(masks[slot]);
       renderer.render(quadScene, quadCam);
+      // 3. smoothed ink and dots over the frame
+      renderer.setRenderTarget(bound);
+      renderer.render(resolveScene, quadCam);
     } finally {
       renderer.autoClear = autoClearWas;
       renderer.setRenderTarget(bound);
@@ -241,9 +296,12 @@ export function createCelInk() {
       targets[slot]?.dispose();
       targets[slot]?.depthTexture?.dispose();
       targets[slot] = null;
+      masks[slot]?.dispose();
+      masks[slot] = null;
     }
     normalMat.dispose();
     inkMat.dispose();
+    resolveMat.dispose();
     quadGeometry.dispose();
   }
 
@@ -252,6 +310,8 @@ export function createCelInk() {
     dispose,
     /** The ink pass's ShaderMaterial (its uniforms are what tests read). */
     get material() { return inkMat; },
+    /** The resolve pass (smooths the ink mask, colours it, composites it). */
+    get resolveMaterial() { return resolveMat; },
     /** The prepass override (normals, double-sided), for the viewer's pre-compile. */
     get prepassMaterial() { return normalMat; },
   };
