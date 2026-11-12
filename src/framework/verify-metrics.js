@@ -298,7 +298,7 @@ export const VIEW_METRICS = {
       : depthUnread(r) ? "not evaluated — a declared sweep stopped before it read how deep a contact presses in"
       : "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked"),
     withheldHint: (r) => (depthUnread(r) ? DEPTH_UNREAD_HINT : SWEEP_WITHHELD_HINT),
-    hint: "a declared motion comes closer than its clearance to another sub-part (at a clearance of 0 or below: presses in deeper than it allows, by the contact's `depth`) — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
+    hint: "a declared motion comes closer than its clearance to another sub-part (at a clearance of 0 or below: presses in deeper than it allows, by the contact's `depth`) — the first contact, its pair and the param driving it are reported; fix the geometry the contact names (move the axis outside both bodies, cut the swing relief, open the gap); write freeRange (the contact-free span) as the control's range only when that stop is intended; for a deliberate rub (a detent) give that sweep a negative clearance of the rub's depth; use collisions.allow only for contact that is the design at every position (meshing gears, a bearing)",
     skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
     pattern: "sweep-contacts",
     locate: (r) => {

@@ -26,8 +26,8 @@ engraved nameplate - raised script text over a backing plate, with
 font/bold/italic/shear controls and fillet-rounded glyph tops),
 `hinged-box.js` (the `animations`
 reference part - stepped timeline, camera cues, pose-only tracks - and the moving-fit
-reference: a rotary lid handle, `collisions: {}`, both pose params swept at `clearance: 0`
-and gated), `screw.js`
+reference for checking a swing: a rotary lid handle, `collisions: {}`, both pose params swept
+at `clearance: 0` and gated; `test/fixtures/pin-hinge.js` is the guide's real pin hinge), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head),
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
@@ -54,8 +54,7 @@ page), `robot-arm.js` (the inverse-kinematics reference part - a 6-axis arm and
 gripper posed by a tool GOAL: `toolX/Y/Z` + pitch/yaw/roll solved in `derive` by
 `limb.pose({ goals })`, warm-started from six seed joint params; a goal-mode `tool`
 handle for Pose mode and a `tool` probe reporting reached / missed by how much;
-`gripper` and `wristRoll` swept and gated, the `base` seed left unswept - about 10 s and a
-real forearm×fingerR contact past a seed of ~158° - so its verdict is withheld;
+its one motion, `gripper`, swept and gated (the six seed joints are no motion);
 `robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
 IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
@@ -819,7 +818,7 @@ the installed package, so let the publish finish before bumping the dep there.
   (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
   through it alone), and `motion-coverage.js` (`motion-unswept` and verify's `sweepCoverage`:
   the place-only params that move one exportable piece against another in any view and that
-  no declared sweep moves there; geometry-free, memoized per part+params, a 1000 ms budget,
+  no declared sweep moves there - never a goal handle's target or seed; geometry-free, memoized per part+params, a 1000 ms budget,
   `motionBudgetMs`). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
   frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
   guard: `settle`, sub-stepped to `SETTLE_STEP_MM` of travel, at most `MAX_SUBSTEPS`, bisecting
@@ -831,7 +830,7 @@ the installed package, so let the publish finish before bumping the dep there.
   `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
   comes out of the inspect's `REPORT_SHARE_MS`, after change tracking has finished with it
   (measure's `beforeSweeps` hook). A sweep's `clearance` of 0 (may touch) or below (may press
-  in that deep) runs at `TOUCH_TOL_MM` (0.02, `collide/depth.js`) and reads penetration depth
+  in that deep; the allowance is that depth plus `TOUCH_TOL_MM`) runs at `TOUCH_TOL_MM` (0.02, `collide/depth.js`) and reads penetration depth
   along each contact every `DEPTH_STEP_MM` (0.2) of travel, splitting it into blocking and
   `allowed: true` stretches; a contact whose depth the deadline cut is `depthUnread` and
   withholds `sweepContacts` unless another blocks; rows cap at `SWEEP_MAX_CONTACTS` (32).
@@ -856,8 +855,9 @@ the installed package, so let the publish finish before bumping the dep there.
   exemption changes are rolled back first, so the re-walk sees the ones the frame began with. There are no contact rows inside the solver: they were built, gated off by the
   bench, and deleted once a comparison through the session showed settle's slide matching or
   beating them (`docs/research/collisions-structure-review.md`). A drag held at contact reads "Stopped at <piece>" in the live readout (never "Out
-  of reach") and on the release chip. A sweep exempts no pair, so its `clearance` must sit
-  below every start gap it moves (a pin's) - lint, geometry-free, cannot check it.
+  of reach") and on the release chip. A sweep exempts no pair, so a POSITIVE `clearance` must
+  sit below every start gap it moves (a pin's) - lint, geometry-free, cannot check it; at
+  `clearance: 0` a seated or pinned pair reads as an allowed touch, never a start contact.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   and the oracle's BVH + min-wall), compiled to ONE WebAssembly module embedded
