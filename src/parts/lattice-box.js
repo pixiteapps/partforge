@@ -106,5 +106,11 @@ export default {
     plate: { label: "Nameplate" },
     print: { label: "Print bed" },
   },
-  verify: { process: "fdm-pla", expect: { _view: { overlaps: 0 } } },
+  // The lid's swing is checked end to end: the closed lid rests on the body (clearance 0
+  // allows that touch, never a press), and the lid's rear edge stays clear of the pin.
+  verify: {
+    process: "fdm-pla",
+    sweeps: { lidAngle: { param: "lidAngle", clearance: 0 } },
+    expect: { _view: { overlaps: 0, sweepContacts: 0 } },
+  },
 };

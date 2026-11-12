@@ -15,6 +15,8 @@ import { normalizeCollisions } from "./declaration.js";
 import { CONTACT_EPS } from "./pairs.js";
 import { sameMat } from "./motion.js";
 import { poseMatrices } from "./place.js";
+import { invertRigid, mulMat4 } from "../geometry/pose.js";
+import { untrustedRebuilds } from "./untrusted-reads.js";
 import { rangesOf, dofsOf } from "../pose/param-solve.js";
 import { locateHandle } from "../pose/handle-source.js";
 import { desugar } from "../panel/legacy.js";
@@ -74,28 +76,45 @@ export function motionOf(part, view, full, s) {
   return { lo: 0, hi: 1, at: (t) => ({ ...full, ...evaluate(anim, t).values }) };
 }
 
+/** The values scanMotion reads a motion at: MOTION_SAMPLES + 1 even steps, then `extra` (t ∈ [0, 1]). */
+function motionSamples(motion, extra = []) {
+  const ts = [...Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => i / MOTION_SAMPLES), ...extra];
+  return ts.map((t) => motion.lo + (motion.hi - motion.lo) * t);
+}
+
+/** A sweep entry's extra samples: a path's waypoints, as t ∈ [0, 1]. */
+const extraSamples = (s) => (s.kind === "path" ? s.waypoints.map((_, i) => i / (s.waypoints.length - 1)) : []);
+
 /**
  * What a motion moves in `view`: `moving` (sub-parts whose placement changes, rigidly) and
- * `rebuild` (sub-parts whose build-scope probe hash changes, whose build or place is
- * untrusted at some sample). Throws when a sample cannot be resolved.
+ * `rebuild` (sub-parts whose build-scope probe hash changes, or whose placement is missing
+ * or not rigid, at some sample). A build the probe cannot trust is judged by what it reads
+ * (untrusted-reads.js): it rebuilds only when it reads a param the motion changes, or its
+ * reads cannot be obtained. Throws when a sample cannot be resolved.
  */
 export function scanMotion(part, view, motion, extra = []) {
-  const ts = [...Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => i / MOTION_SAMPLES), ...extra];
-  const vs = ts.map((t) => motion.lo + (motion.hi - motion.lo) * t);
+  const qs = motionSamples(motion, extra).map((v) => motion.at(v));
+  // the params the motion changes: a key whose value differs from the first sample's
+  const changed = new Set();
+  for (const q of qs.slice(1)) for (const k of Object.keys(q)) if (!Object.is(q[k], qs[0][k])) changed.add(k);
   const names = new Set();
-  const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement and hash
+  const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement, first trusted hash
   const moving = new Set(), rebuild = new Set();
-  for (const v of vs) {
-    const q = motion.at(v);
+  for (const q of qs) {
     const { p, d } = resolveParams(part, q);
     const mats = poseMatrices(part, view, p, d);
     const hashes = probePoses(part, view, q, { scope: "build" });
     // the union over every sample: a sub-part enabled part of the way still counts
     for (const name of viewSubParts(part, view, p)) {
       const m = mats.get(name), h = hashes.get(name);
-      if (!names.has(name)) { names.add(name); mats0.set(name, m); hash0.set(name, h?.baseHash); }
-      if (m === null || m === undefined || !h?.trusted || h.baseHash !== hash0.get(name)) rebuild.add(name);
-      else if (!sameMat(m, mats0.get(name))) moving.add(name);
+      if (!names.has(name)) { names.add(name); mats0.set(name, m); }
+      if (rebuild.has(name)) continue;
+      if (m === null || m === undefined) { rebuild.add(name); continue; }
+      if (h?.trusted) {
+        if (!hash0.has(name)) hash0.set(name, h.baseHash);
+        else if (h.baseHash !== hash0.get(name)) { rebuild.add(name); continue; }
+      } else if (untrustedRebuilds(part, name, q, changed)) { rebuild.add(name); continue; }
+      if (!sameMat(m, mats0.get(name))) moving.add(name);
     }
   }
   const order = Object.keys(part.parts).filter((n) => names.has(n));
@@ -112,7 +131,9 @@ export function scanMotion(part, view, motion, extra = []) {
 export function readSweep(part, name, spec, full, declClear = normalizeCollisions(part)?.clearance ?? CONTACT_EPS) {
   if (!isPlainObject(spec)) return { entries: [{ name, kind: null, skip: "unreadable", why: "is not an object naming a motion", clearance: declClear, views: null }] };
   const views = Array.isArray(spec.views) ? spec.views : null;
-  const clearance = isNum(spec.clearance) && spec.clearance >= 0 ? spec.clearance : declClear;
+  // Any finite clearance (oracle/sweep.js): 0 may touch, a negative one may press in
+  // that deep. Only a value that is no finite number falls back to the declared default.
+  const clearance = isNum(spec.clearance) ? spec.clearance : declClear;
   const base = { clearance, views };
   const unreadable = (kind, why) => ({ entries: [{ name, kind, ...base, skip: "unreadable", why }] });
   const ranges = rangesOf(part);
@@ -183,11 +204,55 @@ export function sweepsInView(part, view, name, spec, full, declClear, r = readSw
     if (s.skip) { out.push(s); continue; }
     let scan;
     try {
-      const extra = s.kind === "path" ? s.waypoints.map((_, i) => i / (s.waypoints.length - 1)) : [];
-      scan = scanMotion(part, view, motionOf(part, view, full, s), extra);
+      scan = scanMotion(part, view, motionOf(part, view, full, s), extraSamples(s));
     } catch (e) { out.push({ ...s, skip: "unreadable", why: `cannot be stepped (${e?.message || e})` }); continue; }
     if (!scan.moving.length && !scan.rebuild.length) continue; // nothing moves in this view
     out.push({ ...s, moving: scan.moving, rebuild: scan.rebuild });
   }
   return out;
+}
+
+/**
+ * How a scanned sweep entry (sweepsInView's, with `moving`) poses its moving pieces against
+ * every other sub-part shown in `view` — the set the engine collides (viewSubParts,
+ * `exportable: false` pieces included) — at scanMotion's samples: one `{ shown, pairs }` per
+ * sample, `shown` the shown names joined, `pairs` `[key, mat]` sorted by key, key
+ * "<moving>|<other>", mat inv(M_other) · M_moving. Null when it cannot be read rigidly (the
+ * entry rebuilds a sub-part, or a placement is missing or not rigid at a sample). Two views
+ * with equal readings (samePlacements: the same shown set and the same matrices) give the
+ * entry the same sweep row, which is how verify skips sweeping it twice.
+ */
+export function relativePlacements(part, view, full, s) {
+  if (s.rebuild?.length || !s.moving?.length) return null;
+  const motion = motionOf(part, view, full, s);
+  const out = [];
+  for (const v of motionSamples(motion, extraSamples(s))) {
+    const { p, d } = resolveParams(part, motion.at(v));
+    const mats = poseMatrices(part, view, p, d);
+    const shown = viewSubParts(part, view, p);
+    const pairs = [];
+    for (const m of s.moving) {
+      const mm = mats.get(m);
+      if (!mm) return null;
+      for (const o of shown) {
+        if (o === m) continue;
+        const mo = mats.get(o);
+        if (!mo) return null;
+        pairs.push([`${m}|${o}`, mulMat4(invertRigid(mo), mm)]);
+      }
+    }
+    pairs.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
+    out.push({ shown: shown.join("\n"), pairs });
+  }
+  return out;
+}
+
+/** Two relativePlacements readings equal: the same shown set and pairs at every sample, by sameMat. */
+export function samePlacements(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((sa, i) => {
+    const sb = b[i];
+    return sa.shown === sb.shown && sa.pairs.length === sb.pairs.length
+      && sa.pairs.every(([k, m], j) => sb.pairs[j][0] === k && sameMat(m, sb.pairs[j][1]));
+  });
 }

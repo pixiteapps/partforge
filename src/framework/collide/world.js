@@ -5,7 +5,7 @@
 //
 // The mats contract, the same in every method: a `mats` Map with a name MISSING places
 // it at the identity; a name mapped to `null` EXCLUDES it (an untrusted or non-rigid
-// placement), so it is skipped by distances, inside and travel alike.
+// placement), so it is skipped by distances, inside, depth and travel alike.
 import { buildBVH, disposeBVHs } from "../oracle/bvh.js";
 import { isAllowed } from "./declaration.js";
 import { pairKey } from "./pairs.js";
@@ -14,6 +14,8 @@ export { placeMatrix, poseMatrices };
 import { mulMat4, invertRigid } from "../geometry/pose.js";
 import { IDENTITY, cornerTravel } from "./motion.js";
 export { IDENTITY, cornerTravel };
+import { penetrationDepth, TOUCH_TOL_MM } from "./depth.js";
+export { TOUCH_TOL_MM };
 
 /**
  * For meshes built posed at (startP, startD): returns (p, d) → Map of the matrices
@@ -213,6 +215,16 @@ export function createCollisionWorld({ meshes = new Map(), indexes = null, decl 
       const ma = matOf(mats, a), mb = matOf(mats, b);
       if (ma === null || mb === null) return false;
       return bvhs.get(a).insideOf(bvhs.get(b), ma ?? IDENTITY, mb ?? IDENTITY) || bvhs.get(b).insideOf(bvhs.get(a), mb ?? IDENTITY, ma ?? IDENTITY);
+    },
+
+    /**
+     * How far (mm) a and b, placed by mats, press into each other (depth.js): 0 apart,
+     * at or below TOUCH_TOL_MM touching. Raw, like distances: allow is not consulted.
+     */
+    depth(a, b, mats) {
+      const ma = matOf(mats, a), mb = matOf(mats, b);
+      if (ma === null || mb === null || !bvhs.has(a) || !bvhs.has(b)) return 0;
+      return penetrationDepth(bvhs.get(a), boxes.get(a), ma ?? IDENTITY, bvhs.get(b), boxes.get(b), mb ?? IDENTITY);
     },
 
     travel(matsA, matsB, travelNames) {

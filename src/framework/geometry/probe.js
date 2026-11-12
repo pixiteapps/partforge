@@ -150,6 +150,17 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
   let count = 0;
   let solidProxy = null;
   let shape2dProxy = null;
+  // Whether some op was handed a FUNCTION (an edge selector, a per-point callback),
+  // directly or inside a plain options object or array. The probe never calls one, so
+  // whatever it reads is invisible to the read recorder (collide/untrusted-reads.js).
+  const seen = { fnArg: false };
+  const hasFn = (a, depth = 0) => {
+    if (typeof a === "function") return true;
+    if (depth > 4 || a === null || typeof a !== "object" || a === solidProxy || a === shape2dProxy) return false;
+    if (Array.isArray(a)) return a.some((x) => hasFn(x, depth + 1));
+    if (Object.getPrototypeOf(a) !== Object.prototype) return false;
+    return Object.values(a).some((x) => hasFn(x, depth + 1));
+  };
 
   // Args are recorded as strings so two probe runs can be compared for determinism.
   // Each chainable handle is a single shared object, so identity is enough to spot it —
@@ -178,6 +189,7 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
       try { specs[op].toArgs(args[0]); }
       catch (e) { issues.push({ kind: "invalid-options", scope, op, message: e?.message || String(e) }); }
     }
+    if (!seen.fnArg && args.some((a) => hasFn(a))) seen.fnArg = true;
     calls.push({ scope, op, args: args.map(describe) });
   };
 
@@ -188,7 +200,7 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
   const { kernel, proxy, shape2d } = makeProbe(onCall, onQuery);
   solidProxy = proxy;
   shape2dProxy = shape2d;
-  return { kernel, calls, issues, used, solidUsed, queried };
+  return { kernel, calls, issues, used, solidUsed, queried, passedFunction: () => seen.fnArg };
 }
 
 /**

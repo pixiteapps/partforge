@@ -67,7 +67,9 @@ export function buildCoreBVH(c, verts, makeJsIndex) {
         return tri === -1 ? null : { t: c.f64()[8], tri };
       }, () => jsIndex().raycast(origin, dir, opts));
     },
-    closestPoint(p) {
+    // A capped query (bvh.js) is the JS twin's: the core has no cap.
+    closestPoint(p, maxDistance = Infinity) {
+      if (maxDistance !== Infinity) return jsIndex().closestPoint(p, maxDistance);
       return guarded(() => {
         const s = c.f64();
         s[0] = p[0]; s[1] = p[1]; s[2] = p[2];

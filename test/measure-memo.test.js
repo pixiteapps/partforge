@@ -18,7 +18,9 @@ const run = (tracker, part, view, opts) => {
   k.cleanup();
   return m;
 };
-const strip = (m) => JSON.parse(JSON.stringify(m)); // drop typed-array identity
+// Drop typed-array identity, and a sweep row's wall time (`ms`): the memo never touches sweeps,
+// whose timing differs run to run.
+const strip = (m) => JSON.parse(JSON.stringify(m, (key, v) => (key === "ms" ? undefined : v)));
 
 const variants = {
   same: hinged,

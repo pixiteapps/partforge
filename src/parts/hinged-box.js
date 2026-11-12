@@ -5,6 +5,8 @@
 // `assemble` opens with an OPACITY fade that brings the lid in from nothing
 // before any motion. Also shown: an intro camera + markdown description on
 // `open`, a looping autoplay `cycle`, and per-step cameras on `assemble`.
+// Also the reference for a moving fit ("Collisions and sweeps" → "When a piece moves"):
+// a `collisions` block, a rotary handle on the lid, and both pose params swept and gated.
 export default {
   meta: { title: "Hinged Box", units: "mm", environment: "workshop" },
   parameters: [
@@ -101,11 +103,33 @@ export default {
       },
     },
   },
+  // The lid's mechanism, kept solid and checked: Pose mode stops the lid at the base, the
+  // rotary handle on its front edge turns lidAngle, and both pose params are swept at
+  // clearance 0 (the closed lid rests on the base: touching is allowed, pressing in is not).
+  collisions: {},
+  handles: {
+    lid: {
+      // The lid's front top edge, at mid width, wherever the angle and the lift put it.
+      point: (p) => {
+        const a = (p.lidAngle * Math.PI) / 180;
+        return [p.width / 2, p.depth - p.depth * Math.cos(a) + p.wall * Math.sin(a),
+          p.height + p.lidLift + p.depth * Math.sin(a) + p.wall * Math.cos(a)];
+      },
+      params: ["lidAngle"], drag: "rotary",
+      // -X: the lid opens by turning -lidAngle about +X, so a turn about -X writes +lidAngle.
+      axis: (p) => ({ origin: [0, p.depth, p.height + p.lidLift], direction: [-1, 0, 0] }),
+      label: "Lid", showOn: "lid",
+    },
+  },
   verify: {
     process: "fdm-pla",
+    sweeps: {
+      lidAngle: { param: "lidAngle", clearance: 0 },
+      lidLift: { param: "lidLift", clearance: 0 },
+    },
     expect: {
       base: { bbox: "<=[200,200,200]" },
-      _view: { overlaps: 0 },
+      _view: { overlaps: 0, sweepContacts: 0 },
     },
   },
 };
