@@ -9,6 +9,7 @@ import { relevanceHash } from "../param-deps.js";
 import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError, FLEX_ROOT_HINT, worstFlexRoot } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
+import { uncoveredMotions, MOTION_HINT } from "../collide/motion-coverage.js";
 // Re-exported for the callers that read them from here; their one home is sheet/constants.js.
 export { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 
@@ -214,6 +215,8 @@ const PRINT_POSE_NOTE = "measured in the print (export) pose";
 // SHEET_CHECKS_NOTICE (sheet/constants.js) stands in for a sheet's budget-gated
 // volunteered checks when its 2-D budget ran out (measure()'s `sheet.evaluated` false):
 // one warning, never `unevaluated` — a check nobody declared must not withhold a verdict.
+// The one exception is motion: a moving piece no declared sweep covers withholds verify.ok
+// (sweepCoverage, below; spec 2026-11-12-moving-fits-swept-design.md, decision 2).
 
 // A DECLARED sheet check the budget withheld: `unevaluated`, as a quick lap's is, so it
 // withholds verify.ok — and it says how to get a verdict. Either the budget ran out
@@ -297,6 +300,21 @@ function sweepNotices(rows) {
   const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${r.name} (${r.error})` : r.name));
   if (unreadable.length) note("readable", `${unreadable.length} sweep(s) could not run: ${unreadable.join(", ")}`, SWEEP_UNREADABLE_HINT);
   return out;
+}
+
+// A motion no declared sweep covers (collide/motion-coverage.js; spec
+// 2026-11-12-moving-fits-swept-design.md, A) is the exception to the volunteered rule: one
+// DECLARED, `unevaluated` check per motion param, so it holds verify.ok at null until a
+// sweep is declared. Every view is scanned, whatever view is verified, and the hint names
+// the view the motion is in. Geometry-free, so a quick lap reports it too. Coverage is the
+// DECLARATION (decision 4): a declared sweep that stopped short keeps sweepNotices' warning
+// and adds no check here. A part whose motion cannot be probed gets no check, never a throw.
+function sweepCoverage(part) {
+  let motions = [];
+  try { motions = uncoveredMotions(part); } catch { /* unprobeable: lint reports what it can */ }
+  return motions.map((entry) => ({ scope: "view", subpart: null, metric: "sweepCoverage", expr: entry.param,
+    actual: null, status: "skip", pass: null, unevaluated: true,
+    message: `no sweep declared for "${entry.param}"`, hint: MOTION_HINT(entry) }));
 }
 
 // Pure policy: profile rules + per-part expect → checks for one case's facts.
@@ -638,6 +656,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     if (facts.sweeps && !sweepsNoticed) { sweepsNoticed = true; checks = [...checks, ...sweepNotices(facts.sweeps)]; }
     return { name, params, checks };
   });
+  // Appended once per verify, to the first case, as sweepNotices are.
+  const coverage = sweepCoverage(part);
+  if (coverage.length && caseResults.length) caseResults[0].checks = [...caseResults[0].checks, ...coverage];
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
   // (the CLI's exit code, the cloud agent's "verify passes" stop rule) took that
@@ -677,7 +698,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const unevaluated = all.filter((c) => c.unevaluated);
   const warnings = all.filter((c) => c.status === "warn");
   const costs = all.filter((c) => c.status === "cost");
-  if (evaluated === 0 && unevaluated.length === 0) {
+  // An unswept motion (sweepCoverage) is about the part's motion, not its expectations, so
+  // it does not stand in for this notice: a part declaring nothing else still hears it.
+  if (evaluated === 0 && unevaluated.every((c) => c.metric === "sweepCoverage")) {
     warnings.push({ case: null, scope: "part", subpart: null, metric: "expectations", kind: "warn", expr: "evaluated",
       actual: 0, status: "warn", pass: null,
       message: declaresAnything ? "no expectation could be evaluated" : "no expectations declared",
