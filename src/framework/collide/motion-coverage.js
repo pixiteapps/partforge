@@ -30,13 +30,13 @@ const NOMINAL_STEPS = [1, 10];
 
 /**
  * The exportable pieces shown at params q, each with its placement mat4 (null: not rigid),
- * and `shown`, every sub-part shown there, joined by name.
+ * `shown`, every sub-part shown there, joined by name, and `mats`, every shown sub-part's.
  */
 function placementsAt(part, view, q) {
   const { p, d } = resolveParams(part, q);
   const mats = poseMatrices(part, view, p, d);
   const pieces = new Map(exportSubParts(part, view, p).map((name) => [name, mats.get(name) ?? null]));
-  return { pieces, shown: [...mats.keys()].join("\n") };
+  return { pieces, shown: [...mats.keys()].join("\n"), mats };
 }
 
 /**
@@ -52,13 +52,42 @@ function buildReadsAt(part, view, full) {
   return reads;
 }
 
-/** Whether any shown piece's placement differs between the probes (cheap: matrices only). */
-function placementChanges(part, view, qs) {
-  let first = null;
+/**
+ * Params some placement shown at `full` reads (derive reads expanded, so a param reaching
+ * place() through `d` counts), from one place-scope probe per sub-part; null when one of
+ * them cannot be probed (then every param is stepped). A param outside the set moves no
+ * placement at `full`, exactly what the stepped pre-filter below would find, at no probe.
+ */
+function placeReadsAt(part, view, full) {
+  const reads = new Set();
+  for (const entry of probePoses(part, view, full, { scope: "place" }).values()) {
+    if (!entry.trusted) return null;
+    for (const k of entry.reads ?? []) reads.add(k);
+  }
+  return reads;
+}
+
+/**
+ * Whether a shown sub-part's build-scope hash differs between the params `qs` (or cannot
+ * be read at one of them): proof the motion rebuilds, as scanMotion would find at those
+ * samples, in 3 probes rather than its 17. False is no proof of the opposite.
+ */
+function rebuildsAt(part, view, qs) {
+  const first = new Map();
   for (const q of qs) {
-    const { p, d } = resolveParams(part, q);
-    const mats = poseMatrices(part, view, p, d);
-    if (!first) { first = mats; continue; }
+    for (const [name, e] of probePoses(part, view, q, { scope: "build" })) {
+      if (!e.trusted) return true;
+      if (!first.has(name)) first.set(name, e.baseHash);
+      else if (first.get(name) !== e.baseHash) return true;
+    }
+  }
+  return false;
+}
+
+/** Whether any shown piece's placement differs between the samples (cheap: matrices only). */
+function placementChanges(samples) {
+  const first = samples[0].mats;
+  for (const { mats } of samples.slice(1)) {
     if (mats.size !== first.size) return true;
     for (const [name, m] of mats) if (!first.has(name) || !sameMat(m, first.get(name))) return true;
   }
@@ -66,14 +95,15 @@ function placementChanges(part, view, qs) {
 }
 
 /**
- * The relative motion of the exportable pieces over the samples `vs` of `param`:
+ * The relative motion of the exportable pieces over the values `vs` of one param, each read
+ * through `sample(v)` (its placementsAt, computed once per value):
  * `{ moving, against, shownChanges }`, or null when there is none (nothing moves, or every
  * moving piece shares one delta and nothing shown stays still) or it cannot be read
  * rigidly, which includes the exportable pieces shown not being the same at every sample.
  * `shownChanges`: the set of all shown sub-parts is not the same at every sample.
  */
-function relativeMotion(part, view, full, param, vs) {
-  const at = vs.map((v) => placementsAt(part, view, { ...full, [param]: v }));
+function relativeMotion(vs, sample) {
+  const at = vs.map(sample);
   const shownChanges = at.some((s) => s.shown !== at[0].shown);
   const samples = at.map((s) => s.pieces);
   const names = [...samples[0].keys()];
@@ -142,7 +172,7 @@ function unmovableParams(part, full) {
  */
 function scanView(part, view, full, stop = () => false) {
   const out = [];
-  let ranges, p0, buildReads, skip;
+  let ranges, p0, buildReads, placeReads, skip;
   try {
     ranges = rangesOf(part);
     p0 = resolveParams(part, full).p;
@@ -150,27 +180,39 @@ function scanView(part, view, full, stop = () => false) {
     skip = unmovableParams(part, full);
     if (stop()) return { motions: out, partial: true };
     buildReads = buildReadsAt(part, view, full);
+    placeReads = placeReadsAt(part, view, full);
   } catch {
     return { motions: out, partial: false };
   }
   for (const [param, r] of ranges) {
-    if (skip.has(param)) continue;
+    if (skip.has(param) || (placeReads && !placeReads.has(param))) continue;
     const v0 = p0[param];
     if (!isNum(v0)) continue;
     if (stop()) return { motions: out, partial: true };
     const finite = isNum(r.min) && isNum(r.max) && r.max > r.min;
     const lo = finite ? r.min : v0 - NOMINAL_STEPS.at(-1), hi = finite ? r.max : v0 + NOMINAL_STEPS.at(-1);
-    const probes = finite ? [lo, (lo + hi) / 2, hi] : [v0, ...NOMINAL_STEPS.flatMap((s) => [v0 - s, v0 + s])];
+    const vs = Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => lo + (hi - lo) * (i / MOTION_SAMPLES));
+    const ends = [vs[0], vs[MOTION_SAMPLES / 2], vs[MOTION_SAMPLES]];
+    // each value's placements once: the pre-filter's probes are samples of the run below
+    const seen = new Map();
+    const sample = (v) => {
+      if (!seen.has(v)) seen.set(v, placementsAt(part, view, { ...full, [param]: v }));
+      return seen.get(v);
+    };
+    const probes = finite ? ends : [v0, ...NOMINAL_STEPS.flatMap((s) => [v0 - s, v0 + s])];
     try {
-      // cheap pre-filter: only a param that moves some placement gets the full scan
-      if (!placementChanges(part, view, probes.map((v) => ({ ...full, [param]: v })))) continue;
-      const vs = Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => lo + (hi - lo) * (i / MOTION_SAMPLES));
-      const rel = relativeMotion(part, view, full, param, vs);
+      // cheap pre-filter: only a param that moves some placement gets the sample run
+      if (!placementChanges(probes.map(sample))) continue;
+      // rule (a), cheapest evidence first: a param whose build hashes already differ at lo,
+      // mid and hi rebuilds, so it is a size and never reaches the sample runs below
+      const buildRead = !buildReads || buildReads.has(param);
+      if (buildRead && rebuildsAt(part, view, ends.map((v) => ({ ...full, [param]: v })))) continue;
+      const rel = relativeMotion(vs, sample);
       if (!rel) continue;
       // rule (a): a param that rebuilds anything shown is a size, not a motion. A param no
       // shown build reads cannot rebuild one, so only the others pay for the full scan
       // (the engine's own, so lint and the engine agree on what rebuilds).
-      if (!buildReads || buildReads.has(param) || rel.shownChanges) {
+      if (buildRead || rel.shownChanges) {
         const scan = scanMotion(part, view, { lo, hi, at: (v) => ({ ...full, [param]: v }) });
         if (scan.rebuild.length) continue;
       }
@@ -274,7 +316,7 @@ export function coveredParams(part, view, full = part?.defaults ?? {}, reads = r
  * (`now` is the clock, for tests): `partial` then says some (view, param) candidates were
  * never looked at, so the list names what was found, never that the rest is clear.
  */
-export function uncoveredMotions(part, full = part?.defaults ?? {}, reads, { budgetMs = 250, now = Date.now } = {}) {
+export function uncoveredMotions(part, full = part?.defaults ?? {}, reads, { budgetMs = 1000, now = Date.now } = {}) {
   if (!isPlainObject(part?.views)) return { motions: [], partial: false };
   const scan = scanViews(part, full, budgetMs, now);
   const motions = [], seen = new Set();

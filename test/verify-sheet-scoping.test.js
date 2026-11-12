@@ -39,8 +39,7 @@ const noBudget = (kk, part, view, params, opts) => measure(kk, part, view, param
 // rides on a runner being fast enough (the laser descriptor's prices still apply). Every verify
 // below that is not about the budget measures this way.
 const unhurried = (kk, part, view, params, opts) => measure(kk, part, view, params, { ...opts, now: () => 0 });
-// motionBudgetMs: Infinity — the unswept-motion scan's clock must not trip under a loaded run either
-const verifyUnhurried = (kk, part, opts = {}) => verify(kk, part, { measureFn: unhurried, motionBudgetMs: Infinity, ...opts });
+const verifyUnhurried = (kk, part, opts = {}) => verify(kk, part, { measureFn: unhurried, ...opts });
 
 test("a 300 mm plate beside a small printed block passes the FDM bed: the bed fits the printed part", () => {
   const v = verifyUnhurried(k, forge({ plate: plate(300, 300), block: printed([20, 20, 20], (s) => s.translate([140, 140, 3])) },

@@ -12,6 +12,10 @@ vi.mock("../src/framework/collide/sweep-targets.js", async (orig) => {
   const m = await orig();
   return { ...m, scanMotion: vi.fn(m.scanMotion) };
 });
+vi.mock("../src/framework/pose-probe.js", async (orig) => {
+  const m = await orig();
+  return { ...m, probePoses: vi.fn(m.probePoses) };
+});
 vi.mock("../src/framework/collide/place.js", async (orig) => {
   const m = await orig();
   return { ...m, poseMatrices: vi.fn(m.poseMatrices) };
@@ -240,19 +244,22 @@ test("the hand reference part: the scan's work is bounded by the params a placem
   const readPairs = [...placeReads.values()].reduce((n, r) => n + r.size, 0);
   expect(scans.length).toBeLessThanOrEqual(readPairs);
 
-  // Pose calls per (view, param): a param no placement reads gets the cheap pre-filter only
-  // (at most 5 probes: 3 over a finite range, 5 around a value with none); one that a
-  // placement reads may also get the full sample run.
+  // Pose calls per (view, param): a param no placement reads gets none at all (the
+  // place-scope reads rule it out); one that a placement reads gets its sample run once,
+  // the pre-filter's probes being samples of it (2 more around a value with no range), and
+  // the full scan's run only when a build reads it.
   const calls = new Map();
   for (const [, view, p] of poseMatrices.mock.calls) {
     const key = `${view}|${changed(p)}`;
     calls.set(key, (calls.get(key) ?? 0) + 1);
   }
+  const scanned = new Set(scans.map(({ view, param }) => `${view}|${param}`));
   for (const [key, n] of calls) {
     const [view, param] = key.split("|");
     if (!param) continue; // a probe at the defaults, shared by every param
     expect(param.includes(","), key).toBe(false);
-    const cap = placeReads.get(view).has(param) ? 5 + MOTION_SAMPLES + 1 : 5;
+    expect(placeReads.get(view).has(param), key).toBe(true);
+    const cap = MOTION_SAMPLES + 1 + 2 + (scanned.has(key) ? MOTION_SAMPLES + 1 : 0);
     expect(n, key).toBeLessThanOrEqual(cap);
   }
   // not vacuous: the joints the hand reports did get their full sample runs
@@ -355,5 +362,42 @@ describe("uncoveredMotions: memo and budget", () => {
 
   test("a complete scan is not partial", () => {
     expect(uncoveredMotions(hinge(), undefined, undefined, { budgetMs: Infinity }).partial).toBe(false);
+  });
+});
+
+describe("the scan's work", () => {
+  test("a size param whose build hashes differ at lo, mid and hi costs no full scan", () => {
+    const part = twoBox({
+      controls: [ctl("height", 5, 40)], defaults: { height: 10 },
+      baseBuild: (k, p) => k.box({ size: [10, 10, p.height] }),
+      lid: (s, p) => s.translate([0, 0, p.height]),
+    });
+    scanMotion.mockClear();
+    poseMatrices.mockClear();
+    probePoses.mockClear();
+    expect(uncoveredMotions(part, part.defaults, undefined, { budgetMs: Infinity }).motions).toEqual([]);
+    expect(scanMotion).not.toHaveBeenCalled();
+    // the pre-filter's 3 placements, and no sample run
+    expect(poseMatrices.mock.calls.length).toBeLessThanOrEqual(3);
+    // one build-scope and one place-scope probe at the defaults, then at most lo, mid, hi
+    const builds = probePoses.mock.calls.filter(([, , , o]) => o?.scope === "build");
+    expect(builds.length).toBeLessThanOrEqual(1 + 3);
+  });
+
+  test("a param no placement reads costs no placement probe", () => {
+    const part = hinge();
+    part.parameters[0].controls.push(ctl("unused", 0, 10));
+    part.defaults.unused = 0;
+    poseMatrices.mockClear();
+    uncoveredMotions(part, part.defaults, undefined, { budgetMs: Infinity });
+    expect(poseMatrices.mock.calls.filter(([, , p]) => p.unused !== 0)).toEqual([]);
+  });
+
+  test("the narrow-window rebuild still takes the full scan to find", () => {
+    const part = hinge();
+    part.parts.base.build = (k, p) => k.box({ size: [p.open > 40 && p.open < 50 ? 12 : 10, 10, 10] });
+    scanMotion.mockClear();
+    expect(uncoveredMotions(part, part.defaults, undefined, { budgetMs: Infinity }).motions).toEqual([]);
+    expect(scanMotion).toHaveBeenCalledTimes(1);
   });
 });
