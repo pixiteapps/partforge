@@ -146,3 +146,55 @@ test("each sweep is read once per lint pass, whatever the number of sweep rules"
   lintPart(noSweeps);
   expect(before - reads).toBe(1);
 });
+
+// ── motion-unswept ──────────────────────────────────────────────────────────
+const hingePart = (extra = {}) => ({
+  meta: { title: "H" },
+  parameters: [{ id: "g", title: "G", description: "d", controls: [control("open", 0, 110)] }],
+  defaults: { open: 0 },
+  parts: {
+    base: { views: { assembly: (s) => s }, build: (k) => k.box({ size: [10, 10, 10] }) },
+    lid: { views: { assembly: (s, p) => s.rotateAbout({ axis: "X", deg: p.open, through: [0, 5, 10] }) }, build: (k) => k.box({ size: [10, 10, 10] }) },
+  },
+  views: { assembly: { label: "Assembly" } },
+  ...extra,
+});
+const unswept = (part) => {
+  const r = lintPart(part);
+  return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule === "motion-unswept");
+};
+
+test("motion-unswept warns, with the hint, when a moving piece has no sweep", () => {
+  const f = unswept(hingePart());
+  expect(f).toHaveLength(1);
+  expect(f[0].severity).toBe("warning");
+  expect(f[0].message).toBe('"open" moves lid against base in view "assembly" and no sweep checks that motion');
+  expect(f[0].hint).toBe('Add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.');
+  expect(f[0].path).toBe("verify.sweeps");
+});
+
+test("motion-unswept: a sweep of the motion clears it", () => {
+  expect(unswept(hingePart({ verify: { sweeps: { open: { param: "open" } } } }))).toEqual([]);
+});
+
+test("motion-unswept: a motion with no finite range asks for a min and max", () => {
+  const part = hingePart();
+  part.parameters[0].controls = [{ key: "open", label: "open", description: "no range" }];
+  const f = unswept(part);
+  expect(f).toHaveLength(1);
+  expect(f[0].hint).toBe('Give the "open" control a min and max first, so the sweep has a range.');
+});
+
+test("motion-unswept: hinged-box as it stands warns for its lid angle", async () => {
+  const part = (await import("../src/parts/hinged-box.js")).default;
+  const f = unswept(part);
+  expect(f.find((x) => x.message.startsWith('"lidAngle" moves lid against base'))).toBeTruthy();
+  for (const x of f) expect(x.severity).toBe("warning");
+});
+
+test("motion-unswept: malformed views give nothing and never throw", () => {
+  for (const views of [null, [], "assembly", 3]) {
+    const r = lintPart(hingePart({ views }));
+    expect(r.warnings.filter((f) => f.rule === "motion-unswept" || f.rule === "internal-rule-error")).toEqual([]);
+  }
+});

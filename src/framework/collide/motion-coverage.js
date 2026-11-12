@@ -150,20 +150,32 @@ export function motionParams(part, view, full = part?.defaults ?? {}) {
 }
 
 /**
- * Params moved by some declared `verify.sweeps` entry that runs in `view`: a param sweep's
- * param, a handle sweep's params, the keys a path's or preset pair's waypoints change, and
- * an animation's tracked params. An unreadable sweep, or one that cannot run, covers nothing.
+ * Every declared sweep read once: name → its `readSweep` result, or null when it cannot be
+ * read. Empty for a part with no `verify.sweeps` map.
  */
-export function coveredParams(part, view, full = part?.defaults ?? {}) {
-  const out = new Set();
+export function readSweeps(part, full = part?.defaults ?? {}) {
+  const out = new Map();
   const sweeps = part?.verify?.sweeps;
   if (!isPlainObject(sweeps)) return out;
   let declClear = CONTACT_EPS;
   try { declClear = normalizeCollisions(part)?.clearance ?? CONTACT_EPS; } catch { /* lint reports */ }
   for (const [name, spec] of Object.entries(sweeps)) {
-    let r;
-    try { r = readSweep(part, name, spec, full, declClear); } catch { continue; }
-    if (r.goal) continue;
+    try { out.set(name, readSweep(part, name, spec, full, declClear)); } catch { out.set(name, null); }
+  }
+  return out;
+}
+
+/**
+ * Params moved by some declared `verify.sweeps` entry that runs in `view`: a param sweep's
+ * param, a handle sweep's params, the keys a path's or preset pair's waypoints change, and
+ * an animation's tracked params. An unreadable sweep, or one that cannot run, covers nothing.
+ * `reads` (optional): each sweep's `readSweep` result by name, from `readSweeps`, so a
+ * caller that already read the sweeps (lint) does not read them again.
+ */
+export function coveredParams(part, view, full = part?.defaults ?? {}, reads = readSweeps(part, full)) {
+  const out = new Set();
+  for (const r of reads.values()) {
+    if (!r || r.goal) continue;
     for (const s of r.entries) {
       if (s.skip) continue;
       if (s.views && !s.views.includes(view)) continue;
@@ -186,16 +198,18 @@ export function coveredParams(part, view, full = part?.defaults ?? {}) {
 /**
  * Every view's motion params that no sweep covers there, one entry per param (the first
  * view it is uncovered in): `[{ view, param, range, moving, against }]`. Empty for a part
- * with no `views` map.
+ * with no `views` map. `reads`: as for `coveredParams`; by default the sweeps are read once,
+ * on the first view with a motion.
  */
-export function uncoveredMotions(part, full = part?.defaults ?? {}) {
+export function uncoveredMotions(part, full = part?.defaults ?? {}, reads) {
   const views = part?.views;
   if (!isPlainObject(views)) return [];
   const out = [], seen = new Set();
   for (const view of Object.keys(views)) {
     const motions = motionParams(part, view, full);
     if (!motions.length) continue;
-    const covered = coveredParams(part, view, full);
+    reads ??= readSweeps(part, full);
+    const covered = coveredParams(part, view, full, reads);
     for (const m of motions) {
       if (covered.has(m.param) || seen.has(m.param)) continue;
       seen.add(m.param);

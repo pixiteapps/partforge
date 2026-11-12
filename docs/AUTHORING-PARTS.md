@@ -3884,8 +3884,11 @@ Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or anim
 param with no finite min and max; a `range` that is not `[lo, hi]` with lo < hi; a handle
 whose point cannot be read; a `path` of fewer than two param objects; a spec that is not an
 object, or names no motion), `sweep-goal-handle` (a warning: a goal handle is never
-swept) and `sweep-rebuilds` (a warning: a build changes along the motion, so the sweep
-rebuilds geometry at every step).
+swept), `sweep-rebuilds` (a warning: a build changes along the motion, so the sweep
+rebuilds geometry at every step) and `motion-unswept` (a warning: a param moves one piece
+against another in some view and no sweep moves it there; the hint gives the sweep to add,
+always with `clearance: 0` —
+[motion-unswept](ERROR-PATTERNS.md#motion-unswept)).
 
 ### How a sweep steps
 

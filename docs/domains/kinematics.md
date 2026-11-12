@@ -1098,6 +1098,7 @@ views: {
 verify: {
   process: "fdm-pla",
   expect: { _view: { overlaps: 0, clearance: { "proximal×middle": ">=0.3", "middle×distal": ">=0.3" } } },
+  sweeps: { curl: { param: "curl", clearance: 0 } },
 },
 ```
 

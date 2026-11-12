@@ -6,6 +6,15 @@
 // BVH, the native core or an oracle module.
 import { err, warn } from "./finding.js";
 import { readSweep, sweepsInView } from "../collide/sweep-targets.js";
+import { MOTION_HINT, uncoveredMotions } from "../collide/motion-coverage.js";
+
+// MOTION_HINT's first sentence is the finding's message, the rest its hint.
+const MOTION_HEAD_END = "and no sweep checks that motion. ";
+function unsweptFinding(m) {
+  const text = MOTION_HINT(m);
+  const cut = text.indexOf(MOTION_HEAD_END) + MOTION_HEAD_END.length;
+  return warn("motion-unswept", text.slice(0, cut - 2), text.slice(cut), "verify.sweeps");
+}
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const SWEEP_SHAPES = "A sweep names one motion: `{ param: \"angle\" }` (a control with a finite min and max, or an explicit `range: [lo, hi]`), `{ handle: \"lid\" }`, `{ from: \"open\", to: \"shut\" }` (preset names), `{ path: [{…params}, {…params}] }` or `{ animation: \"spin\" }`.";
@@ -56,6 +65,17 @@ export const COLLISION_RULES = [
       ? [warn("sweep-rebuilds", `verify.sweeps.${name}: a sub-part's build changes along this motion, so this sweep rebuilds geometry at every step and runs slower`,
         "A sweep moves built pieces by matrix when only `place()` reads its params and every placement is a readable rigid transform. If the motion should only move pieces, read its params in the `views` placement rather than in `build()`; a motion that really reshapes a piece is checked at fixed steps only.", `verify.sweeps.${name}`)]
       : [])),
+  },
+  {
+    // A param that poses one piece against another with no sweep checking it. A warning,
+    // never an error: a stored forge must still load. Geometry-free; no sweep is run.
+    id: "motion-unswept",
+    run: (ctx) => {
+      // the sweeps as the other sweep rules read them, so each is read once per pass
+      let reads;
+      try { reads = new Map(sweepsOf(ctx).map(({ name, read }) => [name, read])); } catch { /* read again below */ }
+      return uncoveredMotions(ctx.part, ctx.p, reads).map(unsweptFinding);
+    },
   },
   {
     id: "collisions-bad-clearance",

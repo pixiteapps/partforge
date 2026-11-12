@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { motionParams, coveredParams, uncoveredMotions, MOTION_HINT } from "../src/framework/collide/motion-coverage.js";
+import { motionParams, coveredParams, readSweeps, uncoveredMotions, MOTION_HINT } from "../src/framework/collide/motion-coverage.js";
 import hand from "../src/parts/hand.js";
 
 const ctl = (key, min, max, extra = {}) => ({ key, label: key, min, max, step: 1, description: key, ...extra });
@@ -205,4 +205,15 @@ test("the hand reference part scans in under 150 ms", () => {
   const t0 = performance.now();
   uncoveredMotions(hand, hand.defaults);
   expect(performance.now() - t0).toBeLessThan(150);
+});
+
+describe("readSweeps", () => {
+  test("reads each declared sweep once, by name, and a caller's reads are honoured", () => {
+    const part = hinge({ verify: { sweeps: { open: { param: "open" } } } });
+    expect([...readSweeps(part).keys()]).toEqual(["open"]);
+    expect(uncoveredMotions(part)).toEqual([]);
+    // reads handed in are used as given: none means nothing is covered
+    expect(uncoveredMotions(part, part.defaults, new Map()).map((m) => m.param)).toEqual(["open"]);
+    expect(readSweeps(hinge()).size).toBe(0);
+  });
 });

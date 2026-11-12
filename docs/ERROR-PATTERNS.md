@@ -955,6 +955,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** The sweep's `clearance` is above the running gap of a pair it moves (the hand's pins sit about 0.4 mm apart): a sweep counts a pair inside its clearance as in contact from the start and exempts no pair, unlike a Pose mode drag, which only refuses to push a pair further in. Lint cannot catch it, because it does not build geometry.
 - **Fix:** Set the sweep's `clearance` below the start gap of every pair it moves (the hand's `fist` path uses 0.3 under 0.4 mm pins), or leave it at the default (`collisions.clearance`, 0.001 mm). To hold a joint's running gap, state it statically with `verify.expect._view.clearance: { "a×b": ">=0.3" }` ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps").
 
+## motion-unswept
+
+- **Symptom:** Lint warns `"open" moves lid against base in view "assembly" and no sweep checks that motion`, naming a param, the pieces it moves, the pieces it moves them against and the view. The part loads and builds as before.
+- **Cause:** The param poses one exportable piece against another (a hinge angle, a slide, an explode offset) without rebuilding anything, and no `verify.sweeps` entry moves it in that view, so nothing checks whether the pieces meet along the motion. A static `overlaps` check only sees the pose the part is in.
+- **Fix:** Declare the sweep the hint gives: `verify.sweeps: { open: { param: "open", clearance: 0 } }`, and gate it with `verify.expect._view: { sweepContacts: 0 }` ([AUTHORING-PARTS.md](AUTHORING-PARTS.md) "Collisions and sweeps"). A handle, path, preset pair or animation sweep that moves the param covers it too. A param whose control has no finite `min` and `max` needs them first, so the sweep has a range. Lint runs no sweep; it reads only which params move which pieces.
+
 ## handle-source-unread
 
 - **Symptom:** In an assembly or print view that draws the part unposed, hovering it shows drag dots and bones floating where the posed view holds them. `handle-source-unread` warns, naming the handles, their sources and the views they show in.

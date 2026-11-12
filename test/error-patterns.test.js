@@ -96,6 +96,7 @@ const BASELINE_IDS = [
   "kernel-internal-error",
   "piece-stands-on-nothing",
   "flex-root-sharp",
+  "motion-unswept",
 ];
 
 const entries = parsePatterns(doc);
