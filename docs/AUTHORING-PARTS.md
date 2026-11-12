@@ -3946,8 +3946,8 @@ verify: {
   sweeps). Verify runs each declared sweep where the motion is: in the verified view and in every
   other view where it moves something, and the other views' rows carry `view` (they come
   back as `verify().sweeps`, and in an inspect report they join `measure.sweeps`). A view
-  that poses the moving pieces against the others exactly as a view already swept is not
-  swept again. So `sweepContacts` on a print view still reads the assembly's swing, and an
+  that shows the same pieces (a non-exportable ghost counts) and poses the moving ones
+  against the others exactly as a view already swept is not swept again. So `sweepContacts` on a print view still reads the assembly's swing, and an
   exploded view that lifts the lid clear cannot answer for the assembly view that swings it
   through the base.
 

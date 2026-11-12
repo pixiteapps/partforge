@@ -300,7 +300,8 @@ const SWEEP_UNREADABLE_HINT = "these sweeps could not run (the error follows eac
 // pose one motion differently (an exploded view lifts the lid clear while `assembly` swings
 // it through the base), and motion coverage credits a declared sweep in every view.
 // Entries, not declarations: a handle expands to one entry per DOF ("<key>.<param>").
-// A view that poses an entry's moving pieces against every other exportable piece exactly
+// A view that shows the same sub-parts and poses an entry's moving pieces against every
+// other one (the set the engine collides, non-exportable pieces included) exactly
 // as a view already swept for that entry (sweep-targets.js relativePlacements, at the
 // motion scan's samples) would give the same row, so it is not swept again; an entry that
 // rebuilds a sub-part is never matched, and runs in every view that moves it. An entry that

@@ -388,6 +388,26 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
       .toEqual(['1 sweep(s) stopped at the time budget: open (view "assembly")']);
   }, SLOW);
 
+  // The engine collides every SHOWN sub-part, `exportable: false` ones included, so a view
+  // that adds a non-exportable piece in the swing path (a motor ghost) is no repeat of a
+  // view without it, though the exportable pieces sit alike (final re-review, Important).
+  it("a view that adds a non-exportable piece in the swing is swept, not skipped as a repeat", () => {
+    const w = hingeViews("working");
+    const open = w.parts.lid.views.assembly;
+    const part = { ...w,
+      parts: {
+        base: { ...w.parts.base, views: { clean: (s) => s, hw: (s) => s } },
+        lid: { ...w.parts.lid, views: { clean: open, hw: open } },
+        motor: { label: "Motor", exportable: false, build: (kk) => kk.box({ min: [5, 26, 12], max: [25, 32, 30] }), views: { hw: (s) => s } },
+      },
+      views: { clean: { label: "Clean" }, hw: { label: "With hardware" } },
+    };
+    const v = verify(k, part, { view: "clean" });
+    expect(v.ok).toBe(false);
+    expect(v.sweeps.map((r) => [r.view, r.name, r.clear])).toEqual([["hw", "open", false]]);
+    expect(v.sweeps[0].contacts.some((c) => [c.a, c.b].includes("motor") && c.allowed === false)).toBe(true);
+  }, SLOW);
+
   it("a view that poses the moving pieces exactly as an already-swept one is not swept again", () => {
     const base = hingeViews("buried");
     // `demo` poses base and lid exactly as `assembly` does
