@@ -182,7 +182,7 @@ test("motion-unswept: a motion with no finite range asks for a min and max", () 
   part.parameters[0].controls = [{ key: "open", label: "open", description: "no range" }];
   const f = unswept(part);
   expect(f).toHaveLength(1);
-  expect(f[0].hint).toBe('Give the "open" control a min and max first, so the sweep has a range.');
+  expect(f[0].hint).toBe('Give the "open" control a min and max, then add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.');
 });
 
 test("motion-unswept: hinged-box as it stands warns for its lid angle", async () => {
@@ -195,6 +195,6 @@ test("motion-unswept: hinged-box as it stands warns for its lid angle", async ()
 test("motion-unswept: malformed views give nothing and never throw", () => {
   for (const views of [null, [], "assembly", 3]) {
     const r = lintPart(hingePart({ views }));
-    expect(r.warnings.filter((f) => f.rule === "motion-unswept" || f.rule === "internal-rule-error")).toEqual([]);
+    expect([...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule === "motion-unswept" || f.rule === "internal-rule-error")).toEqual([]);
   }
 });

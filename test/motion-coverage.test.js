@@ -1,6 +1,21 @@
-import { describe, expect, test } from "vitest";
-import { motionParams, coveredParams, readSweeps, uncoveredMotions, MOTION_HINT } from "../src/framework/collide/motion-coverage.js";
+import { describe, expect, test, vi } from "vitest";
+import { motionParams, coveredParams, readSweeps, uncoveredMotions, MOTION_HINT, motionFinding } from "../src/framework/collide/motion-coverage.js";
+import { MOTION_SAMPLES, scanMotion } from "../src/framework/collide/sweep-targets.js";
+import { poseMatrices } from "../src/framework/collide/place.js";
+import { resolveParams } from "../src/framework/part-model.js";
+import { probePoses } from "../src/framework/pose-probe.js";
 import hand from "../src/parts/hand.js";
+
+// Pass-through spies, so the hand test below can count the work a scan does rather than
+// time it: every other test sees the real functions.
+vi.mock("../src/framework/collide/sweep-targets.js", async (orig) => {
+  const m = await orig();
+  return { ...m, scanMotion: vi.fn(m.scanMotion) };
+});
+vi.mock("../src/framework/collide/place.js", async (orig) => {
+  const m = await orig();
+  return { ...m, poseMatrices: vi.fn(m.poseMatrices) };
+});
 
 const ctl = (key, min, max, extra = {}) => ({ key, label: key, min, max, step: 1, description: key, ...extra });
 const box = (k) => k.box({ size: [10, 10, 10] });
@@ -196,15 +211,64 @@ test("MOTION_HINT is the exact text", () => {
   );
   expect(MOTION_HINT({ ...entry, range: null })).toBe(
     `"open" moves lid against base, pin in view "assembly" and no sweep checks that motion. `
-    + `Give the "open" control a min and max first, so the sweep has a range.`,
+    + `Give the "open" control a min and max, then add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`,
   );
 });
 
-test("the hand reference part scans in under 150 ms", () => {
-  uncoveredMotions(hand, hand.defaults); // one warm-up call first, mostly for JIT, so the timing is not a cold first call
+test("the hand reference part: the scan's work is bounded by the params a placement reads", () => {
+  // The params some placement reads, per view (a place-scope probe's reads).
+  const placeReads = new Map(Object.keys(hand.views).map((view) => {
+    const reads = new Set();
+    for (const e of probePoses(hand, view, hand.defaults, { scope: "place" }).values()) for (const k of e.reads ?? []) reads.add(k);
+    return [view, reads];
+  }));
+  // Each pose call or full scan, attributed to (view, the params it changes from the defaults).
+  const base = resolveParams(hand, hand.defaults).p;
+  const changed = (q) => Object.keys(q).filter((k) => !Object.is(q[k], base[k])).join(",");
+  scanMotion.mockClear();
+  poseMatrices.mockClear();
   const t0 = performance.now();
   uncoveredMotions(hand, hand.defaults);
-  expect(performance.now() - t0).toBeLessThan(150);
+  const ms = performance.now() - t0;
+
+  // A full scan only ever runs for a param some placement reads in that view.
+  const scans = scanMotion.mock.calls.map(([, view, s]) => {
+    const lo = s.at(s.lo), hi = s.at(s.hi);
+    return { view, param: Object.keys(lo).filter((k) => !Object.is(lo[k], hi[k])).join(",") };
+  });
+  for (const { view, param } of scans) expect(placeReads.get(view).has(param), `${view}:${param}`).toBe(true);
+  const readPairs = [...placeReads.values()].reduce((n, r) => n + r.size, 0);
+  expect(scans.length).toBeLessThanOrEqual(readPairs);
+
+  // Pose calls per (view, param): a param no placement reads gets the cheap pre-filter only
+  // (at most 5 probes: 3 over a finite range, 5 around a value with none); one that a
+  // placement reads may also get the full sample run.
+  const calls = new Map();
+  for (const [, view, p] of poseMatrices.mock.calls) {
+    const key = `${view}|${changed(p)}`;
+    calls.set(key, (calls.get(key) ?? 0) + 1);
+  }
+  for (const [key, n] of calls) {
+    const [view, param] = key.split("|");
+    if (!param) continue; // a probe at the defaults, shared by every param
+    expect(param.includes(","), key).toBe(false);
+    const cap = placeReads.get(view).has(param) ? 5 + MOTION_SAMPLES + 1 : 5;
+    expect(n, key).toBeLessThanOrEqual(cap);
+  }
+  // not vacuous: the joints the hand reports did get their full sample runs
+  expect([...calls.values()].some((n) => n > 5)).toBe(true);
+  // hand's print view poses nothing: nothing there gets more than the pre-filter
+  expect(placeReads.get("print").size).toBe(0);
+
+  expect(ms).toBeLessThan(1000); // loose ceiling only: the counts above are the real check
+});
+
+test("motionFinding: the message and the hint, which MOTION_HINT joins", () => {
+  const entry = { view: "assembly", param: "open", range: [0, 110], moving: ["lid"], against: ["base"] };
+  const { message, hint } = motionFinding(entry);
+  expect(message).toBe(`"open" moves lid against base in view "assembly" and no sweep checks that motion`);
+  expect(hint).toBe(`Add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`);
+  expect(MOTION_HINT(entry)).toBe(`${message}. ${hint}`);
 });
 
 describe("readSweeps", () => {

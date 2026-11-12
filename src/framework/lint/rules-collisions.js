@@ -6,14 +6,11 @@
 // BVH, the native core or an oracle module.
 import { err, warn } from "./finding.js";
 import { readSweep, sweepsInView } from "../collide/sweep-targets.js";
-import { MOTION_HINT, uncoveredMotions } from "../collide/motion-coverage.js";
+import { motionFinding, uncoveredMotions } from "../collide/motion-coverage.js";
 
-// MOTION_HINT's first sentence is the finding's message, the rest its hint.
-const MOTION_HEAD_END = "and no sweep checks that motion. ";
 function unsweptFinding(m) {
-  const text = MOTION_HINT(m);
-  const cut = text.indexOf(MOTION_HEAD_END) + MOTION_HEAD_END.length;
-  return warn("motion-unswept", text.slice(0, cut - 2), text.slice(cut), "verify.sweeps");
+  const { message, hint } = motionFinding(m);
+  return warn("motion-unswept", message, hint, "verify.sweeps");
 }
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);

@@ -219,10 +219,21 @@ export function uncoveredMotions(part, full = part?.defaults ?? {}, reads) {
   return out;
 }
 
-/** The hint lint and verify both give for one uncovered motion. Always `clearance: 0`. */
-export function MOTION_HINT({ view, param, range, moving, against }) {
-  const head = `"${param}" moves ${moving.join(", ")} against ${against.join(", ")} in view "${view}" and no sweep checks that motion. `;
-  return head + (range
-    ? `Add verify.sweeps: { ${param}: { param: "${param}", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`
-    : `Give the "${param}" control a min and max first, so the sweep has a range.`);
+/**
+ * One uncovered motion as a finding's two halves: `message`, the sentence naming the motion
+ * (no closing period), and `hint`, the sweep to add. The hint always suggests `clearance: 0`;
+ * a control with no finite range is asked for a min and max first.
+ */
+export function motionFinding({ view, param, range, moving, against }) {
+  const sweep = `add verify.sweeps: { ${param}: { param: "${param}", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`;
+  return {
+    message: `"${param}" moves ${moving.join(", ")} against ${against.join(", ")} in view "${view}" and no sweep checks that motion`,
+    hint: range ? `A${sweep.slice(1)}` : `Give the "${param}" control a min and max, then ${sweep}`,
+  };
+}
+
+/** The hint lint and verify both give for one uncovered motion: message and hint joined. */
+export function MOTION_HINT(entry) {
+  const { message, hint } = motionFinding(entry);
+  return `${message}. ${hint}`;
 }
