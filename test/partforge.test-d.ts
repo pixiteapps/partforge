@@ -528,6 +528,17 @@ expectType<number | null>(facts.subparts[0]!.overhangArea);
 expectType<string>(v.failures[0]!.case);
 expectType<"pass" | "fail" | "warn" | "cost" | "skip">(v.cases[0]!.checks[0]!.status);
 expectType<"gate" | "warn" | "cost">(v.cases[0]!.checks[0]!.kind);
+// Sweeps run in other views come back on verify, each row naming its view; a contact on
+// a sweep that may touch carries its depth and whether it stays within the allowance.
+const swept = verify(kernel, spacer, { view: "spacer", motionBudgetMs: 500, deadline: Date.now() + 1000 });
+const row = swept.sweeps?.[0];
+if (row) {
+  expectType<string | undefined>(row.view);
+  expectType<number | undefined>(row.contactsOmitted);
+  expectType<number | null | undefined>(row.contacts[0]!.depth);
+  expectType<boolean | undefined>(row.contacts[0]!.allowed);
+  expectType<true | undefined>(row.contacts[0]!.depthUnread);
+}
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
 
