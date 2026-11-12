@@ -1050,10 +1050,13 @@ piece it meets (it never passes through), and a sweep reports where that happens
 `src/parts/hand.js` declares a knuckle and a curl sweep for the index and thumb (the
 other digits sweep the same way from the CLI, so the declared ones fit the inspect's report
 share), REPORTED, not gated (no `sweepContacts` in its `expect`): its joints could leave their ranges wide and use
-collision as their limit, and a sweep that meets would then be expected. Pin joints stay
+collision as their limit, and a sweep that meets would then be expected. Every joint param the
+hand does not sweep is an unswept motion (`motion-unswept`, `sweepCoverage`), so the hand
+reaches no verdict: `verify.ok` is `null`, by design, until those digits are swept too. Pin joints stay
 blocked pairs: their ~0.4 mm running gap is above the default clearance (0.001 mm), so they
-read clear. A sweep's own `clearance` must stay below that gap, or every pin reads as a
-contact at the start of the sweep.
+read clear. A sweep's own positive `clearance` must stay below that gap, or every pin reads
+as a contact at the start of the sweep; `clearance: 0` (may touch, never press in) never
+does, which is why `robot-finger.js` sweeps its `curl` at 0.
 
 ## Worked example: `src/parts/robot-finger.js`
 

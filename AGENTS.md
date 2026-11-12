@@ -25,7 +25,9 @@ spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js
 engraved nameplate - raised script text over a backing plate, with
 font/bold/italic/shear controls and fillet-rounded glyph tops),
 `hinged-box.js` (the `animations`
-reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
+reference part - stepped timeline, camera cues, pose-only tracks - and the moving-fit
+reference: a rotary lid handle, `collisions: {}`, both pose params swept at `clearance: 0`
+and gated), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head),
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
@@ -52,12 +54,14 @@ page), `robot-arm.js` (the inverse-kinematics reference part - a 6-axis arm and
 gripper posed by a tool GOAL: `toolX/Y/Z` + pitch/yaw/roll solved in `derive` by
 `limb.pose({ goals })`, warm-started from six seed joint params; a goal-mode `tool`
 handle for Pose mode and a `tool` probe reporting reached / missed by how much;
+`gripper` and `wristRoll` swept and gated, the `base` seed left unswept - about 10 s and a
+real forearm×fingerR contact past a seed of ~158° - so its verdict is withheld;
 `robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
 IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
 it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
 spread/oppose params and six `{ type: "preset" }` shapes, one
-lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI); rigid pin-jointed pieces placed by matrix, the
+lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI, so its thirteen unswept joint params withhold the verdict - `verify.ok` is `null` by design); rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
 is the fixture that script drags), `gearbox.js` (the rotary-handle reference part and the
@@ -813,7 +817,10 @@ the installed package, so let the publish finish before bumping the dep there.
   both), `declaration.js` (`normalizeCollisions`), `motion.js` (rigid-matrix helpers),
   `place.js` (a sub-part's `place()` as a matrix, `poseMatrices`) and `sweep-targets.js`
   (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
-  through it alone). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
+  through it alone), and `motion-coverage.js` (`motion-unswept` and verify's `sweepCoverage`:
+  the place-only params that move one exportable piece against another in any view and that
+  no declared sweep moves there; geometry-free, memoized per part+params, a 1000 ms budget,
+  `motionBudgetMs`). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
   frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
   guard: `settle`, sub-stepped to `SETTLE_STEP_MM` of travel, at most `MAX_SUBSTEPS`, bisecting
   back to contact), `exemptions.js` (the pairs a drag may leave touching: one inside clearance
@@ -823,7 +830,14 @@ the installed package, so let the publish finish before bumping the dep there.
   advancement between samples (a screw-motion assumption), a rebuild path on
   `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
   comes out of the inspect's `REPORT_SHARE_MS`, after change tracking has finished with it
-  (measure's `beforeSweeps` hook). Invariants: `place.js` and `sweep-targets.js`
+  (measure's `beforeSweeps` hook). A sweep's `clearance` of 0 (may touch) or below (may press
+  in that deep) runs at `TOUCH_TOL_MM` (0.02, `collide/depth.js`) and reads penetration depth
+  along each contact every `DEPTH_STEP_MM` (0.2) of travel, splitting it into blocking and
+  `allowed: true` stretches; a contact whose depth the deadline cut is `depthUnread` and
+  withholds `sweepContacts` unless another blocks; rows cap at `SWEEP_MAX_CONTACTS` (32).
+  `collisions.clearance` still refuses a negative. Verify runs a declared sweep that moves
+  nothing in the verified view in the first other view where it does (rows carry `view`;
+  the inspect job appends them to `measure.sweeps`). Invariants: `place.js` and `sweep-targets.js`
   never reach the BVH (`test/worker-layering.test.js`);
   `settle` is the hard guarantee - whatever the solve returns, a frame never moves a
   blocked pair from clear to inside, and a pair inside at drag start can move out, never
