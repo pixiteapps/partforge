@@ -47,7 +47,7 @@
   - `uncoveredMotions(part, full) → Array<{ view, param, range, moving, against }>` — over every key of `part.views`, `motionParams` minus `coveredParams`, one entry per (param) keeping the FIRST view it is a motion in; `[]` for a part with no `views` map or one exportable piece.
   - `MOTION_HINT(entry) → string` — the exact hint:
     `"<param>" moves <moving, comma-joined> against <against, comma-joined> in view "<view>" and no sweep checks that motion. Add verify.sweeps: { <param>: { param: "<param>", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`
-    With `range: null` it ends instead: `Give the "<param>" control a min and max first, so the sweep has a range.`
+    With `range: null` the second sentence is instead: `Give the "<param>" control a min and max, then add verify.sweeps: { <param>: { param: "<param>", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.` (`motionFinding(entry) → { message, hint }` is the pair lint and verify use; `MOTION_HINT` joins them.)
 - "Moves relative to": two pieces move together when their placement deltas between samples are the same matrix (use `sameMat` on `m_i · inverse(m_0)`); a param under which every moving piece shares one delta AND no shown exportable piece stays still is not a motion.
 
 - [ ] **Step 1: Write failing tests** in `test/motion-coverage.test.js`, with inline parts (two boxes, `views` map):
