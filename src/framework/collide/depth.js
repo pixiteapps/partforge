@@ -3,21 +3,30 @@
 // says how much. Pure JS over the indexes' own triangle data (a core index is read through
 // its JS twin), so it gives the same answer whether or not the native core is running.
 //
-// The estimate, in each direction: sample points of one mesh — every vertex, and the
-// midpoint of the stretch of each edge that lies inside the other's box — and take the
-// largest distance to the other's surface among the samples that lie INSIDE it (a parity
-// test, as world.inside uses). The edge stretches are what catch a crossing where no vertex
-// of either piece is inside the other (two bars crossed), and a press whose vertices all sit
-// on the other's faces (two equal boxes pushed together face on). The answer is the larger
-// of the two directions. It is a lower bound on how deep the pieces press, not the distance
-// that would separate them; for a press that is small beside the pieces (the case it is for:
-// a contact along a sweep) the two agree to within the meshes' faceting.
+// The estimate, in each direction: sample points of one mesh, and take the largest distance
+// to the other's surface among the samples that lie INSIDE it. The samples are every vertex,
+// and for each edge, the midpoint of every stretch between the places it crosses the other
+// mesh's surface (a ray query along the edge, clipped to the other's box). Those stretches
+// are what catch a crossing where no vertex of either piece is inside the other (two bars
+// crossed; a bar or pin ploughing through two walls or knuckles of ONE mesh, where one
+// midpoint of the edge would land in the gap between them), and a press whose vertices all
+// sit on the other's faces (two equal boxes pushed together face on). The answer is the
+// larger of the two directions. It is a lower bound on how deep the pieces press, not the
+// distance that would separate them; for a press that is small beside the pieces (the case
+// it is for: a contact along a sweep) the two agree to within the meshes' faceting. Known
+// limit: a press whose deepest point is inside a coarse face, with no vertex there and no
+// edge of either mesh crossing the other near it, reads only as deep as the samples it has.
 //
-// Cost: one closest-point query per sample inside the other's box, then an inside test per
-// sample in order of that distance, deepest first, until one is inside (that one is the
-// answer). The inside test is the face's side when the nearest point is a face's foot (read
-// against the mesh's winding, its signed volume, once per index) and a parity test only at
-// an edge or a corner. A pair whose boxes do not overlap costs nothing.
+// The inside test is the face's side when the nearest surface point is a face's foot, read
+// against the mesh's winding (its signed volume, once per index), so it assumes each mesh is
+// consistently wound (kernel output is); at an edge or a corner, and on a mesh with no
+// volume, it is a parity test as world.inside uses.
+//
+// Cost: a pair whose boxes do not overlap costs nothing, and one whose surfaces neither
+// touch nor nest one in the other costs a distance check (0). Otherwise one ray query per
+// edge through the other's box, and per sample a nearest-point query capped at the best
+// depth found so far (a sample with surface that near cannot raise it), then, for the rest,
+// the full query and the inside test.
 import { insideShared } from "../oracle/bvh.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { IDENTITY } from "./motion.js";
@@ -54,34 +63,58 @@ function clip(b, p, q) {
   return [t0, t1];
 }
 
-// The sample points of `src` (a JS index) carried by R into the other's frame, inside box b:
-// each vertex, and each edge's midpoint within b, once each (a vertex or edge shared by
-// several triangles carries to bit-identical coordinates). Flat, 3 per point.
-function samples(src, R, b) {
-  const V = src.vertices;
-  let pts = new Float64Array(3 * 1024), n = 0;
-  let table = new Int32Array(4096).fill(-1); // open addressing over point indexes
-  const slot = (x, y, z) => {
-    const h = (Math.imul(Math.round(x * 4096) | 0, 73856093) ^ Math.imul(Math.round(y * 4096) | 0, 19349663) ^ Math.imul(Math.round(z * 4096) | 0, 83492791)) >>> 0;
-    let i = h & (table.length - 1);
+// A set of k-tuples of numbers (exact equality), open-addressed: add() says whether new.
+function tupleSet(k) {
+  let keys = new Float64Array(k * 1024), n = 0;
+  let table = new Int32Array(4096).fill(-1);
+  const hashAt = (src, o) => {
+    let h = 0;
+    for (let j = 0; j < k; j++) h = Math.imul(h ^ (Math.round(src[o + j] * 4096) | 0), 0x9e3779b1);
+    return h >>> 0;
+  };
+  const same = (i, src, o) => { for (let j = 0; j < k; j++) if (keys[k * i + j] !== src[o + j]) return false; return true; };
+  const slot = (src, o) => {
+    let i = hashAt(src, o) & (table.length - 1);
     for (;;) {
-      const k = table[i];
-      if (k === -1 || (pts[3 * k] === x && pts[3 * k + 1] === y && pts[3 * k + 2] === z)) return i;
+      const e = table[i];
+      if (e === -1 || same(e, src, o)) return i;
       i = (i + 1) & (table.length - 1);
     }
   };
-  const add = (x, y, z) => {
-    const i = slot(x, y, z);
-    if (table[i] !== -1) return;
-    if (3 * n === pts.length) { const grown = new Float64Array(2 * pts.length); grown.set(pts); pts = grown; }
-    pts[3 * n] = x; pts[3 * n + 1] = y; pts[3 * n + 2] = z;
-    table[i] = n++;
-    if (2 * n > table.length) { // keep the table at most half full
-      table = new Int32Array(2 * table.length).fill(-1);
-      for (let k = 0; k < n; k++) table[slot(pts[3 * k], pts[3 * k + 1], pts[3 * k + 2])] = k;
-    }
+  return {
+    add(src, o = 0) {
+      const i = slot(src, o);
+      if (table[i] !== -1) return false;
+      if (k * n === keys.length) { const g = new Float64Array(2 * keys.length); g.set(keys); keys = g; }
+      for (let j = 0; j < k; j++) keys[k * n + j] = src[o + j];
+      table[i] = n++;
+      if (2 * n > table.length) { // keep the table at most half full
+        table = new Int32Array(2 * table.length).fill(-1);
+        for (let e = 0; e < n; e++) table[slot(keys, k * e)] = e;
+      }
+      return true;
+    },
   };
+}
+
+// Ray steps past a hit (in units of the edge's length): past rounding, never past a
+// neighbouring hit that matters (two hits this close bound no stretch worth sampling).
+const STEP_T = 1e-9;
+const MAX_HITS = 256;
+// How finely the depth is resolved (mm): a sample deeper than the best so far by less than
+// this is not looked at again. Far under TOUCH_TOL_MM and any mesh's faceting.
+const DEPTH_RES_MM = 1e-4;
+
+// The sample points of `src` (a JS index) carried by R into dst's frame, inside dst's box b:
+// each vertex once, and for each edge once, the midpoint of every stretch of its part inside
+// b between consecutive crossings of dst's surface.
+function samples(src, dst, R, b) {
+  const V = src.vertices;
+  const pointSeen = tupleSet(3), edgeSeen = tupleSet(6);
+  const out = [];
+  const add = (p) => { if (pointSeen.add(p)) out.push(p); };
   const tri = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const edge = new Float64Array(6);
   for (let o = 0; o < V.length; o += 9) {
     for (let k = 0; k < 3; k++) {
       const x = V[o + 3 * k], y = V[o + 3 * k + 1], z = V[o + 3 * k + 2], t = tri[k];
@@ -90,15 +123,27 @@ function samples(src, R, b) {
       t[2] = R[2] * x + R[6] * y + R[10] * z + R[14];
     }
     for (let k = 0; k < 3; k++) {
-      const p = tri[k], q = tri[(k + 1) % 3];
-      if (inBox(b, p)) add(p[0], p[1], p[2]);
+      let p = tri[k], q = tri[(k + 1) % 3];
+      if (inBox(b, p)) add([p[0], p[1], p[2]]);
+      // one direction per edge, whichever triangle meets it first
+      if (p[0] > q[0] || (p[0] === q[0] && (p[1] > q[1] || (p[1] === q[1] && p[2] > q[2])))) [p, q] = [q, p];
+      edge[0] = p[0]; edge[1] = p[1]; edge[2] = p[2]; edge[3] = q[0]; edge[4] = q[1]; edge[5] = q[2];
       const s = clip(b, p, q);
-      if (!s) continue;
-      const t = (s[0] + s[1]) / 2;
-      add(p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t);
+      if (!s || !edgeSeen.add(edge)) continue;
+      const d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+      const at = (t) => [p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t];
+      let from = s[0], tMin = s[0];
+      for (let h = 0; h < MAX_HITS; h++) {
+        const hit = dst.raycast(p, d, { tMin, tMax: s[1] });
+        if (!hit) break;
+        if (hit.t - from > STEP_T) add(at((from + hit.t) / 2));
+        from = hit.t;
+        tMin = hit.t + STEP_T;
+      }
+      if (s[1] - from > STEP_T || from === s[0]) add(at((from + s[1]) / 2));
     }
   }
-  return pts.subarray(0, 3 * n);
+  return out;
 }
 
 // +1 when a JS index's triangles wind outward (positive signed volume), -1 inward, 0 for
@@ -139,23 +184,15 @@ function isInside(dst, wind, p, q, tri) {
 // The deepest sample of `src` (placed into dst's frame by R) inside `dst`, or `floor` when
 // none inside is deeper than it.
 function deepestInside(src, dst, dstBox, R, floor) {
-  const pts = samples(src, R, dstBox);
-  const count = pts.length / 3;
-  const near = new Array(count);
-  const keep = [];
-  for (let i = 0; i < count; i++) {
-    const p = [pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]];
-    const c = dst.closestPoint(p);
-    near[i] = { p, c };
-    if (c.dist > floor) keep.push(i);
-  }
-  keep.sort((x, y) => near[y].c.dist - near[x].c.dist);
   const wind = windingOf(dst);
-  for (const i of keep) {
-    const { p, c } = near[i];
-    if (isInside(dst, wind, p, c.point, c.tri)) return c.dist;
+  let best = floor;
+  for (const p of samples(src, dst, R, dstBox)) {
+    // surface within reach of best: this sample cannot raise it by more than DEPTH_RES_MM
+    if (best > 0 && dst.closestPoint(p, best + DEPTH_RES_MM).tri !== -1) continue;
+    const c = dst.closestPoint(p);
+    if (c.dist > best && isInside(dst, wind, p, c.point, c.tri)) best = c.dist;
   }
-  return floor;
+  return best;
 }
 
 /**
@@ -165,6 +202,8 @@ function deepestInside(src, dst, dstBox, R, floor) {
 export function penetrationDepth(bvhA, boxA, ma, bvhB, boxB, mb) {
   if (!boxA || !boxB || !overlaps(placedBox(boxA, ma), placedBox(boxB, mb))) return 0;
   const A = jsOf(bvhA), B = jsOf(bvhB);
+  // surfaces that neither touch nor cross: apart, unless one is wholly inside the other
+  if (!A.withinDistancePosed(B, ma, mb, 0) && !A.insideOf(B, ma, mb) && !B.insideOf(A, mb, ma)) return 0;
   const aInB = mulMat4(invertRigid(mb), ma), bInA = mulMat4(invertRigid(ma), mb);
   const ab = deepestInside(A, B, boxB, aInB, 0);
   return deepestInside(B, A, boxA, bInA, ab);

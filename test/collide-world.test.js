@@ -275,6 +275,31 @@ describe("penetration depth", () => {
     expect(d).toBeGreaterThan(TOUCH_TOL_MM);
     expect(Math.abs(d - 1)).toBeLessThanOrEqual(0.05);
   });
+  // Two meshes merged into one (a non-convex piece: two walls, two knuckles).
+  const merged = (...ms) => ({ positions: new Float64Array(ms.flatMap((m) => [...(m.indices ? [...m.indices].flatMap((i) => [...m.positions.slice(3 * i, 3 * i + 3)]) : m.positions)])) });
+  it("a bar ploughing through two separate walls of one mesh reads the depth in each wall", () => {
+    // walls x 0..2 and 8..10 (y 0..10, z 0..10) as ONE mesh; a bar x -5..15, y 1..2.5,
+    // z 5..7 passes through both. No vertex of either is inside the other, and no wall
+    // edge crosses the bar (each side face's diagonal passes above or below it); the bar's
+    // long edges' one midpoint over the walls' combined box is x 5, in the gap. Deepest bar
+    // point inside a wall: its long edges' stretch through the wall, midpoint x 1 — 1 mm
+    // from both wall faces (x 0, x 2), and 1 to 2.5 mm from the wall's y 0 face, 3 to 5 mm
+    // from z 0 / z 10. So 1. (Through one solid block x 0..10 the same midpoint is x 5 and
+    // the y 2.5 edge reads 2.5, the y-limited depth.)
+    const bar = box([-5, 1, 5], [15, 2.5, 7]);
+    const walls = merged(box([0, 0, 0], [2, 10, 10]), box([8, 0, 0], [10, 10, 10]));
+    expect(Math.abs(depthOf(T(0), T(0), bar, walls) - 1)).toBeLessThanOrEqual(0.1);
+    expect(Math.abs(depthOf(T(0), T(0), bar, box([0, 0, 0], [10, 10, 10])) - 2.5)).toBeLessThanOrEqual(0.1);
+  });
+  it("a pin through two knuckles of one mesh reads its radial press", () => {
+    // knuckles: bores of r 2.9 in two tubes (z 0..5 and 10..15) merged into one mesh; a
+    // r 3 pin (z -5..20), one band, so its side edges run the whole length and their
+    // midpoint (z 7.5) is in the gap. The pin's surface inside each knuckle is 0.1 mm past
+    // the bore (radially): 0.1, less the faceting (64 segments, cos(pi/64) of it).
+    const knuckles = merged(tube(2.9, 6, 0, 5), tube(2.9, 6, 10, 15));
+    const d = depthOf(T(0), T(0), cylinder(3, -5, 20), knuckles);
+    expect(Math.abs(d - 0.1)).toBeLessThanOrEqual(0.02);
+  });
   it("follows the mats contract: null excludes, a missing key is the identity", () => {
     const w = createCollisionWorld({ meshes: new Map([["a", cube()], ["b", cube()]]) });
     expect(w.depth("a", "b", new Map([["b", T(9.5)]]))).toBeCloseTo(0.5, 6);

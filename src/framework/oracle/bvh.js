@@ -905,9 +905,12 @@ export function buildBVH(mesh) {
     return bestTri === -1 ? null : { t: best, tri: bestTri };
   }
 
-  function closestPoint(p) {
+  // The nearest surface point to p. With `maxDistance`, only a point strictly nearer than
+  // it is looked for (the search prunes everything farther, so a small cap is cheap); none
+  // reads as { point: null, dist: Infinity, tri: -1 }, as an empty mesh does.
+  function closestPoint(p, maxDistance = Infinity) {
     const px = p[0], py = p[1], pz = p[2];
-    let best2 = Infinity, bestPt = null, bestTri = -1;
+    let best2 = maxDistance * maxDistance, bestPt = null, bestTri = -1;
     const stack = [0];
     while (stack.length) {
       const n = stack.pop();
@@ -927,7 +930,7 @@ export function buildBVH(mesh) {
         if (dl < dr) { stack.push(r, l); } else { stack.push(l, r); }
       }
     }
-    return { point: bestPt, dist: Math.sqrt(best2), tri: bestTri };
+    return { point: bestPt, dist: bestTri === -1 ? Infinity : Math.sqrt(best2), tri: bestTri };
   }
 
   // Exact minimum surface-to-surface distance to another buildBVH result.
