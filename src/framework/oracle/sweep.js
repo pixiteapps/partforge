@@ -17,9 +17,10 @@
 // is bounded. The one assumption left: between two samples the relative motion of a and b
 // is close to a screw motion. A single joint between them, any translation and a constant-
 // axis spin are exactly that; a coupled chain, a derive or an IK solve can break it.
-// REBUILD (some sub-part's build changes, or its placement is untrusted): those sub-parts
-// are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps, checked at the steps
-// only (a rebuilt mesh has no placement to bound its motion by).
+// REBUILD (some sub-part's build changes, or its placement is untrusted; a build the probe
+// cannot trust only when it reads a param the motion moves, collide/untrusted-reads.js):
+// those sub-parts are rebuilt per step, on SWEEP_REBUILD_STEPS evenly spaced steps, checked
+// at the steps only (a rebuilt mesh has no placement to bound its motion by).
 //
 // A step SWEEP_MAX_STEPS forces past the travel bound marks the row `capped: true`; the
 // advancement above still holds each pair across it, under the same screw-motion
@@ -29,19 +30,50 @@
 // sweep's start is a contact from the start, never exempt: a sweep asks "never closer than
 // this anywhere", unlike a drag, which only refuses to push further in.
 //
+// Clearance 0 and below (spec 2026-11-12-moving-fits-swept-design.md, B): 0 means "may
+// touch, never press in", a negative clearance "may press in up to this depth" (a detent).
+// Distances are unsigned and the advancement proof needs a positive threshold, so such a
+// sweep RUNS at TOUCH_TOL_MM, and each contact interval it finds is then read for depth
+// (world.depth) ALONG it: rigid, at steps over which no point of the pair moves more than
+// DEPTH_STEP_MM relative to the other (pairTravel, the advancement's own bound). Depth
+// cannot change faster than that travel, so a dig that enters and leaves between two
+// readings both within the allowance is at most DEPTH_STEP_MM / 2 (0.1 mm) past it. Where
+// two readings straddle the allowance (-clearance + TOUCH_TOL_MM) the crossing is bisected
+// to BISECT_TOL. The interval is then split into stretches: one past the allowance is a
+// contact (`allowed: false`), one within it `allowed: true`, which leaves the row clear and
+// its freeRange open. So a lid that rests closed and then presses in reads its contact
+// from where it presses in. A rebuild sweep reads depth at its rebuild steps only, as it
+// checks contact (no placement bounds a rebuilt mesh's motion). When the deadline stops a
+// contact before it is read end to end, the stretches read before it keep their verdicts (a
+// stretch already past the allowance is a contact that counts) and the rest is one contact
+// `depthUnread: true`, with the deepest reading in it, and the row is `skipped: "timeout"`;
+// verify withholds sweepContacts for it unless some contact counts. A row carries at most
+// SWEEP_MAX_CONTACTS contacts (capContacts).
+//
+// On a positive-clearance sweep `depth` is informational: read at up to DEPTH_SAMPLES
+// evenly spaced values, left off a contact when the deadline would be passed, never
+// changing the row. Depth is a lower bound, as depth.js says, never an exact figure.
+//
 // Shared runtime: DOM-free, three-free and node:-free, loaded lazily by the worker. The
 // caller owns the kernel round: built solids stay live until its kernel.cleanup().
 import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
 import { createCollisionWorld, relativeMatsAt, buildIndex, disposeIndexes, IDENTITY } from "../collide/world.js";
 import { normalizeCollisions } from "../collide/declaration.js";
 import { SETTLE_STEP_MM } from "../collide/guard.js";
-import { CONTACT_EPS, pairKey } from "../collide/pairs.js";
+import { CONTACT_EPS, pairKey, sweepContactBlocks } from "../collide/pairs.js";
 import { applyMat, cornerTravel } from "../collide/motion.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { motionOf, sweepsInView } from "../collide/sweep-targets.js";
+import { TOUCH_TOL_MM } from "../collide/depth.js";
 
 export const SWEEP_REBUILD_STEPS = 24;
 export const SWEEP_MAX_STEPS = 2000;
+/**
+ * The most contacts one row carries. A row with more keeps every blocking contact first (in
+ * order), then the unread ones, then the allowed ones, and says how many it dropped in
+ * `contactsOmitted`. `clear`, `freeRange` and the sweepContacts gate are read before the cap.
+ */
+export const SWEEP_MAX_CONTACTS = 32;
 
 const BISECT_TOL = 1e-3; // a contact's ends, as a share of the range
 // A pair whose relative placement moved no more than this (mm, at its box corners) since
@@ -67,6 +99,14 @@ function turnOf(m) {
 // A pair advancement cannot prove clear by an interval this small (a share of BISECT_TOL)
 // is reported as a contact over it: conservative, and at most T/2 inside clearance.
 const ADVANCE_FLOOR = 1 / 8;
+// A positive-clearance sweep's informational depth readings per contact, ends included.
+const DEPTH_SAMPLES = 7;
+/**
+ * On a sweep that may touch (clearance <= 0), the most any point of a contact pair moves
+ * relative to the other between two depth readings (mm). A dig between two readings within
+ * the allowance is at most half of this past it.
+ */
+export const DEPTH_STEP_MM = 0.2;
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
 
@@ -100,13 +140,15 @@ const emptyRow = (s, extra) => ({
  * "unreadable"` with its `error` message; the others still run. A skipped row's `clear` is
  * null. `skipStill: false` measures every pair at every step (a check that the still-pair
  * skip changes nothing; slower). `maxSteps` (default SWEEP_MAX_STEPS) caps a rigid sweep's
- * steps, as SWEEP_MAX_STEPS does.
+ * steps, as SWEEP_MAX_STEPS does. `entries` (normalizeSweeps' entries for this view,
+ * already filtered) runs exactly those instead of reading the declarations again: verify,
+ * in another view, runs only the entries no view already swept alike.
  */
-export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS } = {}) {
+export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS, entries = null } = {}) {
   const rows = [];
   const full = { ...part.defaults, ...params };
   const decl = normalizeCollisions(part);
-  for (const s of normalizeSweeps(part, view, params)) {
+  for (const s of entries ?? normalizeSweeps(part, view, params)) {
     if (s.skip) { rows.push(emptyRow(s, { skipped: s.skip })); continue; }
     if (now() > deadline) { rows.push(emptyRow(s, { skipped: "timeout" })); continue; }
     const t0 = now();
@@ -165,7 +207,11 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
   const motion = motionOf(part, view, full, s);
   const { lo, hi } = motion;
   const tol = BISECT_TOL * (hi - lo);
-  const clearance = s.clearance;
+  // A sweep that may touch (clearance <= 0) runs at the touching tolerance; its contacts
+  // are classified by depth against `allowance` below. The row reports s.clearance.
+  const touching = s.clearance <= 0;
+  const clearance = touching ? TOUCH_TOL_MM : s.clearance;
+  const allowance = -s.clearance + TOUCH_TOL_MM;
   const rebuildSet = new Set(s.rebuild);
   const rigid = rebuildSet.size === 0;
   const active = [...s.moving, ...s.rebuild];
@@ -410,18 +456,180 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
     }
 
     if (timedOut) for (const c of open.values()) c.to = last.v; // read up to here
-    row.minClearance = best;
     const merged = mergeContacts(contacts);
-    row.contacts = merged.map(({ before: _b, after: _a, ...c }) => c);
-    if (timedOut) return { ...row, clear: null, skipped: "timeout" };
-    row.clear = contacts.length === 0;
-    if (s.kind === "param") row.freeRange = freeRange(merged, Math.min(Math.max(full[s.param] ?? lo, lo), hi), lo, hi);
-    return row;
+    const depthAt = (v, a, b) => {
+      const pose = poseAt(v);
+      try { return pose.world.depth(a, b, pose.mats); } finally { pose.release(); }
+    };
+    let out = merged;
+    if (touching) {
+      // each contact interval read along its length and split into stretches
+      out = [];
+      let deepest = null;
+      for (const c of merged) {
+        if (timedOut) { out.push({ ...c, depth: null, depthUnread: true }); continue; }
+        const w = rigid
+          ? walkDepth(c, { depthAt, allowance, tol, deadline, now, stepOk: (vl, vr, limit) => {
+              const { T, theta } = pairTravel(shared, c.a, c.b, matsOf(motion.at(vl)), matsOf(motion.at(vr)), clearance);
+              return T <= limit && theta <= MAX_TURN;
+            } })
+          : walkDepth(c, { depthAt, allowance, tol, deadline, now, grid: rebuildGrid(lo, hi) });
+        if (w.deep && (!deepest || w.deep.depth > deepest.depth)) deepest = { ...w.deep, a: c.a, b: c.b };
+        const pieceOf = (st) => {
+          const piece = { ...c, from: st.from, to: st.to, before: st.before, after: st.after, depth: st.depth, allowed: !st.over };
+          if (st.from !== c.from) {
+            // a stretch that starts inside the interval: its own point and driver
+            piece.at = readAt(st.from, pairKey(c.a, c.b), Infinity)?.at ?? c.at;
+            piece.driver = driverAt(st.before ?? st.from, c.a, c.b);
+          }
+          return piece;
+        };
+        if (w.unread) {
+          timedOut = true;
+          // What was read before the clock stopped keeps its reading: a stretch proven past
+          // the allowance is a contact that counts, whatever follows it. Only the rest of the
+          // interval, from the last stretch read, is unread.
+          const { partial } = w;
+          if (!partial) { out.push({ ...c, depth: w.deep?.depth ?? null, depthUnread: true }); continue; }
+          for (const st of w.stretches) out.push(pieceOf(st));
+          // a stretch past the allowance counts as far as it was read; one within it says
+          // nothing until it ends, so it joins the unread rest
+          let rest = { from: partial.from, before: partial.before, depth: partial.depth };
+          if (partial.over) {
+            out.push(pieceOf(partial));
+            rest = { from: partial.to, before: partial.to, depth: null };
+          }
+          const unread = { ...c, from: rest.from, before: rest.before, depth: rest.depth, depthUnread: true };
+          if (rest.from !== c.from) unread.at = readAt(rest.from, pairKey(c.a, c.b), Infinity)?.at ?? c.at;
+          out.push(unread);
+          continue;
+        }
+        for (const st of w.stretches) out.push(pieceOf(st));
+      }
+      // pieces pressing in: the minimum is how deep, negated
+      if (deepest && deepest.depth > TOUCH_TOL_MM) {
+        best = { distance: -deepest.depth, a: deepest.a, b: deepest.b, at: readAt(deepest.value, pairKey(deepest.a, deepest.b), Infinity)?.at ?? null, value: deepest.value };
+      }
+    } else if (!timedOut) {
+      // informational: never changes the row, so the clock stops it without a mark
+      for (const c of merged) {
+        const n = c.to > c.from ? DEPTH_SAMPLES : 1;
+        let deep = -Infinity;
+        for (let i = 0; i < n && deep !== null; i++) {
+          if (now() > deadline) deep = null;
+          else deep = Math.max(deep, depthAt(i === n - 1 ? c.to : c.from + ((c.to - c.from) * i) / (n - 1), c.a, c.b));
+        }
+        if (deep === null) break;
+        c.depth = deep;
+      }
+    }
+    row.minClearance = best;
+    row.contacts = out.map(({ before: _b, after: _a, ...c }) => c);
+    if (timedOut) return capContacts({ ...row, clear: null, skipped: "timeout" });
+    const blocking = out.filter((c) => c.allowed !== true);
+    row.clear = blocking.length === 0;
+    if (s.kind === "param") row.freeRange = freeRange(blocking, Math.min(Math.max(full[s.param] ?? lo, lo), hi), lo, hi);
+    return capContacts(row);
   } finally {
     shared?.dispose();
     disposeIndexes(owned);
     kernel.endSubPart?.();
   }
+}
+
+/**
+ * `row` with at most SWEEP_MAX_CONTACTS contacts: every blocking one first (in order), then
+ * the unread ones (each withholds the gate while nothing blocks), then the allowed ones, and
+ * `contactsOmitted` the number left off. A row within the cap is returned as it is.
+ */
+export function capContacts(row) {
+  const all = row.contacts ?? [];
+  if (all.length <= SWEEP_MAX_CONTACTS) return row;
+  const blocks = (c) => !c.depthUnread && sweepContactBlocks(row, c);
+  const ranked = [...all.filter(blocks), ...all.filter((c) => !blocks(c) && c.depthUnread), ...all.filter((c) => !blocks(c) && !c.depthUnread)];
+  return { ...row, contacts: ranked.slice(0, SWEEP_MAX_CONTACTS), contactsOmitted: all.length - SWEEP_MAX_CONTACTS };
+}
+
+/** The values a rebuild sweep checks at (its SWEEP_REBUILD_STEPS steps). */
+function rebuildGrid(lo, hi) {
+  return Array.from({ length: SWEEP_REBUILD_STEPS }, (_, i) => (i === SWEEP_REBUILD_STEPS - 1 ? hi : lo + ((hi - lo) * i) / (SWEEP_REBUILD_STEPS - 1)));
+}
+
+/**
+ * Read contact `c`'s depth along [c.from, c.to] with `depthAt(v, a, b)` and split it into
+ * stretches past `allowance` (`over`) and within it. Readings are spaced by
+ * `stepOk(vl, vr, limit)` (true when the pair moves at most `limit` mm over the step;
+ * halved until it is, down to a floor), or, given
+ * `grid`, at the grid's values inside the interval. A crossing between two readings is
+ * bisected to `tol`. Returns `{ stretches: [{ from, to, before, after, depth, over }],
+ * deep: { depth, value } | null, unread, partial }`: `unread` when the deadline stopped it,
+ * with `deep` the deepest reading so far, `stretches` the ones finished before it and
+ * `partial` the one it stopped in, read from its `from` to its `to` (null when not even the
+ * first reading was taken). `before`/`after` of the first and last stretch are the
+ * contact's own; inside, the bisected value on the other side of each crossing.
+ *
+ * `limit` is DEPTH_STEP_MM, or, after a reading d past the allowance, d − allowance when
+ * that is more: depth cannot fall by more than the pair moves, so no point of that step
+ * can come back within the allowance unseen. A pair pressed deep along a whole swing (a
+ * knuckle in the other plate) is then read in a few long steps, not one per 0.2 mm. Its
+ * reported depth is the deepest READING, so there it can be short of the true deepest by
+ * up to half a step's travel; whether it presses in is decided exactly as before.
+ */
+function walkDepth(c, { depthAt, allowance, tol, deadline, now, stepOk = null, grid = null }) {
+  let deep = null;
+  const read = (v) => {
+    if (now() > deadline) return null;
+    const d = depthAt(v, c.a, c.b);
+    if (!deep || d > deep.depth) deep = { depth: d, value: v };
+    return d;
+  };
+  const stretches = [];
+  let d0 = read(c.from);
+  if (d0 === null) return { stretches, deep, unread: true, partial: null };
+  let cur = { from: c.from, to: c.from, before: c.before, after: undefined, depth: d0, over: d0 > allowance };
+  // the next reading, and the crossing to it when its side differs from cur's
+  const visit = (vPrev, v, d) => {
+    if ((d > allowance) === cur.over) { cur.to = v; cur.depth = Math.max(cur.depth, d); return true; }
+    let a = vPrev, b = v; // a on cur's side, b on the new side
+    let newDepth = d;
+    while (b - a > tol) {
+      const mid = (a + b) / 2, dm = read(mid);
+      if (dm === null) return false;
+      if ((dm > allowance) === cur.over) { a = mid; cur.depth = Math.max(cur.depth, dm); } else { b = mid; newDepth = Math.max(newDepth, dm); }
+    }
+    cur.to = a; cur.after = b;
+    stretches.push(cur);
+    cur = { from: b, to: v, before: a, after: undefined, depth: newDepth, over: !cur.over };
+    return true;
+  };
+  let v = c.from;
+  if (grid) {
+    for (const g of [...grid.filter((x) => x > c.from && x < c.to), c.to]) {
+      if (g <= v) continue;
+      const d = read(g);
+      if (d === null || !visit(v, g, d)) return { stretches, deep, unread: true, partial: cur };
+      v = g;
+    }
+  } else {
+    const floor = tol * ADVANCE_FLOOR;
+    let h = c.to - c.from, dLast = d0;
+    while (v < c.to) {
+      h = Math.min(h * 2, c.to - v);
+      const limit = Math.max(DEPTH_STEP_MM, dLast - allowance);
+      let v2;
+      for (;;) {
+        v2 = h >= c.to - v ? c.to : v + h;
+        if (h <= floor || stepOk(v, v2, limit)) break;
+        h /= 2;
+      }
+      const d = read(v2);
+      if (d === null || !visit(v, v2, d)) return { stretches, deep, unread: true, partial: cur };
+      v = v2; dLast = d;
+    }
+  }
+  cur.to = c.to; cur.after = c.after;
+  stretches.push(cur);
+  return { stretches, deep, unread: false };
 }
 
 /**

@@ -43,6 +43,14 @@ test("closestPoint on a box face returns the perpendicular foot + distance", () 
   expect(r.point[2]).toBeCloseTo(5, 5);
 });
 
+test("closestPoint with maxDistance finds only a point strictly nearer than it", () => {
+  const bvh = buildBVH(boxMesh(10, 20, 5));
+  const p = [5, 10, 9]; // 4 above the z=5 top face
+  expect(bvh.closestPoint(p, 4.5)).toEqual(bvh.closestPoint(p));
+  expect(bvh.closestPoint(p, 4)).toEqual({ point: null, dist: Infinity, tri: -1 });
+  expect(bvh.closestPoint(p, 1)).toEqual({ point: null, dist: Infinity, tri: -1 });
+});
+
 test("closestPoint matches a brute-force reference on the box", () => {
   const mesh = boxMesh(10, 20, 5);
   const bvh = buildBVH(mesh);

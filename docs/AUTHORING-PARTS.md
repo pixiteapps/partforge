@@ -3769,9 +3769,66 @@ Two things, opt-in per part. **Pose mode keeps pieces solid**: with a `collision
 drag that would push one sub-part into another stops at its surface and slides along it. **Sweeps check a whole
 motion**: `verify.sweeps` declares motions that `measure` steps end to end, reporting whether
 they stay clear, the tightest clearance along them, where first contact happens and which
-param drives it. A part with neither behaves exactly as before. The reference parts are
-`gearbox.js` (an animation sweep, allowed meshing pairs), `drawer-box.js` (a handle sweep per
-drawer) and `hand.js` (a knuckle and a curl sweep for the index and thumb, reported only).
+param drives it. A part with neither behaves exactly as before, unless a piece moves: then
+verify holds its verdict until a sweep checks that motion ("When a piece moves", below). The
+reference parts are `hinged-box.js` (the pattern for CHECKING a swing: the control, a rotary
+handle, `collisions: {}`, both pose params swept at `clearance: 0` and gated; its lid is a
+plain plate on a line, not hinge geometry, which "A hinge that opens" shows), `gearbox.js` (an
+animation sweep, allowed meshing pairs), `drawer-box.js` (a handle sweep per drawer) and
+`hand.js` (a knuckle and a curl sweep for the index and thumb, reported only; its other
+digits are not swept, so its verdict is withheld).
+
+### When a piece moves
+
+A param is a **motion** when it moves one exportable sub-part against another without
+rebuilding either: place-only, as a hinge angle, a slide, a drawer or an explode lift is.
+Every view is scanned, whatever view is verified. When no `verify.sweeps` entry moves a
+motion in the view where it moves something, lint warns `motion-unswept` and verify adds a
+`sweepCoverage` check for it: `status: "skip"`, `unevaluated: true`, so `verify.ok` is `null`
+(on a quick lap too: the check builds no geometry). The hint is the edit:
+
+```
+"lidAngle" moves lid against base in view "box" and no sweep checks that motion
+hint: Add verify.sweeps: { lidAngle: { param: "lidAngle", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.
+```
+
+A slider or number control with no finite `min` and `max` gets "Give the control a min and
+max, then add …" first, since a sweep needs a range. A discrete control (a select) that a
+handle writes cannot take one, so its hint gives the sweep its own span instead: "Add
+verify.sweeps: { pose: { param: "pose", range: [lo, hi], clearance: 0 } } with the span the
+handle moves it over, …". When a piece moves, add four things:
+
+```js
+collisions: {},                                          // Pose mode keeps the pieces solid
+handles: { lid: { point: …, params: ["lidAngle"], drag: "rotary", axis: … } }, // the user moves it
+verify: {
+  sweeps: { lidAngle: { param: "lidAngle", clearance: 0 } }, // the whole range, may touch, never press in
+  expect: { _view: { sweepContacts: 0 } },                // and gate on it
+},
+```
+
+`src/parts/hinged-box.js` has all four for checking its swing (`drag: "axis"` for a slide;
+see "Handles"); "A hinge that opens" below has them on a real pin hinge. A
+handle, path, preset or animation sweep that moves the param covers it as well as a param
+sweep does. What is **not** a motion: a param that rebuilds a piece (a size), a param that
+moves every piece together, a goal handle's target and seed (`params: { position, aim }` and
+`seed`: the solver poses the limb, and a seed is only its starting guess; a seed param that a
+non-goal handle also writes is still a motion), a param with no visible control and no
+handle, a param set only by a discrete control (select, radio, checkbox, text, custom:
+a few fixed poses, which presets and cases check; only slider and number controls, and
+params a non-goal handle writes, are candidates), and a param under which the set of
+exportable pieces changes. One known gap follows: a motion that exists only while a
+checkbox that is off by default is on is not detected, so sweep it yourself. A sub-part whose build
+cannot be probed is judged by what its build reads. To check a goal-posed limb, sweep a path
+between presets or an animation.
+
+The verdict waits for a **declared** sweep, not a finished one: a declared sweep that ran
+out of time is a warning (`sweeps`, below), and the motion counts as covered. A declared
+sweep that cannot be read (an unknown target, a control with no range) covers nothing, so the
+verdict is still held; lint's `sweep-unknown-target` names it. Gating is your choice: a
+covered motion with no `sweepContacts` in `expect` is reported, not gated. The scan itself has
+a budget: 1 s in verify by default, and the CLI's sweep budget under `npx partforge measure`;
+past it verify adds one warning, and the params it did not reach are not checked.
 
 ### The `collisions` block
 
@@ -3860,8 +3917,8 @@ verify: {
   `range: [lo, hi]`, with every other param at its current value.
 - **`handle`** sweeps each param the handle writes on its own, min to max, the others held:
   one row per param, named `<sweep>.<param>` (`drawer1.drawer1Open`). A goal handle is never
-  swept (its params are a target, not a motion): sweep its joint params, a path or an
-  animation instead.
+  swept: its params are a target and its seed a starting guess for the solver, neither a
+  motion. Sweep a path between presets or an animation instead.
 - **A path** moves several params together: `{ from, to }` names two presets, `{ path }`
   gives waypoints, blended linearly between them (t runs 0..1 over the whole path). A path is
   a **straight-line blend of params**, not a natural motion: the hand's open → fist path
@@ -3870,22 +3927,44 @@ verify: {
   blended directly", and check the `driver` before you move a piece.
 - **`animation`** steps the named animation's timeline through the player's own sampling.
   A zero-length one is `skipped: "no-motion"`, which reads clear.
-- **`clearance`** (mm, per sweep, default `collisions.clearance`): `clear` then means "never
-  closer than this anywhere along the motion". It must be **below the start gap of every pair
-  the sweep moves**: a sweep exempts no pair, so on a pinned part a clearance above the pin
-  gap reads as a contact at t = 0 ([sweep-contact-at-start](ERROR-PATTERNS.md#sweep-contact-at-start)).
+- **`clearance`** (mm, per sweep, default `collisions.clearance`, 0.001): how close the
+  motion may bring any pair it moves. One number for every pair the sweep moves:
+
+  | `clearance` | Along the motion |
+  | --- | --- |
+  | `> 0` | never closer than this |
+  | `0` | may touch, never press in |
+  | `< 0` | may press in up to this depth (a detent, a snap passing over) |
+
+  A positive clearance must be **below the start gap of every pair the sweep moves**: a
+  sweep exempts no pair, so on a pinned part a clearance above the pin gap reads as a
+  contact at the start ([sweep-contact-at-start](ERROR-PATTERNS.md#sweep-contact-at-start)).
   Lint cannot check this, because it builds no geometry. The hand's pins are about 0.4 mm,
   so its `fist` uses 0.3.
+- **A pair that starts seated** (a closed lid resting on its base, a drawer on its runner)
+  touches at the start of the motion. Use `clearance: 0`: resting is clear, pressing in is a
+  contact. That is why the `motion-unswept` hint always says `clearance: 0`.
 - **`views`**: the views the sweep runs in. By default it runs in every view where its target
   moves something; a view where nothing moves gets no row (the hand's print kit reports no
-  sweeps).
+  sweeps). Verify runs each declared sweep where the motion is: in the verified view and in every
+  other view where it moves something, and the other views' rows carry `view` (they come
+  back as `verify().sweeps`, and in an inspect report they join `measure.sweeps`). A view
+  that shows the same pieces (a non-exportable ghost counts) and poses the moving ones
+  against the others exactly as a view already swept is not swept again. So `sweepContacts` on a print view still reads the assembly's swing, and an
+  exploded view that lifts the lid clear cannot answer for the assembly view that swings it
+  through the base.
 
 Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or animation; a
 param with no finite min and max; a `range` that is not `[lo, hi]` with lo < hi; a handle
 whose point cannot be read; a `path` of fewer than two param objects; a spec that is not an
 object, or names no motion), `sweep-goal-handle` (a warning: a goal handle is never
-swept) and `sweep-rebuilds` (a warning: a build changes along the motion, so the sweep
-rebuilds geometry at every step).
+swept), `sweep-bad-clearance` (a warning: a `clearance` that is present but no finite
+number, which the sweep would replace with the declared default —
+[sweep-bad-clearance](ERROR-PATTERNS.md#sweep-bad-clearance)), `sweep-rebuilds` (a warning: a
+build changes along the motion, so the sweep rebuilds geometry at every step) and `motion-unswept` (a warning: a param moves one piece
+against another in some view and no sweep moves it there; the hint gives the sweep to add,
+always with `clearance: 0` —
+[motion-unswept](ERROR-PATTERNS.md#motion-unswept)).
 
 ### How a sweep steps
 
@@ -3902,7 +3981,10 @@ rebuilds geometry at every step).
 - **Rebuild** (a param the motion moves changes some build): those sub-parts are rebuilt on
   24 evenly spaced steps (`SWEEP_REBUILD_STEPS`) and checked at the steps only, since a
   rebuilt mesh has no placement to bound its motion by. Slower and coarser; the row says
-  `rebuilds: true`, and lint's `sweep-rebuilds` warns.
+  `rebuilds: true`, and lint's `sweep-rebuilds` warns. A build that queries its own solid
+  (`volume()`, `boundingBox()`) cannot be compared step to step without building it, so it
+  is judged by what it reads: one that never reads a param the motion moves is moved
+  rigidly; one that reads one, or throws, is rebuilt.
 
 ### What a sweep reports
 
@@ -3912,20 +3994,45 @@ anything), one row per sweep (per param for a handle sweep):
 ```js
 { name: "spin", clear: true, clearance: 0.001, steps: 252, rebuilds: false,
   minClearance: { distance: 0.2999, a: "plate", b: "gear3", at: [110.6, 42.7, 15], value: 0 },
-  contacts: [],            // each: { a, b, from, to, at, driver, unresolved? }
+  contacts: [],            // each: { a, b, from, to, at, driver, depth, allowed?, unresolved?, depthUnread? }
   freeRange: null,         // a param sweep: the contact-free [lo, hi] around the current value
-  ms: 1400 }               // wall time; capped / skipped / error when they apply
+  ms: 1400 }               // wall time; capped / skipped / error / contactsOmitted / view when they apply
 ```
 
 - **`contacts`**: each interval of the motion where a blocked pair is within clearance:
   `from`..`to` in the swept value (the param's own units, or t in 0..1 for a path or an
   animation), the pair, a point `at`, and `driver`, the param closing the gap fastest at
-  first contact (the one whose limit or placement to change).
+  first contact (the one whose limit or placement to change). `depth` (mm) is how far the
+  pieces press in, the deepest reading along the interval (a lower bound, never an exact
+  figure). On a positive-clearance sweep it is for information only, and is left off a
+  contact when the deadline would be passed; on an unread contact (`depthUnread`) it is
+  `null`.
+- **`allowed: true`** (a sweep at `clearance` 0 or below): a stretch whose depth stays within
+  the allowance, which is the declared depth plus 0.02 mm (`TOUCH_TOL_MM`): up to 0.02 mm at
+  `clearance: 0` (touching), up to `-clearance + 0.02` on a negative one. It leaves the row
+  clear and its `freeRange` open, and `sweepContacts` never counts it. A stretch past the
+  allowance is a contact. So one interval can come back as several contacts in the row: the
+  hinged box's lid touches the base along the hinge line from 0 to 110 (one allowed contact),
+  and a lid that rests closed and then presses in reads its blocking contact from where it
+  presses in. Such a sweep runs at that 0.02 mm touch threshold and reads depth along each
+  contact every 0.2 mm of travel (`DEPTH_STEP_MM`), so a press that goes at most about 0.1 mm
+  past the allowance and back within one step can be missed.
+- **`minClearance.distance`** goes negative on a sweep at `clearance` 0 or below when pieces
+  press in: it is then minus the deepest depth, the number to tune an allowance against.
+- **`depthUnread: true`**: the time budget ran out before the contact's depth was read end to
+  end (the row is `skipped: "timeout"`). It is neither clear nor a collision: `sweepContacts`
+  is withheld, unless some other contact already counts.
+- **`contactsOmitted`**: a row keeps at most 32 contacts (`SWEEP_MAX_CONTACTS`), the ones
+  that count first; this says how many were left off.
+- **`view`**: on a row verify ran in another view (see `views`, above).
 - **`unresolved: true`** on a contact: advancement could not prove the pair clear over that
   interval at its finest width, so it is reported as a contact (conservatively, at most a
   hair inside clearance) rather than dropped.
 - **`freeRange`** (a param sweep): the contact-free span around the param's current value,
-  the suggested joint limit.
+  the suggested joint limit. It is the span the sweep proved, and on a sweep at a clearance
+  of 0 or below depth is read every 0.2 mm of travel (`DEPTH_STEP_MM`), so a dig between two
+  readings can pass the allowance by up to 0.1 mm: take a print margin off it before you
+  write it as the control's range.
 - **`skipped`**: `"timeout"` (the time budget ran out; the row keeps any contact it found),
   `"unreadable"` (with `error`: an unknown target) or `"no-motion"`.
 
@@ -3934,11 +4041,16 @@ The CLI prints one line for them all:
 ```
 sweeps: drawer1.drawer1Open clear (min 1.00mm carcass×drawer1); drawer2.drawer2Open clear (min 1.00mm carcass×drawer2); …
 sweeps: spin clear (min 0.30mm gear3×plate)
+sweeps: lidAngle clear (min 0.00mm base×lid); lidLift clear (min 0.00mm base×lid)
+sweeps: travel clear (min -0.30mm base×lid), rub at 39.95 base×lid (0.30mm, allowed); before clear (min 0.50mm base×lid); after clear (min 0.93mm base×lid)
 sweeps: … fist CONTACT at 0.78 indexDistal×thumbDistal driven by indexKnuckle
+sweeps: open CONTACT at 40.19 base×lid (0.30mm deep) driven by open, free [0, 40.11]
 ```
 
-A contact line adds `, free [lo, hi]` on a param sweep, `(+N more)` past the first contact,
-`(unresolved)` and `(capped)` when they apply.
+A contact line adds `(<depth>mm deep)` on a sweep at `clearance` 0 or below, `, free [lo, hi]`
+on a param sweep, `(+N more)` past the first contact, `(unresolved)` and `(capped)` when they
+apply. A clear line on such a sweep adds `, rub at <value> <pair> (<depth>mm, allowed)` for
+its first allowed stretch deeper than the touch threshold; a resting touch adds nothing.
 
 **Long sweeps run from the CLI.** The hand's whole open → fist path takes about 17 s, too
 long for every `measure`, so `hand.js` does not declare it. To run it, add
@@ -3948,7 +4060,9 @@ indexDistal×thumbDistal driven by indexKnuckle` (the straight-line blend's thum
 above). For the same reason the hand declares only the index and thumb knuckle and curl
 sweeps: the middle, ring and little fingers sweep the same way from the CLI. Add
 `middleKnuckle: { param: "middleKnuckle" }`, `middleCurl: { param: "middleCurl" }` and so
-on to `verify.sweeps` and run the same command.
+on to `verify.sweeps` and run the same command. The hand therefore **reaches no verdict**:
+its thirteen unswept joint params are motions, each a `sweepCoverage` check, so `verify.ok`
+is `null`. That is the honest answer for a part whose motions do not fit the report budget.
 
 ### Reading `sweepContacts`
 
@@ -3957,7 +4071,7 @@ closer than its clearance ([sweep-contacts](ERROR-PATTERNS.md#sweep-contacts)). 
 of `expect` to report sweeps without gating on them, as the hand does.
 
 - It counts the rows that found a contact, **including a timed-out row that had already
-  found one** (that contact is real).
+  found one** (that contact is real). An `allowed` stretch never counts.
 - A row stopped short with no contact found counts nothing; verify adds a volunteered
   `sweeps` warning naming it, which points to the CLI: `npx partforge measure` gives sweeps
   a 60 s budget, against the 6 s share an `inspect` job's report allows (counted from the
@@ -3968,6 +4082,17 @@ of `expect` to report sweeps without gating on them, as the hand does.
 - Verify runs the sweeps once, on one case (the seed's, else `defaults`, else the first);
   presets and other cases never re-run them.
 
+**`verify.ok: null` on a moving part** has three causes here, each named in
+`verify.unevaluated`:
+
+- **No sweep declared** for a motion: a `sweepCoverage` check per param. Add the sweep its
+  hint gives.
+- **A depth left unread**: a `sweepContacts` withheld because a contact's depth was not read
+  before the deadline (`depthUnread`). Give the pair a running gap (a bore larger than its
+  pin, a gap between knuckle faces) so the sweep can prove it clear, or run the CLI.
+- **Every sweep stopped short**: a `sweepContacts` withheld because no declared sweep in the
+  view ran to its end. Run them with `npx partforge measure`, or declare fewer.
+
 ### Hinge limits: a range, or collision
 
 A joint's limit is the author's choice. Write a `range` as before: a hard limit for sliders,
@@ -3977,6 +4102,144 @@ the joint's param and read its row's `freeRange`, the contact-free span around t
 value: that is a real number to write as the range (less a print margin), instead of a
 guess. Collision does not clamp a slider, so a range is still the only limit a slider obeys.
 `docs/domains/kinematics.md` has this for limbs.
+
+### A hinge that opens
+
+A hinge swept at `clearance: 0` from closed to open shows whether it works as printed.
+When it reads a contact, change the geometry, not the range:
+
+- **Put the axis outside both bodies**, at or past the edge the lid turns about (the
+  hinged box's axis is the base's rear top edge, the lattice box's 1 mm behind it), or cut a
+  relief in the body for the part of the lid that swings down behind it. An axis inside the
+  body's outline drives the lid's back edge through the body as it opens.
+- **Give knuckles a gap along the axis** (about 0.2 mm between neighbouring knuckle faces),
+  and cut a relief in the opposite leaf around each knuckle, so a knuckle never turns inside
+  the other plate.
+- **Sweep the angle** at `clearance: 0` over the control's whole range and gate it with
+  `sweepContacts: 0`. When the stop is intended (a lid that rests against the body at 110°),
+  write the row's `freeRange` back as the control's range. Never narrow the range to hide a
+  contact you have not fixed, and never put the pair in `collisions.allow`.
+
+An assembled pin hinge for FDM with all of it, three pieces printed apart: the base with
+two outer knuckles, the lid with the middle one, and a headed pin pushed through after
+printing. The fits come from `fdm-pla` and are diametral, copied into `derive()`: the pin
+turns in the lid's knuckle on the `moving` fit (0.35), slides through the near base knuckle
+on the `push` fit (0.05) until its head seats on that knuckle's face, and is gripped by the
+far knuckle on the `press` fit (-0.10). The head stops it sliding one way and the press fit
+the other, so the head seat is declared as `contacts`. Every bore is horizontal as printed,
+so each is drawn `holeUndersize` (0.25) larger, and a `clearance` expectation reads the
+RADIAL gap as drawn: half of fit + holeUndersize, 0.30 mm in the lid, declared as a ±0.05
+band (the drawn press bore is 0.075 mm loose; it prints tight once its roof sags). The
+knuckles have a 0.2 mm gap along the axis, each leaf a relief round the other's knuckles,
+both leaves sit under the axis so they fold flat, each knuckle is cut flat on the bed with a
+teardrop bore, and the pin prints lying on a flat along its length (layer lines along the
+pin, not across its shear planes), so the print view has no overhang to support. `open` is
+read only in the lid's assembly view entry; a rotary handle, `collisions: {}`, and the
+sweep. `held` is left off: the lid turns on running clearance. From
+`test/fixtures/pin-hinge.js`, which a test builds and holds equal to this copy:
+
+```js
+// Interfaces: lid×pin: bore-on-pin, moving → clearance lid×pin 0.25..0.35
+// Interfaces: base×pin: bore-on-pin, push (near knuckle) and press (far knuckle), head seated → contacts base×pin
+// Interfaces: base×lid: hinge, moving → clearance base×lid >=0.15, sweep open 0..180
+const W = 36, K = W / 3, R = 5, AXIS = 3.25, T = 2, PIN = 1.5, FLAT = 1.1, HEAD = 2.5, HL = 1.5;
+const LEAF = 22, GAP = 0.2, RELIEF = 5.6, RAD = Math.PI / 180;
+// Built as printed: leaves flat on the bed, the axis along X at height AXIS, each knuckle
+// cut flat on the bed. A bore is a teardrop, its roof 40° off vertical, so no ceiling overhangs.
+const bore = (k, r, x0, len) => k.extrude({ h: len, profile: [
+  ...Array.from({ length: 53 }, (_, i) => [-r * Math.cos((50 + 5 * i) * RAD), r * Math.sin((50 + 5 * i) * RAD)]),
+  [-r / Math.cos(50 * RAD), 0],
+] }).rotate(90, [0, 0, 0], [0, 1, 0]).translate([x0, 0, AXIS]);
+const knuckle = (k, x0, x1) => k.cylinder({ r: R, h: x1 - x0 }).along("+X").translate([x0, 0, AXIS]);
+const onBed = (k, s) => s.cut(k.box({ min: [-HL - 1, -2 * LEAF, -R], max: [W + 1, 2 * LEAF, 0] }));
+export default {
+  meta: { title: "Pin hinge", units: "mm" },
+  parameters: [{ id: "hinge", title: "Hinge", controls: [
+    { key: "open", label: "Open", unit: "°", min: 0, max: 180, step: 1, description: "Folds the lid over the base." },
+  ] }],
+  defaults: { open: 0 },
+  derive: () => ({ // every bore is horizontal as printed, so each is drawn holeUndersize (fdm-pla 0.25) larger
+    lidBore: 2 * PIN + 0.35 + 0.25,  // moving fit: fdm-pla 0.35, the lid turns on the pin
+    nearBore: 2 * PIN + 0.05 + 0.25, // push fit: fdm-pla 0.05, the pin slides in up to its head
+    farBore: 2 * PIN - 0.10 + 0.25,  // press fit: fdm-pla -0.10, the far knuckle grips the pin's end
+  }),
+  parts: {
+    base: { // the two outer knuckles; a relief round the lid's knuckle
+      label: "Base",
+      build: (k, p, d) => onBed(k, k.box({ min: [0, -LEAF, 0], max: [W, 0, T] })
+        .cut(k.box({ min: [K - GAP, -RELIEF, -1], max: [2 * K + GAP, 1, T + 1] }))
+        .union(knuckle(k, 0, K - GAP)).union(knuckle(k, 2 * K + GAP, W)))
+        .cut(bore(k, d.nearBore / 2, -1, K + 1)).cut(bore(k, d.farBore / 2, 2 * K, K + 1)),
+      views: { assembly: (s) => s, print: (s) => s },
+    },
+    lid: { // the middle knuckle; reliefs round the base's
+      label: "Lid",
+      build: (k, p, d) => onBed(k, k.box({ min: [0, 0, 0], max: [W, LEAF, T] })
+        .cut(k.box({ min: [-1, -1, -1], max: [K, RELIEF, T + 1] }))
+        .cut(k.box({ min: [2 * K, -1, -1], max: [W + 1, RELIEF, T + 1] }))
+        .union(knuckle(k, K, 2 * K))).cut(bore(k, d.lidBore / 2, -1, W + 2)),
+      views: {
+        assembly: (s, p) => s.rotateAbout({ axis: "X", deg: p.open, through: [0, 0, AXIS] }),
+        print: (s) => s.translate([0, R + 6, 0]),
+      },
+    },
+    pin: { // printed lying on a flat FLAT below its axis; the head seats on the near knuckle
+      label: "Pin",
+      build: (k) => onBed(k, k.cylinder({ r: PIN, h: W }).along("+X")
+        .union(k.cylinder({ r: HEAD, h: HL }).along("+X").translate([-HL, 0, 0])).translate([0, 0, FLAT])),
+      views: { assembly: (s) => s.translate([0, 0, AXIS - FLAT]), print: (s) => s.translate([HL, -LEAF - 6, 0]) },
+    },
+  },
+  views: { assembly: { label: "Assembly" }, print: { label: "Print" } },
+  collisions: {},
+  handles: {
+    lid: {
+      point: (p) => { const a = p.open * RAD; return [W / 2, LEAF * Math.cos(a) + (AXIS - T / 2) * Math.sin(a), AXIS + LEAF * Math.sin(a) - (AXIS - T / 2) * Math.cos(a)]; },
+      params: ["open"], drag: "rotary", axis: { origin: [0, 0, AXIS], direction: [1, 0, 0] }, label: "Lid", showOn: "lid",
+    },
+  },
+  verify: {
+    process: "fdm-pla",
+    sweeps: { open: { param: "open", clearance: 0 } },
+    expect: { _view: { overlaps: 0, sweepContacts: 0, contacts: [["base", "pin"]],
+      clearance: { "lid×pin": "0.25..0.35", "base×lid": ">=0.15" } } },
+  },
+};
+```
+
+It prints `sweeps: open clear (min 0.20mm base×lid)` (the knuckles' gap along the axis)
+and passes every gate under `fdm-pla` with no cost.
+
+### Detents
+
+A detent rubs on purpose: a bump the lid passes over, a snap that clicks. Declare how deep
+it may press, never wave it through. Because one allowance covers every pair a sweep moves,
+a detent takes the whole travel at minus the bump height (so nothing presses deeper than the
+bump), plus **one sweep at `0` with a `range` for every stretch of travel off the detent**
+(so nothing touches there). From `test/fixtures/hinge-detent.js`, a lid that rubs over a
+0.3 mm catch between about 40° and 50°:
+
+```js
+verify: {
+  sweeps: {
+    travel: { param: "open", clearance: -0.3 },                // the whole travel: at most 0.3 mm deep
+    before: { param: "open", range: [0, 35], clearance: 0 },   // before the catch: touch only
+    after:  { param: "open", range: [55, 110], clearance: 0 }, // past the catch: touch only
+  },
+  expect: { _view: { sweepContacts: 0 } },
+},
+```
+
+It reads `travel clear (min -0.30mm base×lid), rub at 39.95 base×lid (0.30mm, allowed);
+before clear (min 0.50mm base×lid); after clear (min 0.93mm base×lid)`. Leave out `before`
+and a 0.3 mm press anywhere from 0° to the catch would pass. At `clearance: 0` the same rub
+is `open CONTACT at 40.19 base×lid (0.30mm deep)`
+([sweep-contact-detent](ERROR-PATTERNS.md#sweep-contact-detent)). `collisions.allow` is never
+the answer for a detent: it exempts the pair at every depth, so a catch ten times too deep
+would pass. Whether the detent's arm survives the bend is `verify.flex`'s check, not the
+sweep's. Depth is read as the distance to the other piece's surface, so it is at most about
+half the thinner wall: keep a detent's allowance well under half the thinnest moving wall,
+and keep the `travel` sweep's allowance tight.
 
 ## Probes: measuring geometry into the report
 
@@ -5412,7 +5675,7 @@ an inline `{ base: "fdm-pla", fits: { … } }` replaces the whole table.
 | `strain` — the root strain (%) a one-time snap may reach (an advisory) | 1.5 | 3 | 2 |
 | `flexTilt` — the steepest a flexing member may stand off the bed, degrees (a cost, `standing`) | 45 | 45 | — |
 
-`fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`).
+`fits` are diametral; the `clearance` expectation below reads a pair's minimum surface distance, so a pin in a bore is declared at half the fit (`fits.slip` 0.25 → `clearance: { "pin×body": "0.08..0.18" }`). A bore that is horizontal as printed is drawn `holeUndersize` larger, so it reads half of fit + holeUndersize: declare the band there (`fits.moving` 0.35 + 0.25 → `"0.25..0.35"`, as "A hinge that opens" does).
 
 **What `expect` gives you:** per-sub-part
 assertions on the facts `measure` already reports — `holes` (through-bores / genus),
@@ -5504,7 +5767,9 @@ answered — every one SKIPPED (a `ref*` metric on a sub-part with no `reference
 could be evaluated` warning instead; `declared` and `evaluated` on the report tell
 the two apart. A single answerable expectation — or a process profile, which brings
 the bed-fit gate — is enough for a verdict. Treat `null` as "not verified", never as
-a pass.
+a pass. A piece that moves with no declared sweep withholds the verdict too: a
+`sweepCoverage` entry in `verify.unevaluated`, whose hint is the sweep to add ("Collisions
+and sweeps" → "When a piece moves").
 
 **Forges with sheet parts.** When a view holds a `sheetPart()` sub-part, the
 profile's bed fits each printed sub-part in its print (export) pose — the check

@@ -122,7 +122,8 @@ describe("previewHandles", () => {
     expect(Object.values(out.hidden).every((r) => r === "plate's build cannot be read")).toBe(true);
   });
   it("a part without handles answers empty", () => {
-    expect(previewHandles(hingedBox, "box", hingedBox.defaults, ["base", "lid"])).toEqual({ shown: [], hidden: {} });
+    const { handles: _handles, ...plain } = hingedBox; // the box's own lid handle taken off
+    expect(previewHandles(plain, "box", plain.defaults, ["base", "lid"])).toEqual({ shown: [], hidden: {} });
   });
   it("the stepper decides one handle per step and ends at previewHandles' answer (hand, drawer box)", () => {
     for (const part of [hand, drawerBox]) {
@@ -195,7 +196,8 @@ describe("collisions over the file placer", () => {
   it("a part without collisions indexes nothing", () => {
     const idle = [];
     const pc = createPoseCollide({
-      part: hingedBox, viewer: { hasSubMesh: () => true, getSubMeshLocal: () => null }, fastPath: {},
+      part: (({ collisions: _c, ...plain }) => plain)(hingedBox), // the box with its collisions block taken off
+      viewer: { hasSubMesh: () => true, getSubMeshLocal: () => null }, fastPath: {},
       getView: () => "box", schedule: (cb) => { idle.push(cb); return () => {}; },
     });
     pc.delivered(["base", "lid"]);

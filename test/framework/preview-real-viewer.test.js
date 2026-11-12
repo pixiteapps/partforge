@@ -957,8 +957,9 @@ test("collisions: a drawer dragged into the next one stops at contact and tints 
 
 test("collisions: a part with no collisions block creates no collide index", async () => {
   const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
-  const glb = await partGlb(hingedBox, "box", hingedBox.defaults);
-  const handle = mountPreview(makeStage(), { glb, part: hingedBox });
+  const { collisions: _collisions, ...plain } = hingedBox; // the box declares one: take it off
+  const glb = await partGlb(plain, "box", plain.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: plain });
   await drawn(handle); await settleIdle(handle);
   expect(handle.__preview.poseCollide).toBeNull();
   handle.dispose();

@@ -696,7 +696,11 @@ export interface ExpectMap {
 
 /** What every sweep may carry. */
 export interface SweepCommon {
-  /** mm: closer than this counts as contact (default `collisions.clearance`). */
+  /**
+   * mm (default `collisions.clearance`). Positive: closer than this counts as contact.
+   * `0`: the pieces may touch, never press in (a lid resting closed). Negative: they may
+   * press in up to that depth (a detent's rub); deeper is a contact.
+   */
   clearance?: number;
   /** The views it runs in (default: every view where its target moves something). */
   views?: string[];

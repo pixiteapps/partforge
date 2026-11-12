@@ -206,7 +206,11 @@ export default {
   // At the default pose the links never interpenetrate, and each keeps its running
   // clearance (GAP) to the neighbour it turns against: those near misses are intended.
   verify: {
-    expect: { _view: { overlaps: 0, clearance: { "turret×upperArm": ">=0.3", "upperArm×forearm": ">=0.3", "forearm×hand": ">=0.3" } } },
+    // The gripper opening is the arm's one motion: swept at clearance 0 (the fingers ride on
+    // the palm: touching is allowed, pressing in is not) and gated. The six joint params are
+    // the goal solve's seed, not motions: the pose comes from the tool goal.
+    sweeps: { gripper: { param: "gripper", clearance: 0 } },
+    expect: { _view: { overlaps: 0, sweepContacts: 0, clearance: { "turret×upperArm": ">=0.3", "upperArm×forearm": ">=0.3", "forearm×hand": ">=0.3" } } },
   },
   // The agent's one-line read-out: { at, residual, aimResidual, status }.
   probes: { tool: (k, p, d) => d.arm.report.goals[0] },
