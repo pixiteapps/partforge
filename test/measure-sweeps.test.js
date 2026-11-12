@@ -324,7 +324,7 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
   it("an expired deadline stops the other view's sweep: today's warning, the gate withheld", () => {
     const v = verify(k, hingeViews("buried"), { view: "base", deadline: -Infinity });
     expect(v.ok).toBe(null);
-    expect(v.warnings.filter((c) => c.metric === "sweeps").map((c) => c.message)).toEqual(["1 sweep(s) stopped at the time budget: open"]);
+    expect(v.warnings.filter((c) => c.metric === "sweeps").map((c) => c.message)).toEqual(['1 sweep(s) stopped at the time budget: open (view "assembly")']);
     expect(gateOf(v)).toMatchObject({ status: "skip", actual: null, unevaluated: true });
     expect(v.sweeps).toEqual([expect.objectContaining({ name: "open", skipped: "timeout", view: "assembly" })]);
   }, SLOW);
@@ -342,8 +342,55 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
     expect("sweeps" in own).toBe(false);
   }, SLOW);
 
-  it("the first view in `part.views` order that moves it is the one swept", () => {
+  // Two views pose the lid differently: `exploded` (ahead of `assembly`) lifts the lid
+  // 100 mm and swings it about a lifted axis, so it never meets the base there; `assembly`
+  // swings it through the base. Swept in the first other view only, the clear `exploded`
+  // row answered for both, and verify said ok from `base` (final review, Critical).
+  const explodedFirst = () => {
     const base = hingeViews("buried");
+    const exploded = (s, p) => s.translate([0, 0, 100]).rotateAbout({ axis: "X", deg: -p.open, through: [0, 15, 110] });
+    return {
+      ...base,
+      parts: {
+        base: { ...base.parts.base, views: { base: (s) => s, exploded: (s) => s, assembly: (s) => s } },
+        lid: { ...base.parts.lid, views: { lid: (s) => s, exploded, assembly: base.parts.lid.views.assembly } },
+      },
+      views: { base: { label: "Base" }, lid: { label: "Lid" }, exploded: { label: "Exploded" }, assembly: { label: "Assembly" } },
+    };
+  };
+
+  it("a sweep runs in EVERY view where it moves something, not just the first", () => {
+    const part = explodedFirst();
+    const v = verify(k, part, { view: "base" });
+    expect(v.ok).toBe(false);
+    expect(gateOf(v)).toMatchObject({ status: "fail", actual: 1 });
+    expect(v.sweeps.map((r) => [r.view, r.name, r.clear])).toEqual([["exploded", "open", true], ["assembly", "open", false]]);
+    expect(v.sweeps[1].contacts.some((c) => c.allowed === false)).toBe(true);
+    // verified in `assembly`, the exploded view's clear row joins its own contact row
+    const own = verify(k, part, { view: "assembly" });
+    expect(own.ok).toBe(false);
+    expect(own.sweeps.map((r) => [r.view, r.name, r.clear])).toEqual([["exploded", "open", true]]);
+  }, SLOW);
+
+  it("a deadline that passes after the first other view times out the second, naming its view", () => {
+    // the clock jumps past the deadline once the first other view's sweep has run
+    let swept = false, passed = false;
+    const kernel = Object.create(k);
+    kernel.beginSubPart = (label) => { if (String(label).startsWith("oracle:sweep:")) swept = true; return k.beginSubPart?.(label); };
+    kernel.cleanup = () => { if (swept) passed = true; return k.cleanup?.(); };
+    const realNow = Date.now.bind(Date);
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => (passed ? 8e15 : realNow()));
+    let v;
+    try { v = verify(kernel, explodedFirst(), { view: "base" }); } finally { spy.mockRestore(); }
+    expect(v.sweeps.map((r) => [r.view, r.name, r.clear, r.skipped ?? null])).toEqual([
+      ["exploded", "open", true, null], ["assembly", "open", null, "timeout"]]);
+    expect(v.warnings.filter((c) => c.metric === "sweeps").map((c) => c.message))
+      .toEqual(['1 sweep(s) stopped at the time budget: open (view "assembly")']);
+  }, SLOW);
+
+  it("a view that poses the moving pieces exactly as an already-swept one is not swept again", () => {
+    const base = hingeViews("buried");
+    // `demo` poses base and lid exactly as `assembly` does
     const twice = {
       ...base,
       parts: { ...base.parts,
@@ -351,8 +398,14 @@ describe("sweeps run where the motion is, whatever view is verified", () => {
         lid: { ...base.parts.lid, views: { ...base.parts.lid.views, demo: base.parts.lid.views.assembly } } },
       views: { ...base.views, demo: { label: "Demo" } },
     };
-    const v = verify(k, twice, { view: "print" });
-    expect(v.sweeps.map((r) => [r.name, r.view])).toEqual([["open", "assembly"]]);
+    expect(verify(k, twice, { view: "print" }).sweeps.map((r) => [r.name, r.view])).toEqual([["open", "assembly"]]);
+    expect("sweeps" in verify(k, twice, { view: "assembly" })).toBe(false);
+    // the whole assembly shifted is the same relative placement: still swept once
+    const lidAt = base.parts.lid.views.assembly;
+    const shifted = { ...twice, parts: {
+      base: { ...twice.parts.base, views: { ...twice.parts.base.views, demo: (s) => s.translate([50, 0, 0]) } },
+      lid: { ...twice.parts.lid, views: { ...twice.parts.lid.views, demo: (s, p) => lidAt(s, p).translate([50, 0, 0]) } } } };
+    expect(verify(k, shifted, { view: "print" }).sweeps.map((r) => [r.name, r.view])).toEqual([["open", "assembly"]]);
   }, SLOW);
 
   it("a handle's DOF that moves only elsewhere runs there, though a sibling DOF moved here", () => {

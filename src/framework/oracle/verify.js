@@ -1,7 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
-import { runSweeps } from "./sweep.js";
-import { readSweep } from "../collide/sweep-targets.js";
+import { runSweeps, normalizeSweeps } from "./sweep.js";
+import { relativePlacements, samePlacements } from "../collide/sweep-targets.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { sweepContactBlocks } from "../collide/pairs.js";
@@ -293,46 +293,59 @@ const SWEEP_TIMEOUT_HINT = "these sweeps did not fit the report's time budget, s
 const SWEEP_UNREADABLE_HINT = "these sweeps could not run (the error follows each name), so nothing checked their motion for contact; `npx partforge lint` names an unknown param, handle, preset or animation — fix the sweep's target or remove it";
 // SWEEPS WHERE THE MOTION IS (spec 2026-11-12-moving-fits-swept-design.md, A: "Every view
 // is scanned, whatever view is being verified"). The hosting app verifies a part's FIRST
-// view, and a hinge often turns only in a later one (`assembly`), so a sweep that moves
-// nothing in the verified view would never run. Each declared sweep ENTRY with no row of
-// its own here runs in the first other view, in `part.views` order, where it moves
-// something, under the same deadline; its row carries `view`. Entries, not declarations: a
-// handle expands to one entry per DOF ("<key>.<param>"), and one DOF can move a piece here
-// while another moves one only elsewhere. `ownRows` are the verified view's rows. Only the
-// declarations with an entry still to run are read in each further view, and the walk ends
-// once none is left, so a view with nothing left costs nothing. Past the deadline an entry
-// still costs the motion scan that finds its view (geometry-free), which is what names it
-// in the timed-out warning; nothing else runs. Never throws: a view or declaration that
-// cannot be read adds nothing.
+// view, and a hinge often turns only in a later one (`assembly`), so each declared sweep
+// ENTRY runs in EVERY view where it moves something: the verified view's rows (`ownRows`,
+// from measure) first, then each other view in `part.views` order, under the same
+// deadline; those rows carry `view`. Every view, not the first that moves it: two views can
+// pose one motion differently (an exploded view lifts the lid clear while `assembly` swings
+// it through the base), and motion coverage credits a declared sweep in every view.
+// Entries, not declarations: a handle expands to one entry per DOF ("<key>.<param>").
+// A view that poses an entry's moving pieces against every other exportable piece exactly
+// as a view already swept for that entry (sweep-targets.js relativePlacements, at the
+// motion scan's samples) would give the same row, so it is not swept again; an entry that
+// rebuilds a sub-part is never matched, and runs in every view that moves it. An entry that
+// cannot run (unreadable, no motion) is reported once. Past the deadline an entry still
+// costs the geometry-free motion scan in each view that finds it there, and gets a
+// `skipped: "timeout"` row carrying that view, which names it in the timed-out warning.
+// Never throws: a view or entry that cannot be read adds nothing.
 function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
   const decl = part.verify?.sweeps;
   if (!decl || typeof decl !== "object" || Array.isArray(decl)) return [];
-  const done = new Set(ownRows.map((r) => r.name));
   const full = { ...part.defaults, ...params };
-  const pending = new Map(); // declaration key → its entry names (a goal handle has none)
-  for (const [key, spec] of Object.entries(decl)) {
-    let names;
-    try {
-      const r = readSweep(part, key, spec, full);
-      names = r.goal ? [] : r.entries.map((e) => e.name);
-    } catch {
-      continue;
-    }
-    if (names.some((n) => !done.has(n))) pending.set(key, names);
-  }
+  const reported = new Set(ownRows.map((r) => r.name));
+  const swept = new Map(); // entry name → relativePlacements of each view it was swept in
+  const remember = (name, at) => { if (at) swept.set(name, [...(swept.get(name) ?? []), at]); };
+  const placementsOf = (v, s) => {
+    try { return relativePlacements(part, v, full, s); } catch { return null; }
+  };
+  const entriesIn = (v) => {
+    try { return normalizeSweeps(part, v, params); } catch { return []; }
+  };
+  for (const s of entriesIn(view)) if (!s.skip && reported.has(s.name)) remember(s.name, placementsOf(view, s));
   const out = [];
   for (const other of Object.keys(part.views ?? {})) {
-    if (!pending.size) break;
     if (other === view) continue;
+    const run = [], at = new Map();
+    for (const s of entriesIn(other)) {
+      if (s.skip) { if (!reported.has(s.name)) run.push(s); continue; }
+      const here = placementsOf(other, s);
+      if (here && swept.get(s.name)?.some((seen) => samePlacements(seen, here))) continue;
+      at.set(s.name, here);
+      run.push(s);
+    }
+    if (!run.length) continue;
     let rows;
     try {
-      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, only: new Set(pending.keys()), exclude: done });
+      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, entries: run });
     } catch {
       continue;
     }
     if (rows.length) kernel.cleanup?.();
-    for (const r of rows) { done.add(r.name); out.push({ ...r, view: other }); }
-    for (const [key, names] of pending) if (names.every((n) => done.has(n))) pending.delete(key);
+    for (const r of rows) {
+      reported.add(r.name);
+      remember(r.name, at.get(r.name));
+      out.push({ ...r, view: other });
+    }
   }
   return out;
 }
@@ -342,12 +355,14 @@ function sweepNotices(rows) {
   const note = (expr, message, hint) => out.push({ scope: "view", subpart: null, metric: "sweeps", kind: "warn", expr,
     actual: null, status: "warn", pass: null, message, hint, volunteered: true });
   // A row stopped after it found a contact names it: that contact is real, and the gate counts it.
+  // a row run in another view (sweepsElsewhere) names it: one entry can have a row per view
+  const named = (r) => (r.view ? `${r.name} (view ${JSON.stringify(r.view)})` : r.name);
   const timedOut = rows.filter((r) => r.skipped === "timeout").map((r) => {
     const c = r.contacts?.find((x) => sweepContactBlocks(r, x));
-    return c ? `${r.name} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : r.name;
+    return c ? `${named(r)} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : named(r);
   });
   if (timedOut.length) note("ran", `${timedOut.length} sweep(s) stopped at the time budget: ${timedOut.join(", ")}`, SWEEP_TIMEOUT_HINT);
-  const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${r.name} (${r.error})` : r.name));
+  const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${named(r)} (${r.error})` : named(r)));
   if (unreadable.length) note("readable", `${unreadable.length} sweep(s) could not run: ${unreadable.join(", ")}`, SWEEP_UNREADABLE_HINT);
   return out;
 }
@@ -546,8 +561,8 @@ function flexChecks(facts, flex) {
 // `deadline` (an absolute Date.now() reading) bounds every sweep this verify runs, here and
 // in other views; absent, it is the report share counted from the call.
 // The result: { ok, view, sweeps?, cases, failures, warnings, … }. `sweeps` holds the rows
-// of the declared sweeps that move nothing in `view` and were run in the first other view
-// where they move something, each row with that `view`; absent when there are none.
+// of the declared sweeps run in the other views where they move something (sweepsElsewhere),
+// each row with that `view`; absent when there are none.
 export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline, motionBudgetMs } = {}) {
   view = view ?? Object.keys(part.views)[0];
   // Every sweep of one verify, in this view and in others, shares ONE deadline: the
@@ -708,7 +723,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     if (i < 0) i = expanded.findIndex((c) => c.name === "defaults");
     measureCase(expanded[Math.max(i, 0)].params, true);
   }
-  // The sweeps that move nothing here, run where they move something; their rows join the
+  // The sweeps run in every other view where they move something; their rows join the
   // one entry that carries this view's (a copy: a seed's result is the caller's object).
   const swept = part.verify?.sweeps && !quick ? entries.find((e) => Array.isArray(e.result?.sweeps)) : null;
   const elsewhere = swept ? sweepsElsewhere(kernel, part, view, swept.params, swept.result.sweeps, sweepDeadline) : [];

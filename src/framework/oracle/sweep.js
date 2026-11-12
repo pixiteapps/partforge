@@ -117,13 +117,13 @@ const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
  * a sweep that moves nothing in this view, or whose `views` leave it out, is dropped.
  * The reading lives in collide/sweep-targets.js, which lint shares.
  */
-export function normalizeSweeps(part, view, params = {}, only = null) {
+export function normalizeSweeps(part, view, params = {}) {
   const decl = part?.verify?.sweeps;
   if (!decl || typeof decl !== "object" || Array.isArray(decl)) return [];
   const full = { ...part.defaults, ...params };
   const declClear = normalizeCollisions(part)?.clearance ?? CONTACT_EPS;
   // `why` (lint's wording) and `animViews` are the reader's; a sweep entry carries neither.
-  return Object.entries(decl).filter(([name]) => !only || only.has(name)).flatMap(([name, spec]) => sweepsInView(part, view, name, spec, full, declClear)
+  return Object.entries(decl).flatMap(([name, spec]) => sweepsInView(part, view, name, spec, full, declClear)
     .map(({ why: _w, animViews: _v, ...s }) => s));
 }
 
@@ -139,16 +139,15 @@ const emptyRow = (s, extra) => ({
  * "unreadable"` with its `error` message; the others still run. A skipped row's `clear` is
  * null. `skipStill: false` measures every pair at every step (a check that the still-pair
  * skip changes nothing; slower). `maxSteps` (default SWEEP_MAX_STEPS) caps a rigid sweep's
- * steps, as SWEEP_MAX_STEPS does. `only` (a Set of `verify.sweeps` keys) reads only those
- * declarations, and `exclude` (a Set of row names: a handle's are "<key>.<param>") leaves
- * those entries out: verify runs, in another view, only the entries its own view did not.
+ * steps, as SWEEP_MAX_STEPS does. `entries` (normalizeSweeps' entries for this view,
+ * already filtered) runs exactly those instead of reading the declarations again: verify,
+ * in another view, runs only the entries no view already swept alike.
  */
-export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS, only = null, exclude = null } = {}) {
+export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS, entries = null } = {}) {
   const rows = [];
   const full = { ...part.defaults, ...params };
   const decl = normalizeCollisions(part);
-  for (const s of normalizeSweeps(part, view, params, only)) {
-    if (exclude?.has(s.name)) continue;
+  for (const s of entries ?? normalizeSweeps(part, view, params)) {
     if (s.skip) { rows.push(emptyRow(s, { skipped: s.skip })); continue; }
     if (now() > deadline) { rows.push(emptyRow(s, { skipped: "timeout" })); continue; }
     const t0 = now();

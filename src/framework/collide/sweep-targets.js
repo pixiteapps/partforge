@@ -8,13 +8,14 @@
 // world or the native core, so the lint closure and the worker's eager closure may load it
 // (test/worker-layering.test.js). It sits outside oracle/ for
 // that reason; oracle/cases.js re-exports presetMap from here.
-import { viewSubParts, resolveParams } from "../part-model.js";
+import { viewSubParts, exportSubParts, resolveParams } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { viewAnimations, evaluate } from "../animation.js";
 import { normalizeCollisions } from "./declaration.js";
 import { CONTACT_EPS } from "./pairs.js";
 import { sameMat } from "./motion.js";
 import { poseMatrices } from "./place.js";
+import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { rangesOf, dofsOf } from "../pose/param-solve.js";
 import { locateHandle } from "../pose/handle-source.js";
 import { desugar } from "../panel/legacy.js";
@@ -74,14 +75,22 @@ export function motionOf(part, view, full, s) {
   return { lo: 0, hi: 1, at: (t) => ({ ...full, ...evaluate(anim, t).values }) };
 }
 
+/** The values scanMotion reads a motion at: MOTION_SAMPLES + 1 even steps, then `extra` (t ∈ [0, 1]). */
+function motionSamples(motion, extra = []) {
+  const ts = [...Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => i / MOTION_SAMPLES), ...extra];
+  return ts.map((t) => motion.lo + (motion.hi - motion.lo) * t);
+}
+
+/** A sweep entry's extra samples: a path's waypoints, as t ∈ [0, 1]. */
+const extraSamples = (s) => (s.kind === "path" ? s.waypoints.map((_, i) => i / (s.waypoints.length - 1)) : []);
+
 /**
  * What a motion moves in `view`: `moving` (sub-parts whose placement changes, rigidly) and
  * `rebuild` (sub-parts whose build-scope probe hash changes, whose build or place is
  * untrusted at some sample). Throws when a sample cannot be resolved.
  */
 export function scanMotion(part, view, motion, extra = []) {
-  const ts = [...Array.from({ length: MOTION_SAMPLES + 1 }, (_, i) => i / MOTION_SAMPLES), ...extra];
-  const vs = ts.map((t) => motion.lo + (motion.hi - motion.lo) * t);
+  const vs = motionSamples(motion, extra);
   const names = new Set();
   const mats0 = new Map(), hash0 = new Map(); // each name's first sampled placement and hash
   const moving = new Set(), rebuild = new Set();
@@ -185,11 +194,52 @@ export function sweepsInView(part, view, name, spec, full, declClear, r = readSw
     if (s.skip) { out.push(s); continue; }
     let scan;
     try {
-      const extra = s.kind === "path" ? s.waypoints.map((_, i) => i / (s.waypoints.length - 1)) : [];
-      scan = scanMotion(part, view, motionOf(part, view, full, s), extra);
+      scan = scanMotion(part, view, motionOf(part, view, full, s), extraSamples(s));
     } catch (e) { out.push({ ...s, skip: "unreadable", why: `cannot be stepped (${e?.message || e})` }); continue; }
     if (!scan.moving.length && !scan.rebuild.length) continue; // nothing moves in this view
     out.push({ ...s, moving: scan.moving, rebuild: scan.rebuild });
   }
   return out;
+}
+
+/**
+ * How a scanned sweep entry (sweepsInView's, with `moving`) poses its moving pieces against
+ * every other exportable piece shown in `view`, at scanMotion's samples: one array per
+ * sample of `[key, mat]`, key "<moving>|<other>", mat inv(M_other) · M_moving, sorted by key.
+ * Null when it cannot be read rigidly (the entry rebuilds a sub-part, or a placement is
+ * missing or not rigid at a sample). Two views with equal placements (samePlacements) give
+ * the entry the same sweep row, which is how verify skips sweeping it twice.
+ */
+export function relativePlacements(part, view, full, s) {
+  if (s.rebuild?.length || !s.moving?.length) return null;
+  const motion = motionOf(part, view, full, s);
+  const out = [];
+  for (const v of motionSamples(motion, extraSamples(s))) {
+    const { p, d } = resolveParams(part, motion.at(v));
+    const mats = poseMatrices(part, view, p, d);
+    const others = exportSubParts(part, view, p);
+    const sample = [];
+    for (const m of s.moving) {
+      const mm = mats.get(m);
+      if (!mm) return null;
+      for (const o of others) {
+        if (o === m) continue;
+        const mo = mats.get(o);
+        if (!mo) return null;
+        sample.push([`${m}|${o}`, mulMat4(invertRigid(mo), mm)]);
+      }
+    }
+    sample.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
+    out.push(sample);
+  }
+  return out;
+}
+
+/** Two relativePlacements readings equal: the same pairs at every sample, by sameMat. */
+export function samePlacements(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((sa, i) => {
+    const sb = b[i];
+    return sa.length === sb.length && sa.every(([k, m], j) => sb[j][0] === k && sameMat(m, sb[j][1]));
+  });
 }

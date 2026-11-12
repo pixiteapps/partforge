@@ -834,9 +834,11 @@ the installed package, so let the publish finish before bumping the dep there.
   along each contact every `DEPTH_STEP_MM` (0.2) of travel, splitting it into blocking and
   `allowed: true` stretches; a contact whose depth the deadline cut is `depthUnread` and
   withholds `sweepContacts` unless another blocks; rows cap at `SWEEP_MAX_CONTACTS` (32).
-  `collisions.clearance` still refuses a negative. Verify runs a declared sweep that moves
-  nothing in the verified view in the first other view where it does (rows carry `view`;
-  the inspect job appends them to `measure.sweeps`). Invariants: `place.js` and `sweep-targets.js`
+  `collisions.clearance` still refuses a negative. Verify runs each declared sweep entry in every
+  view where it moves something - the verified view, then the others in `part.views` order,
+  one shared deadline - skipping a view that poses its moving pieces exactly as one already
+  swept (`relativePlacements`); other views' rows carry `view` (the inspect job appends them
+  to `measure.sweeps`). Invariants: `place.js` and `sweep-targets.js`
   never reach the BVH (`test/worker-layering.test.js`);
   `settle` is the hard guarantee - whatever the solve returns, a frame never moves a
   blocked pair from clear to inside, and a pair inside at drag start can move out, never

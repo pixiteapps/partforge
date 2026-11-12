@@ -3939,10 +3939,13 @@ verify: {
   contact. That is why the `motion-unswept` hint always says `clearance: 0`.
 - **`views`**: the views the sweep runs in. By default it runs in every view where its target
   moves something; a view where nothing moves gets no row (the hand's print kit reports no
-  sweeps). Verify runs each declared sweep where the motion is: when it moves nothing in the
-  verified view, verify runs it in the first other view where it moves something, and those
-  rows carry `view` (they come back as `verify().sweeps`, and in an inspect report they join
-  `measure.sweeps`). So `sweepContacts` on a print view still reads the assembly's swing.
+  sweeps). Verify runs each declared sweep where the motion is: in the verified view and in every
+  other view where it moves something, and the other views' rows carry `view` (they come
+  back as `verify().sweeps`, and in an inspect report they join `measure.sweeps`). A view
+  that poses the moving pieces against the others exactly as a view already swept is not
+  swept again. So `sweepContacts` on a print view still reads the assembly's swing, and an
+  exploded view that lifts the lid clear cannot answer for the assembly view that swings it
+  through the base.
 
 Lint: `sweep-unknown-target` (an error: an unknown param, handle, preset or animation; a
 param with no finite min and max; a `range` that is not `[lo, hi]` with lo < hi; a handle
