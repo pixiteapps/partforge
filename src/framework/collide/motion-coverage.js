@@ -162,6 +162,15 @@ function relativeMotion(vs, sample) {
   return { moving: group, against: moved.filter((n) => !together(n)), shownChanges };
 }
 
+/** The keys a continuous control (slider, number) sets, or null when the schema cannot be read. */
+function continuousKeys(part) {
+  try {
+    return new Set(controlNodes(desugar(part?.parameters)).filter((c) => CONTINUOUS.has(c.type)).map((c) => c.key));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Params that can never be a motion, read off the declaration alone (no probing):
  * - a goal handle's target (`params: { position, aim? }`): a target, not a
@@ -204,10 +213,7 @@ function unmovableParams(part) {
   let visible = null;
   try { visible = controlBoundKeys(part, { excludeHidden: true }); } catch { /* unreadable schema: keep every param */ }
   if (visible) for (const k of rangesOf(part).keys()) if (!visible.has(k) && !written.has(k)) out.add(k);
-  let continuous = null;
-  try {
-    continuous = new Set(controlNodes(desugar(part?.parameters)).filter((c) => CONTINUOUS.has(c.type)).map((c) => c.key));
-  } catch { /* unreadable schema: keep every param */ }
+  const continuous = continuousKeys(part);
   if (continuous) for (const k of rangesOf(part).keys()) if (!continuous.has(k) && !jointWritten.has(k)) out.add(k);
   return out;
 }
@@ -219,12 +225,13 @@ function unmovableParams(part) {
  */
 function scanView(part, view, full, stop = () => false) {
   const out = [];
-  let ranges, p0, buildReads, placeReads, skip;
+  let ranges, p0, buildReads, placeReads, skip, continuous;
   try {
     ranges = rangesOf(part);
     p0 = resolveParams(part, full).p;
     if (exportSubParts(part, view, p0).length < 2) return { motions: out, partial: false };
     skip = unmovableParams(part);
+    continuous = continuousKeys(part);
     if (stop()) return { motions: out, partial: true };
     buildReads = buildReadsAt(part, view, full);
     placeReads = placeReadsAt(part, view, full);
@@ -264,7 +271,9 @@ function scanView(part, view, full, stop = () => false) {
         const scan = scanMotion(part, view, { lo, hi, at: (v) => ({ ...full, [param]: v }) });
         if (scan.rebuild.length) continue;
       }
-      out.push({ param, range: finite ? [r.min, r.max] : null, moving: rel.moving, against: rel.against });
+      // `discrete`: a handle moves it, but its control picks values (a select), so it can take no min and max
+      out.push({ param, range: finite ? [r.min, r.max] : null, moving: rel.moving, against: rel.against,
+        ...(continuous && !continuous.has(param) ? { discrete: true } : {}) });
     } catch {
       continue; // a motion that cannot be probed is skipped
     }
@@ -390,16 +399,21 @@ export function uncoveredMotions(part, full = part?.defaults ?? {}, reads, { bud
 /**
  * One uncovered motion as a finding's two halves: `message`, the sentence naming the motion
  * (no closing period), and `hint`, the sweep to add. The hint always suggests `clearance: 0`;
- * a control with no finite range is asked for a min and max first.
+ * a slider or number control with no finite range is asked for a min and max first, and a
+ * discrete control a handle writes (`discrete`) is given a sweep with an explicit `range`.
  */
-export function motionFinding({ view, param, range, moving, against }) {
+export function motionFinding({ view, param, range, moving, against, discrete = false }) {
   // the param as an object key: bare when it is a JS identifier, else quoted (`"lid-angle"`)
   const key = /^[A-Za-z_$][\w$]*$/.test(param) ? param : JSON.stringify(param);
-  const sweep = `add verify.sweeps: { ${key}: { param: ${JSON.stringify(param)}, clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`;
-  return {
-    message: `"${param}" moves ${moving.join(", ")} against ${against.join(", ")} in view "${view}" and no sweep checks that motion`,
-    hint: range ? `A${sweep.slice(1)}` : `Give the "${param}" control a min and max, then ${sweep}`,
-  };
+  const q = JSON.stringify(param);
+  const sweep = `add verify.sweeps: { ${key}: { param: ${q}, clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.`;
+  const message = `"${param}" moves ${moving.join(", ")} against ${against.join(", ")} in view "${view}" and no sweep checks that motion`;
+  if (range) return { message, hint: `A${sweep.slice(1)}` };
+  // a select or other discrete control a handle writes cannot take a min and max: the sweep names its span
+  if (discrete) {
+    return { message, hint: `Add verify.sweeps: { ${key}: { param: ${q}, range: [lo, hi], clearance: 0 } } with the span the handle moves it over, and verify.expect._view: { sweepContacts: 0 }.` };
+  }
+  return { message, hint: `Give the "${param}" control a min and max, then ${sweep}` };
 }
 
 /** The hint lint and verify both give for one uncovered motion: message and hint joined. */

@@ -235,6 +235,20 @@ test("motionHint is the exact text", () => {
   );
 });
 
+test("a select a handle writes is still a motion, and its hint names a range, not a min and max", () => {
+  const select = { key: "pose", type: "select", label: "Pose", description: "Lid pose.",
+    options: [{ value: 0, label: "Closed" }, { value: 90, label: "Open" }] };
+  const part = twoBox({ controls: [select], defaults: { pose: 0 },
+    lid: (s, p) => s.rotateAbout({ axis: "X", deg: p.pose, through: [0, 5, 10] }),
+    extra: { handles: { lid: { point: () => [5, 5, 10], params: ["pose"], drag: "rotary", axis: { origin: [0, 5, 10], direction: [1, 0, 0] } } } } });
+  const [m] = uncoveredMotions(part, part.defaults, undefined, { budgetMs: Infinity }).motions;
+  expect(m).toMatchObject({ param: "pose", range: null, discrete: true });
+  expect(motionHint(m)).toBe(`"pose" moves lid against base in view "assembly" and no sweep checks that motion. `
+    + `Add verify.sweeps: { pose: { param: "pose", range: [lo, hi], clearance: 0 } } with the span the handle moves it over, and verify.expect._view: { sweepContacts: 0 }.`);
+  // a slider with no range keeps "Give the control a min and max"
+  expect(motionHint({ ...m, discrete: undefined })).toContain(`Give the "pose" control a min and max, then add`);
+});
+
 test("motionHint quotes a param key that is not a JS identifier", () => {
   const entry = { view: "assembly", param: "lid-angle", range: [0, 110], moving: ["lid"], against: ["base"] };
   expect(motionHint(entry)).toContain(`Add verify.sweeps: { "lid-angle": { param: "lid-angle", clearance: 0 } }`);

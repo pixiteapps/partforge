@@ -3792,8 +3792,11 @@ motion in the view where it moves something, lint warns `motion-unswept` and ver
 hint: Add verify.sweeps: { lidAngle: { param: "lidAngle", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.
 ```
 
-A control with no finite `min` and `max` gets "Give the control a min and max, then add …"
-first, since a sweep needs a range. When a piece moves, add four things:
+A slider or number control with no finite `min` and `max` gets "Give the control a min and
+max, then add …" first, since a sweep needs a range. A discrete control (a select) that a
+handle writes cannot take one, so its hint gives the sweep its own span instead: "Add
+verify.sweeps: { pose: { param: "pose", range: [lo, hi], clearance: 0 } } with the span the
+handle moves it over, …". When a piece moves, add four things:
 
 ```js
 collisions: {},                                          // Pose mode keeps the pieces solid
