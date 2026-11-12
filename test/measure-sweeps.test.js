@@ -17,6 +17,8 @@ import frameKnuckles from "./fixtures/hinge-frame-knuckles.js";
 import buriedAxis from "./fixtures/hinge-buried-axis.js";
 import detent from "./fixtures/hinge-detent.js";
 import buttingKnuckles from "./fixtures/hinge-butting-knuckles.js";
+import { hingeViews } from "./fixtures/hinge-views.js";
+import { handle } from "../src/framework/jobs.js";
 import { runSweeps } from "../src/framework/oracle/sweep.js";
 import { sweepText } from "../bin/sweep-text.js";
 
@@ -163,6 +165,19 @@ describe("verify and sweeps", () => {
     expect(notice(hit)).toEqual(["1 sweep(s) stopped at the time budget: t (contact found at 90: bar×palm)"]);
   }, SLOW);
 
+  it("a known contact wins over an unread depth: the gate fails, never withheld", () => {
+    const touching = (contacts, extra = {}) => row("t", { clearance: 0, clear: null, skipped: "timeout", contacts, ...extra });
+    const unread = { ...contact, from: 90, depth: 0.01, depthUnread: true };
+    // another row that finished with a contact, beside the unread one
+    const beside = withRows([touching([unread]), row("hit", { clear: false, contacts: [contact] })]);
+    expect(gateOf(beside)).toMatchObject({ status: "fail", actual: 1 });
+    expect(beside.ok).toBe(false);
+    // a stretch read past the allowance before the clock stopped, in the same row
+    const same = withRows([touching([{ ...contact, depth: 2, allowed: false, at: [4, 5, 6] }, unread])]);
+    expect(gateOf(same)).toMatchObject({ status: "fail", actual: 1, location: [4, 5, 6] });
+    expect(same.ok).toBe(false);
+  }, SLOW);
+
   it("an unread depth withholds the gate even beside a sweep that finished", () => {
     // a row that ran clear, and the butting knuckles' row stopped while reading depth
     const part = { ...buttingKnuckles, verify: { ...buttingKnuckles.verify, expect: { _view: { sweepContacts: 0 } } } };
@@ -269,6 +284,88 @@ describe("sweeps that may touch, gated", () => {
     const tight = verify(k, gate(detent), { view: "assembly" });
     expect(gateOf(tight)).toMatchObject({ status: "fail", actual: 1 });
     expect(tight.ok).toBe(false);
+  }, SLOW);
+});
+
+// A declared sweep that moves nothing in the verified view runs in the first view where it
+// moves something (spec 2026-11-12-moving-fits-swept-design.md, A: the hosting app verifies
+// a part's FIRST view, and a case's hinge turns in its third).
+describe("sweeps run where the motion is, whatever view is verified", () => {
+  const gateOf = (v) => v.cases[0].checks.find((c) => c.metric === "sweepContacts");
+
+  it("a hinge that turns only in `assembly` is swept when `base` is verified", () => {
+    const part = hingeViews("buried");
+    // measure() itself keeps to its own view: nothing moves in `base`
+    expect(measure(k, part, "base").sweeps).toEqual([]);
+    const v = verify(k, part, { view: "base" });
+    expect(v.ok).toBe(false);
+    const gate = gateOf(v);
+    expect(gate).toMatchObject({ status: "fail", actual: 1 });
+    const row = gate.rows.find((r) => r.view === "assembly");
+    expect(row).toMatchObject({ name: "open", clear: false });
+    expect(row.contacts.some((c) => c.allowed === false)).toBe(true);
+    expect(gate.location).toHaveLength(3);
+  }, SLOW);
+
+  it("the working hinge passes from `base`, its row read in `assembly`", () => {
+    const v = verify(k, hingeViews("working"), { view: "base" });
+    expect(v.ok).toBe(true);
+    const gate = gateOf(v);
+    expect(gate).toMatchObject({ status: "pass", actual: 0 });
+    expect(gate.rows).toEqual([expect.objectContaining({ name: "open", clear: true, view: "assembly" })]);
+  }, SLOW);
+
+  it("an expired deadline stops the other view's sweep: today's warning, the gate withheld", () => {
+    const v = verify(k, hingeViews("buried"), { view: "base", deadline: -Infinity });
+    expect(v.ok).toBe(null);
+    expect(v.warnings.filter((c) => c.metric === "sweeps").map((c) => c.message)).toEqual(["1 sweep(s) stopped at the time budget: open"]);
+    expect(gateOf(v)).toMatchObject({ status: "skip", actual: null, unevaluated: true });
+    expect(gateOf(v).rows).toEqual([expect.objectContaining({ name: "open", skipped: "timeout", view: "assembly" })]);
+  }, SLOW);
+
+  it("rows run in the verified view keep their shape: no `view`, no `rows` on the gate", () => {
+    const single = { ...buriedAxis, verify: { ...buriedAxis.verify, expect: { _view: { sweepContacts: 0 } } } };
+    const m = measure(k, single, "assembly");
+    expect(m.sweeps.every((r) => !("view" in r))).toBe(true);
+    const one = gateOf(verify(k, single, { view: "assembly" }));
+    expect(one).toMatchObject({ status: "fail", actual: 1 });
+    expect("rows" in one).toBe(false);
+    // the four-view part verified where it moves runs nothing elsewhere
+    const own = gateOf(verify(k, hingeViews("buried"), { view: "assembly" }));
+    expect(own).toMatchObject({ status: "fail", actual: 1 });
+    expect("rows" in own).toBe(false);
+  }, SLOW);
+
+  it("the first view in `part.views` order that moves it is the one swept", () => {
+    const base = hingeViews("buried");
+    const twice = {
+      ...base,
+      parts: { ...base.parts,
+        base: { ...base.parts.base, views: { ...base.parts.base.views, demo: (s) => s } },
+        lid: { ...base.parts.lid, views: { ...base.parts.lid.views, demo: base.parts.lid.views.assembly } } },
+      views: { ...base.views, demo: { label: "Demo" } },
+    };
+    const gate = gateOf(verify(k, twice, { view: "print" }));
+    expect(gate.rows.map((r) => [r.name, r.view])).toEqual([["open", "assembly"]]);
+  }, SLOW);
+
+  it("a quick lap still never sweeps, in any view", () => {
+    const part = hingeViews("buried");
+    const seed = measure(k, part, "base", {}, { sweeps: false });
+    const v = verify(k, part, { view: "base", quick: true, seed: { params: {}, result: seed } });
+    expect(gateOf(v)).toMatchObject({ unevaluated: true, message: "not measured (quick check)" });
+    expect("rows" in gateOf(v)).toBe(false);
+  }, SLOW);
+
+  it("the inspect job verifies its first view with the other view's rows", async () => {
+    const posted = [];
+    await handle(k, hingeViews("buried"), { type: "inspect", view: "base", params: {} }, (msg) => posted.push(msg));
+    const report = posted.find((msg) => msg.type === "report");
+    expect(report.measure.sweeps).toEqual([]); // measure keeps its own view
+    expect(report.verify.ok).toBe(false);
+    const gate = gateOf(report.verify);
+    expect(gate).toMatchObject({ status: "fail", actual: 1 });
+    expect(gate.rows.map((r) => r.view)).toEqual(["assembly"]);
   }, SLOW);
 });
 

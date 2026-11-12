@@ -1,5 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
+import { runSweeps } from "./sweep.js";
+import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
 import { sweepContactBlocks } from "../collide/pairs.js";
 import { heldCheck } from "./held.js";
@@ -288,6 +290,31 @@ function sheetRowChecks(s, declaredExp) {
 // stopped would vanish from the verdict. One warning per reason, naming every sweep.
 const SWEEP_TIMEOUT_HINT = "these sweeps did not fit the report's time budget, so nothing checked their motion for contact; run them on their own — `npx partforge measure <part>` gives sweeps a longer budget, or declare fewer at a time in verify.sweeps (one sweep per run when each is long)";
 const SWEEP_UNREADABLE_HINT = "these sweeps could not run (the error follows each name), so nothing checked their motion for contact; `npx partforge lint` names an unknown param, handle, preset or animation — fix the sweep's target or remove it";
+// SWEEPS WHERE THE MOTION IS (spec 2026-11-12-moving-fits-swept-design.md, A: "Every view
+// is scanned, whatever view is being verified"). The hosting app verifies a part's FIRST
+// view, and a hinge often turns only in a later one (`assembly`), so a sweep that moves
+// nothing in the verified view would never run. Each declared sweep with no row of its own
+// here runs in the first other view, in `part.views` order, where it moves something, under
+// the same deadline; its row carries `view`. `ownRows` are the verified view's rows (their
+// names are the sweeps already run). Never throws: a view whose sweeps cannot be read adds
+// nothing.
+function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
+  const done = new Set(ownRows.map((r) => r.name));
+  const out = [];
+  for (const other of Object.keys(part.views ?? {})) {
+    if (other === view) continue;
+    let rows;
+    try {
+      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, exclude: done });
+    } catch {
+      continue;
+    }
+    if (rows.length) kernel.cleanup?.();
+    for (const r of rows) { done.add(r.name); out.push({ ...r, view: other }); }
+  }
+  return out;
+}
+
 function sweepNotices(rows) {
   const out = [];
   const note = (expr, message, hint) => out.push({ scope: "view", subpart: null, metric: "sweeps", kind: "warn", expr,
@@ -496,6 +523,9 @@ function flexChecks(facts, flex) {
 // `ok` — a fast lap yields facts, never a verdict.
 export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline, motionBudgetMs } = {}) {
   view = view ?? Object.keys(part.views)[0];
+  // Every sweep of one verify, in this view and in others, shares ONE deadline: the
+  // caller's, else the report share counted from here (measure's own default).
+  const sweepDeadline = deadline ?? Date.now() + REPORT_SHARE_MS;
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
 
@@ -605,7 +635,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // still answers for its sweeps: they read the motion and the part, never min wall or
   // overhang — so the CLI, which seeds verify with a measurement taken without min wall,
   // never sweeps twice, whatever the case order), else "defaults", else the first case.
-  // `deadline` (the caller's, e.g. the CLI's longer budget) reaches that one measure.
+  // `deadline` (the caller's, e.g. the CLI's longer budget, else verify's own) reaches that
+  // one measure, and then the sweeps run in other views (sweepsElsewhere).
   const seedSweeps = !seedAdmitted && seed?.result?.view === view && Array.isArray(seed.result.sweeps)
     ? { params: full(seed.params), rows: seed.result.sweeps } : null;
   const sameParams = (a, b) => {
@@ -625,7 +656,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // the same way a min-wall seed is: the extra key is simply never read here.)
     const measured = measureFn(kernel, part, view, params,
       { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps,
-        ...(sweeps && deadline !== undefined ? { deadline } : {}) });
+        ...(sweeps ? { deadline: sweepDeadline } : {}) });
     const result = graft ? { ...measured, sweeps: graft } : measured;
     entries.push({ params: fp, result });
     return result;
@@ -650,6 +681,13 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     if (i < 0) i = expanded.findIndex((c) => c.name === "defaults");
     measureCase(expanded[Math.max(i, 0)].params, true);
   }
+  // The sweeps that move nothing here, run where they move something; their rows join the
+  // one entry that carries this view's (a copy: a seed's result is the caller's object).
+  const swept = part.verify?.sweeps && !quick ? entries.find((e) => Array.isArray(e.result?.sweeps)) : null;
+  if (swept) {
+    const elsewhere = sweepsElsewhere(kernel, part, view, swept.params, swept.result.sweeps, sweepDeadline);
+    if (elsewhere.length) swept.result = { ...swept.result, sweeps: [...swept.result.sweeps, ...elsewhere] };
+  }
   // The sweep rows reach one case only (the one that ran them, or the reused seed), so
   // their stopped-short notices are raised once, on the first case whose facts carry them.
   let sweepsNoticed = false;
@@ -664,6 +702,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
         ? { ...c, unevaluated: true, message: "not measured (quick check)", hint: "sweeps do not run on a quick lap — re-run this check without `quick` to evaluate the declared sweeps" }
         : c));
     }
+    // Rows read in another view are nowhere else in a report (measure keeps to its own
+    // view), so the gate carries every row it read.
+    if (facts.sweeps?.some((r) => r.view)) checks = checks.map((c) => (c.metric === "sweepContacts" ? { ...c, rows: facts.sweeps } : c));
     if (facts.sweeps && !sweepsNoticed) { sweepsNoticed = true; checks = [...checks, ...sweepNotices(facts.sweeps)]; }
     return { name, params, checks };
   });

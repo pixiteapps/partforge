@@ -6,7 +6,7 @@ import drawerBox from "../src/parts/drawer-box.js";
 import hand from "../src/parts/hand.js";
 import gearbox from "../src/parts/gearbox.js";
 import { bootManifoldKernel } from "../src/testing.js";
-import { runSweeps, normalizeSweeps, SWEEP_REBUILD_STEPS, SWEEP_MAX_STEPS, DEPTH_STEP_MM } from "../src/framework/oracle/sweep.js";
+import { runSweeps, normalizeSweeps, capContacts, SWEEP_REBUILD_STEPS, SWEEP_MAX_STEPS, SWEEP_MAX_CONTACTS, DEPTH_STEP_MM } from "../src/framework/oracle/sweep.js";
 import { presetMap } from "../src/framework/oracle/cases.js";
 import { buildView } from "../src/framework/oracle/build.js";
 import { createCollisionWorld, relativeMatsAt } from "../src/framework/collide/world.js";
@@ -492,6 +492,76 @@ describe("touching and pressing-in sweeps", () => {
     expect(row.contacts[0].depth).toBeTypeOf("number"); // the deepest read so far
     expect("allowed" in row.contacts[0]).toBe(false);
   }, SLOW);
+
+  it("a stretch read past the allowance before the deadline is kept as a contact; only the rest is unread", () => {
+    // the detent at clearance 0: its rub crosses the allowance and back. Cut the depth
+    // walk at every reading in turn: once a stretch past the allowance is read, it stays a
+    // blocking contact, and only what follows the last stretch read is unread
+    const part = withSweeps(detent, { open: { param: "open", clearance: 0 } });
+    const [whole] = runSweeps(k, part, "assembly", { open: 0 });
+    const over = whole.contacts.find((c) => c.allowed === false);
+    let sawBoth = false;
+    for (let extra = 1; extra < 400; extra++) {
+      let ticks = 0;
+      const [row] = runSweeps(k, part, "assembly", { open: 0 }, { deadline: whole.steps + extra, now: () => ticks++ });
+      if (!row.skipped) break; // the walk fit: nothing left to cut
+      const unread = row.contacts.filter((c) => c.depthUnread);
+      expect(unread).toHaveLength(1);
+      const blocking = row.contacts.filter((c) => c.allowed === false);
+      for (const c of blocking) {
+        expect(c.from).toBeGreaterThanOrEqual(over.from - 1e-9);
+        expect(c.to).toBeLessThanOrEqual(unread[0].from + 1e-9);
+        expect(c.depth).toBeGreaterThan(TOUCH_TOL_MM);
+      }
+      expect(unread[0].to).toBe(whole.contacts.at(-1).to);
+      if (blocking.length) sawBoth = true;
+    }
+    expect(sawBoth).toBe(true);
+  }, SLOW);
+
+  it("a row carries at most SWEEP_MAX_CONTACTS contacts, blocking ones first", () => {
+    // a block sliding past 40 posts meets each in turn: 40 contacts, 32 kept
+    const posts = 40;
+    const part = boxPart({
+      boxes: {
+        comb: (kk) => Array.from({ length: posts }, (_, i) => kk.box({ min: [10 * i + 10, -1, 0], max: [10 * i + 12, 1, 5] }))
+          .reduce((a, b) => a.union(b)),
+        slider: (kk) => kk.box({ min: [0, -3, 1], max: [2, 3, 3] }),
+      },
+      views: { slider: (s, p) => s.translate([p.x, 0, 0]) },
+      controls: [{ ...control("x", 0, 420), unit: "mm" }],
+      defaults: { x: 0 },
+      sweeps: { slide: { param: "x" } },
+    });
+    const [row] = runSweeps(k, part, "assembly", { x: 0 });
+    expect(row.clear).toBe(false);
+    expect(row.contacts).toHaveLength(SWEEP_MAX_CONTACTS);
+    expect(row.contactsOmitted).toBe(posts - SWEEP_MAX_CONTACTS);
+    // freeRange was read before the cap: up to the first post
+    expect(row.freeRange[0]).toBe(0);
+    expect(row.freeRange[1]).toBeLessThanOrEqual(8.01);
+    const froms = row.contacts.map((c) => c.from);
+    expect(froms).toEqual([...froms].sort((a, b) => a - b));
+  }, SLOW);
+
+  it("the cap keeps blocking contacts first, then unread ones, then allowed ones", () => {
+    const c = (from, extra) => ({ from, to: from + 1, a: "a", b: "b", at: null, driver: "v", ...extra });
+    const allowed = Array.from({ length: 30 }, (_, i) => c(i * 10, { depth: 0, allowed: true }));
+    const blocking = [c(5, { depth: 1, allowed: false }), c(305, { depth: 1, allowed: false })];
+    const unread = [c(400, { depth: null, depthUnread: true })];
+    const row = { name: "t", clearance: 0, clear: null, skipped: "timeout", contacts: [...allowed.slice(0, 1), blocking[0], ...allowed.slice(1), blocking[1], ...unread] };
+    const capped = capContacts(row);
+    expect(capped.contacts).toEqual([...blocking, ...unread, ...allowed.slice(0, SWEEP_MAX_CONTACTS - 3)]);
+    expect(capped.contactsOmitted).toBe(33 - SWEEP_MAX_CONTACTS);
+    expect(capped.clear).toBeNull();
+    // within the cap the row is unchanged, order and all
+    const small = { ...row, contacts: row.contacts.slice(0, 5) };
+    expect(capContacts(small)).toBe(small);
+    // a positive clearance: every contact blocks, kept in order
+    const pos = { name: "p", clearance: 1, clear: false, contacts: allowed.concat(allowed).map(({ allowed: _a, ...x }) => x) };
+    expect(capContacts(pos).contacts).toEqual(pos.contacts.slice(0, SWEEP_MAX_CONTACTS));
+    expect(capContacts(pos).contactsOmitted).toBe(60 - SWEEP_MAX_CONTACTS);
+  });
 
   it("a dig between two butting knuckles that touch all the way round is found", () => {
     // knuckles end to end with no axial gap touch at every angle; a thin lid arm passes

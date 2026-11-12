@@ -54,3 +54,21 @@ test("a change-tracked inspect still diffs when its sweeps would use the whole s
   expect(row.verdict).toBe("added");
   expect(row.addedMm3).toBeCloseTo(1000, 0);
 }, 60_000);
+
+// A sweep that moves nothing in the inspected view runs in the view where it does, inside
+// the same report deadline: here the inspected view's sweeps spend the whole share, so the
+// other view's row is a timeout, never a second budget.
+test("a sweep run in another view shares the report's one deadline", async () => {
+  const part = blockPart(10);
+  const twoViews = {
+    ...part,
+    parts: { ...part.parts, stand: { label: "stand", build: (kk) => kk.box({ min: [0, 0, 0], max: [5, 5, 5] }), views: { flat: (s) => s } } },
+    views: { flat: { label: "Flat" }, main: { label: "Main" } },
+    verify: { ...part.verify, expect: { _view: { sweepContacts: 0 } } },
+  };
+  const r = await inspect(twoViews, { view: "flat" });
+  expect(r.measure.sweeps).toEqual([]);
+  const gate = r.verify.cases[0].checks.find((c) => c.metric === "sweepContacts");
+  expect(gate.rows).toEqual([expect.objectContaining({ name: "grow", skipped: "timeout", view: "main" })]);
+  expect(r.verify.ok).toBe(null);
+}, 60_000);

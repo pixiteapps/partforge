@@ -262,15 +262,19 @@ const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && !!first
 // clear), or it stopped with a contact in hand.
 const sweepRan = (s) => !s.skipped || s.skipped === "no-motion" || sweepHit(s);
 // A contact on a sweep that may touch whose depth the clock stopped before it was read end
-// to end: neither clear nor a collision, so it withholds the gate for the whole view.
+// to end: neither clear nor a collision, so it withholds the gate for the whole view —
+// unless some row has a contact that counts, which fails it whatever else is unread.
 const depthUnread = (r) => !!r.sweeps?.some((s) => s.contacts?.some((c) => c.depthUnread));
 const DEPTH_UNREAD_HINT = "these pieces stay in contact along the motion and the time budget ran out before their depth could be read. Give the moving pair a running gap (for example 0.2 mm between knuckle faces, a bore larger than its pin) so the sweep can prove it clear, or run npx partforge measure for the long budget.";
 const SWEEP_WITHHELD_HINT = "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names";
 function sweepContacts(r) {
   if (!r.sweeps) return null;
+  // a known contact wins over an unread depth: the gate fails on what is known
+  const hits = r.sweeps.filter(sweepHit).length;
+  if (hits) return hits;
   if (depthUnread(r)) return null;
   if (r.sweeps.length && !r.sweeps.some(sweepRan)) return null;
-  return r.sweeps.filter(sweepHit).length;
+  return 0;
 }
 
 export const VIEW_METRICS = {

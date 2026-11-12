@@ -715,6 +715,9 @@ export async function handle(kernel, part, msg, post, opts = {}) {
           measureFn: measure,
           quick,
           seed: { params: msg.params ?? {}, result: measured },
+          // The report's one deadline: a sweep that moves nothing in this view runs in the
+          // view where it does (verify's sweepsElsewhere) on what the sweeps here left.
+          deadline: inspectStart + REPORT_SHARE_MS,
         }),
       };
       // `match` is present only when the caller asked for it AND something scored, so
