@@ -294,8 +294,6 @@ describe("params that are never motions", () => {
     // the lid follows `open`, which a goal handle writes as its target
     const part = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: ["open"], aim: [] }, seed: [] } } });
     expect(motions(part)).toEqual([]);
-    const listed = hinge({ handles: { aim: { on: "arm", drag: "goal", params: ["open"] } } });
-    expect(motions(listed)).toEqual([]);
     // a goal handle's seed is not its target
     const seeded = hinge({ handles: { aim: { on: "arm", drag: "goal", params: { position: [] }, seed: ["open"] } } });
     expect(brief(motions(seeded))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
@@ -400,4 +398,44 @@ describe("the scan's work", () => {
     expect(uncoveredMotions(part, part.defaults, undefined, { budgetMs: Infinity }).motions).toEqual([]);
     expect(scanMotion).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("a build the probe cannot trust", () => {
+  // A build that queries its own solid: the probe answers with stand-ins, so its hash is
+  // untrusted, but what it READS is still recorded.
+  const querying = (read = () => {}) => (k, p) => { const b = box(k); b.boundingBox(); read(p); return b; };
+
+  test("a third piece whose build queries and does not read the param leaves the hinge a motion", () => {
+    const part = hinge();
+    part.parts.tag = { views: { assembly: (s) => s.translate([30, 0, 0]) }, build: querying() };
+    expect(brief(motions(part))).toEqual([{ param: "open", moving: ["lid"], against: ["base", "tag"] }]);
+  });
+
+  test("the moving lid's own build queries and does not read the param: still a motion", () => {
+    const part = hinge();
+    part.parts.lid.build = querying();
+    expect(brief(motions(part))).toEqual([{ param: "open", moving: ["lid"], against: ["base"] }]);
+  });
+
+  test("a querying build that reads the param rebuilds: not a motion", () => {
+    const part = twoBox({
+      controls: [ctl("height", 5, 40)], defaults: { height: 10 },
+      baseBuild: (k, p) => { const b = k.box({ size: [10, 10, p.height] }); b.boundingBox(); return b; },
+      lid: (s, p) => s.translate([0, 0, p.height]),
+    });
+    expect(motions(part)).toEqual([]);
+  });
+
+  test("a querying build that throws counts as rebuilding", () => {
+    const part = hinge();
+    part.parts.tag = { views: { assembly: (s) => s.translate([30, 0, 0]) }, build: (k) => { box(k).boundingBox(); throw new Error("no"); } };
+    expect(motions(part)).toEqual([]);
+  });
+});
+
+test("the memo rescans when part.parameters is replaced on the same object", () => {
+  const part = hinge();
+  expect(uncoveredMotions(part).motions.map((m) => m.param)).toEqual(["open"]);
+  part.parameters = [{ ...part.parameters[0], controls: [{ ...part.parameters[0].controls[0], hidden: true }] }];
+  expect(uncoveredMotions(part).motions).toEqual([]);
 });

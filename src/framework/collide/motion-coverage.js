@@ -8,11 +8,26 @@
 // lint closure and the worker's eager closure may load it (test/worker-layering.test.js).
 // No sweep is ever run here. Nothing here throws on a malformed part: a param whose motion
 // cannot be probed is skipped.
-import { exportSubParts, resolveParams } from "../part-model.js";
+//
+// A part object is treated as immutable between calls: the view scan is memoized per part
+// object (scanViews), keyed on the params, the budget and the identity of `parameters`,
+// `parts`, `views`, `handles` and `derive`. Replacing one of those rescans; mutating one
+// in place does not.
+//
+// A build the probe cannot TRUST (it queried its solid, or passed a function) is judged by
+// what it READS, per sub-part: a build is a function of its inputs, so one that never reads
+// a param (directly or through the `derive` outputs it reads) cannot rebuild when that param
+// moves. Its reads are recorded on the probe kernel (geometry/probe.js answers queries with
+// stand-ins), so, like param-deps.js's prediction, they miss a param read only inside a
+// branch the real query result would take. A build that throws there, or reads the param,
+// rebuilds.
+import { exportSubParts, resolveParams, resolveParamsAttributed, recordedParams, viewSubParts } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
+import { newReadSink, expandReads } from "../read-recorder.js";
+import { createProbeKernel } from "../geometry/probe.js";
 import { viewAnimations } from "../animation.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
-import { rangesOf, dofsOf } from "../pose/param-solve.js";
+import { rangesOf } from "../pose/param-solve.js";
 import { handleParamKeys } from "../pose/handle-source.js";
 import { controlBoundKeys } from "../lint/rules-schema.js";
 import { normalizeCollisions } from "./declaration.js";
@@ -40,14 +55,39 @@ function placementsAt(part, view, q) {
 }
 
 /**
- * Params some build shown at `full` reads (derive reads expanded), or null when one of
- * those builds cannot be probed. A param outside the set cannot change a build there.
+ * One sub-part's build reads at params q, recorded on the probe kernel (derive reads
+ * expanded), or null when the build throws there. For a build the probe cannot trust.
+ */
+function untrustedBuildReads(part, name, q) {
+  try {
+    const resolved = resolveParamsAttributed(part, q);
+    const sink = newReadSink();
+    sink.attribution = resolved.attribution;
+    const rec = recordedParams(resolved, sink);
+    part.parts[name].build(createProbeKernel().kernel, rec.p, rec.d);
+    return new Set(expandReads(sink));
+  } catch {
+    return null;
+  }
+}
+
+/** An untrusted build of `name` at q rebuilds for `param` when it reads it, or cannot be read. */
+function untrustedRebuilds(part, name, q, param) {
+  const reads = untrustedBuildReads(part, name, q);
+  return !reads || reads.has(param);
+}
+
+/**
+ * Params some build shown at `full` reads (derive reads expanded; an untrusted build's
+ * recorded on the probe kernel), or null when one of those builds cannot be read at all.
+ * A param outside the set cannot change a build there.
  */
 function buildReadsAt(part, view, full) {
   const reads = new Set();
-  for (const entry of probePoses(part, view, full, { scope: "build" }).values()) {
-    if (!entry.trusted) return null;
-    for (const k of entry.reads ?? []) reads.add(k);
+  for (const [name, entry] of probePoses(part, view, full, { scope: "build" })) {
+    const keys = entry.trusted ? entry.reads ?? [] : untrustedBuildReads(part, name, full);
+    if (!keys) return null;
+    for (const k of keys) reads.add(k);
   }
   return reads;
 }
@@ -68,15 +108,28 @@ function placeReadsAt(part, view, full) {
 }
 
 /**
- * Whether a shown sub-part's build-scope hash differs between the params `qs` (or cannot
- * be read at one of them): proof the motion rebuilds, as scanMotion would find at those
- * samples, in 3 probes rather than its 17. False is no proof of the opposite.
+ * Whether stepping `param` over the params `qs` rebuilds a shown sub-part, decided per
+ * sub-part: a trusted build by its build-scope hash (differing from the first one seen),
+ * an untrusted one by its reads (untrustedRebuilds). Over lo, mid and hi it is the cheap
+ * proof (3 probes rather than 17; false there is no proof of the opposite). With
+ * `placements` it is scanMotion's rule over every sample, a placement that is missing or
+ * not rigid also rebuilding, except that an untrusted build rebuilds only when it reads
+ * the param.
  */
-function rebuildsAt(part, view, qs) {
+function rebuildsAt(part, view, qs, param, { placements = false } = {}) {
   const first = new Map();
   for (const q of qs) {
+    let mats = null;
+    if (placements) {
+      const { p, d } = resolveParams(part, q);
+      mats = poseMatrices(part, view, p, d);
+      for (const name of viewSubParts(part, view, p)) if (mats.get(name) == null) return true;
+    }
     for (const [name, e] of probePoses(part, view, q, { scope: "build" })) {
-      if (!e.trusted) return true;
+      if (!e.trusted) {
+        if (untrustedRebuilds(part, name, q, param)) return true;
+        continue;
+      }
       if (!first.has(name)) first.set(name, e.baseHash);
       else if (first.get(name) !== e.baseHash) return true;
     }
@@ -145,7 +198,7 @@ function relativeMotion(vs, sample) {
  *   `excludeHidden`, the control-default-not-literal population) and no handle writes it.
  * Nothing here throws on a malformed handle or schema: what cannot be read excludes nothing.
  */
-function unmovableParams(part, full) {
+function unmovableParams(part) {
   const out = new Set();
   const handles = isPlainObject(part?.handles) ? Object.values(part.handles) : [];
   const written = new Set();
@@ -153,10 +206,12 @@ function unmovableParams(part, full) {
     try {
       for (const k of handleParamKeys(h)) written.add(k);
       if (h?.drag !== "goal") continue;
+      // partforge's goal form is `params: { position, aim? }`; anything else names no target
       const p = h.params;
-      const targets = Array.isArray(p) ? dofsOf(h, handles, full)
-        : [...(Array.isArray(p?.position) ? p.position : []), ...(Array.isArray(p?.aim) ? p.aim : [])];
-      for (const k of targets) if (typeof k === "string") out.add(k);
+      if (!isPlainObject(p)) continue;
+      for (const k of [...(Array.isArray(p.position) ? p.position : []), ...(Array.isArray(p.aim) ? p.aim : [])]) {
+        if (typeof k === "string") out.add(k);
+      }
     } catch { /* a malformed handle excludes nothing */ }
   }
   let visible = null;
@@ -177,7 +232,7 @@ function scanView(part, view, full, stop = () => false) {
     ranges = rangesOf(part);
     p0 = resolveParams(part, full).p;
     if (exportSubParts(part, view, p0).length < 2) return { motions: out, partial: false };
-    skip = unmovableParams(part, full);
+    skip = unmovableParams(part);
     if (stop()) return { motions: out, partial: true };
     buildReads = buildReadsAt(part, view, full);
     placeReads = placeReadsAt(part, view, full);
@@ -206,15 +261,18 @@ function scanView(part, view, full, stop = () => false) {
       // rule (a), cheapest evidence first: a param whose build hashes already differ at lo,
       // mid and hi rebuilds, so it is a size and never reaches the sample runs below
       const buildRead = !buildReads || buildReads.has(param);
-      if (buildRead && rebuildsAt(part, view, ends.map((v) => ({ ...full, [param]: v })))) continue;
+      if (buildRead && rebuildsAt(part, view, ends.map((v) => ({ ...full, [param]: v })), param)) continue;
       const rel = relativeMotion(vs, sample);
       if (!rel) continue;
       // rule (a): a param that rebuilds anything shown is a size, not a motion. A param no
       // shown build reads cannot rebuild one, so only the others pay for the full scan
-      // (the engine's own, so lint and the engine agree on what rebuilds).
+      // (the engine's own, so lint and the engine agree on what rebuilds). The engine marks
+      // every untrusted build as rebuilding; when it names any, the same samples are read
+      // again per sub-part, an untrusted build rebuilding only if it reads the param.
       if (buildRead || rel.shownChanges) {
-        const scan = scanMotion(part, view, { lo, hi, at: (v) => ({ ...full, [param]: v }) });
-        if (scan.rebuild.length) continue;
+        const at = (v) => ({ ...full, [param]: v });
+        const scan = scanMotion(part, view, { lo, hi, at });
+        if (scan.rebuild.length && rebuildsAt(part, view, vs.map(at), param, { placements: true })) continue;
       }
       out.push({ param, range: finite ? [r.min, r.max] : null, moving: rel.moving, against: rel.against });
     } catch {
@@ -235,11 +293,16 @@ export function motionParams(part, view, full = part?.defaults ?? {}) {
   return scanView(part, view, full).motions;
 }
 
-// The scan of every view, memoized per part object: the last (params, budget) it ran with
-// and its result, so lint and verify in one apply share one scan. Coverage is not cached:
+// The scan of every view, memoized per part object: the last (params, budget, the five
+// declaration references — see the module header) it ran with and its result, so lint and
+// verify in one apply share one scan. Coverage is not cached:
 // it reads the sweeps, which a caller may hand in, and costs no probing.
 const SCANS = new WeakMap();
 const sortedJson = (v) => JSON.stringify(v, (_, x) => (isPlainObject(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+
+const DECL_KEYS = ["parameters", "parts", "views", "handles", "derive"];
+const declOf = (part) => DECL_KEYS.map((k) => part[k]);
+const sameDecl = (decl, part) => DECL_KEYS.every((k, i) => decl[i] === part[k]);
 
 /** `{ views: [[view, motions]], partial }` over every view, within `budgetMs`. */
 function scanViews(part, full, budgetMs, now) {
@@ -248,7 +311,7 @@ function scanViews(part, full, budgetMs, now) {
   if (now === Date.now) {
     try { key = `${budgetMs}|${sortedJson(full)}`; } catch { /* unkeyable params: scan uncached */ }
     const hit = key != null && SCANS.get(part);
-    if (hit && hit.key === key) return hit.result;
+    if (hit && hit.key === key && sameDecl(hit.decl, part)) return hit.result;
   }
   const t0 = now();
   const stop = () => now() - t0 >= budgetMs;
@@ -258,7 +321,7 @@ function scanViews(part, full, budgetMs, now) {
     result.views.push([view, motions]);
     if (partial) { result.partial = true; break; }
   }
-  if (key != null) SCANS.set(part, { key, result });
+  if (key != null) SCANS.set(part, { key, decl: declOf(part), result });
   return result;
 }
 
