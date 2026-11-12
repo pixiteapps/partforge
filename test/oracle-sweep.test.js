@@ -12,6 +12,12 @@ import { buildView } from "../src/framework/oracle/build.js";
 import { createCollisionWorld, relativeMatsAt } from "../src/framework/collide/world.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { collideBar, collideBarTwo } from "./fixtures/collide-bar.js";
+import { readSweep } from "../src/framework/collide/sweep-targets.js";
+import { TOUCH_TOL_MM } from "../src/framework/collide/world.js";
+import frameKnuckles from "./fixtures/hinge-frame-knuckles.js";
+import buriedAxis from "./fixtures/hinge-buried-axis.js";
+import detent from "./fixtures/hinge-detent.js";
+import { readFileSync } from "node:fs";
 
 const SLOW = 120_000;
 let k;
@@ -92,6 +98,10 @@ describe("sweep engine", () => {
     expect(row.contacts[0].to).toBe(90);
     expect(row.freeRange[0]).toBe(0);
     expect(Math.abs(row.freeRange[1] - 60)).toBeLessThan(0.1);
+    // a positive clearance: the contact carries its depth (the bar ends ploughed into the
+    // slab), and no allowance
+    expect(row.contacts[0].depth).toBeGreaterThan(1.5); // about 1.7 mm at 90°
+    expect("allowed" in row.contacts[0]).toBe(false);
   }, SLOW);
 
   it("an empty sub-part in the view does not stop a sweep", () => {
@@ -364,4 +374,140 @@ describe("sweep engine", () => {
     const part = withSweeps(hand, { curl: { param: "indexCurl", views: ["print"] } });
     expect(normalizeSweeps(part, "assembly", hand.defaults)).toEqual([]);
   });
+});
+
+// Sweep clearance at and below zero (spec 2026-11-12-moving-fits-swept-design.md, B): 0 may
+// touch but never press in, a negative clearance may press in up to that depth.
+describe("touching and pressing-in sweeps", () => {
+  const AXIS = [0, -3, 0]; // the hinge axis, along X, behind the base's back wall at the seam
+  // A closed lid resting on its base, hinged on a 1 mm pin in two 1.175 mm bores (a
+  // 0.175 mm running gap). `sink` sets the lid's box that far into the base at 0°.
+  const pinnedLid = (sink = 0) => boxPart({
+    boxes: {
+      base: (kk) => [0, 14].reduce((s, x0) => s.union(kk.cylinder({ r: 2.8, h: 6 }).cut(kk.cylinder({ r: 1.175, h: 8 }).translate([0, 0, -1]))
+        .along("+X").translate([x0, AXIS[1], AXIS[2]])), kk.box({ min: [0, 0, -5], max: [20, 20, 0] })),
+      lid: (kk) => kk.box({ min: [0, 0, -sink], max: [20, 20, 5 - sink] })
+        .union(kk.cylinder({ r: 1, h: 20 }).along("+X").translate([0, AXIS[1], AXIS[2]])),
+    },
+    views: { lid: (s, p) => s.rotateAbout({ axis: "X", deg: p.open, through: AXIS }) },
+    controls: [control("open", 0, 110)],
+    defaults: { open: 0 },
+    sweeps: { open: { param: "open", clearance: 0 } },
+  });
+  const detentAt = (clearance) => withSweeps(detent, { open: { param: "open", clearance } });
+
+  it("a lid resting closed on a running pin is clear at clearance 0", () => {
+    const [row] = runSweeps(k, pinnedLid(), "assembly", { open: 0 });
+    expect(row.clearance).toBe(0);
+    expect(row.clear).toBe(true);
+    for (const c of row.contacts) {
+      expect(c.allowed).toBe(true);
+      expect(c.depth).toBeLessThanOrEqual(TOUCH_TOL_MM);
+    }
+    expect(row.freeRange).toEqual([0, 110]);
+  }, SLOW);
+
+  it("the same lid set 1 mm into its base is a contact, as deep as it presses", () => {
+    const [row] = runSweeps(k, pinnedLid(1), "assembly", { open: 0 });
+    expect(row.clear).toBe(false);
+    const [c] = row.contacts;
+    expect(c.from).toBe(0);
+    expect(c.allowed).toBe(false);
+    expect(c.depth).toBeGreaterThan(0.9);
+    expect(c.depth).toBeLessThan(1.1);
+    expect(row.minClearance.distance).toBeCloseTo(-c.depth, 9);
+  }, SLOW);
+
+  it("a detent within a negative clearance is an allowed rub", () => {
+    const [row] = runSweeps(k, detentAt(-0.3), "assembly", { open: 0 });
+    expect(row.clearance).toBe(-0.3);
+    expect(row.clear).toBe(true);
+    expect(row.contacts).toHaveLength(1);
+    const [c] = row.contacts;
+    expect(c.allowed).toBe(true);
+    expect(c.depth).toBeGreaterThan(0.25);
+    expect(c.depth).toBeLessThan(0.35);
+    expect(c.from).toBeGreaterThan(38);
+    expect(c.to).toBeLessThan(52);
+    expect(row.minClearance.distance).toBeCloseTo(-c.depth, 9);
+    expect(row.freeRange).toEqual([0, 110]); // an allowed rub is free
+  }, SLOW);
+
+  it("the same detent at clearance 0, or past a smaller allowance, is a contact", () => {
+    for (const clearance of [0, -0.1]) {
+      const [row] = runSweeps(k, detentAt(clearance), "assembly", { open: 0 });
+      expect(row.clear, String(clearance)).toBe(false);
+      expect(row.contacts).toHaveLength(1);
+      const [c] = row.contacts;
+      expect(c.allowed).toBe(false);
+      expect(c.from).toBeGreaterThan(38);
+      expect(c.to).toBeLessThan(52);
+      expect(row.freeRange[1]).toBeLessThanOrEqual(c.from);
+    }
+  }, SLOW);
+
+  it("knuckles centred on the axis with no relief press in all the way round", () => {
+    const [row] = runSweeps(k, frameKnuckles, "assembly", frameKnuckles.defaults);
+    expect(row.clear).toBe(false);
+    expect(row.contacts).toHaveLength(1);
+    const [c] = row.contacts;
+    expect([c.a, c.b]).toEqual(["base", "lid"]);
+    expect(c.from).toBe(0);
+    expect(c.to).toBe(110);
+    expect(c.depth).toBeGreaterThan(1);
+    expect(c.allowed).toBe(false);
+  }, SLOW);
+
+  it("a buried axis rests clear closed and presses in as it opens", () => {
+    const [row] = runSweeps(k, buriedAxis, "assembly", buriedAxis.defaults);
+    expect(row.clear).toBe(false);
+    expect(row.contacts).toHaveLength(1);
+    const [c] = row.contacts;
+    expect(c.from).toBeGreaterThan(0); // resting closed is not the contact
+    expect(c.from).toBeLessThan(20);
+    expect(c.to).toBe(110);
+    expect(c.driver).toBe("open");
+    expect(c.allowed).toBe(false);
+    expect(c.depth).toBeGreaterThan(1);
+  }, SLOW);
+
+  it("a deadline while reading depth marks the row timed out", () => {
+    // the sweep itself fits; the clock runs out once its contacts are being read
+    let ticks = 0;
+    const part = withSweeps(detent, { open: { param: "open", clearance: -0.3 } });
+    const steps = runSweeps(k, part, "assembly", { open: 0 })[0].steps;
+    // one now() per sweep step, plus the row's own readings: stop after the stepping
+    const [row] = runSweeps(k, part, "assembly", { open: 0 }, { deadline: steps + 3, now: () => ticks++ });
+    expect(row.skipped).toBe("timeout");
+    expect(row.clear).toBeNull();
+    expect(row.contacts).toHaveLength(1);
+  }, SLOW);
+});
+
+describe("readSweep clearance", () => {
+  const part = withSweeps(collideBar, {});
+  const clearanceOf = (spec) => readSweep(part, "swing", { param: "angle", ...spec }, {}, 0.05).entries[0].clearance;
+  it("keeps any finite clearance, zero and below included", () => {
+    expect(clearanceOf({ clearance: -0.3 })).toBe(-0.3);
+    expect(clearanceOf({ clearance: 0 })).toBe(0);
+    expect(clearanceOf({ clearance: 0.2 })).toBe(0.2);
+  });
+  it("falls back to the declared default for a clearance that is no number", () => {
+    for (const clearance of [NaN, "x", Infinity, -Infinity, null]) expect(clearanceOf({ clearance })).toBe(0.05);
+    expect(clearanceOf({})).toBe(0.05);
+  });
+});
+
+// The reference parts' declared sweeps, recorded before clearance went below 0: every one
+// of them reads clear, so nothing about them may move (a contact would only gain `depth`).
+describe("reference parts' sweep rows", () => {
+  const GOLDEN = JSON.parse(readFileSync(new URL("./fixtures/sweep-rows-golden.json", import.meta.url), "utf8"));
+  const parts = { gearbox, "drawer-box": drawerBox, hand };
+  it("are unchanged", () => {
+    for (const [key, rows] of Object.entries(GOLDEN)) {
+      const [file, view] = key.split("#");
+      const part = parts[file];
+      expect(strip(runSweeps(k, part, view, part.defaults)), key).toEqual(rows);
+    }
+  }, SLOW);
 });

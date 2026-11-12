@@ -1,0 +1,189 @@
+{
+  "gearbox#gearbox": [
+    {
+      "name": "spin",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 252,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 0.29988413854232554,
+        "a": "plate",
+        "b": "gear3",
+        "at": [
+          110.64679739791853,
+          42.65852505550279,
+          15
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": null
+    }
+  ],
+  "drawer-box#cabinet": [
+    {
+      "name": "drawer1.drawer1Open",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 128,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 1,
+        "a": "carcass",
+        "b": "drawer1",
+        "at": [
+          75,
+          -54,
+          145.5
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        100
+      ]
+    },
+    {
+      "name": "drawer2.drawer2Open",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 128,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 1,
+        "a": "carcass",
+        "b": "drawer2",
+        "at": [
+          75,
+          -54,
+          96.83333587646484
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        100
+      ]
+    },
+    {
+      "name": "drawer3.drawer3Open",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 128,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 1,
+        "a": "carcass",
+        "b": "drawer3",
+        "at": [
+          75.5,
+          -60,
+          47.66666793823242
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        100
+      ]
+    }
+  ],
+  "hand#assembly": [
+    {
+      "name": "indexKnuckle",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 252,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 0.3999928114747292,
+        "a": "indexKnuckle",
+        "b": "indexProximal",
+        "at": [
+          -21.882166304393344,
+          1.1810807663885349e-14,
+          157.58277890993233
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        90
+      ]
+    },
+    {
+      "name": "indexCurl",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 128,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 0.3999958223692232,
+        "a": "indexMiddle",
+        "b": "indexDistal",
+        "at": [
+          -35.582747347395625,
+          24.922582501933398,
+          211.37254351705408
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "thumbKnuckle",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 67,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 0.399993344627324,
+        "a": "thumbProximal",
+        "b": "thumbDistal",
+        "at": [
+          -66.45843171388489,
+          23.109185974972554,
+          137.53695512703104
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        60
+      ]
+    },
+    {
+      "name": "thumbCurl",
+      "clear": true,
+      "clearance": 0.001,
+      "steps": 66,
+      "rebuilds": false,
+      "minClearance": {
+        "distance": 0.39998891698095435,
+        "a": "thumbProximal",
+        "b": "thumbDistal",
+        "at": [
+          -63.43102788571976,
+          19.70640010433749,
+          141.2411956326984
+        ],
+        "value": 0
+      },
+      "contacts": [],
+      "freeRange": [
+        0,
+        1
+      ]
+    }
+  ]
+}

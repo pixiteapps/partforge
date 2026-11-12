@@ -1,6 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
+import { sweepContactBlocks } from "../collide/pairs.js";
 import { heldCheck } from "./held.js";
 import { flexMembers } from "./flex-members.js";
 import { resolveProfile, overhangAngleFor, bedContactFor, footprintFor, rootFilletFor, strainFor, flexTiltFor } from "./dfm-profiles.js";
@@ -293,7 +294,7 @@ function sweepNotices(rows) {
     actual: null, status: "warn", pass: null, message, hint, volunteered: true });
   // A row stopped after it found a contact names it: that contact is real, and the gate counts it.
   const timedOut = rows.filter((r) => r.skipped === "timeout").map((r) => {
-    const c = r.contacts?.[0];
+    const c = r.contacts?.find((x) => sweepContactBlocks(r, x));
     return c ? `${r.name} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : r.name;
   });
   if (timedOut.length) note("ran", `${timedOut.length} sweep(s) stopped at the time budget: ${timedOut.join(", ")}`, SWEEP_TIMEOUT_HINT);

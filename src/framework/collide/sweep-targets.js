@@ -112,7 +112,9 @@ export function scanMotion(part, view, motion, extra = []) {
 export function readSweep(part, name, spec, full, declClear = normalizeCollisions(part)?.clearance ?? CONTACT_EPS) {
   if (!isPlainObject(spec)) return { entries: [{ name, kind: null, skip: "unreadable", why: "is not an object naming a motion", clearance: declClear, views: null }] };
   const views = Array.isArray(spec.views) ? spec.views : null;
-  const clearance = isNum(spec.clearance) && spec.clearance >= 0 ? spec.clearance : declClear;
+  // Any finite clearance (oracle/sweep.js): 0 may touch, a negative one may press in
+  // that deep. Only a value that is no finite number falls back to the declared default.
+  const clearance = isNum(spec.clearance) ? spec.clearance : declClear;
   const base = { clearance, views };
   const unreadable = (kind, why) => ({ entries: [{ name, kind, ...base, skip: "unreadable", why }] });
   const ranges = rangesOf(part);

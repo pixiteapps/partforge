@@ -29,6 +29,18 @@
 // sweep's start is a contact from the start, never exempt: a sweep asks "never closer than
 // this anywhere", unlike a drag, which only refuses to push further in.
 //
+// Clearance 0 and below (spec 2026-11-12-moving-fits-swept-design.md, B): 0 means "may
+// touch, never press in", a negative clearance "may press in up to this depth" (a detent).
+// Distances are unsigned and the advancement proof needs a positive threshold, so such a
+// sweep RUNS at TOUCH_TOL_MM, and each contact interval it finds is then read for depth
+// (world.depth) at DEPTH_SAMPLES evenly spaced values, ends included. A contact whose
+// deepest reading is within the allowance (-clearance + TOUCH_TOL_MM) is `allowed: true`:
+// it leaves the row clear and its freeRange open. One that is not is trimmed to where the
+// readings pass the allowance, each trimmed end placed by one interpolated probe, so a lid
+// that rests closed and then presses in reads its contact from where it presses in, to
+// within the samples' spacing. Every contact (on a positive-clearance sweep too) carries
+// `depth`, the deepest reading: a lower bound, as depth.js says, never an exact figure.
+//
 // Shared runtime: DOM-free, three-free and node:-free, loaded lazily by the worker. The
 // caller owns the kernel round: built solids stay live until its kernel.cleanup().
 import { viewSubParts, resolveParams, buildPosed } from "../part-model.js";
@@ -39,6 +51,7 @@ import { CONTACT_EPS, pairKey } from "../collide/pairs.js";
 import { applyMat, cornerTravel } from "../collide/motion.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { motionOf, sweepsInView } from "../collide/sweep-targets.js";
+import { TOUCH_TOL_MM } from "../collide/depth.js";
 
 export const SWEEP_REBUILD_STEPS = 24;
 export const SWEEP_MAX_STEPS = 2000;
@@ -67,6 +80,10 @@ function turnOf(m) {
 // A pair advancement cannot prove clear by an interval this small (a share of BISECT_TOL)
 // is reported as a contact over it: conservative, and at most T/2 inside clearance.
 const ADVANCE_FLOOR = 1 / 8;
+// Depth readings per contact interval, its two ends included (a reading costs up to ~40 ms
+// on a ~20k-triangle pair that presses in, so this is small and fixed); a trimmed contact
+// spends at most one more per end.
+const DEPTH_SAMPLES = 7;
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
 
@@ -165,7 +182,11 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
   const motion = motionOf(part, view, full, s);
   const { lo, hi } = motion;
   const tol = BISECT_TOL * (hi - lo);
-  const clearance = s.clearance;
+  // A sweep that may touch (clearance <= 0) runs at the touching tolerance; its contacts
+  // are classified by depth against `allowance` below. The row reports s.clearance.
+  const touching = s.clearance <= 0;
+  const clearance = touching ? TOUCH_TOL_MM : s.clearance;
+  const allowance = -s.clearance + TOUCH_TOL_MM;
   const rebuildSet = new Set(s.rebuild);
   const rigid = rebuildSet.size === 0;
   const active = [...s.moving, ...s.rebuild];
@@ -410,18 +431,99 @@ function sweepOne(kernel, part, view, full, decl, s, { deadline, now, skipStill,
     }
 
     if (timedOut) for (const c of open.values()) c.to = last.v; // read up to here
-    row.minClearance = best;
     const merged = mergeContacts(contacts);
+    if (!timedOut) {
+      const depthAt = (v, a, b) => {
+        const pose = poseAt(v);
+        try { return pose.world.depth(a, b, pose.mats); } finally { pose.release(); }
+      };
+      let deepest = null;
+      for (const c of merged) {
+        const read = readDepth(c, depthAt, { touching, allowance, deadline, now });
+        if (read.deep && (!deepest || read.deep.depth > deepest.depth)) deepest = { ...read.deep, a: c.a, b: c.b };
+        if (read.trimmed) {
+          // the contact now starts and ends elsewhere: read its point and driver there
+          c.at = readAt(c.from, pairKey(c.a, c.b), Infinity)?.at ?? c.at;
+          c.driver = driverAt(c.before ?? c.from, c.a, c.b);
+        }
+        if (read.timedOut) { timedOut = true; break; }
+      }
+      // pieces pressing in on a sweep that may touch: the minimum is how deep, negated
+      if (touching && deepest && deepest.depth > TOUCH_TOL_MM) {
+        best = { distance: -deepest.depth, a: deepest.a, b: deepest.b, at: readAt(deepest.value, pairKey(deepest.a, deepest.b), Infinity)?.at ?? null, value: deepest.value };
+      }
+    }
+    for (const c of merged) if (!("depth" in c)) c.depth = null; // not read: the clock ran out
+    row.minClearance = best;
     row.contacts = merged.map(({ before: _b, after: _a, ...c }) => c);
     if (timedOut) return { ...row, clear: null, skipped: "timeout" };
-    row.clear = contacts.length === 0;
-    if (s.kind === "param") row.freeRange = freeRange(merged, Math.min(Math.max(full[s.param] ?? lo, lo), hi), lo, hi);
+    const blocking = merged.filter((c) => c.allowed !== true);
+    row.clear = blocking.length === 0;
+    if (s.kind === "param") row.freeRange = freeRange(blocking, Math.min(Math.max(full[s.param] ?? lo, lo), hi), lo, hi);
     return row;
   } finally {
     shared?.dispose();
     disposeIndexes(owned);
     kernel.endSubPart?.();
   }
+}
+
+/**
+ * Read one contact's depth (mm) at DEPTH_SAMPLES evenly spaced values over [from, to], with
+ * `depthAt(v, a, b)`, and set `c.depth` (the deepest reading). On a sweep that may touch,
+ * also set `c.allowed` (deepest within `allowance`) and, when it is not allowed, trim the
+ * contact to the readings past the allowance: an end that moves is placed by one probe
+ * between the last reading within the allowance and the first past it, interpolated to
+ * where the depth reads twice the allowance, or halfway from it to the reading past it
+ * when that is nearer (so it usually lands past the allowance), and `before` /
+ * `after` move to the nearest value read within it. The deadline is checked before every
+ * reading; one that stops it leaves the deepest so far in `c.depth`, and `allowed: false`
+ * only when that already passes the allowance. Returns `{ deep: { depth, value } | null,
+ * timedOut, trimmed }`.
+ */
+function readDepth(c, depthAt, { touching, allowance, deadline, now }) {
+  const n = c.to > c.from ? DEPTH_SAMPLES : 1;
+  const vs = Array.from({ length: n }, (_, i) => (i === n - 1 ? c.to : c.from + ((c.to - c.from) * i) / (n - 1)));
+  const ds = [];
+  let deep = null;
+  const take = (v) => {
+    const d = depthAt(v, c.a, c.b);
+    if (!deep || d > deep.depth) deep = { depth: d, value: v };
+    return d;
+  };
+  for (const v of vs) {
+    if (now() > deadline) {
+      if (deep) { c.depth = deep.depth; if (touching && deep.depth > allowance) c.allowed = false; }
+      return { deep, timedOut: true, trimmed: false };
+    }
+    ds.push(take(v));
+  }
+  c.depth = deep.depth;
+  if (!touching) return { deep, timedOut: false, trimmed: false };
+  c.allowed = deep.depth <= allowance;
+  if (c.allowed) return { deep, timedOut: false, trimmed: false };
+  const first = ds.findIndex((d) => d > allowance);
+  const last = ds.length - 1 - [...ds].reverse().findIndex((d) => d > allowance);
+  // one end: the probe between an in-allowance reading (vIn, dIn) and one past it (vOut, dOut)
+  const probe = (vIn, dIn, vOut, dOut) => {
+    const target = Math.min(2 * allowance, (allowance + dOut) / 2); // past the allowance, short of dOut
+    const share = (target - dIn) / (dOut - dIn);
+    const v = vIn + (vOut - vIn) * Math.min(0.999, Math.max(0.001, share));
+    if (now() > deadline) return { past: vOut, within: vIn, timedOut: true };
+    const d = take(v);
+    return d > allowance ? { past: v, within: vIn } : { past: vOut, within: v };
+  };
+  let timedOut = false;
+  if (first > 0) {
+    const e = probe(vs[first - 1], ds[first - 1], vs[first], ds[first]);
+    c.from = e.past; c.before = e.within; timedOut ||= !!e.timedOut;
+  }
+  if (last < n - 1 && !timedOut) {
+    const e = probe(vs[last + 1], ds[last + 1], vs[last], ds[last]);
+    c.to = e.past; c.after = e.within; timedOut ||= !!e.timedOut;
+  }
+  c.depth = deep.depth; // a probe may have read deeper
+  return { deep, timedOut, trimmed: first > 0 || last < n - 1 };
 }
 
 /**

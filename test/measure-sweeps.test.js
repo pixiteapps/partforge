@@ -13,6 +13,10 @@ import { assemblyOverlaps } from "../src/framework/assembly.js";
 import { VIEW_METRICS } from "../src/framework/verify-metrics.js";
 import { pairKey } from "../src/framework/collide/pairs.js";
 import { collideBar } from "./fixtures/collide-bar.js";
+import frameKnuckles from "./fixtures/hinge-frame-knuckles.js";
+import buriedAxis from "./fixtures/hinge-buried-axis.js";
+import detent from "./fixtures/hinge-detent.js";
+import { sweepText } from "../bin/sweep-text.js";
 
 const SLOW = 120_000;
 let k;
@@ -142,6 +146,19 @@ describe("verify and sweeps", () => {
     expect(notice(v)).toEqual(["1 sweep(s) stopped at the time budget: b (contact found at 60.06: bar×palm)"]);
   }, SLOW);
 
+  it("a timed-out sweep that may touch counts only a contact read past its allowance", () => {
+    const touching = (contacts) => row("t", { clearance: 0, clear: null, skipped: "timeout", contacts });
+    // an allowed rub, and a contact whose depth the clock never read: neither counts, so
+    // the row has no reading and the gate is withheld, as for any sweep that stopped short
+    const quiet = withRows([touching([{ ...contact, depth: 0, allowed: true }, { ...contact, from: 90, depth: null }])]);
+    expect(gateOf(quiet)).toMatchObject({ status: "skip", actual: null, unevaluated: true });
+    expect(notice(quiet)).toEqual(["1 sweep(s) stopped at the time budget: t"]);
+    // one read past it does, and the warning names that one
+    const hit = withRows([touching([{ ...contact, depth: 0, allowed: true }, { ...contact, from: 90, depth: 2, allowed: false, at: [4, 5, 6] }])]);
+    expect(gateOf(hit)).toMatchObject({ status: "fail", actual: 1, location: [4, 5, 6] });
+    expect(notice(hit)).toEqual(["1 sweep(s) stopped at the time budget: t (contact found at 90: bar×palm)"]);
+  }, SLOW);
+
   it("a seed measured without sweeps is not admitted for a part that declares them", () => {
     const part = barSweep(gated);
     const seed = measure(k, part, "assembly", {}, { sweeps: false });
@@ -210,12 +227,63 @@ describe("collisions.allow and the overlaps gate", () => {
   }, SLOW);
 });
 
+// The moving-fit fixtures (spec 2026-11-12-moving-fits-swept-design.md, "Why" and B), each
+// sweeping its hinge at clearance 0.
+describe("sweeps that may touch, gated", () => {
+  const gate = (part) => ({ ...part, verify: { ...part.verify, expect: { _view: { sweepContacts: 0 } } } });
+  const sweepAt = (part, clearance) => ({ ...part, verify: { ...part.verify, sweeps: { open: { param: "open", clearance } } } });
+  const gateOf = (v) => v.cases[0].checks.find((c) => c.metric === "sweepContacts");
+
+  it("knuckles in the other plate, and a buried axis, fail the gate", () => {
+    for (const part of [frameKnuckles, buriedAxis]) {
+      const v = verify(k, gate(part), { view: "assembly" });
+      expect(v.ok, part.meta.title).toBe(false);
+      expect(gateOf(v)).toMatchObject({ status: "fail", actual: 1 });
+    }
+  }, SLOW);
+
+  it("a detent rub passes within its allowance and fails past it", () => {
+    const allowed = verify(k, gate(sweepAt(detent, -0.3)), { view: "assembly" });
+    expect(gateOf(allowed)).toMatchObject({ status: "pass", actual: 0 });
+    expect(allowed.ok).toBe(true);
+    const tight = verify(k, gate(detent), { view: "assembly" });
+    expect(gateOf(tight)).toMatchObject({ status: "fail", actual: 1 });
+    expect(tight.ok).toBe(false);
+  }, SLOW);
+});
+
 describe("the CLI sweeps line", () => {
   it("prints a contact with its value, pair, driver and free range", () => {
     const out = execFileSync(process.execPath, ["bin/cli.js", "measure", "test/fixtures/collide-bar-sweep.js", "--no-verify"], { encoding: "utf8" });
     const line = out.split("\n").find((l) => l.startsWith("  sweeps:"));
     expect(line).toMatch(/^ {2}sweeps: swing CONTACT at (59|60)\.\d\d bar×palm driven by angle, free \[0, (59|60)\.\d\d\]$/);
   }, SLOW);
+
+  it("prints how deep a contact presses on a sweep that may touch", () => {
+    const out = execFileSync(process.execPath, ["bin/cli.js", "measure", "test/fixtures/hinge-detent.js", "--no-verify"], { encoding: "utf8" });
+    const line = out.split("\n").find((l) => l.startsWith("  sweeps:"));
+    expect(line).toMatch(/^ {2}sweeps: open CONTACT at (40|41)\.\d\d base×lid \(0\.(2|3)\dmm deep\) driven by open, free \[0, (39|40)\.\d\d\]$/);
+  }, SLOW);
+
+  const rub = { from: 40.0, to: 50.0, a: "lid", b: "base", at: [0, 0, 0], driver: "open", depth: 0.298, allowed: true };
+  const clearRow = { name: "open", clear: true, clearance: -0.3, steps: 66, rebuilds: false,
+    minClearance: { distance: -0.298, a: "lid", b: "base", at: [0, 0, 0], value: 45 }, contacts: [rub], freeRange: [0, 110], ms: 1 };
+  it("an allowed rub reads clear, with the rub and its depth", () => {
+    expect(sweepText(clearRow)).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed)");
+    expect(sweepText({ ...clearRow, contacts: [rub, { ...rub, from: 80.5 }] })).toBe("open clear (min -0.30mm base×lid), rub at 40 base×lid (0.30mm, allowed) (+1 more)");
+  });
+
+  it("a contact line names the first contact past the allowance, never an allowed rub", () => {
+    const deep = { ...rub, from: 70.25, depth: 1.2, allowed: false };
+    const s = { ...clearRow, clear: false, clearance: 0, contacts: [rub, deep], freeRange: [0, 69.9] };
+    expect(sweepText(s)).toBe("open CONTACT at 70.25 base×lid (1.20mm deep) driven by open, free [0, 69.90]");
+  });
+
+  it("a positive-clearance contact line is unchanged", () => {
+    const c = { from: 60.06, to: 180, a: "palm", b: "bar", at: [1, 2, 3], driver: "angle", depth: 1.7 };
+    const s = { name: "swing", clear: false, clearance: 0.001, contacts: [c, { ...c, from: 120 }], freeRange: [0, 59.97] };
+    expect(sweepText(s)).toBe("swing CONTACT at 60.06 bar×palm driven by angle, free [0, 59.97] (+1 more)");
+  });
 });
 
 describe("a view no sweep moves", () => {

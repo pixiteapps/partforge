@@ -18,6 +18,7 @@
 // sheet/constants.js, lint/finding.js) — so the linter's stays kernel-free.
 import { PROCESSES } from "./process/registry.js";
 import { DOMAINS } from "./domains/registry.js";
+import { sweepContactBlocks } from "./collide/pairs.js";
 
 // `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
 // [x,y,z] }` — so a reader who copies the shape of a measurement gets a legal
@@ -253,8 +254,10 @@ export const SUBPART_METRICS = withDomainMetrics({
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
 });
 // A sweep row that found a contact: a finished one that is not clear, or one the deadline
-// stopped after it found one.
-const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && s.contacts?.length > 0);
+// stopped after it found one that counts (an allowed touch or rub never does, nor, on a
+// sweep that may touch, a contact whose depth it never read).
+const firstBlocking = (s) => s.contacts?.find((c) => sweepContactBlocks(s, c)) ?? null;
+const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && !!firstBlocking(s));
 // A row that answered: it ran (a no-motion animation has nothing to run, so it answers
 // clear), or it stopped with a contact in hand.
 const sweepRan = (s) => !s.skipped || s.skipped === "no-motion" || sweepHit(s);
@@ -283,12 +286,12 @@ export const VIEW_METRICS = {
     withheld: (r) => (r.sweeps?.length && sweepContacts(r) === null
       ? "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked" : null),
     withheldHint: "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names",
-    hint: "a declared motion comes closer than its clearance to another sub-part — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
+    hint: "a declared motion comes closer than its clearance to another sub-part (at a clearance of 0 or below: presses in deeper than it allows, by the contact's `depth`) — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
     skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
     pattern: "sweep-contacts",
     locate: (r) => {
       const row = r.sweeps?.find(sweepHit);
-      return row ? row.contacts[0]?.at ?? row.minClearance?.at ?? null : null;
+      return row ? firstBlocking(row)?.at ?? row.minClearance?.at ?? null : null;
     } },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
