@@ -4523,8 +4523,9 @@ returns instead:
   fails. A kit whose 3D section is STEP runs on OCCT, laser and router drawings included.
   The kit is a list of entries `{ path, kind, data }` (`data` a `Uint8Array`), handed to
   `mount({ onKit })` as `onKit({ entries, name })`. With no `onKit`, partforge delivers it
-  through `onDownload` or the DOM: a kit whose only model file is a single one is saved as
-  that bare file, with the README and parts list left out, and anything else as `<name>-kit.zip`. The paths: `print/<name>.stl` (one per part) or
+  through `onDownload` or the DOM: a kit holding one model file and nothing else but the
+  README and parts list is saved as that bare model file (README and parts list left out);
+  any other kit, one with a cut drawing or more than one model, is saved as `<name>-kit.zip`. The paths: `print/<name>.stl` (one per part) or
   `print/<name>.3mf|step` (one file, printed parts laid out on the bed) for 3D files;
   `laser/` and `cnc/` for cut drawings, each holding `sheets/<material>-<t>mm/sheet-<i>-of-<n>.svg`
   (pieces laid out on the stock) and `parts/<name>[-xN].svg` (one per distinct piece;

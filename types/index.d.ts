@@ -302,9 +302,9 @@ export interface MountOptions {
   onDownload?: (file: DownloadPayload) => void;
   /**
    * Receive the download kit's files instead of partforge saving them. Without it, a kit
-   * whose only model file is a single one is saved as that bare file, with the README and
-   * parts list left out (through `onDownload` if given), and any other kit as
-   * `<name>-kit.zip`. The sink is called synchronously and must not return a promise the
+   * holding one model file and nothing else but the README and parts list is saved as that
+   * bare model file, README and parts list left out (through `onDownload` if given); any
+   * other kit, one with a cut drawing or more than one model, is saved as `<name>-kit.zip`. The sink is called synchronously and must not return a promise the
    * export should wait for: a host that needs to do async work takes the entries and
    * returns.
    */

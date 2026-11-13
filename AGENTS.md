@@ -674,8 +674,9 @@ the installed package, so let the publish finish before bumping the dep there.
   be evaluated is still listed in its cut section) and `runtime.exportKit({ sections,
   sets, onProgress })`, one `export-kit` job (never epoch-guarded). The job's `kit`
   reply goes through `download.js`'s `deliverKit` to the host's `onKit({ entries,
-  name })` sink, or with no sink a kit whose only model file is a single one is saved
-  as that bare file (README and parts list left out) and anything else zipped as
+  name })` sink, or with no sink a kit holding one model file and nothing else but the
+  README and parts list is saved as that bare model file (README and parts list left out)
+  and any other kit zipped as
   `<name>-kit.zip` (models stored, the rest deflated); a delivery that throws rejects the export's Promise. A kit
   with a STEP 3D section runs on OCCT as ONE job. Entries are `{ path, kind, data }`:
   `print/` for 3D files, `laser/` and `cnc/` (each with `sheets/` and `parts/`) for
