@@ -156,10 +156,12 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
    * joint records (a hinge's with its `axisKind`), every joint's and the tip's origin in part
    * coordinates, each hinge's world rotation axis (the direction a positive value turns about)
    * and, for a limb with ball joints, each ball's `{ bend, spread, twist }` axes in `ballAxes`.
+   * `frames` holds each joint's posed frame axes `{ x, y, z }` (after its own turn: x the bend
+   * axis, z the spread axis, y along the bone it turns), the joint gizmo's orthogonal rings.
    * Throws without the parent frames, like `world`.
    */
   function ikInfo() {
-    const points = {}, axes = {}, ballAxes = {};
+    const points = {}, axes = {}, ballAxes = {}, jointFrames = {};
     const origin = (joint) => world(joint).origin;
     const all = () => (frames == null ? posedFrames : { ...frames, ...posedFrames });
     // The direction a positive unit value of one hinge (or one ball component) turns about,
@@ -172,6 +174,7 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
     const inWorld = (a, W) => [0, 1, 2].map((k) => r3(a[0] * W.x[k] + a[1] * W.y[k] + a[2] * W.z[k]));
     joints.forEach((j, i) => {
       points[j.name] = origin(j.frame);
+      { const W = world(j.frame); jointFrames[j.name] = { x: W.x, y: W.y, z: W.z }; }
       if (j.type === "ball") {
         // bend and spread swing the segment about axes of the frame BEFORE the ball turns it
         // (its own steps are the last in its frame's list: drop them); twist turns about the
@@ -204,7 +207,7 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
         rec.follower = j.follow != null;
         return rec;
       }),
-      points, values: values.map(roundValue), axes,
+      points, values: values.map(roundValue), axes, frames: jointFrames,
     };
     if (Object.keys(ballAxes).length) info.ballAxes = ballAxes;
     if (tree.r) info.r = [...tree.r];

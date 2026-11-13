@@ -6,14 +6,20 @@
 // BVH, the native core or an oracle module.
 import { err, warn } from "./finding.js";
 import { readSweep, sweepsInView } from "../collide/sweep-targets.js";
+import { motionFinding, uncoveredMotions } from "../collide/motion-coverage.js";
+
+function unsweptFinding(m) {
+  const { message, hint } = motionFinding(m);
+  return warn("motion-unswept", message, hint, "verify.sweeps");
+}
 
 const isPlainObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const SWEEP_SHAPES = "A sweep names one motion: `{ param: \"angle\" }` (a control with a finite min and max, or an explicit `range: [lo, hi]`), `{ handle: \"lid\" }`, `{ from: \"open\", to: \"shut\" }` (preset names), `{ path: [{…params}, {…params}] }` or `{ animation: \"spin\" }`.";
 
 // Every declared sweep read ONCE per lint pass and shared by the three sweep rules (the
 // rules run on one ctx): `{ name, spec, read }`, plus `rebuilds()`, whether some view's
-// motion rebuilds a sub-part — sampled exactly as the engine's scanMotion samples it, an
-// untrusted placement or build included — computed on first ask.
+// motion rebuilds a sub-part — the engine's own scanMotion, an untrusted placement included
+// and an untrusted build judged by its reads — computed on first ask.
 const SWEEPS = new WeakMap();
 function sweepsOf(ctx) {
   let list = SWEEPS.get(ctx);
@@ -47,8 +53,22 @@ export const COLLISION_RULES = [
     id: "sweep-goal-handle",
     run: (ctx) => sweepsOf(ctx).flatMap(({ name, spec, read }) => (read.goal
       ? [warn("sweep-goal-handle", `verify.sweeps.${name} sweeps goal handle "${spec.handle}", which is a target, not a motion, so it is never swept`,
-        "Sweep the limb's joint params (`{ param: \"elbow\" }`), a path between presets (`{ from: \"rest\", to: \"reach\" }`) or an animation instead.", `verify.sweeps.${name}`)]
+        "Sweep a path between presets (`{ from: \"rest\", to: \"reach\" }`) or an animation instead: either moves the limb the way the solver poses it. A joint param a non-goal handle writes can be swept on its own (`{ param: \"elbow\" }`).", `verify.sweeps.${name}`)]
       : [])),
+  },
+  {
+    // A clearance that is present but no finite number: the engine falls back to the
+    // declared default, so the sweep runs at a clearance the author never wrote.
+    id: "sweep-bad-clearance",
+    run: ({ part }) => {
+      const decl = part?.verify?.sweeps;
+      if (!isPlainObject(decl)) return [];
+      return Object.entries(decl).flatMap(([name, spec]) => (isPlainObject(spec) && spec.clearance !== undefined
+        && !(typeof spec.clearance === "number" && Number.isFinite(spec.clearance))
+        ? [warn("sweep-bad-clearance", `verify.sweeps.${name}.clearance is ${typeof spec.clearance === "number" ? spec.clearance : JSON.stringify(spec.clearance) ?? String(spec.clearance)}, not a number of millimetres, so the sweep runs at the declared default instead`,
+          "Write a number: `clearance: 0` (may touch, never press in), a positive gap the pieces must keep, or a negative depth they may press in (a detent's rub, `clearance: -0.3`).", `verify.sweeps.${name}.clearance`)]
+        : []));
+    },
   },
   {
     id: "sweep-rebuilds",
@@ -56,6 +76,17 @@ export const COLLISION_RULES = [
       ? [warn("sweep-rebuilds", `verify.sweeps.${name}: a sub-part's build changes along this motion, so this sweep rebuilds geometry at every step and runs slower`,
         "A sweep moves built pieces by matrix when only `place()` reads its params and every placement is a readable rigid transform. If the motion should only move pieces, read its params in the `views` placement rather than in `build()`; a motion that really reshapes a piece is checked at fixed steps only.", `verify.sweeps.${name}`)]
       : [])),
+  },
+  {
+    // A param that poses one piece against another with no sweep checking it. A warning,
+    // never an error: a stored forge must still load. Geometry-free; no sweep is run.
+    id: "motion-unswept",
+    run: (ctx) => {
+      // the sweeps as the other sweep rules read them, so each is read once per pass
+      let reads;
+      try { reads = new Map(sweepsOf(ctx).map(({ name, read }) => [name, read])); } catch { /* read again below */ }
+      return uncoveredMotions(ctx.part, ctx.p, reads).motions.map(unsweptFinding);
+    },
   },
   {
     id: "collisions-bad-clearance",

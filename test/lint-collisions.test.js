@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
+import { queryingLid } from "./fixtures/querying-lid.js";
 
 const partWith = (collisions) => ({
   meta: { title: "T" },
@@ -108,6 +109,22 @@ test("sweep-goal-handle warns: a goal handle is a target, not a motion", () => {
   expect(f[0].severity).toBe("warning");
 });
 
+test("sweep-bad-clearance warns on a clearance that is no finite number", () => {
+  for (const clearance of ["0.2", NaN, null, Infinity, { mm: 1 }]) {
+    const f = sweepFindings({ s: { param: "swing", clearance } });
+    expect(f.map((x) => x.rule), String(clearance)).toEqual(["sweep-bad-clearance"]);
+    expect(f[0].severity).toBe("warning");
+    expect(f[0].path).toBe("verify.sweeps.s.clearance");
+  }
+  expect(sweepFindings({ s: { param: "swing", clearance: NaN } })[0].message).toContain("clearance is NaN");
+  for (const clearance of [0, -0.3, 0.2]) expect(sweepFindings({ s: { param: "swing", clearance } })).toEqual([]);
+});
+
+test("sweep-goal-handle's hint leads with a path between presets or an animation", () => {
+  const [f] = sweepFindings({ s: { handle: "reach" } });
+  expect(f.hint.startsWith("Sweep a path between presets")).toBe(true);
+});
+
 test("sweep-rebuilds warns when the motion changes a build", () => {
   const f = sweepFindings({ s: { param: "size" } });
   expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);
@@ -123,6 +140,12 @@ test("sweep-rebuilds samples the whole motion, as the engine does, not only its 
   };
   const f = sweepFindings({ s: { param: "swing" } }, { parts });
   expect(f.map((x) => x.rule)).toEqual(["sweep-rebuilds"]);
+});
+
+test("sweep-rebuilds stays quiet for an untrusted build that does not read the swept param", () => {
+  const rules = (part) => { const r = lintPart(part); return [...r.errors, ...r.warnings, ...r.notes].map((f) => f.rule); };
+  expect(rules(queryingLid())).not.toContain("sweep-rebuilds");
+  expect(rules(queryingLid({ readsOpen: true }))).toContain("sweep-rebuilds");
 });
 
 test("sweep-rebuilds counts a placement that is no rigid transform", () => {
@@ -145,4 +168,60 @@ test("each sweep is read once per lint pass, whatever the number of sweep rules"
   reads = 0;
   lintPart(noSweeps);
   expect(before - reads).toBe(1);
+});
+
+// ── motion-unswept ──────────────────────────────────────────────────────────
+const hingePart = (extra = {}) => ({
+  meta: { title: "H" },
+  parameters: [{ id: "g", title: "G", description: "d", controls: [control("open", 0, 110)] }],
+  defaults: { open: 0 },
+  parts: {
+    base: { views: { assembly: (s) => s }, build: (k) => k.box({ size: [10, 10, 10] }) },
+    lid: { views: { assembly: (s, p) => s.rotateAbout({ axis: "X", deg: p.open, through: [0, 5, 10] }) }, build: (k) => k.box({ size: [10, 10, 10] }) },
+  },
+  views: { assembly: { label: "Assembly" } },
+  ...extra,
+});
+const unswept = (part) => {
+  const r = lintPart(part);
+  return [...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule === "motion-unswept");
+};
+
+test("motion-unswept warns, with the hint, when a moving piece has no sweep", () => {
+  const f = unswept(hingePart());
+  expect(f).toHaveLength(1);
+  expect(f[0].severity).toBe("warning");
+  expect(f[0].message).toBe('"open" moves lid against base in view "assembly" and no sweep checks that motion');
+  expect(f[0].hint).toBe('Add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.');
+  expect(f[0].path).toBe("verify.sweeps");
+});
+
+test("motion-unswept: a sweep of the motion clears it", () => {
+  expect(unswept(hingePart({ verify: { sweeps: { open: { param: "open" } } } }))).toEqual([]);
+});
+
+test("motion-unswept: a motion with no finite range asks for a min and max", () => {
+  const part = hingePart();
+  part.parameters[0].controls = [{ key: "open", label: "open", description: "no range" }];
+  const f = unswept(part);
+  expect(f).toHaveLength(1);
+  expect(f[0].hint).toBe('Give the "open" control a min and max, then add verify.sweeps: { open: { param: "open", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }.');
+});
+
+// hinged-box.js declares both its sweeps; without them its two pose params are motions.
+test("motion-unswept: hinged-box is clean, and warns for both pose params with its sweeps taken off", async () => {
+  const part = (await import("../src/parts/hinged-box.js")).default;
+  expect(unswept(part)).toEqual([]);
+  const { sweeps: _sweeps, ...verify } = part.verify;
+  const f = unswept({ ...part, verify });
+  expect(f.find((x) => x.message.startsWith('"lidAngle" moves lid against base'))).toBeTruthy();
+  expect(f.find((x) => x.message.startsWith('"lidLift" moves lid against base'))).toBeTruthy();
+  for (const x of f) expect(x.severity).toBe("warning");
+});
+
+test("motion-unswept: malformed views give nothing and never throw", () => {
+  for (const views of [null, [], "assembly", 3]) {
+    const r = lintPart(hingePart({ views }));
+    expect([...r.errors, ...r.warnings, ...r.notes].filter((f) => f.rule === "motion-unswept" || f.rule === "internal-rule-error")).toEqual([]);
+  }
 });

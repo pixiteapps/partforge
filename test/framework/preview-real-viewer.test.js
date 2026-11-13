@@ -494,19 +494,51 @@ test("exportPreview carries the hinged box's autoplay cycle as channels", async 
   runtime.dispose();
 });
 
+test("exportPreview stores the params the meshes sit at", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const runtime = await mountHingedBox(hingedBox);
+  runtime.setParams({ lidAngle: 50 });
+  const d = await decodePreviewGlb(await runtime.exportPreview());
+  runtime.dispose();
+  expect(d.params.lidAngle).toBe(0); // the cycle's t = 0 value, not the live 50
+  expect(d.params.width).toBe(hingedBox.defaults.width); // the defaults ride along
+});
+
+test("a still export stores the live params", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const base = makePart();
+  const part = { ...base, defaults: { ...base.defaults, tilt: 0 } }; // build() never reads tilt
+  const runtime = mount(part, { createWorker, elements: makeElements() });
+  workers.manifold.onmessage({ data: { type: "ready" } });
+  workers.manifold.onmessage({ data: { type: "meshes", ms: 1, meshes: [
+    { ...boxSoup("body", [0, 0, 0], [4, 4, 4]), reads: ["h"] },
+  ] } });
+  await runtime.ready;
+  runtime.setParams({ tilt: 7 });
+  const d = await decodePreviewGlb(await runtime.exportPreview());
+  runtime.dispose();
+  expect(d.animation).toBeNull();
+  expect(d.params).toMatchObject({ h: 4, tilt: 7 });
+});
+
 test("exportPreview carries no animation when a tracked param is read by build()", async () => {
   const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
   const animations = hingedBox.views.box.animations;
   const part = {
     ...hingedBox,
     views: { box: { ...hingedBox.views.box, animations: {
-      ...animations, cycle: { ...animations.cycle, tracks: { width: [[0, 60], [1, 80]] } },
+      // the cycle keeps its lidAngle track (t = 0 value 0) and gains one build() reads
+      ...animations, cycle: { ...animations.cycle, tracks: { ...animations.cycle.tracks, width: [[0, 60], [1, 80]] } },
     } } },
   };
   const runtime = await mountHingedBox(part);
+  runtime.setParams({ lidAngle: 50 });
   const out = await decodePreviewGlb(await runtime.exportPreview());
   expect(out.view).toBe("box");
   expect(out.animation).toBeNull();
+  // No animation baked, so no t = 0 override: the file sits at the live params.
+  expect(out.params.lidAngle).toBe(50); // not the unbaked cycle's t = 0 value, 0
+  expect(out.params.width).toBe(hingedBox.defaults.width);
   runtime.dispose();
 });
 
@@ -708,5 +740,476 @@ test("a tooltip showing when the label changes no longer names the old action", 
   expect(button.getAttribute("aria-label")).toBe("Replay animation");
   const shown = tip.classList.contains("show") ? tip.textContent : null;
   expect(shown).not.toBe("Pause animation");
+  handle.dispose();
+});
+
+// --- mountPreview({ part }): posing on the file ---------------------------------
+// A gearbox GLB without a kernel: a 10 mm box soup per view sub-part, each at that
+// sub-part's placement origin (so the viewer has something to frame), with the params
+// the file sits at. Pose mode then runs on these meshes, posed by the file placer.
+import gearbox from "../../src/parts/gearbox.js";
+import drawerBox from "../../src/parts/drawer-box.js";
+import { viewSubParts, resolveParams } from "../../src/framework/part-model.js";
+import { placeMatrix } from "../../src/framework/collide/place.js";
+import { snapValues } from "../../src/framework/pose/param-solve.js";
+import { samplePreviewAnimation } from "../../src/framework/preview-animation.js";
+import { viewAnimations, evaluate } from "../../src/framework/animation.js";
+
+async function partGlb(part, view, params, animation = null) {
+  const { p, d } = resolveParams(part, params);
+  const meshes = viewSubParts(part, view, params).map((name) => {
+    const m = placeMatrix(part.parts[name], view, p, d);
+    const o = m ? [m[12], m[13], m[14]] : [0, 0, 0];
+    return boxSoup(name, o.map((c) => c - 5), o.map((c) => c + 5));
+  });
+  return encodePreviewGlb({ meshes, part, view, params, animation });
+}
+const gearboxGlb = ({ params = gearbox.defaults, animation = false, cues = null } = {}) => {
+  const all = { ...gearbox.defaults, ...params };
+  if (!animation) return partGlb(gearbox, "gearbox", all);
+  // An empty read set: no build reads a tracked key (true of the gearbox), so the spin bakes.
+  const sampled = samplePreviewAnimation(gearbox, "gearbox", all, { buildReads: () => new Set() });
+  return partGlb(gearbox, "gearbox", all, cues ? { ...sampled, anim: { ...sampled.anim, cues } } : sampled);
+};
+// The fake renderer draws only when its loop is driven: one frame lands `drawn`.
+async function drawn(handle) {
+  await handle.ready;
+  state.renderer.animationLoop((clockMs += 100));
+  await handle.drawn;
+}
+// The pose mode decides its handles in idle time after the first frame.
+const settleIdle = (handle) => vi.waitFor(() => expect(handle.__preview.visible).not.toBeNull());
+// The crank's point at `params`, turned `deg` about the crank's declared axis
+// (gearbox.js: origin [C1x, C1y, GEAR_Z] with C1 = [0, 0], direction +Z).
+function crankTarget(params, deg) {
+  const { p, d } = resolveParams(gearbox, params);
+  const [x, y, z] = gearbox.handles.crank.point(p, d);
+  const [ox, oy] = gearbox.handles.crank.axis.origin;
+  const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return [ox + (x - ox) * c - (y - oy) * s, oy + (x - ox) * s + (y - oy) * c, z];
+}
+// Turn the crank by `total` degrees through the session, in `step`-degree frames.
+function turnCrank(handle, total, step = 30) {
+  const { poseMode } = handle.__preview;
+  const start = { ...handle.getParams() };
+  poseMode.session.begin("crank");
+  for (let a = step; a <= total; a += step) poseMode.session.frame(crankTarget(start, Math.min(a, total)));
+  if (total % step) poseMode.session.frame(crankTarget(start, total));
+}
+
+// Turn the crank with the pointer on the canvas: hover its point, press, four moves
+// round its axis on screen (`during` runs once pose mode's frame has taken them —
+// it batches moves into a requestAnimationFrame), release.
+async function pointerTurnCrank(handle, v, during = () => {}) {
+  v.domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300 });
+  const fire = (type, x, y) => v.domElement.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, button: 0, buttons: type === "pointerup" ? 0 : 1, bubbles: true }));
+  const centre = v.projectPoint(gearbox.handles.crank.axis.origin);
+  const s = handle.pose.handlePoints().find((h) => h.handleId === "crank");
+  const r = Math.hypot(s.x - centre.x, s.y - centre.y);
+  const a0 = Math.atan2(s.y - centre.y, s.x - centre.x);
+  fire("pointermove", s.x, s.y);
+  fire("pointerdown", s.x, s.y);
+  for (let k = 1; k <= 4; k++) fire("pointermove", centre.x + r * Math.cos(a0 + k * 0.15), centre.y + r * Math.sin(a0 + k * 0.15));
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  during();
+  fire("pointerup", centre.x + r * Math.cos(a0 + 0.6), centre.y + r * Math.sin(a0 + 0.6));
+}
+
+test("without part, mountPreview exposes the no-op pose and null params", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb() });
+  await handle.ready;
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.isEnabled()).toBe(false);
+  expect(handle.pose.pinCount()).toBe(0);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(handle.pose.onDragEnd(() => {})).toBeTypeOf("function");
+  expect(handle.getParams()).toBeNull();
+  expect(handle.__preview).toBeNull();
+  handle.dispose();
+});
+
+test("part must be a PartDefinition", () => {
+  expect(() => mountPreview(makeStage(), { glb: new Uint8Array(4), part: 3 })).toThrow(/part must be a PartDefinition/);
+  expect(() => mountPreview(makeStage(), { glb: new Uint8Array(4), part: { defaults: {} } })).toThrow(/part must be a PartDefinition/);
+});
+
+test("with part, the pose surface is safe before ready", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(() => handle.pose.releasePins()).not.toThrow();
+  expect(typeof handle.pose.onDragEnd(() => {})).toBe("function");
+  expect(handle.pose.__lastDragEnd()).toBeNull();
+  handle.pose.setEnabled(false); // kept until pose mode exists
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.pose.isEnabled()).toBe(false);
+  expect(handle.pose.isLive()).toBe(false);
+  handle.pose.setEnabled(true);
+  expect(handle.pose.isLive()).toBe(true);
+  handle.dispose();
+  expect(() => { handle.pose.setEnabled(false); handle.pose.releasePins(); }).not.toThrow();
+  expect(handle.pose.onDragEnd(() => {})).toBeTypeOf("function");
+});
+
+test("with part, the preview seeds its params from the file and shows the place-only handles once decided", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ params: { driveAngle: 37 } }), part: gearbox });
+  await drawn(handle);
+  expect(handle.getParams().driveAngle).toBe(37);
+  expect(handle.__preview.fileParams.driveAngle).toBe(37);
+  expect(Object.isFrozen(handle.__preview.fileParams)).toBe(true);
+  await settleIdle(handle);
+  expect(handle.pose.isLive()).toBe(true);
+  const ids = handle.pose.handlePoints().map((h) => h.handleId);
+  expect(new Set(ids)).toEqual(new Set(Object.keys(gearbox.handles)));
+  handle.dispose();
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(handle.pose.isLive()).toBe(false);
+});
+
+test("a drag writes the params and poses every gear by matrix; release fires onDragEnd once", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  const early = [];
+  handle.pose.onDragEnd((e) => early.push(e)); // subscribed before ready
+  await drawn(handle); await settleIdle(handle);
+  const v = viewers.at(-1);
+  const { poseMode, placer } = handle.__preview;
+  turnCrank(handle, 30);
+  const mid = handle.getParams().driveAngle;
+  expect(mid).toBeCloseTo(30, 0);
+  const { p, d } = resolveParams(gearbox, handle.getParams());
+  const want = placer.matricesAt(p, d);
+  for (const name of ["gear1", "gear2", "gear3", "crank"]) {
+    expectNear([...v._subMeshes[name].matrix.elements], want.get(name), 4);
+  }
+  expect(want.get("gear2")).not.toEqual(IDENTITY); // the idler turned too
+  poseMode.session.end();
+  expect(handle.pose.__lastDragEnd()).toMatchObject({ changed: ["driveAngle"] });
+
+  // A released pointer drag tells onDragEnd once.
+  const ends = [];
+  const off = handle.pose.onDragEnd((e) => ends.push(e));
+  await pointerTurnCrank(handle, v);
+  expect(ends).toHaveLength(1);
+  expect(ends[0]).toMatchObject({ handleId: "crank", changed: ["driveAngle"] });
+  expect(early).toEqual(ends);
+  expect(handle.pose.__lastDragEnd()).toMatchObject({ handleId: "crank", changed: ["driveAngle"] });
+  off();
+  handle.dispose();
+});
+
+test("a wrapped param keeps its turn: a drag to 370 lands as the editor's own snapping has it", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  turnCrank(handle, 370, 10);
+  handle.__preview.poseMode.session.end();
+  expect(handle.getParams().driveAngle).toBe(snapValues(gearbox, { driveAngle: 370 }).driveAngle);
+  handle.dispose();
+});
+
+test("the drawer box's corner handle is hidden in a preview; its drawers show", async () => {
+  const glb = await partGlb(drawerBox, "cabinet", drawerBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: drawerBox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.__preview.visible).toEqual({ shown: ["drawer1", "drawer2", "drawer3"], hidden: { corner: expect.stringMatching(/rebuilds/) } });
+  expect(new Set(handle.pose.handlePoints({ offscreen: true }).map((h) => h.handleId))).toEqual(new Set(["drawer1", "drawer2", "drawer3"]));
+  handle.dispose();
+});
+
+test("collisions: a part with a collisions block gets the editor's collide index over the drawn meshes", async () => {
+  const glb = await partGlb(drawerBox, "cabinet", drawerBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: drawerBox });
+  await drawn(handle); await settleIdle(handle);
+  const pc = handle.__preview.poseCollide;
+  expect(pc).not.toBeNull();
+  const count = viewSubParts(drawerBox, "cabinet", drawerBox.defaults).length;
+  // world.js loads on the first idle slice, then each slice indexes what it has time for
+  await vi.waitFor(() => expect(pc.state().indexed.length).toBe(count));
+  expect(pc.state().queued + pc.state().indexed.length).toBe(count);
+  handle.dispose();
+  expect(pc.state().indexed).toEqual([]); // disposed with the preview
+});
+
+test("collisions: a drawer dragged into the next one stops at contact and tints the pair", async () => {
+  // partGlb's 10 mm boxes sit at each placement's origin: drawer1 (closed) at y = 0 and
+  // drawer2 (40 % open) 44 mm out along -Y, so drawer1 meets it about 31 % open.
+  const glb = await partGlb(drawerBox, "cabinet", drawerBox.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: drawerBox });
+  await drawn(handle); await settleIdle(handle);
+  const pc = handle.__preview.poseCollide;
+  const count = viewSubParts(drawerBox, "cabinet", drawerBox.defaults).length;
+  await vi.waitFor(() => expect(pc.state().indexed.length).toBe(count));
+  const { poseMode } = handle.__preview;
+  poseMode.session.begin("drawer1");
+  for (const open of [20, 40, 60]) {
+    const { d } = resolveParams(drawerBox, { ...drawerBox.defaults, drawer1Open: open });
+    poseMode.session.frame(d.pulls[0]);
+  }
+  const held = handle.getParams().drawer1Open;
+  expect(held).toBeGreaterThan(29);
+  expect(held).toBeLessThan(32);
+  expect(pc.state().tinted).toEqual({ a: "drawer1", b: "drawer2" });
+  poseMode.session.end();
+  expect(pc.state().tinted).toBeNull();
+  handle.dispose();
+});
+
+test("collisions: a part with no collisions block creates no collide index", async () => {
+  const { default: hingedBox } = await import("../../src/parts/hinged-box.js");
+  const { collisions: _collisions, ...plain } = hingedBox; // the box declares one: take it off
+  const glb = await partGlb(plain, "box", plain.defaults);
+  const handle = mountPreview(makeStage(), { glb, part: plain });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.__preview.poseCollide).toBeNull();
+  handle.dispose();
+});
+
+test("a file showing a view the part does not declare attaches nothing, and says so once", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const glb = await encodePreviewGlb({ meshes: [boxSoup("gear1", [0, 0, 0], [4, 4, 4])], view: "elsewhere" });
+  const handle = mountPreview(makeStage(), { glb, part: gearbox });
+  await drawn(handle);
+  expect(warn.mock.calls.filter(([m]) => /preview part ignored/.test(m))).toEqual([
+    ['partforge: preview part ignored — the file shows view "elsewhere", which the part does not declare'],
+  ]);
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  handle.dispose();
+});
+
+test("dispose mid-drag writes nothing and throws nothing", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  const v = viewers.at(-1);
+  const { poseMode } = handle.__preview;
+  turnCrank(handle, 30);
+  v.setSubPose.mockClear();
+  expect(() => handle.dispose()).not.toThrow();
+  expect(handle.getParams()).toBeNull();
+  // A late session effect after teardown is a no-op.
+  expect(() => poseMode.session.end()).not.toThrow();
+  expect(v.setSubPose).not.toHaveBeenCalled();
+});
+
+test("chrome: false attaches no Release pins action and no readout pill, but the chip", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await gearboxGlb(), part: gearbox, chrome: false });
+  await drawn(handle); await settleIdle(handle);
+  expect(stage.querySelector(".pf-pose-actions")).toBeNull();
+  expect(stage.querySelector(".pf-pose-readout")).toBeNull();
+  expect(stage.querySelector(".pf-pose-chip")).not.toBeNull();
+  handle.dispose();
+  expect(stage.querySelector(".pf-pose-chip")).toBeNull();
+});
+
+test("with chrome, the Release pins action and the readout pill sit in the viewbar", async () => {
+  const stage = makeToolbarStage();
+  const handle = mountPreview(stage, { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  expect(stage.querySelector("#viewbar .pf-pose-actions")).not.toBeNull();
+  expect(stage.querySelector("#viewbar .pf-pose-readout")).not.toBeNull();
+  let mid = null;
+  await pointerTurnCrank(handle, viewers.at(-1), () => { mid = handle.pose.__dragReadout(); });
+  expect(mid).toMatch(/Input angle/);
+  expect(handle.pose.__dragReadout()).toBeNull(); // released
+  handle.dispose();
+  expect(stage.querySelector(".pf-pose-actions")).toBeNull();
+  expect(stage.querySelector(".pf-pose-readout")).toBeNull();
+});
+
+// --- mountPreview({ part }) on a playing animation: the params follow the player -------
+const spin = viewAnimations(gearbox).get("gearbox").find((a) => a.autoplay);
+const maxAbsDiff = (a, b) => Math.max(...[...a].map((x, i) => Math.abs(x - b[i])));
+// Advance the player to about `t` (the spin lasts 6 s; runFrames's 0.1 s frames).
+const playTo = (t) => runFrames(t * spin.totalDuration - 0.1);
+
+test("while the animation plays, getParams follows the player", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  expect(handle.animation.state().status).toBe("playing");
+  const { t } = handle.animation.state();
+  expect(t).toBeGreaterThan(0.3);
+  const got = handle.getParams();
+  expect(got.driveAngle).toBeCloseTo(evaluate(spin, t).values.driveAngle, 6);
+  expect(got).toEqual({ ...handle.__preview.fileParams, ...evaluate(spin, t).values });
+  expect(handle.__preview.params.driveAngle).toBe(handle.__preview.fileParams.driveAngle); // nothing written
+  // the placer's matrices at those params are the player's pose
+  const { p, d } = resolveParams(gearbox, got);
+  const want = handle.__preview.placer.matricesAt(p, d);
+  const v = viewers.at(-1);
+  for (const name of ["gear1", "gear2", "gear3", "crank"]) {
+    expect(maxAbsDiff(v._subMeshes[name].matrix.elements, want.get(name))).toBeLessThan(1e-3);
+  }
+  handle.dispose();
+});
+
+test("a press pauses the player and writes its params; cancel restores them, not t = 0", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  const { t } = handle.animation.state();
+  const v = viewers.at(-1);
+  const before = Object.fromEntries(["gear1", "gear2", "gear3", "crank"].map((n) => [n, [...v._subMeshes[n].matrix.elements]]));
+  const { poseMode } = handle.__preview;
+  const start = handle.getParams();
+  poseMode.session.begin("crank");
+  expect(handle.animation.state().status).toBe("paused");
+  const held = handle.getParams().driveAngle;
+  expect(held).toBeCloseTo(evaluate(spin, t).values.driveAngle, 9);
+  expect(handle.__preview.params.driveAngle).toBe(held); // written into the preview's own params
+  poseMode.session.frame(crankTarget(start, 30));
+  expect(handle.getParams().driveAngle).toBeCloseTo(held + 30, 0);
+  poseMode.session.cancel();
+  expect(handle.getParams().driveAngle).toBeCloseTo(held, 9);
+  // every mesh back at the paused pose
+  for (const [name, m] of Object.entries(before)) expect(maxAbsDiff(v._subMeshes[name].matrix.elements, m)).toBeLessThan(1e-3);
+  expect(handle.animation.state().status).toBe("paused"); // stays paused
+  handle.dispose();
+});
+
+test("a press during the intro pauses it and writes the file params", async () => {
+  const cues = [{ t: 0, view: "front", sweep: null }];
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true, cues }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.animation.state().status).toBe("intro");
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams);
+  handle.__preview.poseMode.session.begin("crank");
+  expect(handle.animation.state().status).toBe("paused");
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams);
+  handle.dispose();
+});
+
+test("a pause from the button writes the player's params, so a later press finds them", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  handle.animation.pause();
+  const { t } = handle.animation.state();
+  expect(handle.__preview.params.driveAngle).toBeCloseTo(evaluate(spin, t).values.driveAngle, 9);
+  runFrames(1);
+  expect(handle.getParams().driveAngle).toBeCloseTo(evaluate(spin, t).values.driveAngle, 9);
+  handle.dispose();
+});
+
+test("under reduced motion the params are the file params and handles show at once", async () => {
+  vi.stubGlobal("matchMedia", (query) => ({ matches: query === "(prefers-reduced-motion: reduce)", media: query }));
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  runFrames(1);
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams);
+  expect(handle.pose.isLive()).toBe(true);
+  handle.dispose();
+});
+
+test("a press stops the turntable", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox, turntable: 30 });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.motion.state).toBe("playing");
+  handle.__preview.poseMode.session.begin("crank");
+  expect(handle.motion.state).toBe("stopped");
+  handle.__preview.poseMode.session.end();
+  handle.motion.restart();
+  expect(handle.motion.state).toBe("playing"); // restart re-arms it
+  handle.dispose();
+});
+
+test("motion.restart puts the params back to the file's", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.2);
+  turnCrank(handle, 60);
+  handle.__preview.poseMode.session.end();
+  expect(handle.getParams().driveAngle).not.toBeCloseTo(handle.__preview.fileParams.driveAngle, 0);
+  handle.motion.restart();
+  expect(handle.__preview.params).toEqual(handle.__preview.fileParams);
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams); // playing again from t = 0
+  expect(handle.animation.state().status).toBe("playing");
+  handle.dispose();
+});
+
+test("a part that throws while posing attaches is ignored: drawn resolves and the handle answers as without part", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const part = { ...gearbox, derive: () => { throw new Error("derive broke"); } };
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part });
+  await drawn(handle); // resolves: the meshes are on screen
+  expect(handle.getParams()).toBeNull();
+  expect(handle.pose.isLive()).toBe(false);
+  expect(handle.pose.handlePoints()).toEqual([]);
+  expect(warn.mock.calls.some(([m]) => typeof m === "string" && m.startsWith("partforge: preview part ignored"))).toBe(true);
+  handle.dispose();
+});
+
+// The gearbox plus one numeric param no animation tracks, written by a place-only
+// axis handle that moves nothing.
+const liftGearbox = {
+  ...gearbox,
+  defaults: { ...gearbox.defaults, lift: 0 },
+  handles: {
+    ...gearbox.handles,
+    lifter: { point: (p) => [30, 0, 10 + p.lift], params: ["lift"], drag: "axis", direction: [0, 0, 1], label: "Lift", views: ["gearbox"] },
+  },
+};
+async function liftGlb() {
+  const all = { ...liftGearbox.defaults };
+  const sampled = samplePreviewAnimation(liftGearbox, "gearbox", all, { buildReads: () => new Set() });
+  return partGlb(liftGearbox, "gearbox", all, sampled);
+}
+
+test("a dragged untracked key survives the player: following and the next press keep it", async () => {
+  const handle = mountPreview(makeStage(), { glb: await liftGlb(), part: liftGearbox });
+  await drawn(handle); await settleIdle(handle);
+  expect(handle.__preview.visible.shown).toContain("lifter");
+  playTo(0.2);
+  const { poseMode } = handle.__preview;
+  poseMode.session.begin("lifter"); // pauses the player
+  poseMode.session.frame([30, 0, 17]);
+  poseMode.session.end();
+  const lift = handle.__preview.params.lift;
+  expect(lift).toBeCloseTo(7, 0);
+  handle.animation.resume();
+  runFrames(0.3);
+  expect(handle.animation.state().status).toBe("playing");
+  const { t } = handle.animation.state();
+  expect(handle.getParams()).toEqual({ ...handle.__preview.params, ...evaluate(spin, t).values });
+  expect(handle.getParams().lift).toBe(lift); // the live params under the player, not the file's
+  poseMode.session.begin("crank"); // a press pauses there and writes the player's values
+  expect(handle.__preview.params.lift).toBe(lift);
+  poseMode.session.cancel();
+  expect(handle.getParams().lift).toBe(lift);
+  handle.dispose();
+});
+
+test("a file whose animation is not the part's autoplay animation does not follow it, and says so once", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { spin: spec, ...rest } = gearbox.views.gearbox.animations;
+  const part = { ...gearbox, views: { ...gearbox.views, gearbox: { ...gearbox.views.gearbox, animations: { ...rest, turn: spec } } } };
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb({ animation: true }), part });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  expect(handle.animation.state().status).toBe("playing");
+  expect(handle.getParams()).toEqual(handle.__preview.fileParams); // a still, for params
+  expect(warn.mock.calls.filter(([m]) => /preview animation/.test(m))).toEqual([
+    ['partforge: preview animation "spin" is not the part\'s autoplay animation "turn"'],
+  ]);
+  handle.dispose();
+});
+
+test("motion.restart during a drag cancels it, then puts the params back to the file's", async () => {
+  const handle = mountPreview(makeStage(), { glb: await gearboxGlb(), part: gearbox });
+  await drawn(handle); await settleIdle(handle);
+  const ends = [];
+  handle.pose.onDragEnd((e) => ends.push(e));
+  const { poseMode } = handle.__preview;
+  const start = { ...handle.getParams() };
+  poseMode.session.begin("crank");
+  poseMode.session.frame(crankTarget(start, 60));
+  expect(handle.getParams().driveAngle).not.toBeCloseTo(start.driveAngle, 0);
+  handle.motion.restart();
+  expect(poseMode.session.isActive()).toBe(false);
+  expect(handle.__preview.params).toEqual(handle.__preview.fileParams);
+  expect(ends).toEqual([]); // cancelled, never released
   handle.dispose();
 });

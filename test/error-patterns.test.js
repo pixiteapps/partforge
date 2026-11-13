@@ -100,6 +100,8 @@ const BASELINE_IDS = [
   "implicit-lipschitz-low",
   "implicit-thin-feature",
   "implicit-step-export",
+  "motion-unswept",
+  "sweep-bad-clearance",
 ];
 
 const entries = parsePatterns(doc);

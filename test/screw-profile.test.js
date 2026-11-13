@@ -1,16 +1,23 @@
 import { expect, test } from "vitest";
-import { screwCrossSection, SCREW_STEP_DEG } from "../src/framework/geometry/screw-profile.js";
+import {
+  screwCrossSection as sized, screwStepsPerTurn, SCREW_MAX_STEPS, SCREW_MIN_STEPS,
+} from "../src/framework/geometry/screw-profile.js";
+import { SAGITTA_TOL } from "../src/framework/geometry/circle-segs.js";
+
+// The densification mechanics below are pinned at the old flat 5° (72 steps a
+// turn) so their point counts stay readable; the radius sizing has its own tests
+// at the bottom of the file.
+const screwCrossSection = (profile, pitch, opts = {}) => sized(profile, pitch, { stepsPerTurn: 72, ...opts });
 
 test("a constant-z segment needs no subdivision and maps to itself", () => {
   // No z change → no polar sweep → no chordal error to correct.
   expect(screwCrossSection([[5, 0], [3, 0]], 2)).toEqual([[5, 0], [3, 0]]);
 });
 
-test("densifies each segment to the 5 degree polar step", () => {
+test("densifies each segment to the polar step", () => {
   // z spans 1 of a pitch of 2 → 180 deg of sweep → 180/5 = 36 segments, 37 points,
   // and the closing edge back down sweeps the same 180 deg for 35 more (its two
   // endpoints are already in the list).
-  expect(SCREW_STEP_DEG).toBe(5);
   expect(screwCrossSection([[5, 0], [5, 1]], 2)).toHaveLength(37 + 35);
 });
 
@@ -117,4 +124,33 @@ test("rejects a negative radius, matching revolve's rule", () => {
 test("rejects a non-positive pitch and a too-short profile", () => {
   expect(() => screwCrossSection([[5, 0], [5, 1]], 0)).toThrow(/pitch must be > 0/);
   expect(() => screwCrossSection([[5, 0]], 2)).toThrow(/at least 2/);
+});
+
+// Feedback #244: the step used to be a flat 5° whatever the radius, and a thread's
+// triangle count is quadratic in it, so small threads were enormous. It is now
+// sized by the print tier's chord tolerance at the profile's largest radius.
+test("the step is sized by the print chord tolerance at the profile's largest radius", () => {
+  const sagitta = (r, n) => r * (1 - Math.cos(Math.PI / n));
+  for (const r of [1.5, 3, 6]) {
+    const n = screwStepsPerTurn([[r - 0.3, 0], [r, 0.25], [r - 0.3, 0.5]]);
+    expect(sagitta(r, n)).toBeLessThanOrEqual(SAGITTA_TOL.print);
+    expect(sagitta(r, n - 1)).toBeGreaterThan(SAGITTA_TOL.print); // the fewest that meet it
+  }
+  expect(screwStepsPerTurn([[1.3, 0], [1.5, 0.25], [1.3, 0.5]])).toBe(28); // M3-sized
+  expect(screwStepsPerTurn([[2.7, 0], [3, 0.5], [2.7, 1]])).toBe(39); // M6-sized
+});
+
+test("the step never gets finer than the old 5°, nor coarser than 15°", () => {
+  expect(SCREW_MAX_STEPS).toBe(72);
+  expect(SCREW_MIN_STEPS).toBe(24);
+  expect(screwStepsPerTurn([[40, 0], [42, 1], [40, 2]])).toBe(72); // a big worm keeps its density
+  expect(screwStepsPerTurn([[0.2, 0], [0.4, 0.1], [0.2, 0.2]])).toBe(24); // a tiny thread floors
+  expect(screwStepsPerTurn([[0, 0], [0, 1]])).toBe(24); // no radius: the floor, never a throw
+});
+
+test("the default cross-section uses the sized step", () => {
+  // A full-pitch r = 5 profile: 360° at the sized step, the wrap point dropped.
+  const n = screwStepsPerTurn([[5, 0], [5, 2]]);
+  expect(n).toBeLessThan(72);
+  expect(sized([[5, 0], [5, 2]], 2)).toHaveLength(n);
 });

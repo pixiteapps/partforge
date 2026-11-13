@@ -18,6 +18,7 @@
 // sheet/constants.js, lint/finding.js) — so the linter's stays kernel-free.
 import { PROCESSES } from "./process/registry.js";
 import { DOMAINS } from "./domains/registry.js";
+import { sweepContactBlocks } from "./collide/pairs.js";
 
 // `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
 // [x,y,z] }` — so a reader who copies the shape of a measurement gets a legal
@@ -253,15 +254,27 @@ export const SUBPART_METRICS = withDomainMetrics({
     hint: "the rebuild's bounding-box corners drift from the reference import — check overall dimensions and that the rebuild is aligned to the reference's coordinates" },
 });
 // A sweep row that found a contact: a finished one that is not clear, or one the deadline
-// stopped after it found one.
-const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && s.contacts?.length > 0);
+// stopped after it found one that counts (an allowed touch or rub never does, nor, on a
+// sweep that may touch, a contact whose depth it never read).
+const firstBlocking = (s) => s.contacts?.find((c) => sweepContactBlocks(s, c)) ?? null;
+const sweepHit = (s) => s.clear === false || (s.skipped === "timeout" && !!firstBlocking(s));
 // A row that answered: it ran (a no-motion animation has nothing to run, so it answers
 // clear), or it stopped with a contact in hand.
 const sweepRan = (s) => !s.skipped || s.skipped === "no-motion" || sweepHit(s);
+// A contact on a sweep that may touch whose depth the clock stopped before it was read end
+// to end: neither clear nor a collision, so it withholds the gate for the whole view —
+// unless some row has a contact that counts, which fails it whatever else is unread.
+const depthUnread = (r) => !!r.sweeps?.some((s) => s.contacts?.some((c) => c.depthUnread));
+const DEPTH_UNREAD_HINT = "these pieces stay in contact along the motion and the time budget ran out before their depth could be read. Give the moving pair a running gap (for example 0.2 mm between knuckle faces, a bore larger than its pin) so the sweep can prove it clear, or run npx partforge measure for the long budget.";
+const SWEEP_WITHHELD_HINT = "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names";
 function sweepContacts(r) {
   if (!r.sweeps) return null;
+  // a known contact wins over an unread depth: the gate fails on what is known
+  const hits = r.sweeps.filter(sweepHit).length;
+  if (hits) return hits;
+  if (depthUnread(r)) return null;
   if (r.sweeps.length && !r.sweeps.some(sweepRan)) return null;
-  return r.sweeps.filter(sweepHit).length;
+  return 0;
 }
 
 export const VIEW_METRICS = {
@@ -278,17 +291,19 @@ export const VIEW_METRICS = {
   // volunteered `sweeps` warning instead. When every row stopped short so none ran, there
   // is no reading and the gate is withheld (`withheld`), never a 0; `[]` (no declared sweep
   // moves anything in this view) reads 0. No `sweeps` key (none declared, or a measurement
-  // taken with `sweeps: false`, as verify's other cases are) is a plain skip.
+  // taken with `sweeps: false`, as verify's other cases are) is a plain skip. A contact
+  // whose depth the clock never finished reading (`depthUnread`) withholds it too.
   sweepContacts: { kind: "gate", extract: sweepContacts,
-    withheld: (r) => (r.sweeps?.length && sweepContacts(r) === null
-      ? "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked" : null),
-    withheldHint: "no declared sweep ran to its end, so this gate has no verdict and verify.ok is withheld — see the `sweeps` warning for which sweeps stopped and why; run them alone with `npx partforge measure <part>` (a longer budget) or fix the unreadable ones `npx partforge lint` names",
-    hint: "a declared motion comes closer than its clearance to another sub-part — the first contact, its pair and the param driving it are reported; add clearance, narrow that param's range (freeRange is the contact-free span), or allow the pair in collisions.allow",
+    withheld: (r) => (!r.sweeps?.length || sweepContacts(r) !== null ? null
+      : depthUnread(r) ? "not evaluated — a declared sweep stopped before it read how deep a contact presses in"
+      : "not evaluated — every declared sweep stopped short (time budget or unreadable), so none was checked"),
+    withheldHint: (r) => (depthUnread(r) ? DEPTH_UNREAD_HINT : SWEEP_WITHHELD_HINT),
+    hint: "a declared motion comes closer than its clearance to another sub-part (at a clearance of 0 or below: presses in deeper than it allows, by the contact's `depth`) — the first contact, its pair and the param driving it are reported; fix the geometry the contact names (move the axis outside both bodies, cut the swing relief, open the gap); write freeRange (the contact-free span) as the control's range only when that stop is intended; for a deliberate rub (a detent) give that sweep a negative clearance of the rub's depth; use collisions.allow only for contact that is the design at every position (meshing gears, a bearing)",
     skipMessage: "not measured — verify runs the declared sweeps on one case only (the first it measures), and none when verify.sweeps declares none",
     pattern: "sweep-contacts",
     locate: (r) => {
       const row = r.sweeps?.find(sweepHit);
-      return row ? row.contacts[0]?.at ?? row.minClearance?.at ?? null : null;
+      return row ? firstBlocking(row)?.at ?? row.minClearance?.at ?? null : null;
     } },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },

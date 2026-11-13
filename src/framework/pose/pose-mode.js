@@ -90,8 +90,8 @@ import { beginRotateDrag, rotateDragAngle } from "../gizmo/gizmo-rotate.js";
 import { ARROW_HALF_LENGTH, ARROW_UNIT_PX, arrowHitGeometry, hitMaterial } from "../gizmo/gizmo-handles.js";
 import { pickGizmoHandle } from "../gizmo/gizmo-pick.js";
 import { createPoseSession, pinId, pinTarget } from "./pose-session.js";
-import { dragPlaneNormal, dragPlanePoint, hitHandle, reachMissed } from "./pose-geom.js";
-import { limbInfo, jointRings, goalGrabJoints } from "./param-solve.js";
+import { dragPlaneNormal, dragPlanePoint, hitHandle, reachMissed, PLANAR_VIEW_MIN } from "./pose-geom.js";
+import { limbInfo, jointRings, goalGrabJoints, planarDragNormal } from "./param-solve.js";
 import { handleKind, handleAt, handleRecord } from "./handle-source.js";
 import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
 import { planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutItems } from "./handle-guides.js";
@@ -188,6 +188,8 @@ export function aimAxes(toward, angles) {
  *   handle whose `showOn` names it.
  * @param opts.cueBlocked () => true while the resting cue must wait (mount: the opening
  *   view's autoplay is pending or playing). Default: never.
+ * @param opts.animating () => true while any animation plays (mount: the transport's
+ *   status). The cue never shows over a playing animation. Default: never.
  * Session effects, passed through to createPoseSession: getParams, write, commit,
  * restore, staleSubParts, ghost, unghost, hold. Optional: collide (the drag guard factory)
  * and onBlocked (the pair a held drag stopped at, or null), passed through as the session's
@@ -216,6 +218,7 @@ export function createPoseMode(viewer, {
   // true while the cue must wait: mount's, while the opening view's autoplay is
   // pending or playing (the cue starts once it ends; a loop nobody stops: never)
   cueBlocked = () => false,
+  animating = () => false,
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
   createJointRings = createJointGizmo,
@@ -269,8 +272,13 @@ export function createPoseMode(viewer, {
   const paths = new Map(); // handleId -> { key, guide } (handle-guides' sweepPath, cached)
   // the resting cue: "pending" until the first live frame with the part on screen (and
   // no opening autoplay pending or playing — cueBlocked), then { start, touch } while it
-  // shows, then "done" (once per mount)
+  // shows, then "done" (once per mount, but for the touch-only flash after a camera grab,
+  // { start, flash: true }, which hides on the next grab, drag or playing animation)
   let cue = Object.keys(handles).length ? "pending" : "done";
+  // A camera grab (OrbitControls' start..end): the cue hides while it runs, and on a
+  // touch-only device a grab that moved the camera flashes the cue again on lift.
+  let orbiting = false;
+  let orbitMoved = false;
 
   // The pair the held drag stopped at (the session's blockedChange), or null: while set, a
   // limb drag reads "Stopped at <b>" rather than "Out of reach", and draws no miss line.
@@ -547,14 +555,31 @@ export function createPoseMode(viewer, {
    * `axes`), a ball's bend/spread/twist axes (ikInfo `ballAxes`); `slots[ring]` is `{ ring
    * (the jointRings entry), joint }`, the joint that ring turns. The focus's joint and every
    * joint with rings at the same point share it. Null when it has no ring.
+   *
+   * A COMPOUND joint — a ball, or hinges stacked at one point, with three or more turns
+   * between them (the hand's thumb ball, the arm's wrist) — shows three rings square to each
+   * other on the joint's own posed frame instead (ikInfo `frames` of the stack's last joint:
+   * bend about its x, spread its z, twist its y), so they turn with the joint. Each Euler
+   * step's own axis is generally not square to the others, which read as a skewed gizmo.
+   * Its slots carry `compound` (compoundOf), and a ring drag turns the whole frame.
    */
   function jointTarget(focus) {
     if (focus?.kind !== "joint") return null;
     const info = shown.find((e) => e.info.name === focus.limb)?.info;
     const at = info?.points[focus.joint];
     if (!Array.isArray(at)) return null;
+    const group = coincident(focus.limb, focus.joint);
+    const compound = compoundOf(focus.limb, info, group);
+    if (compound) {
+      const f = info.frames[compound.frame];
+      const byRing = { bend: f.x, spread: f.z, twist: f.y };
+      const ring = rings.get(ringKey(focus.limb, group[0]));
+      const slots = {};
+      for (const slot of JOINT_GIZMO_PARTS) slots[slot] = { ring, joint: compound.frame, axis: byRing[slot], compound };
+      return { limb: focus.limb, joint: focus.joint, at, axes: JOINT_GIZMO_PARTS.map((slot) => byRing[slot]), slots };
+    }
     const slots = {};
-    for (const name of coincident(focus.limb, focus.joint)) {
+    for (const name of group) {
       const ring = rings.get(ringKey(focus.limb, name));
       const ball = info.ballAxes?.[name];
       for (const slot of JOINT_GIZMO_PARTS) {
@@ -565,6 +590,34 @@ export function createPoseMode(viewer, {
     }
     const axes = JOINT_GIZMO_PARTS.map((slot) => slots[slot]?.axis ?? null);
     return axes.some(Boolean) ? { limb: focus.limb, joint: focus.joint, at, axes, slots } : null;
+  }
+  /**
+   * The compound joint the coincident joints `group` make, or null: every one of them
+   * offered by one handle, three or more turns (ring slots) between them, and a posed frame
+   * to put the rings on — the LAST joint at that point, with a ring or not (a thumb ball's
+   * fixed twist step still turns the bone the rings should line up with; it turns with the
+   * others, so a world turn of its frame is a turn of theirs). `{ limb (derive's key),
+   * frame, mode, handleId, vars }`, the shape param-solve's compoundRingValues takes.
+   */
+  function compoundOf(limb, info, group) {
+    const entries = group.map((n) => rings.get(ringKey(limb, n)));
+    if (!entries.length || entries.some((e) => !e)) return null;
+    const { handleId, mode, limb: key } = entries[0];
+    if (entries.some((e) => e.handleId !== handleId || e.mode !== mode || e.limb !== key)) return null;
+    const vars = [];
+    entries.forEach((e, k) => {
+      for (const s of Object.values(e.slots)) vars.push({ joint: group[k], component: s.component, param: s.param, scale: s.scale, range: s.range });
+    });
+    const at = info.points[group[0]];
+    let frame = group.at(-1);
+    for (let i = info.joints.findIndex((j) => j.name === frame) + 1; i < info.joints.length; i++) {
+      const p = info.points[info.joints[i].name];
+      if (!Array.isArray(p) || len(sub(p, at)) > COINCIDENT_MM) break;
+      frame = info.joints[i].name;
+    }
+    const f = info.frames?.[frame];
+    if (vars.length < 3 || !f || ![f.x, f.y, f.z].every((a) => Array.isArray(a) && len(a) > 0)) return null;
+    return { limb: key, frame, mode, handleId, vars };
   }
   const sameFocus = (a, b) => a === b || (!!a && !!b && a.kind === b.kind && a.limb === b.limb && a.joint === b.joint);
   /** The gizmo that shows: the press's, else the hovered one, else the one a touch left up. */
@@ -863,7 +916,7 @@ export function createPoseMode(viewer, {
     const name = jointGizmo.pick(pt, { target: { at: target.at, axes: target.axes }, touch });
     const slot = name && target.slots[name];
     if (!slot) return null;
-    return { kind: "jring", handleId: slot.ring.handleId, limb: target.limb, joint: slot.joint, ring: slot.ring, axis: slot.axis, name, at: target.at, gizmo: name };
+    return { kind: "jring", handleId: slot.ring.handleId, limb: target.limb, joint: slot.joint, ring: slot.ring, axis: slot.axis, name, at: target.at, gizmo: name, compound: slot.compound ?? null };
   }
 
   /** The focused gizmo's limb and centre, or null. */
@@ -996,11 +1049,14 @@ export function createPoseMode(viewer, {
     if (cue === "pending") {
       if (!partsFrame()) return; // nothing built yet: the handles have nowhere to show
       if (cueBlocked()) return;  // the opening autoplay has the stage until it ends
+      if (orbiting || isAnimating()) return; // a camera grab or a playing animation has it
       cue = { start: now(), touch: hoverNone() };
       syncCue();
       return;
     }
-    if (typeof cue !== "object" || cue.touch) return;
+    if (typeof cue !== "object") return;
+    if (isAnimating()) { endCue(); return; } // the cue never shows over a playing animation
+    if (cue.touch) return;
     const o = cueOpacity();
     if (o <= 0) { endCue(); return; }
     if (o < CUE_OPACITY) {
@@ -1008,6 +1064,35 @@ export function createPoseMode(viewer, {
       viewer.requestRender?.();
     }
   }
+  function isAnimating() {
+    try { return !!animating(); } catch { return false; }
+  }
+  /**
+   * Touch-only: flash the cue again (its hold and fade, from now) once a camera grab that
+   * moved the camera lifts — a finger has no hover to find the handles by. Never while a
+   * handle drags, an animation plays, or before the opening cue has had its turn.
+   */
+  function flashCue() {
+    if (cue === "pending" || !live || press || !hoverNone() || isAnimating()) return;
+    if (!Object.keys(handles).length) return;
+    cue = { start: now(), touch: false, flash: true };
+    syncCue();
+    viewer.requestRender?.();
+  }
+  function onOrbitStart() {
+    orbiting = true;
+    orbitMoved = false;
+    if (typeof cue === "object") endCue(); // a new grab hides a cue still showing
+  }
+  function onOrbitChange() { if (orbiting) orbitMoved = true; }
+  function onOrbitEnd() {
+    if (!orbiting) return;
+    orbiting = false;
+    if (orbitMoved) flashCue(); // a tap that never moved the camera is no rotate
+  }
+  orbitControls?.addEventListener?.("start", onOrbitStart);
+  orbitControls?.addEventListener?.("change", onOrbitChange);
+  orbitControls?.addEventListener?.("end", onOrbitEnd);
   function endCue() {
     if (cue === "done") return;
     cue = "done";
@@ -1110,16 +1195,25 @@ export function createPoseMode(viewer, {
     const grabName = hit.kind === "ring" ? "ring" : hit.kind === "jring" ? `ring:${hit.joint}` : hit.at;
     if (!session.begin(hit.handleId, grabName)) { finishPress(); return false; }
     press.started = true;
-    if (cue?.touch) endCue(); // touch: the first drag ends the cue
+    if (cue?.touch || cue?.flash) endCue(); // touch: a drag ends the cue (the first, or a flash)
+    orbitMoved = false; // a handle drag inside a camera grab is no rotate: no flash on lift
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
     const ray = press.ray;
     if (hit.kind === "dot") {
       const maxDist = 4 * Math.max(chainLength(s.info), 1);
-      // A plane that holds the limb's line from its base joint to the grabbed point
-      // (pose-geom's dragPlaneNormal), fixed for the whole drag: a pull along the limb's
-      // on-screen line is a pull along the limb, so a finger seen end-on still straightens.
-      const normal = dragPlaneNormal(ray.forward, sub(grab, chainOf(s.info)[0] ?? grab));
+      // A point that can only move in one plane (every joint the drag moves above it a
+      // hinge about one axis: a finger's knuckles) drags on THAT plane, so the cursor's hit
+      // on it is a target the limb can reach — unless the plane is seen nearly edge-on
+      // (pose-geom's PLANAR_VIEW_MIN), where a small cursor move would throw the point far.
+      // Otherwise a plane that holds the limb's line from its base joint to the grabbed
+      // point (pose-geom's dragPlaneNormal), fixed for the whole drag: a pull along the
+      // limb's on-screen line is a pull along the limb, so a finger seen end-on still
+      // straightens.
+      const planar = planarDragNormal({ part, params: { ...getParams() }, handle: s.handle, grab: hit.at, allHandles: Object.values(handles) });
+      const normal = planar && Math.abs(dot(unit(ray.forward), planar)) >= PLANAR_VIEW_MIN
+        ? planar
+        : dragPlaneNormal(ray.forward, sub(grab, chainOf(s.info)[0] ?? grab));
       // The press may sit up to HANDLE_HIT_PX off the dot: carry that offset, so the
       // point does not jump to the cursor on the first frame.
       const pressHit = dragPlanePoint(ray.origin, ray.dir, grab, normal, maxDist);
@@ -1136,7 +1230,7 @@ export function createPoseMode(viewer, {
         projectToClient: (v) => { const p = toScreen(v.toArray()); return p ? new THREE.Vector2(p.x, p.y) : null; },
       });
       if (!rotate) { session.cancel(); return false; }
-      press.ring = { ...rotate, axis, center, name: hit.name, joint: hit.kind === "jring" };
+      press.ring = { ...rotate, axis, center, name: hit.name, joint: hit.kind === "jring", compound: hit.compound ?? null };
     }
     syncRings();
     return true;
@@ -1156,7 +1250,8 @@ export function createPoseMode(viewer, {
     } catch { finishPress(); return false; }
     if (!session.begin(s.handleId, handleAt(s.handle))) { finishPress(); return false; }
     press.started = true;
-    if (cue?.touch) endCue(); // touch: the first drag ends the cue
+    if (cue?.touch || cue?.flash) endCue(); // touch: a drag ends the cue (the first, or a flash)
+    orbitMoved = false; // a handle drag inside a camera grab is no rotate: no flash on lift
     press.drag = drag;
     setCursor("grabbing");
     notify(hoverListeners); // a drag began (mount closes a selection popover)
@@ -1196,7 +1291,9 @@ export function createPoseMode(viewer, {
       const deg = (angle * 180) / Math.PI;
       if (ring.joint) {
         // a joint ring: turn that one joint (forward kinematics)
-        const result = session.jointFrame(hit.ring, hit.name, deg);
+        const result = ring.compound
+          ? session.compoundFrame(ring.compound, ring.axis.toArray(), deg)
+          : session.jointFrame(hit.ring, hit.name, deg);
         if (!result) return;
         refresh();
         const info = shown.find((e) => e.info.name === hit.limb)?.info;
@@ -1244,7 +1341,7 @@ export function createPoseMode(viewer, {
   function limbReadout(hit, residual, blocked = null) {
     const handle = handles[hit.handleId];
     if (!handle) return;
-    const source = hit.kind === "jring" ? { readout: hit.ring?.slots?.[hit.name]?.param }
+    const source = hit.kind === "jring" ? { readout: hit.compound ? hit.compound.vars.map((v) => v.param) : hit.ring?.slots?.[hit.name]?.param }
       : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
       : handle;
     const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
@@ -1745,6 +1842,9 @@ export function createPoseMode(viewer, {
       window.removeEventListener("keydown", onKeyDown, true);
       offFrame();
       offTheme();
+      orbitControls?.removeEventListener?.("start", onOrbitStart);
+      orbitControls?.removeEventListener?.("change", onOrbitChange);
+      orbitControls?.removeEventListener?.("end", onOrbitEnd);
       scene?.dispose();
       scene = null;
       gizmo?.dispose();

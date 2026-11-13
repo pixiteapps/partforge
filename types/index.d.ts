@@ -359,16 +359,16 @@ export interface ViewerState {
    */
   projection: "perspective" | "orthographic";
   cutaway: CutawayState | null;
-  /** Always reported by `getViewerState()` — the mode being headed for, so a realistic switch still loading reads `"realistic"` (a failed one settles to `"cad"`). Optional on the way back in (a state saved by an older partforge has none). */
+  /** Always reported by `getViewerState()` — the mode being headed for, so a realistic switch still loading reads `"realistic"` and a cel switch still compiling reads `"cel"` (a failed one settles to the mode it left). Optional on the way back in (a state saved by an older partforge has none). */
   renderMode?: RenderMode;
   /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
 }
 
-/** The viewer's appearance: the drafting view, or physical materials under an environment. */
-export type RenderMode = "cad" | "realistic";
+/** The viewer's appearance: the drafting view, physical materials under an environment, or the cel-shaded look. */
+export type RenderMode = "cad" | "realistic" | "cel";
 
-/** What `renderMode.onChange` listeners receive. `busy` while realistic's assets load; `error` when they failed. */
+/** What `renderMode.onChange` listeners receive. `busy` while realistic's assets load or cel's shaders compile; `error` when they failed. */
 export interface RenderModeEvent {
   mode: RenderMode;
   busy: boolean;
@@ -829,7 +829,11 @@ export interface PartRuntime {
   pickMarker: PickMarkerRuntime;
   /** The selection popover, or `null` without the `selectionPopover` option. */
   selection: SelectionRuntime | null;
-  /** Realistic render mode (docs "Materials and appearance"). set() resolves to the mode actually in effect — "cad" if assets failed to load. */
+  /**
+   * Render mode — CAD, realistic or cel (docs "Materials and appearance"). set() resolves to the mode actually
+   * in effect: "cad" if realistic's assets failed to load. Cel needs no assets; a cel switch whose shaders fail
+   * to compile leaves the previous mode in effect and emits an `error` event.
+   */
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;
@@ -863,9 +867,9 @@ export interface MountPreviewOptions {
   animate?: boolean;
   /** `false` (0.168.0+): no view cube, `#viewbar` controls, view style, tooltips, play button or `elements.chrome` wiring. Default true. */
   chrome?: boolean;
-  /** `"transparent"` (0.168.0+): alpha-0 clear, no theme background, no grid. CAD mode only — realistic mode draws its own environment backdrop. Default `"theme"`. */
+  /** `"transparent"` (0.168.0+): alpha-0 clear, no theme background, no grid. CAD and cel modes — realistic mode draws its own environment backdrop. Cel keeps the part, ink and ground shadow but draws no field or halftone. Default `"theme"`. */
   background?: "theme" | "transparent";
-  /** `true` (0.168.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic mode draws its own ground and shadow. Default false. */
+  /** `true` (0.168.0+): a soft contact shadow under the part, cast once at showAssembly from the meshes as the file stores them (the rest pose, before a player applies its first pose); a playing animation does not move it. CAD mode only — realistic and cel modes draw their own ground shadow (cel ignores this option). Default false. */
   contactShadow?: boolean;
   /** `false` (0.168.0+): no wheel/pinch zoom (a wheel scrolls the page). Default true. */
   zoom?: boolean;
@@ -910,6 +914,13 @@ export interface MountPreviewOptions {
   camera?: "carry" | "default";
   /** The opening render mode (0.168.0+): applied at mount, over any carried render mode; afterwards `setViewerState`, `renderMode.set` and the view style control change it as usual. Unset, the carried state decides. */
   renderMode?: RenderMode;
+  /**
+   * 0.187.0+: the part the file was written from. Pose mode then runs on the file: every
+   * handle the editor would show in this view that moves pieces by placement alone (never
+   * one that rebuilds geometry) can be dragged, IK included; drags write the preview's own
+   * params (`getParams`) and edit nothing else.
+   */
+  part?: PartDefinition;
 }
 
 /** The handle `mountPreview()` returns. Every method is safe before `ready` settles. */
@@ -926,6 +937,16 @@ export interface PreviewRuntime {
   dispose(): void;
   /** The view the file was written for (`null` until drawn, or when the file names none). */
   getView(): string | null;
+  /** 0.187.0+: a copy of the preview's params (seeded from the file's, moved by drags); `null` before `ready`, without `part`, and once disposed. */
+  getParams(): Record<string, unknown> | null;
+  /**
+   * 0.187.0+: Pose mode on the file, as `PartRuntime.pose` (with `part`); without `part`, the
+   * no-op stand-in. Every method is safe before `ready` and once disposed.
+   */
+  pose: PoseRuntime & {
+    /** Each released (not cancelled) drag. Returns an unsubscribe. */
+    onDragEnd(cb: (e: { handleId: string; changed: string[]; pinHeld: boolean; blocked: { a: string; b: string } | null }) => void): () => void;
+  };
   /** Camera, projection, render mode and environment; `cutaway` is always `null`. */
   getViewerState(): ViewerState;
   /** Apply a state (camera, projection, render mode, environment) now, or once drawn. */
@@ -965,6 +986,11 @@ export interface PreviewRuntime {
     /** Each state change. Returns an unsubscribe. */
     onChange(cb: (state: "waiting" | "playing" | "stopped" | "finished") => void): () => void;
   } | null;
+  /**
+   * The preview's render mode. set() resolves to the mode actually in effect: "cad" if realistic's assets
+   * failed to load. Cel needs no assets; a cel switch whose shaders fail to compile leaves the previous mode
+   * in effect and emits an `error` event.
+   */
   renderMode: {
     get(): RenderMode;
     set(mode: RenderMode): Promise<RenderMode>;

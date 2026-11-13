@@ -24,6 +24,9 @@
 // which the viewer reads as "no feature edges" (never undefined, which would
 // make it derive lines by angle).
 //
+// The params the file was written at (encoder version 6) come back as `params`,
+// null when absent or empty (see paramsOf).
+//
 // The baked animation (encoder version 4) comes back as `animation`, null for a
 // file without the partforgeAnimation extra (every version 1–3 file):
 // { ...the extra (name, label, loop, duration, cues, opacity, steps, animated),
@@ -77,6 +80,20 @@ function metaOf(extras) {
   const out = {};
   if (Number.isInteger(m.background)) out.background = m.background;
   if (typeof m.environment === "string") out.environment = m.environment;
+  return Object.keys(out).length ? out : null;
+}
+
+// The params the file was written at (encoder version 6), `params` on the result:
+// the partforgeParams extra kept to finite numbers, strings and booleans (the same
+// rule the writer applies, so a hand-edited file cannot smuggle an object in); null
+// for a file without the extra (versions 1-5) or with nothing primitive in it.
+function paramsOf(extras) {
+  const raw = extras?.partforgeParams;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if ((typeof v === "number" && Number.isFinite(v)) || typeof v === "string" || typeof v === "boolean") out[k] = v;
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -238,5 +255,6 @@ export async function decodePreviewGlb(bytes) {
     meta: metaOf(extras),
     meshes,
     animation: await readAnimation(gltf),
+    params: paramsOf(extras),
   };
 }

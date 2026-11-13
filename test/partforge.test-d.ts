@@ -347,15 +347,16 @@ expectType<void>(runtime.setHostPane(null));
 expectType<AnimationRuntime | null>(runtime.animation);
 expectType<void | undefined>(runtime.animation?.play("open"));
 expectType<AnimationState | undefined>(runtime.animation?.state());
-// Realistic render mode and environments.
-expectType<"cad" | "realistic">(runtime.renderMode.get());
-expectType<Promise<"cad" | "realistic">>(runtime.renderMode.set("realistic"));
+// Realistic and cel render modes, and environments.
+expectType<"cad" | "realistic" | "cel">(runtime.renderMode.get());
+expectType<Promise<"cad" | "realistic" | "cel">>(runtime.renderMode.set("realistic"));
+expectType<Promise<"cad" | "realistic" | "cel">>(runtime.renderMode.set("cel"));
 expectType<() => void>(runtime.renderMode.onChange((e) => void [e.mode, e.busy, e.error]));
 expectType<Promise<string>>(runtime.environment.set("workshop"));
 expectType<Array<{ id: string; label: string }>>(runtime.environment.list());
 expectType<boolean>(runtime.declaresMaterials);
 expectType<Promise<Array<{ view: string; dataUrl: string }>>>(runtime.renderViews(["iso"], { renderMode: "realistic" }));
-expectType<"cad" | "realistic" | undefined>(runtime.getViewerState().renderMode);
+expectType<"cad" | "realistic" | "cel" | undefined>(runtime.getViewerState().renderMode);
 expectType<SelectionRuntime | null>(runtime.selection);
 expectType<{ subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" } | undefined>(runtime.getViewerState().selection);
 
@@ -527,6 +528,17 @@ expectType<number | null>(facts.subparts[0]!.overhangArea);
 expectType<string>(v.failures[0]!.case);
 expectType<"pass" | "fail" | "warn" | "cost" | "skip">(v.cases[0]!.checks[0]!.status);
 expectType<"gate" | "warn" | "cost">(v.cases[0]!.checks[0]!.kind);
+// Sweeps run in other views come back on verify, each row naming its view; a contact on
+// a sweep that may touch carries its depth and whether it stays within the allowance.
+const swept = verify(kernel, spacer, { view: "spacer", motionBudgetMs: 500, deadline: Date.now() + 1000 });
+const row = swept.sweeps?.[0];
+if (row) {
+  expectType<string | undefined>(row.view);
+  expectType<number | undefined>(row.contactsOmitted);
+  expectType<number | null | undefined>(row.contacts[0]!.depth);
+  expectType<boolean | undefined>(row.contacts[0]!.allowed);
+  expectType<true | undefined>(row.contacts[0]!.depthUnread);
+}
 
 expectType<number>(assemblyOverlaps(kernel, spacer, "spacer", {}, { tolerance: 0.5 }).length);
 

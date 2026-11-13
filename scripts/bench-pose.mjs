@@ -1,10 +1,14 @@
-// Frame-time bench for posing (inverse kinematics): drives robot-arm.html and
-// hand.html in real Chromium and reports, per scenario, the main-thread milliseconds
+// Frame-time bench for posing (inverse kinematics): drives robot-arm.html,
+// hand.html and preview-pose.html (the robot arm's cached preview posed with no kernel,
+// mountPreview({ glb, part }); dev-only, so skipped with --preview) in real Chromium and reports, per scenario, the main-thread milliseconds
 // each animation frame spends in script (every rAF callback and every pointer listener,
 // timed by wrappers installed before the app loads), the frame rate, the part's
 // main-thread derive() calls, and the top self-time functions from a CDP CPU profile.
 //
-//   npm run bench:pose -- [--preview] [--url <base>] [--json <file>] [--no-profile] [--swiftshader]
+//   npm run bench:pose -- [--preview] [--mode <cad|realistic|cel>] [--url <base>] [--json <file>] [--no-profile] [--swiftshader]
+//
+// --mode times a render mode (default cad): applied to each page after it loads, before its
+// scenarios run, and printed in the report header.
 //
 // Without --url it starts its own server: the Vite dev server, or with --preview a
 // production build (built into a temp dir with base "/") served by `vite preview`.
@@ -28,6 +32,10 @@
 //   jointRing    round a joint ring (arm: the elbow, goal mode; hand: the wrist pitch)
 //   idleOrbit    a tip pinned (its badge drawn), then an orbit drag on the background
 //
+// preview-pose.html runs the robot arm's scenarios through `window.__pfPreview.pose`; the
+// ones that need a test hook the preview does not carry (the aim and joint rings, so the
+// elbow-pinned drag too) are left out there.
+//
 // On macOS Chromium runs on the GPU (ANGLE Metal); --swiftshader keeps Playwright's
 // software GL, where rendering, not script, sets the frame time.
 // Requires Playwright + Chromium: `npm i -D playwright && npx playwright install chromium`.
@@ -47,6 +55,13 @@ const profile = !args.includes("--no-profile");
 const root = fileURLToPath(new URL("..", import.meta.url));
 const VIEWER_CANVAS = "#app > canvas:not(.pf-ink-canvas)";
 const FRAMES = 60;
+const MODES = ["cad", "realistic", "cel"];
+const modeAt = args.indexOf("--mode");
+const mode = modeAt >= 0 ? args[modeAt + 1] : "cad";
+if (!MODES.includes(mode)) {
+  console.error(`usage: bench-pose --mode <${MODES.join("|")}> (got ${mode ?? "nothing"})`);
+  process.exit(2);
+}
 
 let server = null;
 let outDir = null;
@@ -101,6 +116,8 @@ function instrument() {
   EventTarget.prototype.removeEventListener = function (type, fn, o) {
     return remove.call(this, type, (typeof fn === "function" && wrapped.get(fn)) || fn, o);
   };
+  // The pose surface: the editor's runtime, or a cached preview's handle.
+  window.__pfPose = () => window.__pfRuntime?.pose ?? window.__pfPreview?.pose;
   const bench = { frames: null, derives: 0 };
   window.__bench = bench;
   /** One pointermove per animation frame through `points` (client px); per-frame script ms recorded. */
@@ -174,11 +191,24 @@ async function measure(page, cdp, points, buttons) {
 
 async function open(page, url) {
   await page.goto(url, { waitUntil: "load", timeout: 60000 });
-  await page.waitForFunction(() => document.getElementById("download")?.disabled === false, null, { timeout: 60000 });
+  if (url.includes("preview-pose.html")) {
+    // the preview's handles are decided in idle time after it is drawn
+    await page.waitForFunction(() => window.__pfPreview, null, { timeout: 90000 });
+    await page.evaluate(() => window.__pfPreview.drawn);
+    await page.waitForFunction(() => window.__pfPreview.pose.handlePoints().length > 0, null, { timeout: 15000 });
+  } else {
+    await page.waitForFunction(() => document.getElementById("download")?.disabled === false, null, { timeout: 60000 });
+  }
   await sleep(500);
   return page.locator(VIEWER_CANVAS).boundingBox();
 }
-const handlePoints = (page) => page.evaluate(() => window.__pfRuntime.pose.handlePoints());
+/** Switch the viewer to the bench's render mode; realistic loads assets and cel compiles shaders, so settle after it lands.
+ *  The editor's runtime, or on preview-pose.html the cached preview's handle (same renderMode surface). */
+async function applyMode(page) {
+  await page.evaluate((m) => (window.__pfRuntime ?? window.__pfPreview).renderMode.set(m), mode);
+  await sleep(500);
+}
+const handlePoints = (page) => page.evaluate(() => window.__pfPose().handlePoints());
 const inBox = (box, p) => p.x > 30 && p.y > 30 && p.x < box.width - 30 && p.y < box.height - 30;
 
 /** FRAMES points toward the canvas centre and back (~120 px out), with a little sideways wobble. */
@@ -241,7 +271,7 @@ async function dragContact(page, cdp, box, at) {
   });
   await hoverOnto(page, a);
   const r = await dragMeasure(page, cdp, a, pts);
-  const ended = await page.evaluate(() => window.__pfRuntime.pose.__lastDragEnd?.() ?? null);
+  const ended = await page.evaluate(() => window.__pfPose().__lastDragEnd?.() ?? null);
   await page.evaluate((r) => window.__pfRuntime.setParams({ ...r, thumbLock: false }), restore);
   await sleep(300);
   return { handle: `index held against ${ended?.blocked?.b ?? "nothing"}`, ...r };
@@ -253,7 +283,9 @@ async function benchPage(browser, base, entry) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e?.message ?? e)));
   const cdp = profile ? await page.context().newCDPSession(page) : null;
-  const box = await open(page, `${base}/${entry}`);
+  await open(page, `${base}/${entry}`);
+  await applyMode(page);
+  const box = await page.locator(VIEWER_CANVAS).boundingBox();
   const at = (p) => ({ x: box.x + p.x, y: box.y + p.y });
   const find = async (id) => (await handlePoints(page)).find((p) => (id == null || p.handleId === id) && inBox(box, p));
   const out = {};
@@ -286,7 +318,7 @@ async function benchPage(browser, base, entry) {
   } else {
     const tool = await find(null);
     await hoverOnto(page, at(tool));
-    const g = await page.evaluate(() => window.__pfRuntime.pose.__aimGizmo());
+    const g = await page.evaluate(() => window.__pfPose().__aimGizmo?.() ?? null);
     const ring = g && (g.rings.pitch ?? Object.values(g.rings)[0]);
     if (ring?.ahead) {
       const from = at(ring), to = at(ring.ahead);
@@ -303,10 +335,10 @@ async function benchPage(browser, base, entry) {
 
   // jointRing: hover a joint's dot, then round its ring (arm: the elbow; hand: the wrist pitch)
   const [limb, joint] = entry === "hand.html" ? ["palm", "wristPitch"] : ["arm", "elbow"];
-  const dot = (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === limb && p.joint === joint);
+  const dot = (await page.evaluate(() => window.__pfPose().__jointRings?.() ?? [])).find((p) => p.limb === limb && p.joint === joint);
   if (dot) {
     await hoverOnto(page, at(dot));
-    const g = await page.evaluate(() => window.__pfRuntime.pose.__jointGizmo());
+    const g = await page.evaluate(() => window.__pfPose().__jointGizmo?.() ?? null);
     const ring = g && Object.values(g.rings)[0];
     if (ring?.ahead) {
       const from = at(ring), to = at(ring.ahead);
@@ -322,23 +354,23 @@ async function benchPage(browser, base, entry) {
 
   // arm dragPinned: pin the elbow (a click on its dot), drag the tool, unpin
   if (entry !== "hand.html") {
-    const elbow = (await page.evaluate(() => window.__pfRuntime.pose.__jointRings())).find((p) => p.limb === "arm" && p.joint === "elbow");
+    const elbow = (await page.evaluate(() => window.__pfPose().__jointRings?.() ?? [])).find((p) => p.limb === "arm" && p.joint === "elbow");
     if (elbow) {
       await hoverOnto(page, at(elbow));
       await page.mouse.click(at(elbow).x, at(elbow).y);
       await sleep(200);
       const tool = await find("tool");
-      if (tool && (await page.evaluate(() => window.__pfRuntime.pose.pinCount())) === 1) {
+      if (tool && (await page.evaluate(() => window.__pfPose().pinCount())) === 1) {
         await hoverOnto(page, at(tool));
         out.dragPinned = { handle: "tool, elbow pinned", ...await dragMeasure(page, cdp, at(tool), dragPoints(at(tool), box)) };
       }
-      await page.evaluate(() => window.__pfRuntime.pose.releasePins());
+      await page.evaluate(() => window.__pfPose().releasePins());
       await sleep(100);
     }
   }
 
   // idleOrbit: a pinned tip's badge drawn, then orbit from the background
-  if (!(await page.evaluate(() => window.__pfRuntime.pose.pinCount()))) {
+  if (!(await page.evaluate(() => window.__pfPose().pinCount()))) {
     const tip = await find(null);
     await hoverOnto(page, at(tip));
     await page.mouse.click(at(tip).x, at(tip).y);
@@ -367,10 +399,12 @@ try {
   // script, the frame time (and the hand drops to a few fps), which hides what posing costs.
   browser = await chromium.launch(process.platform === "darwin" && !args.includes("--swiftshader")
     ? { args: ["--use-angle=metal", "--ignore-gpu-blocklist", "--enable-gpu"] } : {});
-  for (const entry of ["robot-arm.html", "hand.html"]) {
+  // preview-pose.html is dev-only (not in rollupOptions.input): a production build lacks it
+  const entries = ["robot-arm.html", "hand.html", ...(preview ? [] : ["preview-pose.html"])];
+  for (const entry of entries) {
     results[entry] = await benchPage(browser, base, entry);
     const { gl, errors, ...scenarios } = results[entry];
-    console.log(`\n${entry}  (GL: ${gl})${errors.length ? `  page errors: ${errors.join(" | ")}` : ""}`);
+    console.log(`\n${entry}  (mode: ${mode}, GL: ${gl})${errors.length ? `  page errors: ${errors.join(" | ")}` : ""}`);
     for (const [name, r] of Object.entries(scenarios)) {
       console.log(`  ${name.padEnd(10)} frames ${String(r.frames).padStart(3)}  median ${String(r.medianMs).padStart(5)} ms  p95 ${String(r.p95Ms).padStart(5)} ms  max ${String(r.maxMs).padStart(5)} ms  fps ${String(r.fps).padStart(5)}  derives/frame ${r.derivesPerFrame}${r.handle ? `  (${r.handle})` : ""}`);
       for (const t of r.top ?? []) console.log(`      ${String(t.ms).padStart(7)} ms  ${t.fn}`);

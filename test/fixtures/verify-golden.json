@@ -1448,7 +1448,7 @@
     "evaluated": 7
   },
   "hand.js#assembly": {
-    "ok": true,
+    "ok": null,
     "view": "assembly",
     "cases": [
       {
@@ -2900,6 +2900,162 @@
             "status": "pass",
             "pass": true,
             "message": "54.03293236240974 >= 10"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "indexSpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"indexSpread\"",
+            "hint": "\"indexSpread\" moves indexKnuckle, indexProximal, indexMiddle, indexDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { indexSpread: { param: \"indexSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "middleKnuckle",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"middleKnuckle\"",
+            "hint": "\"middleKnuckle\" moves middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleKnuckle: { param: \"middleKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "middleCurl",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"middleCurl\"",
+            "hint": "\"middleCurl\" moves middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleCurl: { param: \"middleCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "middleSpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"middleSpread\"",
+            "hint": "\"middleSpread\" moves middleKnuckle, middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleSpread: { param: \"middleSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "ringKnuckle",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"ringKnuckle\"",
+            "hint": "\"ringKnuckle\" moves ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringKnuckle: { param: \"ringKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "ringCurl",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"ringCurl\"",
+            "hint": "\"ringCurl\" moves ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringCurl: { param: \"ringCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "ringSpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"ringSpread\"",
+            "hint": "\"ringSpread\" moves ringKnuckle, ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringSpread: { param: \"ringSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "pinkyKnuckle",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"pinkyKnuckle\"",
+            "hint": "\"pinkyKnuckle\" moves pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyKnuckle: { param: \"pinkyKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "pinkyCurl",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"pinkyCurl\"",
+            "hint": "\"pinkyCurl\" moves pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyCurl: { param: \"pinkyCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "pinkySpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"pinkySpread\"",
+            "hint": "\"pinkySpread\" moves pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkySpread: { param: \"pinkySpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "thumbOppose",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"thumbOppose\"",
+            "hint": "\"thumbOppose\" moves thumbMetacarpal, thumbProximal, thumbDistal against stand, palm, carpal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { thumbOppose: { param: \"thumbOppose\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "wristPitch",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"wristPitch\"",
+            "hint": "\"wristPitch\" moves palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristPitch: { param: \"wristPitch\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "wristYaw",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"wristYaw\"",
+            "hint": "\"wristYaw\" moves palm, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, carpal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristYaw: { param: \"wristYaw\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       },
@@ -14700,13 +14856,281 @@
         ]
       }
     ],
-    "unevaluated": [],
-    "declared": 777,
+    "unevaluated": [
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "indexSpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"indexSpread\"",
+        "hint": "\"indexSpread\" moves indexKnuckle, indexProximal, indexMiddle, indexDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { indexSpread: { param: \"indexSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "middleKnuckle",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"middleKnuckle\"",
+        "hint": "\"middleKnuckle\" moves middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleKnuckle: { param: \"middleKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "middleCurl",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"middleCurl\"",
+        "hint": "\"middleCurl\" moves middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleCurl: { param: \"middleCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "middleSpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"middleSpread\"",
+        "hint": "\"middleSpread\" moves middleKnuckle, middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleSpread: { param: \"middleSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "ringKnuckle",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"ringKnuckle\"",
+        "hint": "\"ringKnuckle\" moves ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringKnuckle: { param: \"ringKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "ringCurl",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"ringCurl\"",
+        "hint": "\"ringCurl\" moves ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringCurl: { param: \"ringCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "ringSpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"ringSpread\"",
+        "hint": "\"ringSpread\" moves ringKnuckle, ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringSpread: { param: \"ringSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "pinkyKnuckle",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"pinkyKnuckle\"",
+        "hint": "\"pinkyKnuckle\" moves pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyKnuckle: { param: \"pinkyKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "pinkyCurl",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"pinkyCurl\"",
+        "hint": "\"pinkyCurl\" moves pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyCurl: { param: \"pinkyCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "pinkySpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"pinkySpread\"",
+        "hint": "\"pinkySpread\" moves pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkySpread: { param: \"pinkySpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "thumbOppose",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"thumbOppose\"",
+        "hint": "\"thumbOppose\" moves thumbMetacarpal, thumbProximal, thumbDistal against stand, palm, carpal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { thumbOppose: { param: \"thumbOppose\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "wristPitch",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"wristPitch\"",
+        "hint": "\"wristPitch\" moves palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristPitch: { param: \"wristPitch\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "wristYaw",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"wristYaw\"",
+        "hint": "\"wristYaw\" moves palm, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, carpal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristYaw: { param: \"wristYaw\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      }
+    ],
+    "declared": 790,
     "evaluated": 777
   },
   "hand.js#print": {
-    "ok": true,
+    "ok": null,
     "view": "print",
+    "sweeps": [
+      {
+        "name": "indexKnuckle",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 252,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399992811,
+          "a": "indexKnuckle",
+          "b": "indexProximal",
+          "at": [
+            -21.8821663,
+            1.18108077e-14,
+            157.582779
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          90
+        ],
+        "view": "assembly"
+      },
+      {
+        "name": "indexCurl",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399995822,
+          "a": "indexMiddle",
+          "b": "indexDistal",
+          "at": [
+            -35.5827473,
+            24.9225825,
+            211.372544
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          1
+        ],
+        "view": "assembly"
+      },
+      {
+        "name": "thumbKnuckle",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 67,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399993345,
+          "a": "thumbProximal",
+          "b": "thumbDistal",
+          "at": [
+            -66.4584317,
+            23.109186,
+            137.536955
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          60
+        ],
+        "view": "assembly"
+      },
+      {
+        "name": "thumbCurl",
+        "clear": true,
+        "clearance": 0.001,
+        "steps": 66,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.399988917,
+          "a": "thumbProximal",
+          "b": "thumbDistal",
+          "at": [
+            -63.4310279,
+            19.7064001,
+            141.241196
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          1
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -16157,6 +16581,162 @@
             "status": "pass",
             "pass": true,
             "message": "54.573251825426745 >= 10"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "indexSpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"indexSpread\"",
+            "hint": "\"indexSpread\" moves indexKnuckle, indexProximal, indexMiddle, indexDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { indexSpread: { param: \"indexSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "middleKnuckle",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"middleKnuckle\"",
+            "hint": "\"middleKnuckle\" moves middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleKnuckle: { param: \"middleKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "middleCurl",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"middleCurl\"",
+            "hint": "\"middleCurl\" moves middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleCurl: { param: \"middleCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "middleSpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"middleSpread\"",
+            "hint": "\"middleSpread\" moves middleKnuckle, middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleSpread: { param: \"middleSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "ringKnuckle",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"ringKnuckle\"",
+            "hint": "\"ringKnuckle\" moves ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringKnuckle: { param: \"ringKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "ringCurl",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"ringCurl\"",
+            "hint": "\"ringCurl\" moves ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringCurl: { param: \"ringCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "ringSpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"ringSpread\"",
+            "hint": "\"ringSpread\" moves ringKnuckle, ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringSpread: { param: \"ringSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "pinkyKnuckle",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"pinkyKnuckle\"",
+            "hint": "\"pinkyKnuckle\" moves pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyKnuckle: { param: \"pinkyKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "pinkyCurl",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"pinkyCurl\"",
+            "hint": "\"pinkyCurl\" moves pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyCurl: { param: \"pinkyCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "pinkySpread",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"pinkySpread\"",
+            "hint": "\"pinkySpread\" moves pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkySpread: { param: \"pinkySpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "thumbOppose",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"thumbOppose\"",
+            "hint": "\"thumbOppose\" moves thumbMetacarpal, thumbProximal, thumbDistal against stand, palm, carpal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { thumbOppose: { param: \"thumbOppose\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "wristPitch",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"wristPitch\"",
+            "hint": "\"wristPitch\" moves palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristPitch: { param: \"wristPitch\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepCoverage",
+            "expr": "wristYaw",
+            "actual": null,
+            "status": "skip",
+            "pass": null,
+            "unevaluated": true,
+            "message": "no sweep declared for \"wristYaw\"",
+            "hint": "\"wristYaw\" moves palm, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, carpal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristYaw: { param: \"wristYaw\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
           }
         ]
       },
@@ -27957,8 +28537,178 @@
         ]
       }
     ],
-    "unevaluated": [],
-    "declared": 777,
+    "unevaluated": [
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "indexSpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"indexSpread\"",
+        "hint": "\"indexSpread\" moves indexKnuckle, indexProximal, indexMiddle, indexDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { indexSpread: { param: \"indexSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "middleKnuckle",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"middleKnuckle\"",
+        "hint": "\"middleKnuckle\" moves middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleKnuckle: { param: \"middleKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "middleCurl",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"middleCurl\"",
+        "hint": "\"middleCurl\" moves middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleCurl: { param: \"middleCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "middleSpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"middleSpread\"",
+        "hint": "\"middleSpread\" moves middleKnuckle, middleProximal, middleMiddle, middleDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { middleSpread: { param: \"middleSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "ringKnuckle",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"ringKnuckle\"",
+        "hint": "\"ringKnuckle\" moves ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringKnuckle: { param: \"ringKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "ringCurl",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"ringCurl\"",
+        "hint": "\"ringCurl\" moves ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringCurl: { param: \"ringCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "ringSpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"ringSpread\"",
+        "hint": "\"ringSpread\" moves ringKnuckle, ringProximal, ringMiddle, ringDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { ringSpread: { param: \"ringSpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "pinkyKnuckle",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"pinkyKnuckle\"",
+        "hint": "\"pinkyKnuckle\" moves pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyKnuckle: { param: \"pinkyKnuckle\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "pinkyCurl",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"pinkyCurl\"",
+        "hint": "\"pinkyCurl\" moves pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkyCurl: { param: \"pinkyCurl\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "pinkySpread",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"pinkySpread\"",
+        "hint": "\"pinkySpread\" moves pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { pinkySpread: { param: \"pinkySpread\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "thumbOppose",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"thumbOppose\"",
+        "hint": "\"thumbOppose\" moves thumbMetacarpal, thumbProximal, thumbDistal against stand, palm, carpal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { thumbOppose: { param: \"thumbOppose\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "wristPitch",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"wristPitch\"",
+        "hint": "\"wristPitch\" moves palm, carpal, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristPitch: { param: \"wristPitch\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      },
+      {
+        "case": "defaults",
+        "scope": "view",
+        "subpart": null,
+        "metric": "sweepCoverage",
+        "expr": "wristYaw",
+        "actual": null,
+        "status": "skip",
+        "pass": null,
+        "unevaluated": true,
+        "message": "no sweep declared for \"wristYaw\"",
+        "hint": "\"wristYaw\" moves palm, thumbMetacarpal, thumbProximal, thumbDistal, indexKnuckle, indexProximal, indexMiddle, indexDistal, middleKnuckle, middleProximal, middleMiddle, middleDistal, ringKnuckle, ringProximal, ringMiddle, ringDistal, pinkyKnuckle, pinkyProximal, pinkyMiddle, pinkyDistal against stand, carpal in view \"assembly\" and no sweep checks that motion. Add verify.sweeps: { wristYaw: { param: \"wristYaw\", clearance: 0 } } and verify.expect._view: { sweepContacts: 0 }."
+      }
+    ],
+    "declared": 790,
     "evaluated": 777
   },
   "hinged-box.js#box": {
@@ -27995,6 +28745,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -28116,8 +28877,8 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 11,
-    "evaluated": 11
+    "declared": 12,
+    "evaluated": 12
   },
   "hull-sweep.js#sweep": {
     "ok": null,
@@ -28677,6 +29438,17 @@
           },
           {
             "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
             "subpart": "body×plate",
             "metric": "nearMiss",
             "kind": "warn",
@@ -29038,12 +29810,53 @@
     ],
     "costs": [],
     "unevaluated": [],
-    "declared": 20,
-    "evaluated": 19
+    "declared": 21,
+    "evaluated": 20
   },
   "lattice-box.js#body": {
     "ok": true,
     "view": "body",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -29075,6 +29888,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29135,12 +29959,53 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 7,
+    "evaluated": 7
   },
   "lattice-box.js#lid": {
     "ok": true,
     "view": "lid",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -29172,6 +30037,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29232,12 +30108,53 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 7,
+    "evaluated": 7
   },
   "lattice-box.js#mesh": {
     "ok": true,
     "view": "mesh",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -29269,6 +30186,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29329,12 +30257,53 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 7,
+    "evaluated": 7
   },
   "lattice-box.js#plate": {
     "ok": true,
     "view": "plate",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -29366,6 +30335,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29426,12 +30406,53 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 6,
-    "evaluated": 6
+    "declared": 7,
+    "evaluated": 7
   },
   "lattice-box.js#print": {
     "ok": true,
     "view": "print",
+    "sweeps": [
+      {
+        "name": "lidAngle",
+        "clear": true,
+        "clearance": 0,
+        "steps": 128,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0,
+          "a": "body",
+          "b": "lid",
+          "at": [
+            80,
+            0,
+            40
+          ],
+          "value": 0
+        },
+        "contacts": [
+          {
+            "from": 0,
+            "to": 1.39631464,
+            "a": "body",
+            "b": "lid",
+            "at": [
+              80,
+              0,
+              40
+            ],
+            "driver": "lidAngle",
+            "depth": 4.97503808e-14,
+            "allowed": true
+          }
+        ],
+        "freeRange": [
+          0,
+          110
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",
@@ -29463,6 +30484,17 @@
             "scope": "view",
             "subpart": null,
             "metric": "overlaps",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
             "kind": "gate",
             "expr": "0",
             "actual": 0,
@@ -29661,8 +30693,8 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 18,
-    "evaluated": 18
+    "declared": 19,
+    "evaluated": 19
   },
   "lofted-bottle.js#bottle": {
     "ok": true,
@@ -31027,6 +32059,17 @@
           },
           {
             "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "view",
             "subpart": "turret×upperArm",
             "metric": "clearance",
             "kind": "gate",
@@ -31065,8 +32108,8 @@
     "warnings": [],
     "costs": [],
     "unevaluated": [],
-    "declared": 4,
-    "evaluated": 4
+    "declared": 5,
+    "evaluated": 5
   },
   "robot-finger.js#assembly": {
     "ok": true,
@@ -31362,6 +32405,32 @@
   "robot-finger.js#print": {
     "ok": true,
     "view": "print",
+    "sweeps": [
+      {
+        "name": "curl",
+        "clear": true,
+        "clearance": 0,
+        "steps": 361,
+        "rebuilds": false,
+        "minClearance": {
+          "distance": 0.400000095,
+          "a": "proximal",
+          "b": "middle",
+          "at": [
+            3.20000005,
+            0.324833453,
+            56.9911995
+          ],
+          "value": 0
+        },
+        "contacts": [],
+        "freeRange": [
+          0,
+          1
+        ],
+        "view": "assembly"
+      }
+    ],
     "cases": [
       {
         "name": "defaults",

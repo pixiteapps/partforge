@@ -22,8 +22,8 @@ import {
 import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
-import { pairKey } from "../src/framework/collide/pairs.js";
 import { parseSweepBudget } from "./sweep-budget.js";
+import { sweepText } from "./sweep-text.js";
 import { sniffMediaType } from "../src/framework/ingest/sniff.js";
 import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
 import { installNodeDom } from "../src/framework/ingest/node-dom.js";
@@ -320,7 +320,7 @@ const commands = {
       // The CLI is the place to run sweeps the inspect's report share cannot fit (a
       // hand's full set is ~17 s), so they get a budget of their own here.
       const sweepDeadline = Date.now() + CLI_SWEEP_BUDGET_MS;
-      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline });
+      const report = measure(kernel, part, view, {}, { deadline: sweepDeadline, previewHandles: true });
       if (!flags.json) printMeasure(report);
       // Write --out right after measure succeeds, then re-write once verify has
       // attached report.verify. If verify throws (unknown metric, per-case build
@@ -338,7 +338,9 @@ const commands = {
       if (!flags["no-verify"]) {
         // Seeded with the report above, as the inspect job seeds it: verify reuses the
         // measurement where it can and its sweep rows always, so nothing sweeps twice.
-        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline });
+        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline,
+          // the unswept-motion scan gets the sweeps' budget too: the CLI is where they run in full
+          motionBudgetMs: CLI_SWEEP_BUDGET_MS });
         if (!flags.json) printVerify(v);
         report.verify = v;
         // Tri-state: `null` is a withheld verdict (nothing declared, or a check
@@ -597,23 +599,6 @@ const commands = {
   },
 };
 
-// One sweep row (oracle/sweep.js) for the `sweeps:` line: clear with its tightest pair,
-// a contact with where it starts, its pair, the param driving it and (a param sweep)
-// the contact-free range, or why it stopped short. A row's `ms` is never printed.
-const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
-function sweepText(s) {
-  if (s.skipped) return `${s.name} skipped (${s.skipped})`;
-  const capped = s.capped ? " (capped)" : "";
-  if (s.clear) {
-    const m = s.minClearance;
-    return `${s.name} clear${m ? ` (min ${m.distance.toFixed(2)}mm ${pairKey(m.a, m.b)})` : ""}${capped}`;
-  }
-  const c = s.contacts[0];
-  const free = s.freeRange ? `, free [${s.freeRange.map(fmtV).join(", ")}]` : "";
-  const more = s.contacts.length > 1 ? ` (+${s.contacts.length - 1} more)` : "";
-  return `${s.name} CONTACT at ${fmtV(c.from)} ${pairKey(c.a, c.b)}${c.unresolved ? " (unresolved)" : ""} driven by ${c.driver ?? "?"}${free}${more}${capped}`;
-}
-
 function printMeasure(r) {
   console.log(`${r.part} / ${r.view}`);
   for (const s of r.subparts) {
@@ -648,6 +633,10 @@ function printMeasure(r) {
     for (const h of r.handles) {
       const at = h.point ? `[${h.point.map((n) => n.toFixed(1)).join(", ")}]` : `unreadable (${h.error})`;
       console.log(`    ${h.label} (${h.kind}${h.group ? `, group ${h.group}` : ""}) at ${at} → ${h.params.join(", ")}`);
+    }
+    if (r.previewHandles) {
+      console.log(`  preview handles: ${r.previewHandles.shown.length ? r.previewHandles.shown.join(", ") : "none"}`);
+      for (const [id, why] of Object.entries(r.previewHandles.hidden)) console.log(`    hidden in a preview: ${id} — ${why}`);
     }
   }
   if (r.probes) {

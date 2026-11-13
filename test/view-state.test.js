@@ -109,8 +109,10 @@ test("render mode persists and nothing stored reads as null", () => {
   expect(loadRenderMode()).toBeNull();
   saveRenderMode("realistic");
   expect(loadRenderMode()).toBe("realistic");
+  saveRenderMode("cel");
+  expect(loadRenderMode()).toBe("cel");
   saveRenderMode("bogus");
-  expect(loadRenderMode()).toBe("realistic");
+  expect(loadRenderMode()).toBe("cel");
 });
 
 test("environment persists and an unknown stored id reads as null", () => {

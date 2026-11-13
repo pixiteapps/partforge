@@ -851,6 +851,11 @@ when they are all off.
   as squarely as it can. So moving the pointer along the limb's line on screen pulls the
   point along the limb, out or in, even when you look nearly down the limb. When the limb
   points within about 18° of your line of sight, the plane faces you instead.
+  A point that can only move in one plane drags on that plane instead: every joint the
+  drag moves above it is a hinge, all of them turn about one axis, and nothing above the
+  limb moves that axis (a finger's knuckles). The pointer's hit on that plane is a point
+  the limb can reach, so the point follows the pointer. When you see that plane within
+  about 12° of edge-on, the drag uses the limb-line plane above.
 - **The aim gizmo.** A goal handle with `aim` shows a ball and rotate rings at its `at`
   point instead of a dot. They show when you hover the point, and they stay while the
   pointer is inside the rings and while you drag any part of them. Hover a part to highlight it: it gets lighter and thicker,
@@ -885,12 +890,19 @@ when they are all off.
     viewbar while a pin is set and posing is on.
 - **Joint rings.** A joint with a parameter to turn (a goal handle's `seed`, an angles
   handle's `joints`) shows a rotate ring about its axis while you hover its dot: a hinge
-  shows one ring, a ball joint three (bend, spread and twist). The ring colour follows the
-  axis: bend red, spread blue, twist green. Joints at one point share one gizmo, each in
-  its own ring (the robot arm's wrist pitch, yaw and roll). Each ring holds one joint: a
-  joint at that point whose axis kind matches a joint already in the gizmo gets no ring. Drag a ring to turn that one
-  joint (forward kinematics): it writes that joint's parameter, clamped to the joint's
-  range. The limit arc shows during the drag, and a joint at its stop shows the warning
+  shows one ring. The ring colour follows the axis: bend red, spread blue, twist green.
+  Joints at one point share one gizmo. Each ring holds one joint: a joint at that point
+  whose axis kind matches a joint already in the gizmo gets no ring. Drag a ring to turn
+  that one joint (forward kinematics): it writes that joint's parameter, clamped to the
+  joint's range.
+  A **compound joint** — a ball joint, or hinges at one point with three or more turns
+  between them (the robot arm's wrist pitch, yaw and roll; a thumb ball built from
+  zero-length hinges) — shows three rings at right angles to each other on the joint's own
+  posed frame (ikInfo's `frames` of its last joint: bend about x, spread about z, twist
+  about y, the bone). The rings turn with the joint. Drag one to turn the joint's frame
+  about that ring's axis: all of the joint's parameters are solved together, inside their
+  joint ranges and schema ranges, so one ring usually writes several of them. Where the
+  ranges stop the turn, the joint stops there and shows the warning colour. The limit arc shows during the drag, and a joint at its stop shows the warning
   colour. Drag the dot itself for the inverse-kinematics drag, as before. A goal handle's
   joint that a seeded joint above it moves (the robot arm's elbow and wrist) is a grab
   too: drag it and the seeded joints carry THAT joint toward the pointer, the joints
@@ -1123,10 +1135,13 @@ piece it meets (it never passes through), and a sweep reports where that happens
 `src/parts/hand.js` declares a knuckle and a curl sweep for the index and thumb (the
 other digits sweep the same way from the CLI, so the declared ones fit the inspect's report
 share), REPORTED, not gated (no `sweepContacts` in its `expect`): its joints could leave their ranges wide and use
-collision as their limit, and a sweep that meets would then be expected. Pin joints stay
+collision as their limit, and a sweep that meets would then be expected. Every joint param the
+hand does not sweep is an unswept motion (`motion-unswept`, `sweepCoverage`), so the hand
+reaches no verdict: `verify.ok` is `null`, by design, until those digits are swept too. Pin joints stay
 blocked pairs: their ~0.4 mm running gap is above the default clearance (0.001 mm), so they
-read clear. A sweep's own `clearance` must stay below that gap, or every pin reads as a
-contact at the start of the sweep.
+read clear. A sweep's own positive `clearance` must stay below that gap, or every pin reads
+as a contact at the start of the sweep; `clearance: 0` (may touch, never press in) never
+does, which is why `robot-finger.js` sweeps its `curl` at 0.
 
 ## Worked example: `src/parts/robot-finger.js`
 
@@ -1171,6 +1186,7 @@ views: {
 verify: {
   process: "fdm-pla",
   expect: { _view: { overlaps: 0, clearance: { "proximal×middle": ">=0.3", "middle×distal": ">=0.3" } } },
+  sweeps: { curl: { param: "curl", clearance: 0 } },
 },
 ```
 

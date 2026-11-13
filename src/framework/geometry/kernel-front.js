@@ -27,7 +27,7 @@ import { beveledExtrude } from "./rim-bevel.js";
 import { DEFAULT_FONT_BYTES } from "./fonts/default-font.js";
 import { convexHull, hullPoints } from "./hull.js";
 import { latheRoundedRect, torusContour } from "./rounded-solids.js";
-import { screwCrossSection } from "./screw-profile.js";
+import { screwCrossSection, screwStepsPerTurn } from "./screw-profile.js";
 import { smoothLoftRings } from "./loft-smooth.js";
 import { DOMAINS } from "../domains/registry.js";
 
@@ -69,12 +69,19 @@ export function finishKernel(k) {
   // is one implementation and STEP gets a real twisted B-rep rather than a loft.
   // Its cross-section is densified here, not by the author, so its facets are quieted
   // (see quietArcs below).
-  k.screwSweep ??= ({ profile, pitch, turns, lefthand = false }) =>
-    quietArcs(() => k.extrude({
-      profile: screwCrossSection(profile, pitch, { lefthand }),
-      h: pitch * turns,
-      twist: (lefthand ? -360 : 360) * turns,
-    }));
+  //
+  // The step count (screw-profile.js) is handed to the extrude as `_twistDivisions`
+  // so Manifold divides the twist at the same step the section was densified at.
+  // It travels in the POSITIONAL form, which the options validator never sees, so
+  // it is not an author option; OCCT twists natively and ignores it.
+  k.screwSweep ??= ({ profile, pitch, turns, lefthand = false }) => {
+    const steps = screwStepsPerTurn(profile);
+    return quietArcs(() => k.extrude(
+      screwCrossSection(profile, pitch, { lefthand, stepsPerTurn: steps }),
+      pitch * turns,
+      { twist: (lefthand ? -360 : 360) * turns, _twistDivisions: Math.max(1, Math.ceil(steps * turns - 1e-9)) },
+    ));
+  };
 
   // Compound default: a tapped (internally threaded) hole, as ONE cut tool.
   //

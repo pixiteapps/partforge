@@ -25,7 +25,9 @@ spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js
 engraved nameplate - raised script text over a backing plate, with
 font/bold/italic/shear controls and fillet-rounded glyph tops),
 `hinged-box.js` (the `animations`
-reference part - stepped timeline, camera cues, pose-only tracks), `screw.js`
+reference part - stepped timeline, camera cues, pose-only tracks - and the moving-fit
+reference for checking a swing: a rotary lid handle, `collisions: {}`, both pose params swept
+at `clearance: 0` and gated; `test/fixtures/pin-hinge.js` is the guide's real pin hinge), `screw.js`
 (the `k.screwSweep` reference part - a periodic ISO thread plus a hex head),
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
@@ -52,12 +54,13 @@ page), `robot-arm.js` (the inverse-kinematics reference part - a 6-axis arm and
 gripper posed by a tool GOAL: `toolX/Y/Z` + pitch/yaw/roll solved in `derive` by
 `limb.pose({ goals })`, warm-started from six seed joint params; a goal-mode `tool`
 handle for Pose mode and a `tool` probe reporting reached / missed by how much;
+its one motion, `gripper`, swept and gated (the six seed joints are no motion);
 `robot-arm.html`, checked by `scripts/check-pose.mjs`), `hand.js` (the angles-mode
 IK reference part - a printable articulated hand: a palm limb (wrist pitch/yaw) with four
 fingers (spread, mcp, pip, dip following pip) and a thumb (oppose, mcp, ip) parented on
 it, posed by per-digit knuckle (mcp alone), curl (pip + dip; the thumb's ip) and
 spread/oppose params and six `{ type: "preset" }` shapes, one
-lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI); rigid pin-jointed pieces placed by matrix, the
+lockable angles-mode handle per digit, a knuckle and a curl sweep for the index and thumb (reported, not gated; the other digits sweep the same way from the CLI, so its thirteen unswept joint params withhold the verdict - `verify.ok` is `null` by design); rigid pin-jointed pieces placed by matrix, the
 print view a flat kit the pose never reaches; `hand.html`, checked by
 `scripts/check-pose.mjs`; the dev-only `pose-smoke.html` page, with `test/fixtures/ik-hand-smoke.js`,
 is the fixture that script drags), `organic-hand.js` (the organic reference part - one contact `k.implicit` hand
@@ -308,6 +311,41 @@ the installed package, so let the publish finish before bumping the dep there.
   sheets beside an unburnt twin that differs only by the burn;
   `scripts/capture-contact-sheet.mjs` renders both in every environment and
   diffs them) - to check by eye after any preset or shader change.
+- **`src/framework/cel/`** - the cel-shaded render mode (spec
+  `docs/superpowers/specs/2026-11-07-cel-shading-design.md`, whose table the
+  constants follow): `cel-style.js` (the constants and the tone maths, pure),
+  `cel-material.js` (band materials per sub-part), `cel-ink.js` (the ink pass)
+  and `cel-ground.js` (the live VSM ground shadow). `cel-style.js` is three-free
+  and DOM-free, and `test/cel-layering.test.js` holds that and keeps `cel/` out of
+  the worker graph; the other three import three.js and only the viewer loads
+  them. The ink pass runs only for the live scene, inside `renderWithBackdrop`,
+  so captures get it and throwaway scenes do not. It writes ink and dot MASKS to
+  an offscreen target, then a resolve pass smooths the ink mask (FXAA-style, since
+  the canvas's MSAA never reaches a fullscreen quad) and composites both. CAD's
+  feature lines are anti-aliased separately: `smooth-lines.js` widens each
+  LineMaterial quad a pixel and feathers its sides, so those materials always blend. The ground shadow has two VSM
+  pitfalls: the plane must sit strictly inside the shadow map's xy bounds, and
+  the depth slab must be thin; the light's world elevation is clamped to 40°.
+  The map is NOT re-rendered every frame: cel turns three's
+  `shadowMap.autoUpdate` off and `prepareCelGround` asks for a render only when
+  cel-ground's `shadowChanged` signature moves (casters, their visibility,
+  geometry or pose, the light's frame, the map size, the cutaway's plane) and on
+  every capture (camera-relative light; the live map re-renders after it). An
+  orbit re-renders nothing. Anything new that changes what casts must show up in
+  that signature.
+  The key light is WORLD-FIXED on the canvas and camera-relative in a capture
+  (0.186.1): `CEL.light` is a view-space direction read at the viewer's
+  DEFAULT camera pose, `CEL.light.at` = (18, 12, 18) — NOT a pure iso, which
+  steepens the world key until no wall of a box is lit
+  (`celLightWorld`); every band material and clone lights by ONE shared
+  uniform, and `prepareCelGround` aims it per frame — `aimCelLight(cam)` plus
+  the ground's `aimWorld` with no render target bound, `restCelLight()` plus
+  the camera-relative `aim` with one — so a face keeps its tone through an
+  orbit while canonical captures stay lit the same way, as CAD's capture
+  lights do. The field follows the theme (`celField(theme)`: pale cyan, or a
+  slate in dark, each with its own halftone dot and its own ground-shadow colour
+  and opacity, applied through the ground's `setLook`); the ink does not. Cel needs no assets, so `captureCurrent({ renderMode: "cel" })` and
+  `renderViews(…, { renderMode: "cel" })` always work; `captureViews` stays CAD.
 - **`src/framework/gltf/`** + **`src/framework/mount-preview.js`** - the cached
   preview (0.147.0). `gltf/encode-preview.js` is `partforge/gltf`'s writer: one
   view's POSED meshes as a GLB (one node/mesh per sub-part under a single
@@ -417,6 +455,17 @@ the installed package, so let the publish finish before bumping the dep there.
   vertices of the pose shown — never every vertex at every pose, which a dense
   model would make too slow. The first pose is then smaller than `fill`, by
   design. A turntable mount ignores it (no animation plays there).
+  Since 0.187.0 the file carries `partforgeParams` (encoder 6) and
+  `mountPreview({ part })` runs Pose mode on it: `preview-pose.js` (pure; never
+  imports `collide/world.js`) is the placer — `place(p, d) · base⁻¹` over the
+  file's meshes, the pose ladder's rung 1 with the file as the delivery — and
+  `previewHandles` decides which handles are place-only against the file
+  (`handlesShownInView` ∩ the baker's identity test over
+  `PREVIEW_HANDLE_SAMPLES`; mount-preview steps it one handle per idle slice,
+  `previewHandlesStepper`); `measure()` reports it as `previewHandles` only when
+  asked (`previewHandles: true`, which the CLI's measure verb passes — the inspect
+  path never pays for it). While a baked animation plays, `getParams()` follows the
+  player (the live params under its values); a press pauses it and writes them.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,
@@ -790,7 +839,13 @@ the installed package, so let the publish finish before bumping the dep there.
   both), `declaration.js` (`normalizeCollisions`), `motion.js` (rigid-matrix helpers),
   `place.js` (a sub-part's `place()` as a matrix, `poseMatrices`) and `sweep-targets.js`
   (what a sweep moves or rebuilds; lint's `rules-collisions.js` and the engine read sweeps
-  through it alone). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
+  through it alone), and `motion-coverage.js` (`motion-unswept` and verify's `sweepCoverage`:
+  the place-only params that move one exportable piece against another in any view and that
+  no declared sweep moves there - only slider/number controls and params a non-goal handle
+  writes are candidates, never a goal handle's target or seed or a discrete control; an
+  untrusted build is judged by its reads through `untrusted-reads.js`, which the engine's
+  `scanMotion` shares; geometry-free, memoized per part+params, a 1000 ms budget,
+  `motionBudgetMs`). The BVH side: `world.js` (each sub-part indexed ONCE in its own mesh
   frame, moved by matrix per query; a `null` mat excludes a piece), `guard.js` (the drag
   guard: `settle`, sub-stepped to `SETTLE_STEP_MM` of travel, at most `MAX_SUBSTEPS`, bisecting
   back to contact), `exemptions.js` (the pairs a drag may leave touching: one inside clearance
@@ -800,7 +855,16 @@ the installed package, so let the publish finish before bumping the dep there.
   advancement between samples (a screw-motion assumption), a rebuild path on
   `SWEEP_REBUILD_STEPS` (24) steps, `SWEEP_MAX_STEPS` (2000) marking a row `capped`; its time
   comes out of the inspect's `REPORT_SHARE_MS`, after change tracking has finished with it
-  (measure's `beforeSweeps` hook). Invariants: `place.js` and `sweep-targets.js`
+  (measure's `beforeSweeps` hook). A sweep's `clearance` of 0 (may touch) or below (may press
+  in that deep; the allowance is that depth plus `TOUCH_TOL_MM`) runs at `TOUCH_TOL_MM` (0.02, `collide/depth.js`) and reads penetration depth
+  along each contact every `DEPTH_STEP_MM` (0.2) of travel, splitting it into blocking and
+  `allowed: true` stretches; a contact whose depth the deadline cut is `depthUnread` and
+  withholds `sweepContacts` unless another blocks; rows cap at `SWEEP_MAX_CONTACTS` (32).
+  `collisions.clearance` still refuses a negative. Verify runs each declared sweep entry in every
+  view where it moves something - the verified view, then the others in `part.views` order,
+  one shared deadline - skipping a view that poses its moving pieces exactly as one already
+  swept (`relativePlacements`); other views' rows carry `view` (the inspect job appends them
+  to `measure.sweeps`). Invariants: `place.js` and `sweep-targets.js`
   never reach the BVH (`test/worker-layering.test.js`);
   `settle` is the hard guarantee - whatever the solve returns, a frame never moves a
   blocked pair from clear to inside, and a pair inside at drag start can move out, never
@@ -819,8 +883,9 @@ the installed package, so let the publish finish before bumping the dep there.
   exemption changes are rolled back first, so the re-walk sees the ones the frame began with. There are no contact rows inside the solver: they were built, gated off by the
   bench, and deleted once a comparison through the session showed settle's slide matching or
   beating them (`docs/research/collisions-structure-review.md`). A drag held at contact reads "Stopped at <piece>" in the live readout (never "Out
-  of reach") and on the release chip. A sweep exempts no pair, so its `clearance` must sit
-  below every start gap it moves (a pin's) - lint, geometry-free, cannot check it.
+  of reach") and on the release chip. A sweep exempts no pair, so a POSITIVE `clearance` must
+  sit below every start gap it moves (a pin's) - lint, geometry-free, cannot check it; at
+  `clearance: 0` a seated or pinned pair reads as an allowed touch, never a start contact.
 - **`src/framework/core/`** + **`native/`** - the native core: C++ ports of the
   hottest per-vertex JS (`creasedNormals` with the fillet-surface evaluators,
   the oracle's BVH + min-wall, and the implicit engine's sample/mesh/cleanup/detail

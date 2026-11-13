@@ -84,6 +84,8 @@ async function run(part, on) {
   }));
   kernel.cleanup?.();
   const measured = measure(kernel, part, view, {}, { minWall: true, gaps: true });
+  // A sweep row's `ms` is wall time, never part of the contract (the rest of the row is).
+  if (measured.sweeps) measured.sweeps = measured.sweeps.map(({ ms: _ms, ...row }) => row);
   return { meshes, measured };
 }
 

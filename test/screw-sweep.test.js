@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
+import { screwStepsPerTurn } from "../src/framework/geometry/screw-profile.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -69,7 +70,11 @@ test("the thread advances one full turn per pitch of height", () => {
   let delta = crestPhaseAt(z0 + PITCH / 4) - crestPhaseAt(z0);
   if (delta < -180) delta += 360;
   if (delta > 180) delta -= 360;
-  expect(delta).toBeCloseTo(90, 0);   // measured 89.79
+  // The crest's vertices sit on the twist divisions, so the measured phase is
+  // quantized by one step (screwStepsPerTurn — 50 a turn, 7.2°, at this radius);
+  // half a step either side of 90 is exact advance. Measured 93.29.
+  const step = 360 / screwStepsPerTurn(ISO);
+  expect(Math.abs(delta - 90)).toBeLessThan(step / 2);
 });
 
 test("lefthand mirrors the volume but reverses the advance", () => {
@@ -77,12 +82,26 @@ test("lefthand mirrors the volume but reverses the advance", () => {
   const lh = k.screwSweep({ profile: ISO, pitch: PITCH, turns: TURNS, lefthand: true });
   // Mirror symmetry holds in the limit, but the densified polygon is not itself
   // mirror-symmetric (densification starts at z=0 either way), so the two differ by
-  // a tessellation artifact — measured 0.251%. Assert relative, not absolute.
-  expect(Math.abs(lh.volume() - rh.volume()) / rh.volume()).toBeLessThan(0.005);
+  // a tessellation artifact that grows with the step — measured 0.251% at the old
+  // flat 5°, 0.506% at this radius's sized 7.2°. Assert relative, not absolute.
+  expect(Math.abs(lh.volume() - rh.volume()) / rh.volume()).toBeLessThan(0.01);
   expect(lh.genus()).toBe(0);
 });
 
 test("an over-pitch profile is rejected rather than silently folded", () => {
   expect(() => k.screwSweep({ profile: [[4, 0], [6, 0], [6, 2.5], [4, 2.5]], pitch: 1.5, turns: 3 }))
     .toThrow(/exceeds pitch/);
+});
+
+test("a small thread is sized by its radius, not the old flat 5° (feedback #244)", () => {
+  // An M3x0.5-sized rod: the step its radius needs (28 a turn) instead of 72, which
+  // is ~6.5× fewer triangles for a surface still within 0.01 mm of the exact one.
+  const P = 0.5, R = 1.5, h = (Math.sqrt(3) / 2) * P, root = R - (5 / 8) * h;
+  const m3 = [[root, 0], [root, P / 4], [R, P / 4 + (P - P / 8 - P / 4) / 2],
+    [R, P / 4 + (P - P / 8 - P / 4) / 2 + P / 8], [root, P]];
+  const rod = k.screwSweep({ profile: m3, pitch: P, turns: 20 });
+  expect(rod.genus()).toBe(0);
+  const tris = rod.toMesh({ quality: "print" }).positions.length / 9;
+  expect(tris).toBeLessThan(40000);   // measured 32,592; the old flat 5° was 210,528
+  expect(rod.volume()).toBeGreaterThan(Math.PI * root ** 2 * P * 20);
 });

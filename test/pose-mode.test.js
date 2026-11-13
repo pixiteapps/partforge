@@ -1418,4 +1418,105 @@ describe("the resting cue", () => {
     t.mode.setSuppressed(false);
     expect(lastCue(t)).toBeNull();
   });
+  // OrbitControls' start / change / end, as the real controls dispatch them
+  const orbitWithEvents = () => {
+    const ls = { start: new Set(), change: new Set(), end: new Set() };
+    return {
+      enabled: true,
+      addEventListener: (k, f) => ls[k].add(f),
+      removeEventListener: (k, f) => ls[k].delete(f),
+      emit: (k) => { for (const f of ls[k]) f({ type: k }); },
+    };
+  };
+  const rotate = (orbit, moved = true) => { orbit.emit("start"); if (moved) orbit.emit("change"); orbit.emit("end"); };
+
+  it("touch: a rotate hides the cue while it runs and flashes it again on lift", () => {
+    const orbit = orbitWithEvents();
+    const t = clockSetup(true, { orbitControls: orbit });
+    t.viewer.tick();
+    expect(lastCue(t)).not.toBeNull(); // the opening touch cue
+    orbit.emit("start");
+    expect(lastCue(t)).toBeNull(); // hidden while the finger rotates
+    orbit.emit("change");
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    orbit.emit("end");
+    const c = lastCue(t);
+    expect(c.opacity).toBeCloseTo(CUE_OPACITY, 6);
+    expect(c.points.length + c.arrows.length).toBe(3);
+    // a flash holds, then fades out like the desktop cue
+    t.clock.t += CUE_HOLD_MS + CUE_FADE_MS + 1;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    // every later rotate flashes again; rotating more hides it at once
+    rotate(orbit);
+    expect(lastCue(t)).not.toBeNull();
+    orbit.emit("start");
+    expect(lastCue(t)).toBeNull();
+    orbit.emit("change");
+    orbit.emit("end");
+    expect(lastCue(t)).not.toBeNull();
+  });
+
+  it("touch: a tap that never moved the camera does not flash", () => {
+    const orbit = orbitWithEvents();
+    const t = clockSetup(true, { orbitControls: orbit });
+    t.viewer.tick();
+    rotate(orbit, false);
+    expect(lastCue(t)).toBeNull();
+  });
+
+  it("a mouse device never flashes after a rotate", () => {
+    const orbit = orbitWithEvents();
+    const t = clockSetup(false, { orbitControls: orbit });
+    t.viewer.tick();
+    t.clock.t += CUE_HOLD_MS + CUE_FADE_MS + 1;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull();
+    rotate(orbit);
+    expect(lastCue(t)).toBeNull();
+  });
+
+  it("touch: no flash while an animation plays, and a playing animation hides a cue", () => {
+    const orbit = orbitWithEvents();
+    let playing = false;
+    const t = clockSetup(true, { orbitControls: orbit, animating: () => playing });
+    t.viewer.tick();
+    rotate(orbit);
+    expect(lastCue(t)).not.toBeNull();
+    playing = true;
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull(); // hidden the frame playback starts
+    rotate(orbit);
+    t.viewer.tick();
+    expect(lastCue(t)).toBeNull(); // no flash over a playing animation
+    playing = false;
+    rotate(orbit);
+    expect(lastCue(t)).not.toBeNull();
+  });
+
+  it("the opening cue waits while an animation plays", () => {
+    let playing = true;
+    const t = clockSetup(false, { animating: () => playing });
+    t.viewer.tick();
+    expect(t.scene.calls.setCue.filter(Boolean)).toEqual([]);
+    playing = false;
+    t.viewer.tick();
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+  });
+
+  it("touch: a handle drag ends a flash", () => {
+    const orbit = orbitWithEvents();
+    const t = clockSetup(true, { orbitControls: orbit });
+    t.viewer.tick();
+    rotate(orbit);
+    expect(lastCue(t)).not.toBeNull();
+    const s = t.screenOf([-40, 0, 80]);
+    const touch = { pointerType: "touch", pointerId: 3 };
+    t.fire("pointerdown", s.x, s.y, touch);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - i * 8, touch);
+    expect(t.mode.isDragging()).toBe(true);
+    expect(lastCue(t)).toBeNull();
+    t.fire("pointerup", s.x, s.y - 32, touch);
+  });
 });

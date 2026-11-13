@@ -65,14 +65,31 @@ export function runWorker(part, opts = {}) {
   let pumping = false;
   const importMeshes = new Map(); // name → {digest, positions, indices} — primed by the host for STEP-on-manifold
 
+  // One boot at a time, and a FAILED boot is forgotten: the next job boots again.
+  // The WASM fetch behind a boot can be cut off mid-download ("WebAssembly
+  // compilation aborted: Network error: …"), and a worker that kept the rejected
+  // promise failed every later job with that same error, so no retry could ever
+  // help (feedback #222).
+  function boot(start) {
+    const attempt = start().catch((e) => {
+      if (booting === attempt) booting = null;
+      throw e;
+    });
+    booting = attempt;
+    return attempt;
+  }
+  const bootManifold = () => manifoldKernels().then((m) => { manifold = m; });
+
   // Manifold is cheap to boot — bring it up eagerly and signal readiness.
   if (backend === "manifold") {
-    booting = manifoldKernels().then((m) => { manifold = m; postMessage({ type: "ready" }); });
-    // A failed boot is reported to the host by the first job that awaits `booting`
-    // (the pump's error boundary posts it). This no-op handler only keeps the eager
-    // rejection from surfacing as an unhandled rejection before that job arrives —
-    // `booting` itself still rejects for kernelFor.
-    booting.catch(() => {});
+    // Ready is posted whether or not the eager boot worked: a host that gates its
+    // first generate on this worker alone would otherwise wait forever on a failed
+    // boot. That generate boots again and reports a failure through the pump's
+    // error boundary.
+    boot(bootManifold).then(
+      () => postMessage({ type: "ready" }),
+      () => postMessage({ type: "ready" }),
+    );
   } else {
     // OCCT boots lazily (its ~11 MB WASM loads on the first job), but the worker can
     // accept jobs as soon as its module graph is up — messages queue in the port.
@@ -84,7 +101,13 @@ export function runWorker(part, opts = {}) {
 
   async function kernelFor(data) {
     if (backend === "manifold") {
-      await booting;
+      // A job can arrive while the eager boot is still running, and mount's first
+      // generate always does: its gate opens on the first ready from EITHER worker,
+      // and the occt worker's comes at once. That boot failing was nobody's attempt
+      // on this job's behalf, so wait it out and try once more; only then does the job
+      // fail. Nothing else can be in flight here, since the pump runs one job at a time.
+      if (!manifold && booting) await booting.catch(() => {});
+      if (!manifold) await (booting ?? boot(bootManifold));
       // The sender declares the job's mesh quality; the worker knows nothing about
       // job-type semantics (mount marks STL/3MF exports quality:"print").
       return data.quality === "print" ? manifold.print : manifold.preview;
@@ -99,8 +122,7 @@ export function runWorker(part, opts = {}) {
       // buttons) stay unstamped, so their progress still reaches mount's own busy
       // indicator instead of an export controller that has nothing pending.
       postMessage({ type: "progress", phase: "loading exact kernel", ...(data.jobId != null ? { jobId: data.jobId } : {}) });
-      booting = booting ?? occtKernel().then((k) => (occt = k));
-      await booting;
+      await (booting ?? boot(() => occtKernel().then((k) => { occt = k; })));
     }
     return occt;
   }

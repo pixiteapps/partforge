@@ -72,6 +72,13 @@ export function dragPlaneNormal(forward, along) {
   return unit([f[0] - c * d[0], f[1] - c * d[1], f[2] - c * d[2]]);
 }
 
+/**
+ * How far off edge-on a planar drag's plane (a point that can only move in one plane,
+ * param-solve's planarDragNormal) must be seen to drag on it: |view . normal| at least 0.2,
+ * about 12° off edge-on. Nearer edge-on, the drag falls back to dragPlaneNormal's plane.
+ */
+export const PLANAR_VIEW_MIN = 0.2;
+
 /** The id of the screen point nearest (px, py) within `radius` CSS px, else null. */
 export function hitHandle(screenPts, px, py, radius = 12) {
   let best = null;

@@ -13,7 +13,7 @@ import type { KitOptions } from "./index.js";
 export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid };
 // Declared in oracle.d.ts (its own surface); testing.js re-exports all of oracle.js.
 export {
-  samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP,
+  samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP, openingParams,
   type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
   type NormalizedAnimationStep, type NormalizedAnimationCue,
   dragHandle, type DragRequest, type DragResult,
@@ -591,9 +591,21 @@ export interface HandleFacts {
  */
 export interface SweepRow {
   name: string;
-  /** No blocked pair came within `clearance` along the motion; `null` when the sweep was skipped. */
+  /**
+   * The view this row was swept in, present only on a row verify ran in a view other than
+   * the one it verified (`VerifyReport.sweeps`, and an inspect report's `measure.sweeps`).
+   */
+  view?: string;
+  /**
+   * No blocked pair came within `clearance` along the motion (at a clearance of 0 or
+   * below: no contact pressed in past the allowance); `null` when the sweep was skipped.
+   */
   clear: boolean | null;
-  /** mm: the sweep's own, else `collisions.clearance`, else 0.001. */
+  /**
+   * mm: the sweep's own, else `collisions.clearance`, else 0.001. Positive: pieces must
+   * stay this far apart. `0`: they may touch, never press in. Negative: they may press in
+   * up to that depth (a detent's rub), read along each contact as `depth`.
+   */
   clearance: number;
   steps: number;
   /** Some sub-part's build changes along the motion, so it was rebuilt at fixed steps. */
@@ -612,6 +624,8 @@ export interface SweepRow {
   skipped?: "timeout" | "unreadable" | "no-motion";
   /** The thrown message, with `skipped: "unreadable"`. */
   error?: string;
+  /** How many contacts the row left off past its cap (32), allowed and unread ones first. */
+  contactsOmitted?: number;
 }
 
 export interface SweepContact {
@@ -625,6 +639,19 @@ export interface SweepContact {
   driver: string | null;
   /** Advancement could not prove the pair clear over the interval; reported as a contact. */
   unresolved?: true;
+  /**
+   * mm: how deep the pair presses in over the contact, read as distance to the other
+   * piece's surface (a lower bound); `null` when it could not be read. On a positive-
+   * clearance sweep it is informational.
+   */
+  depth?: number | null;
+  /**
+   * On a sweep whose clearance is 0 or below: `true` when the stretch stays within the
+   * allowance (it never counts against the row), `false` when it presses in past it.
+   */
+  allowed?: boolean;
+  /** The time budget ran out before this stretch's depth was read; it withholds `sweepContacts`. */
+  depthUnread?: true;
 }
 
 export interface MeasureReport {
@@ -664,6 +691,12 @@ export interface MeasureReport {
    * absent when the part declares none.
    */
   handles?: HandleFacts[];
+  /**
+   * Which of `handles` a kernel-free cached preview of this view would let a visitor
+   * drag (`mountPreview({ part })`), and why each other one is hidden. Present only
+   * when the run passed `previewHandles: true` and the part declares handles.
+   */
+  previewHandles?: { shown: string[]; hidden: Record<string, string> };
   /**
    * Declared sweeps for this view, in declaration order: `[]` when none moves anything in
    * it, absent when the part declares none or the run passed `sweeps: false`. Never
@@ -729,6 +762,12 @@ export function measure(
      * call's start.
      */
     deadline?: number;
+    /**
+     * Also report `previewHandles` (default false): it probes every handle's param
+     * range geometry-free, which costs a part with many handles a few hundred ms, so
+     * only a caller that prints it (the CLI's `measure` verb) asks.
+     */
+    previewHandles?: boolean;
   },
 ): MeasureReport;
 
@@ -767,7 +806,10 @@ export interface VerifyCheck {
    * never decides `ok`.
    */
   volunteered?: boolean;
-  /** True when the check could not be evaluated this run (a quick lap, or a declared sheet check past the 2-D budget). */
+  /**
+   * True when the check could not be evaluated this run (a quick lap, a declared sheet
+   * check past the 2-D budget, or a `sweepCoverage` check: a motion with no sweep).
+   */
   unevaluated?: boolean;
 }
 
@@ -794,8 +836,17 @@ export interface VerifyReport {
   warnings: Array<VerifyCheck & { case: string }>;
   /** Design choices with a price (supports, footprint); never failures. Accepted ones are flagged. */
   costs: Array<VerifyCheck & { case: string }>;
-  /** Checks a quick lap could not evaluate. */
+  /**
+   * Checks this run could not evaluate: a quick lap's, a declared sheet check past the
+   * 2-D budget, or a `sweepCoverage` check — a param that poses one piece against another
+   * with no declared sweep, which holds `ok` at `null` until a sweep is declared.
+   */
   unevaluated: Array<VerifyCheck & { case: string }>;
+  /**
+   * The rows of the declared sweeps run in the other views where they move something,
+   * each with its `view`; absent when none ran elsewhere. `sweepContacts` reads them.
+   */
+  sweeps?: SweepRow[];
   /** Check instances the part or its profile declared, across cases (near-miss notices excluded). */
   declared: number;
   /** Of `declared`, how many were actually answered — a skipped or unevaluated check is not. Zero withholds `ok`. */
@@ -823,6 +874,8 @@ export function verify(
     quick?: boolean;
     /** When the declared sweeps must stop (a `Date.now()` reading), for the one case that runs them. */
     deadline?: number;
+    /** ms the scan for motions with no sweep (`sweepCoverage`) may take; default 1000. */
+    motionBudgetMs?: number;
   },
 ): VerifyReport;
 
