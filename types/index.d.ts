@@ -302,8 +302,11 @@ export interface MountOptions {
   onDownload?: (file: DownloadPayload) => void;
   /**
    * Receive the download kit's files instead of partforge saving them. Without it, a kit
-   * whose only file is one model is saved bare (through `onDownload` if given) and any
-   * other kit as `<name>-kit.zip`.
+   * whose only model file is a single one is saved as that bare file, with the README and
+   * parts list left out (through `onDownload` if given), and any other kit as
+   * `<name>-kit.zip`. The sink is called synchronously and must not return a promise the
+   * export should wait for: a host that needs to do async work takes the entries and
+   * returns.
    */
   onKit?: (kit: KitPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */
@@ -1099,6 +1102,15 @@ export const KIT_DEFAULTS: Readonly<{
   flip: "left-right";
   twoSided: "one-file";
 }>;
+
+/** Each kit entry kind: its file extension, MIME type and the pattern its `path` must match. */
+export const KIT_KINDS: Readonly<Record<KitEntryKind, Readonly<{ ext: string; mime: string; pattern: RegExp }>>>;
+
+/** How each kit section is shown. An options error raised inside a section reads `"cut kit options: <label>: …"`. */
+export const SECTION_LABELS: Readonly<Record<KitSectionId, string>>;
+
+/** The kit's cut section ids, in the process registry's order (`["laser", "cnc-router"]` today). */
+export function cutSectionIds(): Array<Exclude<KitSectionId, "3d">>;
 
 /** Normalise kit options — defaults filled, `cutFormat` derived — or throw a `"cut kit options: …"` error. */
 export function validateKitOptions(options: unknown): Required<KitOptions>;

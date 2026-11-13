@@ -75,6 +75,17 @@ test("the main entry exports the kit's options surface", async () => {
   expect(main.validateKitOptions({}).destination).toBe("own-laser");
 });
 
+test("the main entry exports the download kit's vocabulary, for a host's tests", async () => {
+  const main = await import("../src/index.js");
+  const entries = await import("../src/framework/export/kit/entries.js");
+  const options = await import("../src/framework/export/kit/options.js");
+  expect(main.KIT_KINDS).toBe(entries.KIT_KINDS);
+  expect(main.KIT_KINDS["model-stl"].pattern.test("print/lid.stl")).toBe(true);
+  expect(main.cutSectionIds()).toEqual(["laser", "cnc-router"]);
+  expect(main.SECTION_LABELS).toBe(options.SECTION_LABELS);
+  expect(main.SECTION_LABELS).toEqual({ "3d": "3D files", laser: "Laser-cut parts", "cnc-router": "CNC-routed parts" });
+});
+
 test("makeHandle passes describeKit and exportKit through", async () => {
   const base = { ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} };
   const describeKit = () => ({ sets: { range: [1, 20], default: 1 }, sections: [] });
