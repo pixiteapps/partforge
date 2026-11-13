@@ -92,14 +92,16 @@ function stubRenderer(buffer, bound = null) {
 }
 describe("createCelInk render", () => {
   const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
-  it("draws the quad into the target that was bound, and restores it", () => {
+  it("draws the masks offscreen, resolves them into the target that was bound, and restores it", () => {
     const bound = { width: 64, height: 48 };
     const r = stubRenderer([800, 600], bound);
     const ink = createCelInk();
     ink.render(r, scene, cam, { pixelScale: 1, field: null });
     const renders = r.calls.filter((c) => c[0] === "render");
-    expect(renders).toHaveLength(2);
-    expect(renders[1][2]).toBe(bound);
+    expect(renders).toHaveLength(3); // prepass, masks, resolve
+    expect(renders[1][2]).not.toBe(bound);
+    expect(renders[1][2].texture).toBe(ink.resolveMaterial.uniforms.tInk.value);
+    expect(renders[2][2]).toBe(bound);
     expect(r.calls.at(-1)).toEqual(["set", bound]);
     ink.dispose();
   });
@@ -109,6 +111,17 @@ describe("createCelInk render", () => {
     expect(ink.material.uniforms.uBgDots.value).toBe(0);
     ink.render(stubRenderer([64, 48]), scene, cam, { field: { color: new THREE.Color(CEL.field.color), dots: true } });
     expect(ink.material.uniforms.uBgDots.value).toBe(CEL.field.dots);
+    ink.dispose();
+  });
+  it("smooths the ink mask in the resolve and composites over the frame", () => {
+    const ink = createCelInk();
+    expect(ink.material.blending).toBe(THREE.NoBlending);
+    const r = ink.resolveMaterial;
+    expect(r.transparent).toBe(true);
+    expect(r.fragmentShader).toContain("ink = (b < lMin || b > lMax) ? a : b;");
+    ink.render(stubRenderer([64, 48]), scene, cam, {});
+    expect(r.uniforms.tInk.value.minFilter).toBe(THREE.LinearFilter);
+    expect([r.uniforms.uRes.value.x, r.uniforms.uRes.value.y]).toEqual([64, 48]);
     ink.dispose();
   });
   it("floors every sampling radius at one texel (NearestFilter target)", () => {

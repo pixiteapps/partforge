@@ -5,6 +5,7 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { smoothLineMaterial } from "./smooth-lines.js";
 import { UltraHDRLoader } from "three/addons/loaders/UltraHDRLoader.js";
 import { buildCadMaterial, buildPhysicalMaterial } from "./materials/physical.js";
 import { grainAxisFor, setGrainAxis } from "./materials/patterns.js";
@@ -348,9 +349,10 @@ export function createViewer(container, part, {
 
   // CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
   const EDGE_ANGLE = 35; // deg — last-ditch threshold for payloads with no kernel edge data
-  const lineMaterial = new LineMaterial({ // ~10% lighter, 1 px by default
-    color: THEME.dark.line, linewidth: edgeWidth, transparent: edgeOpacity < 1, opacity: edgeOpacity,
-  });
+  // smoothLineMaterial feathers the sides (and makes it blend); clones keep it.
+  const lineMaterial = smoothLineMaterial(new LineMaterial({ // ~10% lighter, 1 px by default
+    color: THEME.dark.line, linewidth: edgeWidth, opacity: edgeOpacity,
+  }));
   lineMaterial.resolution.set(1, 1); // real size set by resize() below
   const subLines = Object.fromEntries(
     names.map((n) => [n, new LineSegments2(new LineSegmentsGeometry(), lineMaterial)])
@@ -1413,7 +1415,7 @@ export function createViewer(container, part, {
     floor.receiveShadow = true;
     lit.add(sun, sun.target, floor);
     const quad = new THREE.PlaneGeometry(2, 2);
-    unlit.add(new THREE.Mesh(quad, celInk.material));
+    unlit.add(new THREE.Mesh(quad, celInk.material), new THREE.Mesh(quad, celInk.resolveMaterial));
     for (const n of names) {
       const geo = subCache[n];
       if (!geo) continue; // unbuilt: compiles when first shown
@@ -2629,7 +2631,7 @@ export function createViewer(container, part, {
     const opacity = lineOpacityForMode();
     lineMaterial.color.set(color);
     lineMaterial.opacity = opacity;
-    lineMaterial.transparent = opacity < 1;
+    lineMaterial.transparent = true; // always: the feathered edges blend
     for (const m of fadeLineMats.values()) m.color.set(color);
   }
 
@@ -3334,7 +3336,7 @@ export function createViewer(container, part, {
     // live viewer shows. A dedicated LineMaterial in the style's colour and width
     // (renderOffscreen sizes its resolution to the target, as for every capture); added
     // after framing so it can't perturb the bbox.
-    const lineMat = new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, transparent: st.edges.opacity < 1, opacity: st.edges.opacity });
+    const lineMat = smoothLineMaterial(new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, opacity: st.edges.opacity }));
     for (const mesh of built) {
       const edges = mesh.geometry.userData.edges;
       if (!edges) continue;
