@@ -4,7 +4,7 @@
 import { describe, expect, test } from "vitest";
 import {
   EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, DEFAULT_STOCK_SIZE, DESTINATIONS, KIT_LIMITS,
-  validateKitOptions, resolveStock,
+  validateKitOptions, resolveStock, normalizeStock,
 } from "../src/framework/export/formats.js";
 import { PROCESSES } from "../src/framework/process/registry.js";
 
@@ -85,6 +85,15 @@ describe("validateKitOptions", () => {
     refuses({ stock: [{ group: "*", size: [5, 300] }] }, 'cut kit options: stock "*" size must be two numbers from 10 to 3000 mm, got [5,300]');
     refuses({ stock: [{ group: "*", size: [300, 3001] }] }, 'cut kit options: stock "*" size must be two numbers from 10 to 3000 mm, got [300,3001]');
     refuses({ stock: [{ group: "*", size: [300, 300] }, { group: "*", size: [200, 200] }] }, 'cut kit options: stock names "*" twice');
+  });
+});
+
+describe("normalizeStock", () => {
+  test("copies entries; a caller's refuse hook words the error", () => {
+    expect(normalizeStock(null)).toBeNull();
+    expect(normalizeStock([{ group: "*", size: [300, 200] }])).toEqual([{ group: "*", size: [300, 200] }]);
+    expect(() => normalizeStock("x")).toThrow("cut kit options: stock must be an array of { group, size: [w, h] }");
+    expect(() => normalizeStock("x", (m) => new Error(`section: ${m}`))).toThrow("section: stock must be an array of { group, size: [w, h] }");
   });
 });
 

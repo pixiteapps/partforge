@@ -24,7 +24,7 @@ const FLIP_NOTE = {
 };
 const ALIGN_NOTE = "On the bottom side, move the imported far-side vectors so their outline sits on the piece's outline as the CAM shows it from that side. Shortcut: make the job's material the piece's size, then centre the imported vectors on the material (VCarve: Align Selected Objects → Centre); because the far layers are mirrored about the piece's own centre, they then land exactly.";
 const ONE_FILE_NOTE = "On the bottom side the CUT outline is for alignment only — cut the piece out from the near side.";
-const TWO_SIDED_ORDER = "Two-sided pieces: machine the far side first, flip, then the near side and the through cut last, so the board holds the piece until the end. Sheet layouts in sheets/ carry near-side work only; far-side work is in the per-piece files.";
+const twoSidedOrder = (folder) => `Two-sided pieces: machine the far side first, flip, then the near side and the through cut last, so the board holds the piece until the end. Sheet layouts in ${folder}/sheets/ carry near-side work only; far-side work is in the per-piece files.`;
 const LIMITS_LINE = "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.";
 
 // C0 controls, DEL and C1 controls out of an author string, so a label can never ring a
@@ -60,32 +60,44 @@ const mm2 = ([w, h]) => `${w.toFixed(2)} × ${h.toFixed(2)} mm`;
 const faceOf = (op) => (op.face === "far" ? "far" : "near");
 const labelsOf = (labels) => labels.map(cleanLabel).join(", ");
 
-export function renderReadme(m) {
-  const k = m.kerf;
+// One cut section's lines in BEFORE YOU CUT: its kerf, scale check, file legend, the
+// two-sided order of work, its marks files and the service note. `c` is one of
+// renderReadme's `cut` items: { label, folder, destination, cutFormat, kerf, scale,
+// marksFiles, hasSheets, anyTwoSided }.
+function cuttingBlock(c) {
+  const k = c.kerf ?? 0;
   const kerfed = k > 0;
-  const router = m.destination === "cnc-router";
-  // A cutting service gets each piece's score and engrave lines in a separate
-  // -marks.dxf, which neither table lists — so the files are named here, or a service
-  // order built from the cut files alone silently leaves the marks off.
-  const marksFiles = m.pieces.map((pc) => pc.marksFile).filter(Boolean);
+  const router = c.destination === "cnc-router";
+  return [
+    router
+      ? "Kerf: none — a CNC router's CAM applies the tool offset."
+      : kerfed
+        ? `Kerf: ${k.toFixed(2)} mm applied to the cut lines only. Set kerf in ONE place — these download options, or your laser software / cutting service — never both.`
+        : "Kerf: none applied — your laser software or cutting service must compensate.",
+    ...(kerfed || router ? [] : ["To have the files adjusted instead, download again with a kerf set, and turn compensation off in your laser software or service."]),
+    "Scale check — measure one cut piece against its line:",
+    ...c.scale.map((s) => `${cleanLabel(s.label)}: nominal ${s.nominal[0].toFixed(2)} × ${s.nominal[1].toFixed(2)} mm; this file draws ${
+      kerfed ? `${s.drawn[0].toFixed(2)} × ${s.drawn[1].toFixed(2)} with ${k.toFixed(2)} mm kerf` : "the same (no kerf applied)"}`),
+    router ? ROUTER_LEGEND : c.cutFormat === "dxf" ? DXF_LEGEND : SVG_LEGEND,
+    ...(c.anyTwoSided ? [twoSidedOrder(c.folder)] : []),
+    // A cutting service gets each piece's score and engrave lines in a separate
+    // -marks.dxf, which neither table lists — so the files are named here, or a service
+    // order built from the cut files alone silently leaves the marks off.
+    ...(c.marksFiles?.length ? [`Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: ${c.marksFiles.join(", ")}.`] : []),
+    // A service kit whose every piece is oversized writes no sheets at all.
+    ...(c.destination === "service" && c.hasSheets ? [`The sheets in ${c.folder}/sheets/ are for reference only — a cutting service lays out the pieces itself.`] : []),
+  ];
+}
+
+// `m.cut` lists the kit's cut sections; each gets its cutting block, headed by its label
+// when there is more than one. A kit with no cut section has no BEFORE YOU CUT.
+export function renderReadme(m) {
+  const cut = m.cut ?? [];
   const body = {
-    "BEFORE YOU CUT": [
+    "BEFORE YOU CUT": cut.length === 0 ? [] : [
       ...m.stockNotes.map((g) =>
         `This kit assumes ${g.thickness.toFixed(2)} mm ${cleanLabel(g.material)} — if yours differs, change "${cleanLabel(g.control ?? "the sheet thickness setting")}" and re-download.`),
-      router
-        ? "Kerf: none — a CNC router's CAM applies the tool offset."
-        : kerfed
-          ? `Kerf: ${k.toFixed(2)} mm applied to the cut lines only. Set kerf in ONE place — these download options, or your laser software / cutting service — never both.`
-          : "Kerf: none applied — your laser software or cutting service must compensate.",
-      ...(kerfed || router ? [] : ["To have the files adjusted instead, download again with a kerf set, and turn compensation off in your laser software or service."]),
-      "Scale check — measure one cut piece against its line:",
-      ...m.scale.map((s) => `${cleanLabel(s.label)}: nominal ${s.nominal[0].toFixed(2)} × ${s.nominal[1].toFixed(2)} mm; this file draws ${
-        kerfed ? `${s.drawn[0].toFixed(2)} × ${s.drawn[1].toFixed(2)} with ${k.toFixed(2)} mm kerf` : "the same (no kerf applied)"}`),
-      router ? ROUTER_LEGEND : m.cutFormat === "dxf" ? DXF_LEGEND : SVG_LEGEND,
-      ...(m.anyTwoSided ? [TWO_SIDED_ORDER] : []),
-      ...(marksFiles.length ? [`Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: ${marksFiles.join(", ")}.`] : []),
-      // A service kit whose every piece is oversized writes no sheets/ at all.
-      ...(m.destination === "service" && m.sheets.length ? ["The sheets in sheets/ are for reference only — a cutting service lays out the pieces itself."] : []),
+      ...cut.flatMap((c) => [...(cut.length > 1 ? [`${cleanLabel(c.label)}:`] : []), ...cuttingBlock(c)]),
       "Test-cut one joint first.",
     ],
     SHEETS: table(["file", "material", "thickness", "size", "pieces", "used"], m.sheets.map((s) => [
@@ -113,7 +125,7 @@ export function renderReadme(m) {
     SETTINGS: m.settings.map((s) => `${cleanLabel(s.key)} = ${settingValue(s.value)}`),
     CHECKS: m.checks.length ? m.checks.map(cleanLabel) : ["none"],
     // Only a non-strict layout (a service, a CNC router) can leave a piece off the sheets.
-    "OVERSIZED PIECES": m.destination === "service" || router ? m.oversized.map(cleanLabel) : [],
+    "OVERSIZED PIECES": cut.some((c) => c.destination === "service" || c.destination === "cnc-router") ? m.oversized.map(cleanLabel) : [],
     "RENAMED FILES": m.renamed.map(cleanLabel),
     LIMITS: [LIMITS_LINE],
   };

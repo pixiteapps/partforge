@@ -50,9 +50,9 @@ export const KIT_DEFAULTS = Object.freeze({
 const OPTION_KEYS = ["destination", "cutFormat", "kerf", "colors", "stock", "margin", "spacing", "printFormat", "sets", "flip", "twoSided"];
 
 const fail = (message) => new Error(`${KIT_OPTIONS_ERROR} ${message}`);
-const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
+export const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
   && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
-const inRange = (v, [lo, hi]) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+export const inRange = (v, [lo, hi]) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
 
 // `undefined` means "all defaults" (a caller that sent no options at all); anything else
 // that is not a plain object is refused. Returns a fresh, fully populated object with
@@ -105,23 +105,24 @@ export function validateKitOptions(o) {
 // null/undefined → null ("every group gets DEFAULT_STOCK_SIZE"); otherwise fresh
 // `{ group, size: [w, h] }` copies. A group key is sheetGroup()'s `"<material>|<t>"`, or
 // "*" for an explicit default — which groups exist is only known once the parts are
-// resolved, so matching happens later, in resolveStock.
-function normalizeStock(stock) {
+// resolved, so matching happens later, in resolveStock. `refuse(message)` makes the
+// error: export/kit/options.js passes its own, which names the kit section.
+export function normalizeStock(stock, refuse = fail) {
   if (stock === undefined || stock === null) return null;
-  if (!Array.isArray(stock)) throw fail("stock must be an array of { group, size: [w, h] }");
+  if (!Array.isArray(stock)) throw refuse("stock must be an array of { group, size: [w, h] }");
   if (stock.length > KIT_LIMITS.stockEntries)
-    throw fail(`stock has ${stock.length} entries — at most ${KIT_LIMITS.stockEntries}`);
+    throw refuse(`stock has ${stock.length} entries — at most ${KIT_LIMITS.stockEntries}`);
   const seen = new Set();
   return stock.map((entry, i) => {
     const shaped = isPlainObject(entry) && Object.keys(entry).every((k) => k === "group" || k === "size")
       && typeof entry.group === "string" && entry.group.length > 0
       && Array.isArray(entry.size) && entry.size.length === 2;
-    if (!shaped) throw fail(`stock entry ${i + 1} needs a group and a size [w, h] in mm`);
+    if (!shaped) throw refuse(`stock entry ${i + 1} needs a group and a size [w, h] in mm`);
     const { group, size } = entry;
     const [lo, hi] = KIT_LIMITS.stockSide;
     if (!size.every((v) => inRange(v, KIT_LIMITS.stockSide)))
-      throw fail(`stock "${group}" size must be two numbers from ${lo} to ${hi} mm, got ${JSON.stringify(size)}`);
-    if (seen.has(group)) throw fail(`stock names "${group}" twice`);
+      throw refuse(`stock "${group}" size must be two numbers from ${lo} to ${hi} mm, got ${JSON.stringify(size)}`);
+    if (seen.has(group)) throw refuse(`stock names "${group}" twice`);
     seen.add(group);
     return { group, size: [size[0], size[1]] };
   });

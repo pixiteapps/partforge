@@ -1,7 +1,7 @@
 // The kit as a list of entries { path, kind, data } that a host zips (or, for a kit with
 // one model in it, saves as that bare file). Each kind owns the name grammar of the files
-// it may carry, continuing bundle.js's KIT_ENTRY_RE. Imports nothing: it loads in the
-// worker and on the main thread alike.
+// it may carry, the successor to the one-ZIP kit's single name pattern. Imports nothing:
+// it loads in the worker and on the main thread alike.
 
 const NAME = "[a-z0-9][a-z0-9._-]*";
 const DRAWING = `^(laser|cnc)\\/(sheets\\/${NAME}\\/sheet-\\d+-of-\\d+|parts\\/${NAME}(-x\\d+)?(-far)?(-marks)?)`;
