@@ -602,15 +602,41 @@ const POSED_ABS = new Float64Array(9);
 // twice, or not at all).
 const INSIDE_DIRS = [[1, 0, 0], [0.5773, 0.3217, 0.7489], [-0.2676, 0.8231, -0.5005], [0.1393, -0.4421, 0.8860]];
 const GRAZE_EPS = 1e-7;
+// A hit whose smallest barycentric coordinate is below this lies on the triangle's edge or
+// corner (as a fraction of the triangle, so it scales with it).
+const EDGE_BARY_EPS = 1e-7;
+
+// Whether the ray from p along d meets triangle `base` of V on (or within EDGE_BARY_EPS of) an
+// edge or a corner: rayTri's own barycentrics, recomputed. Such a hit is where rayTri's
+// verdict is down to rounding — a ray along a facet's edge line is coplanar with that facet
+// and meets the faces at either end exactly on an edge, so one end can count and the other
+// not, leaving an odd count for a point outside. A ray that misses the triangle (det 0, or
+// outside it) reads as on the edge too: no answer to trust.
+function hitsEdge(V, base, p, d) {
+  const ax = V[base], ay = V[base + 1], az = V[base + 2];
+  const e1x = V[base + 3] - ax, e1y = V[base + 4] - ay, e1z = V[base + 5] - az;
+  const e2x = V[base + 6] - ax, e2y = V[base + 7] - ay, e2z = V[base + 8] - az;
+  const px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+  const det = e1x * px + e1y * py + e1z * pz;
+  if (det > -1e-12 && det < 1e-12) return true;
+  const inv = 1 / det;
+  const tx = p[0] - ax, ty = p[1] - ay, tz = p[2] - az;
+  const u = (tx * px + ty * py + tz * pz) * inv;
+  const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+  const v = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+  return !(Math.min(u, v, 1 - u - v) >= EDGE_BARY_EPS);
+}
 
 // Crossings of the ray from p along dir through `other` (any index with raycast),
-// or -1 if two consecutive hits are within GRAZE_EPS (the ray runs along an edge).
-function crossings(other, p, dir) {
+// or -1 when the count cannot be trusted: two consecutive hits within GRAZE_EPS, or a
+// hit on a triangle's edge or corner (the ray runs along an edge, or through one).
+function crossings(other, V, p, dir) {
   let n = 0, tMin = 1e-6, skipTri = -1;
   for (;;) {
     const hit = other.raycast(p, dir, { tMin, skipTri });
     if (!hit) return n;
     if (n > 0 && hit.t - tMin < GRAZE_EPS + 1e-9) return -1;
+    if (hitsEdge(V, hit.tri * 9, p, dir)) return -1;
     n++;
     // look back a hair so a neighbour sharing this hit's edge is found (and flagged)
     tMin = hit.t - 1e-9; skipTri = hit.tri;
@@ -627,12 +653,33 @@ export function insideShared(other, w, mOther) {
     inv[1] * w[0] + inv[5] * w[1] + inv[9] * w[2] + inv[13],
     inv[2] * w[0] + inv[6] * w[1] + inv[10] * w[2] + inv[14],
   ];
-  let n = -1;
+  // a core index casts natively and keeps its triangles in its JS twin (the same ones)
+  const V = (other.vertices ?? other.jsIndex().vertices);
   for (const dir of INSIDE_DIRS) {
-    n = crossings(other, p, dir);
-    if (n >= 0) break;
+    const n = crossings(other, V, p, dir);
+    if (n >= 0) return n % 2 === 1;
   }
-  return n > 0 && n % 2 === 1;
+  // Every direction grazed (the point is on the surface, or each cast runs through an edge or
+  // a corner): the winding number decides.
+  return Math.abs(windingNumber(V, p)) > 0.5;
+}
+
+// The generalized winding number of the triangles in V about p: the sum of their signed solid
+// angles seen from p (Van Oosterom–Strackee), over 4π. About ±1 inside a closed mesh (the sign
+// is its winding), 0 outside, about ±0.5 on its surface — which reads as outside, as a resting
+// touch must. O(triangles), so only for the point no ray can decide.
+function windingNumber(V, p) {
+  let sum = 0;
+  for (let o = 0; o < V.length; o += 9) {
+    const ax = V[o] - p[0], ay = V[o + 1] - p[1], az = V[o + 2] - p[2];
+    const bx = V[o + 3] - p[0], by = V[o + 4] - p[1], bz = V[o + 5] - p[2];
+    const cx = V[o + 6] - p[0], cy = V[o + 7] - p[1], cz = V[o + 8] - p[2];
+    const la = Math.sqrt(ax * ax + ay * ay + az * az), lb = Math.sqrt(bx * bx + by * by + bz * bz), lc = Math.sqrt(cx * cx + cy * cy + cz * cz);
+    const det = ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    const den = la * lb * lc + (ax * bx + ay * by + az * bz) * lc + (ax * cx + ay * cy + az * cz) * lb + (bx * cx + by * cy + bz * cz) * la;
+    sum += 2 * Math.atan2(det, den);
+  }
+  return sum / (4 * Math.PI);
 }
 
 // The BVH for `mesh`, memoized in a CALLER-OWNED Map keyed on the mesh object.
