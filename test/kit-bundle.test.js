@@ -280,7 +280,7 @@ describe("the README names the right settings", () => {
 describe("download options", () => {
   test("own laser refuses a piece its stock cannot hold, naming it", async () => {
     const r = await kit(fixture, { options: { stock: [{ group: "*", size: [100, 100] }] } });
-    expect(r.error).toBe('cut kit options: stock too small — "Front" is 120.0 × 50.0 mm; a 100 × 100 mm sheet leaves 90 × 90 after its 5 mm margin (Birch Plywood 3 mm)');
+    expect(r.error).toBe('cut kit options: Laser-cut parts: stock too small — "Front" is 120.0 × 50.0 mm; a 100 × 100 mm sheet leaves 90 × 90 after its 5 mm margin (Birch Plywood 3 mm)');
     expect(r.download).toBeUndefined();
   });
 
@@ -293,7 +293,7 @@ describe("download options", () => {
   test("a margin that leaves no room fails before anything is built", async () => {
     const r = await kit(fixture, { options: { margin: 50, stock: [{ group: "*", size: [10, 10] }] } });
     expect(r.error).toBe(
-      "cut kit options: a 10 × 10 mm sheet has no room inside a 50 mm margin on every side (Birch Plywood 3 mm) — lower margin or use larger stock");
+      "cut kit options: Laser-cut parts: a 10 × 10 mm sheet has no room inside a 50 mm margin on every side (Birch Plywood 3 mm) — lower margin or use larger stock");
     expect(r.phases.some((ph) => ph.startsWith("building"))).toBe(false);
   });
 
@@ -304,7 +304,7 @@ describe("download options", () => {
 
   test("a stock entry naming no group in the kit is refused, never ignored", async () => {
     const r = await kit(fixture, { options: { stock: [{ group: "acrylic|3.00", size: [300, 300] }] } });
-    expect(r.error).toBe('cut kit options: stock names "acrylic|3.00", which no checked sheet part uses — the kit\'s groups are "birch plywood|3.00"');
+    expect(r.error).toBe('cut kit options: Laser-cut parts: stock names "acrylic|3.00", which no checked sheet part uses — the kit\'s groups are "birch plywood|3.00"');
   });
 
   test("sets multiply every cut quantity; a printed file keeps its name and lists the count", async () => {
@@ -324,7 +324,7 @@ describe("download options", () => {
 
   test("a kerf that closes a slot names the piece", async () => {
     const r = await kit(slotted(0.4), { options: { kerf: 0.5 } });
-    expect(r.error).toMatch(/^cut kit options: kerf 0\.50 mm closes a (?:[0-9.]+ mm )?slot in "Slotted" — widen it or lower kerf$/);
+    expect(r.error).toMatch(/^cut kit options: Laser-cut parts: kerf 0\.50 mm closes a (?:[0-9.]+ mm )?slot in "Slotted" — widen it or lower kerf$/);
   });
 
   test("3MF prints are one real 3MF package", async () => {
@@ -370,7 +370,7 @@ describe("caps", () => {
         [n, sheetPart({ ...ply, material: "birch plywood", label: n, profile: (kk) => kk.shape2d(rect(14, 14)) })])),
     };
     const r = await kit(tiles, { options: { sets: 17, margin: 2.5, spacing: 1, stock: [{ group: "*", size: [20, 20] }] } });
-    expect(r.error).toBe("cut kit options: birch plywood 3 mm needs 51 sheets — at most 50 per material; use larger stock or fewer sets");
+    expect(r.error).toBe("cut kit options: Laser-cut parts: birch plywood 3 mm needs 51 sheets — at most 50 per material; use larger stock or fewer sets");
   });
 });
 
@@ -386,7 +386,7 @@ describe("more than one stock group", () => {
 
   test("a group with neither its own stock entry nor a \"*\" default is refused, never defaulted", async () => {
     const r = await kit(two, { options: { stock: [{ group: "birch plywood|3.00", size: [200, 200] }] } });
-    expect(r.error).toBe('cut kit options: no stock size for "acrylic|3.00" (Acrylic 3 mm) — add a stock entry for it or a "*" default');
+    expect(r.error).toBe('cut kit options: Laser-cut parts: no stock size for "acrylic|3.00" (Acrylic 3 mm) — add a stock entry for it or a "*" default');
     expect(r.phases.some((ph) => ph.startsWith("building"))).toBe(false);
   });
 

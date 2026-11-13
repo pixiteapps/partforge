@@ -137,7 +137,33 @@ describe("laser and routed parts in one kit", () => {
 
   test("a section naming none of its own parts is refused", async () => {
     const r = await refusal(shared, { sections: { laser: { parts: ["plinth"] } } });
-    expect(r.message).toBe("cut kit options: none of the checked parts is a laser-cut part");
+    expect(r.message).toBe("cut kit options: Laser-cut parts: none of the checked parts is a laser-cut part");
+  });
+
+  // Every options error raised inside a section names it, so a host can send the person
+  // back to that section's settings — even when two sections share one stock group.
+  test("only the CNC section's stock is too small: the error names that section", async () => {
+    const r = await refusal(shared, { sections: { laser: { parts: both },
+      "cnc-router": { parts: both, options: { stock: [{ group: "*", size: [10, 10] }] } } } });
+    expect(r.message).toBe(
+      "cut kit options: CNC-routed parts: a 10 × 10 mm sheet has no room inside a 5 mm margin on every side (walnut 18 mm) — lower margin or use larger stock");
+    expect(r.phases).toEqual([]);
+  });
+
+  test("an error raised while a section builds names it too", async () => {
+    const r = await refusal(shared, { sections: { "cnc-router": { parts: both },
+      laser: { parts: both, options: { stock: [{ group: "*", size: [30, 30] }] } } } });
+    expect(r.message).toMatch(/^cut kit options: Laser-cut parts: stock too small — "Lid" is 40\.0 × 40\.0 mm;/);
+  });
+
+  test("a stock entry naming no group in the section names the section", async () => {
+    const r = await refusal(shared, { sections: { laser: { parts: both, options: { stock: [{ group: "acrylic|3.00", size: [300, 300] }] } } } });
+    expect(r.message).toMatch(/^cut kit options: Laser-cut parts: stock names "acrylic\|3\.00"/);
+  });
+
+  test("an error that already names its section is not named twice", async () => {
+    const r = await refusal(shared, { sections: { laser: { parts: both, options: { kerf: 2 } } } });
+    expect(r.message).toBe("cut kit options: Laser-cut parts: kerf must be a number from 0 to 0.5 mm, got 2");
   });
 });
 
@@ -182,7 +208,7 @@ describe("everything is checked before anything is built", () => {
 
   test("a later section's missing parts stop an earlier section's build", async () => {
     const r = await refusal(boardFixture, { sections: { laser: { parts: ["lid"] }, "cnc-router": { parts: ["lid"] } } });
-    expect(r.message).toBe("cut kit options: none of the checked parts is a CNC-routed part");
+    expect(r.message).toBe("cut kit options: CNC-routed parts: none of the checked parts is a CNC-routed part");
     expect(r.phases).toEqual([]);
   });
 });

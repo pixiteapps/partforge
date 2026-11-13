@@ -20,6 +20,30 @@ import { collectControls, isClearance } from "./controls.js";
 
 const fail = (message) => new Error(`${KIT_OPTIONS_ERROR} ${message}`);
 
+// An options error raised inside a section names that section — `cut kit options:
+// <Section label>: <rest>` — so a host can send the person back to its settings. The
+// writers below the kit (resolveStock, layout.js, the cut section's own checks) do not
+// know which section they serve, so the label is put in here, once: the error keeps its
+// object and every other word, and one that already names its section is left alone.
+// Errors about sets or the request as a whole are raised outside every section and keep
+// the bare prefix; any other error passes through untouched.
+function nameSection(id, err) {
+  const label = SECTION_LABELS[id];
+  const head = `${KIT_OPTIONS_ERROR} `;
+  if (!label || !(err instanceof Error) || !err.message.startsWith(head)) return err;
+  const rest = err.message.slice(head.length);
+  if (!rest.startsWith(`${label}:`)) err.message = `${head}${label}: ${rest}`;
+  return err;
+}
+function inSection(id, run) {
+  try {
+    const out = run();
+    return out instanceof Promise ? out.catch((err) => { throw nameSection(id, err); }) : out;
+  } catch (err) {
+    throw nameSection(id, err);
+  }
+}
+
 // The request's sections in build order — cut sections first, in the process registry's
 // order, then 3D — each with its options checked and its part list read. An unknown
 // section id is refused by validateSectionOptions.
@@ -27,7 +51,7 @@ function readSections(request) {
   if (!isPlainObject(request) || !isPlainObject(request.sections)) throw fail("the kit request needs a sections object");
   const read = new Map();
   for (const [id, section] of Object.entries(request.sections)) {
-    const options = validateSectionOptions(id, isPlainObject(section) ? section.options : undefined);
+    const options = inSection(id, () => validateSectionOptions(id, isPlainObject(section) ? section.options : undefined));
     if (!isPlainObject(section) || !Array.isArray(section.parts) || !section.parts.every((n) => typeof n === "string"))
       throw fail(`${SECTION_LABELS[id]}: parts must be a list of part names`);
     read.set(id, { id, parts: section.parts, options });
@@ -50,12 +74,12 @@ export async function buildKit(ctx, request) {
   // section's options, sets, each section's parts, piece counts and stock.
   const sections = readSections(request);
   const sets = validateSets(request.sets);
-  const plans = sections.map(({ id, parts, options }) => {
+  const plans = sections.map(({ id, parts, options }) => inSection(id, () => {
     const names = ctx.selectedFrom(parts);
     return id === "3d"
       ? { id, plan: prepareModelSection(names, options) }
       : { id, plan: prepareCutSection(ctx, id, names, options, sets) };
-  });
+  }));
 
   const { part, p } = ctx;
   const controls = collectControls(part.parameters);
@@ -63,8 +87,8 @@ export async function buildKit(ctx, request) {
   const cut = [];
   let model = null;
   for (const { id, plan } of plans) {
-    if (id === "3d") model = await buildModelSection(ctx, plan, { quantity: anyCut ? sets : 1 });
-    else cut.push(await buildCutSection({ ...ctx, controls }, plan));
+    if (id === "3d") model = await inSection(id, () => buildModelSection(ctx, plan, { quantity: anyCut ? sets : 1 }));
+    else cut.push(await inSection(id, () => buildCutSection({ ...ctx, controls }, plan)));
   }
 
   const readme = renderReadme({
