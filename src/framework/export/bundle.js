@@ -2,12 +2,12 @@
 // one release as a wrapper: it maps the old options onto a per-section kit request,
 // builds the kit (export/kit/build.js) and zips its entries.
 //
-// The mapping: each checked sheet part goes to its own process's section, with the
+// The mapping: each checked sheet part goes to its own process's cut section, with the
 // layout options (stock, margin, spacing) shared; `destination: "cnc-router"` gives laser
 // parts a cutting service's files (cut-only DXF, -marks.dxf, reference sheets), as the
-// old single destination did; every other checked part goes to the 3D section in
-// `printFormat`. A stock entry naming a group only the other section has is passed to
-// that section alone.
+// old single destination did; every other checked part — a sheet part whose process has
+// no cut section included — goes to the 3D section in `printFormat`. A stock entry
+// naming a group only the other section has is passed to that section alone.
 //
 // jobs.js loads this module LAZILY, on the first export-bundle job (`loadBundle`), never
 // at worker boot (test/worker-layering.test.js). And nothing here may reach ./oracle/*
@@ -17,6 +17,7 @@ import { isSheetPart, sheetMeta } from "../sheet/constants.js";
 import { selectExportable } from "../export-select.js";
 import { validateKitOptions, KIT_OPTIONS_ERROR } from "./formats.js";
 import { buildKit } from "./kit/build.js";
+import { cutSectionIds } from "./kit/options.js";
 
 // One export-bundle job's kit. `names` is the job's selected() — exportable, enabled, in
 // definition order — and `posed`/`label`/`exportName` are jobs.js's own, so the kit's
@@ -26,8 +27,12 @@ export async function buildBundle({ kernel, part, msg, p, d, posed, label, expor
   // not wait behind a build (spec D.3). An absent options object means every default.
   const o = validateKitOptions(msg.options ?? {});
   if (names.length === 0) throw new Error("no exportable parts selected");
-  const sheetNames = names.filter((name) => isSheetPart(part.parts[name]));
-  const printNames = names.filter((name) => !isSheetPart(part.parts[name]));
+  // A sheet part goes to its process's cut section; one whose process has no cut section
+  // is a 3D part like any other (export/kit/describe.js lists it the same way).
+  const cutIds = cutSectionIds();
+  const isCut = (name) => isSheetPart(part.parts[name]) && cutIds.includes(part.parts[name].sheet.process);
+  const sheetNames = names.filter(isCut);
+  const printNames = names.filter((name) => !isCut(name));
   if (sheetNames.length === 0) {
     throw new Error(`${KIT_OPTIONS_ERROR} none of the checked parts is a sheet part — check a sheet part or export STL/3MF instead`);
   }

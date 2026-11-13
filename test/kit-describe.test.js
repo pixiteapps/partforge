@@ -74,3 +74,16 @@ test("a laser part whose stock cannot be evaluated is still a laser part: listed
   expect(left).toEqual({ name: "left", label: "Side (L)", default: true });
   expect(laser.options.stock.groups).toEqual([{ group: "birch plywood|3.00", label: "Birch Plywood 3 mm" }]);
 });
+
+test("a sheet part whose process has no cut section is a 3D part: ticked in 3D, in no cut section", () => {
+  const plasma = {
+    ...laserFixture,
+    parts: { ...laserFixture.parts, left: { ...laserFixture.parts.left, sheet: { ...laserFixture.parts.left.sheet, process: "plasma" } } },
+  };
+  const kit = describeKitRows(plasma, {});
+  const three = kit.sections.find((s) => s.id === "3d");
+  expect(three.parts.find((r) => r.name === "left").default).toBe(true);
+  expect(three.parts.find((r) => r.name === "right").default).toBe(false);
+  expect(kit.sections.map((s) => s.id)).toEqual(["3d", "laser"]);
+  expect(kit.sections[1].parts.map((r) => r.name)).not.toContain("left");
+});

@@ -19,14 +19,20 @@ import { SECTION_LABELS, cutSectionIds, sectionOptionSchema } from "./options.js
 // from whether its stock evaluates: a part whose material or thickness cannot be read at
 // these params has no `sheet` and no stock group, but is still listed in its cut section
 // (and off in 3D), so the cut section's own named error reaches the person at download.
+// A sheet part whose process has no cut section is a 3D part like any other: on in 3D,
+// in no cut section.
 export function describeKitRows(part, params) {
   const rows = exportableRows(part, params);
-  const declared = (row) => (isSheetPart(part.parts[row.name]) ? part.parts[row.name].sheet.process : null);
+  const cutIds = cutSectionIds();
+  const declared = (row) => {
+    const sp = part.parts[row.name];
+    return isSheetPart(sp) && cutIds.includes(sp.sheet.process) ? sp.sheet.process : null;
+  };
   const sections = [{
     id: "3d", label: SECTION_LABELS["3d"], options: sectionOptionSchema("3d"),
     parts: rows.map((row) => ({ ...row, default: declared(row) === null })),
   }];
-  for (const id of cutSectionIds()) {
+  for (const id of cutIds) {
     const own = rows.filter((row) => declared(row) === id);
     if (own.length === 0) continue;
     const groups = new Map();
