@@ -246,3 +246,102 @@ describe("createCelGround", () => {
     expect(Math.asin(d.y) * 180 / Math.PI).toBeGreaterThanOrEqual(CEL.ground.minWorldElevationDeg - 1e-6);
   });
 });
+
+// The ground's shadow map re-renders only when what it is rendered from
+// changes (the viewer turns three's per-frame update off in cel). The live
+// light is world-fixed, so a camera move must never count.
+describe("createCelGround shadowChanged", () => {
+  function setup() {
+    const g = createCelGround({ mapSize: 1024 });
+    const scene = new THREE.Scene(), pivot = new THREE.Group();
+    scene.add(pivot, g.light, g.light.target, g.plane);
+    const a = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+    const b = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 5));
+    b.position.x = 12;
+    pivot.add(a, b);
+    g.fit(new THREE.Box3().setFromObject(pivot));
+    g.aimWorld(celLightWorld());
+    g.setCasters([a, b]);
+    const cam = new THREE.PerspectiveCamera(45, 1, 1, 1000);
+    cam.position.set(50, 40, 50); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+    // the first frame always renders; after it, an untouched frame does not
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    return { g, scene, pivot, a, b, cam };
+  }
+  it("an orbit, pan or zoom (camera only, world-fixed light re-aimed) needs no update", () => {
+    const { g, cam } = setup();
+    for (let i = 0; i < 5; i++) {
+      cam.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.3); cam.position.multiplyScalar(0.9);
+      cam.lookAt(1, 0, 2); cam.updateMatrixWorld();
+      g.aimWorld(celLightWorld());
+      expect(g.shadowChanged()).toBe(false);
+    }
+  });
+  it("a pose change (a caster's matrix) needs an update", () => {
+    const { g, b } = setup();
+    b.matrixAutoUpdate = false;
+    b.matrix.makeRotationY(0.2); b.matrixWorldNeedsUpdate = true;
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+  it("a parent's move needs an update", () => {
+    const { g, pivot } = setup();
+    pivot.position.y = 3;
+    expect(g.shadowChanged()).toBe(true);
+  });
+  it("new geometry, or geometry edited in place, needs an update", () => {
+    const { g, a } = setup();
+    a.geometry = new THREE.BoxGeometry(8, 8, 8);
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    a.geometry.attributes.position.needsUpdate = true;
+    expect(g.shadowChanged()).toBe(true);
+  });
+  it("a caster set or visibility change needs an update", () => {
+    const { g, a, b, pivot } = setup();
+    g.setCasters([a]);
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    g.setCasters([a, b]);
+    expect(g.shadowChanged()).toBe(true);
+    pivot.visible = false;
+    expect(g.shadowChanged()).toBe(true);
+    pivot.visible = true;
+    expect(g.shadowChanged()).toBe(true);
+  });
+  it("a refit, a map-size switch or a disposed map needs an update", () => {
+    const { g, pivot } = setup();
+    pivot.scale.setScalar(1); // untouched
+    g.fit(new THREE.Box3(new THREE.Vector3(-20, 0, -20), new THREE.Vector3(20, 15, 20)));
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    g.setMapSize(512);
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+  it("the cutaway's plane turning on, moving or turning off needs an update", () => {
+    const { g } = setup();
+    const p = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+    expect(g.shadowChanged({ clipPlane: p })).toBe(true);
+    expect(g.shadowChanged({ clipPlane: p })).toBe(false);
+    p.constant = 2;
+    expect(g.shadowChanged({ clipPlane: p })).toBe(true);
+    expect(g.shadowChanged({ clipPlane: null })).toBe(true);
+  });
+  it("a capture always re-renders and leaves the live map to re-render after it", () => {
+    const { g, cam } = setup();
+    g.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
+    expect(g.shadowChanged({ capture: true })).toBe(true);
+    expect(g.shadowChanged({ capture: true })).toBe(true);
+    g.aimWorld(celLightWorld());
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+  it("invalidate forces the next live frame to re-render", () => {
+    const { g } = setup();
+    g.invalidate();
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+});

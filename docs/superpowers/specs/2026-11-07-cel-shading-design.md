@@ -101,10 +101,12 @@ line. The constants below are the ones the user dialled in on real parts.
    canvas, `celGroundLightWorld`; in view space in a capture), so the shadow
    always falls away from the lit side; a ground light in the other frame
    would put the shadow under the lit side at some angles, which reads wrong.
-   The shadow map still re-renders every frame (three's default), so the
-   moving / settled map-size schedule (Performance, below) stays; skipping
-   the re-render on camera-only frames, now that the live shadow holds
-   still, is a follow-up. *Reviewer's question; my call.* At steep cameras
+   Since 0.191.3 the shadow map re-renders only when what it is rendered
+   from changes (`shadowChanged` in cel-ground.js: casters, their
+   visibility, geometry or pose, the light's frame, the map size, the
+   cutaway's plane) and on every capture, so a camera-only frame reuses it;
+   the moving / settled map-size schedule (Performance, below) follows
+   caster motion only. *Reviewer's question; my call.* At steep cameras
    the light's WORLD elevation is clamped to at least 40° (a top view would
    otherwise drop a camera-relative light to ~24° and throw a tall part's
    shadow off the plane); from below the floor the plane is single-sided and
