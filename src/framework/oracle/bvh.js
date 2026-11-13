@@ -655,14 +655,31 @@ export function insideShared(other, w, mOther) {
   ];
   // a core index casts natively and keeps its triangles in its JS twin (the same ones)
   const V = (other.vertices ?? other.jsIndex().vertices);
-  // A point no direction can decide (every one grazes: it sits on the surface, or on the
-  // line of an edge each way) reads as outside — never a guess at inside.
-  let n = -1;
   for (const dir of INSIDE_DIRS) {
-    n = crossings(other, V, p, dir);
-    if (n >= 0) break;
+    const n = crossings(other, V, p, dir);
+    if (n >= 0) return n % 2 === 1;
   }
-  return n > 0 && n % 2 === 1;
+  // Every direction grazed (the point is on the surface, or each cast runs through an edge or
+  // a corner): the winding number decides.
+  return Math.abs(windingNumber(V, p)) > 0.5;
+}
+
+// The generalized winding number of the triangles in V about p: the sum of their signed solid
+// angles seen from p (Van Oosterom–Strackee), over 4π. About ±1 inside a closed mesh (the sign
+// is its winding), 0 outside, about ±0.5 on its surface — which reads as outside, as a resting
+// touch must. O(triangles), so only for the point no ray can decide.
+function windingNumber(V, p) {
+  let sum = 0;
+  for (let o = 0; o < V.length; o += 9) {
+    const ax = V[o] - p[0], ay = V[o + 1] - p[1], az = V[o + 2] - p[2];
+    const bx = V[o + 3] - p[0], by = V[o + 4] - p[1], bz = V[o + 5] - p[2];
+    const cx = V[o + 6] - p[0], cy = V[o + 7] - p[1], cz = V[o + 8] - p[2];
+    const la = Math.sqrt(ax * ax + ay * ay + az * az), lb = Math.sqrt(bx * bx + by * by + bz * bz), lc = Math.sqrt(cx * cx + cy * cy + cz * cz);
+    const det = ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    const den = la * lb * lc + (ax * bx + ay * by + az * bz) * lc + (ax * cx + ay * cy + az * cz) * lb + (bx * cx + by * cy + bz * cz) * la;
+    sum += 2 * Math.atan2(det, den);
+  }
+  return sum / (4 * Math.PI);
 }
 
 // The BVH for `mesh`, memoized in a CALLER-OWNED Map keyed on the mesh object.

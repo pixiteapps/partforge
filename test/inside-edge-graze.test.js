@@ -46,12 +46,47 @@ describe("insideShared: a ray along an edge line", () => {
     expect(insideShared(index, [-5, 0, 0], I)).toBe(true);
   });
 
-  it("when every direction grazes it answers outside", () => {
+  it("when every direction grazes, an open sliver far off reads outside (winding number ~0)", () => {
     // every cast reports one hit on a tiny triangle at t 5 — on its corner for +X, and off it
     // for the oblique ones (which miss it), read as a graze just the same: no direction decides
     const tri = [[0, 0, 0], [0, 0, 1e-3], [0, 1e-3, 0]];
     const index = fakeIndex(tri, (p, d, tMin) => (tMin < 5 ? { t: 5, tri: 0 } : null));
     expect(insideShared(index, [-5, 0, 0], I)).toBe(false);
+  });
+
+  // A convex polytope with a vertex pair at ±10 along each of the inside test's four
+  // directions: from its centre every cast meets a vertex, so no direction decides and the
+  // winding number does (review of 0.191.2).
+  const DIRS = [[1, 0, 0], [0.5773, 0.3217, 0.7489], [-0.2676, 0.8231, -0.5005], [0.1393, -0.4421, 0.8860]];
+  function dirPolytope() {
+    const P = [];
+    for (const d of DIRS) { const l = Math.hypot(...d); P.push(d.map((x) => (10 * x) / l), d.map((x) => (-10 * x) / l)); }
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const dt = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const tris = [];
+    for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) for (let m = j + 1; m < 8; m++) {
+      const n = cr(sub(P[j], P[i]), sub(P[m], P[i]));
+      const side = P.map((q, x) => ([i, j, m].includes(x) ? 0 : dt(n, sub(q, P[i]))));
+      if (side.every((x) => x <= 1e-9)) tris.push(i, j, m); else if (side.every((x) => x >= -1e-9)) tris.push(i, m, j);
+    }
+    return { positions: new Float64Array(P.flat()), indices: new Uint32Array(tris), P };
+  }
+
+  it("a point every direction grazes is decided by the winding number", () => {
+    const mesh = dirPolytope();
+    expect(mesh.indices.length / 3).toBe(12);
+    const ix = buildBVH(mesh);
+    for (const p of [[0, 0, 0], [1e-9, 1e-9, -1e-9], [1e-7, 1e-7, -1e-7]]) expect(insideShared(ix, p, I)).toBe(true);
+    // the same mesh wound the other way round reads the same
+    const flipped = new Uint32Array(mesh.indices);
+    for (let t = 0; t < flipped.length; t += 3) [flipped[t + 1], flipped[t + 2]] = [flipped[t + 2], flipped[t + 1]];
+    expect(insideShared(buildBVH({ positions: mesh.positions, indices: flipped }), [0, 0, 0], I)).toBe(true);
+    // outside, on the line through a vertex pair (+X: through both ±10 X vertices)
+    expect(insideShared(ix, [-15, 0, 0], I)).toBe(false);
+    const d = mesh.P[2].map((x) => x * 1.5); // past the vertex at +10 along the second direction
+    expect(insideShared(ix, d, I)).toBe(false);
+    expect(insideShared(ix, mesh.P[3].map((x) => x * 1.5), I)).toBe(false);
   });
 
   it("a point outside the hinge base on a bore facet's edge line reads outside", () => {
