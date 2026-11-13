@@ -30,8 +30,12 @@ const differs = (a, b) => typeof a !== typeof b || !Object.is(a, b);
 export function nudgeAttribution(
   part,
   p,
-  { steps = new Map(), budgetMs = 10, maxCalls = 64, now = () => performance.now() } = {},
+  { steps = new Map(), budgetMs = 10, totalMs = 40, maxCalls = 64, now = () => performance.now() } = {},
 ) {
+  // `budgetMs` bounds the first derive call (a slower one skips the pass);
+  // `totalMs` bounds the whole pass, which runs once per generate job on the
+  // worker's build path. Past it the inputs not yet nudged count as inputs to
+  // every output, as a non-numeric one does.
   if (!part || typeof part.derive !== "function") return null;
   const seen = new Set();
   const t0 = now();
@@ -61,6 +65,10 @@ export function nudgeAttribution(
       addAll(key);
       continue;
     }
+    if (now() - t0 > totalMs) {
+      addAll(key);
+      continue;
+    }
     let out;
     try {
       out = leaves(resolveDerived(part, { ...p, [key]: next }), "", new Map());
@@ -84,6 +92,30 @@ export function nudgeAttribution(
       for (const x of set) union.add(x);
     }
   }
-  const depsForPath = (path) => byPrefix.get(path) ?? null;
+  // Every path the derive's output holds: its leaves and their prefixes.
+  const known = new Set();
+  for (const leaf of base.keys()) {
+    let end = leaf.length;
+    while (end > 0 && !known.has(leaf.slice(0, end))) {
+      known.add(leaf.slice(0, end));
+      end = leaf.lastIndexOf(".", end - 1);
+    }
+  }
+  // A path the output holds answers for itself: its inputs, or none when no
+  // nudge moved it (a constant). A path it does not hold - `pts.length`,
+  // `pts.map`, a member of a leaf object - answers as its nearest held parent,
+  // so iterating a derived array ranks by that array's inputs. Null only when
+  // no part of the path is in the output (the recorded attribution stands in).
+  const NONE = new Set();
+  const depsForPath = (path) => {
+    for (let q = path; ; ) {
+      const hit = byPrefix.get(q);
+      if (hit) return hit;
+      if (known.has(q)) return NONE;
+      const cut = q.lastIndexOf(".");
+      if (cut < 0) return null;
+      q = q.slice(0, cut);
+    }
+  };
   return { depsOfPath, inputs, depsForPath };
 }

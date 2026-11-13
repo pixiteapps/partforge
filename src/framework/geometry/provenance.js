@@ -64,7 +64,9 @@ export function createProvenance({ log, expand }) {
     if (!entries) byId.set(id, (entries = new Map()));
     entries.set(key, { mat: mat ?? IDENTITY12, key });
   };
-  const recordOf = (id, mat) => table.get(runKey(id, mat)) ?? [];
+  // Exact key first; else the tolerant match originsFor uses, since a restamp's
+  // runs carry the kernel's float32 transform and its operand's a structural one.
+  const recordOf = (id, mat) => table.get(runKey(id, mat)) ?? lookup(id, mat ?? IDENTITY12) ?? [];
 
   function boundary(op, receiver, args, run) {
     const result = run();

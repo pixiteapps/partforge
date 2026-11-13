@@ -121,7 +121,11 @@ heap for the export. The next display build after an export is cold.
 is wrapped by `provenance.js`'s `provenanceKernel`: while a recorder is active, `toMesh`
 adds `originIds` (a `Uint16Array`, one per triangle, 0 = none, else a 1-based index) and
 `origins` (the param keys each face run was built from, newest read first). With none
-active `toMesh` is unchanged, and `toSTL` never carries them.
+active `toMesh` is unchanged, and `toSTL` never carries them. The records are keyed by
+run (original ID and transform), and a cached op returns the solid its first run made, so
+every op that mints an original ID must be a cache node too: `box`, `sphere` and
+`cylinder` are cached for that reason, cheap as they are. An uncached minting op gets a
+fresh ID each build and orphans its records behind the first cached op downstream.
 `setCacheBudget(bytes)` bounds the bytes the cache's retained solids may hold (the
 Manifold backend estimates each from its triangle and vertex counts); `trimCache()`
 then drops whole partitions, least recently built first, until they fit. A trim frees

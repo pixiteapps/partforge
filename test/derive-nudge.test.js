@@ -46,9 +46,21 @@ test("a large derive answers path lookups from an index, not a scan of every lea
   expect([...n.depsForPath("pts")].sort()).toEqual(["a", "b"]);
   expect([...n.depsForPath("pts.3")].sort()).toEqual(["a", "b"]);
   expect([...n.depsForPath("pts.3.0")]).toEqual(["a"]);
-  expect(n.depsForPath("pts.3.2")).toBeNull();
+  expect([...n.depsForPath("pts.3.2")]).toEqual([]); // a constant leaf: no input moves it
+  expect([...n.depsForPath("pts.length")].sort()).toEqual(["a", "b"]); // not in the output: its parent answers
+  expect([...n.depsForPath("pts.3.0.toFixed")]).toEqual(["a"]);
   expect(n.depsForPath("pt")).toBeNull(); // a prefix of a key, not of a path
   const t0 = performance.now();
   for (let r = 0; r < 20; r++) for (let i = 0; i < 500; i++) { n.depsForPath(`pts.${i}`); n.depsForPath(`pts.${i}.1`); n.depsForPath("w"); }
   expect(performance.now() - t0).toBeLessThan(250);
+});
+
+test("the whole pass is bounded: past totalMs the remaining inputs count for everything", () => {
+  let clock = 0;
+  const part = { derive: (p) => { clock += 4; return { a: p.x, b: p.y, c: p.z }; } };
+  const n = nudgeAttribution(part, { x: 1, y: 2, z: 3 }, { budgetMs: 10, totalMs: 6, now: () => clock });
+  // base call: 4 ms. x is nudged (clock 8, past the 6 ms total); y and z are not.
+  expect([...n.depsForPath("a")].sort()).toEqual(["x", "y", "z"]);
+  expect([...n.depsForPath("b")].sort()).toEqual(["y", "z"]);
+  expect(clock).toBe(8);
 });

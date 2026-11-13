@@ -29,7 +29,10 @@ test("changing a late-stage param resumes — union hits, only the cut misses", 
   k.beginSubPart("y"); barrel(8, 10, 16, 2, 1.7).toMesh(); k.endSubPart(); k.cleanup();
   k.resetCacheStats();
   k.beginSubPart("y"); barrel(8, 10, 16, 2, 2.1).toMesh(); k.endSubPart(); k.cleanup(); // bore changed only
-  expect(k.cacheStats()).toEqual({ hits: 1, misses: 1 }); // union hit, cut miss
+  // The primitives are cache nodes too (their run ids must outlive a build for face
+  // provenance): the two union cylinders and the union hit; the new bore cylinder
+  // and the cut miss.
+  expect(k.cacheStats()).toEqual({ hits: 3, misses: 2 });
 });
 
 test("a cached-resume mesh equals a cold-built mesh", async () => {

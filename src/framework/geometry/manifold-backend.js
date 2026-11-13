@@ -688,7 +688,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       // transform. This is load-bearing rather than an optimization: the common
       // authoring idiom labels each piece AFTER positioning it, which would give every
       // copy its own canonical base and stop the hoist below from ever firing.
-      if (canon.chain.length) return replay(wrap(canon.m, canon.hash).label(name), canon.chain);
+      if (canon.chain.length) {
+        // The replayed result is a fresh wrapper over a transformed Manifold: hand
+        // it the base label's id map, or provenance would see runs with new ids and
+        // no way back to the records made under the old ones.
+        const base = wrap(canon.m, canon.hash).label(name);
+        const out = replay(base, canon.chain);
+        if (base._idMap && out !== base) { idMaps.set(out._m, base._idMap); out._idMap = base._idMap; }
+        return out;
+      }
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
         // Re-stamp every distinct originalID 1:1 onto fresh reserved ids. Folding
@@ -768,9 +776,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
 
   const kernel = finishKernel({
+    // The primitives are cache nodes, cheap as they are: a cached op downstream (a
+    // boolean, a label) hands back the solid its first run made, whose runs carry
+    // that run's originalIDs. A primitive re-minted per build would get a fresh id
+    // each time and every provenance record made before the cached op would be
+    // orphaned from the second build on. Hash-consed, equal args are one solid
+    // with one id, for as long as anything built from it is retained.
     cylinder: (rb, rt, h2, { center = false } = {}) => {
       const n = segsAt(Math.max(rb, rt)); // a cone is sized by its wider end
-      return wrap(T(Manifold.cylinder(h2, rb, rt, n, center)), h("cylinder", rb, rt, h2, center, n));
+      return cached(h("cylinder", rb, rt, h2, center, n), () => T(Manifold.cylinder(h2, rb, rt, n, center)));
     },
     // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
     // node — its internal cylinders/cut are never retained. The template for
@@ -799,11 +813,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Sized by the double-curvature rule (circle-segs.js: a sphere spends the per-circle
     // count squared), on both tiers — the hash carries the count, so a sphere built at
     // one tier never masquerades as the other's in the cache.
-    sphere: (r) => wrap(T(Manifold.sphere(r, dcAt(r))), h("sphere", r, dcAt(r))),
-    box: (min, max) => {
+    sphere: (r) => cached(h("sphere", r, dcAt(r)), () => T(Manifold.sphere(r, dcAt(r)))),
+    box: (min, max) => cached(h("box", min, max), () => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
-      return wrap(T(cube.translate(min)), h("box", min, max), undefined, { runs: runsThrough(cube, translateAffine(min)) });
-    },
+      return noteRuns(T(cube.translate(min)), runsThrough(cube, translateAffine(min)));
+    }),
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
         // Even/odd like `extrude` below and like the OCCT prism, so the outline's
