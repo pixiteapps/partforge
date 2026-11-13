@@ -586,6 +586,10 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // `runs` (a thunk or an array) is this solid's run lineage, when the op knows it
   // structurally; `idMap` (old originalID -> new) marks a restamping op's result.
   // Both are recorded against `m` (see `lineage` above), so re-wraps share them.
+  // A rigid transform moves runs without renaming them, so its result inherits
+  // its operand's idMap: label's replay below hands the provenance recorder the
+  // TRANSFORMED labelled solid, and only the idMap tells it which old id each
+  // fresh id came from (without it, a label after a translate kept no records).
   const wrap = (m, hash, canon = { m, hash, chain: [] }, { runs, idMap } = {}) => {
     if (runs) noteRuns(m, runs);
     if (idMap) idMaps.set(m, idMap);
@@ -719,7 +723,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           runs = dedupeRuns(Array.from(g0.runOriginalID, (oid, r) =>
             ({ id: idMap.get(oid), mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null })));
           g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o2) => idMap.get(o2));
-          o = noteRuns(T(new Manifold(g0)), runs);
+          // The constructor re-welds, and that can pinch a latent sliver off as
+          // fresh femto-debris (the fillet restamp above sweeps for the same reason).
+          o = noteRuns(dropDebris(T(new Manifold(g0))), runs);
         } finally {
           g0.delete?.();
         }
@@ -746,7 +752,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     isEmpty: () => m.isEmpty(),
     translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
       { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] },
-      { runs: runsThrough(m, translateAffine(v)) }),
+      { runs: runsThrough(m, translateAffine(v)), idMap: idMaps.get(m) }),
     rotate: (deg, center, axis) => {
       const nz = (axis[0] !== 0) + (axis[1] !== 0) + (axis[2] !== 0);
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
@@ -758,15 +764,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const turn = nz <= 1 ? deg * Math.hypot(axis[0], axis[1], axis[2]) : deg;
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
         { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] },
-        { runs: runsThrough(m, rotateAffine(turn, center, axis)) });
+        { runs: runsThrough(m, rotateAffine(turn, center, axis)), idMap: idMaps.get(m) });
     },
     mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane), undefined,
-      { runs: runsThrough(m, mirrorAffine(PLANE_NORMAL[plane])) }),
+      { runs: runsThrough(m, mirrorAffine(PLANE_NORMAL[plane])), idMap: idMaps.get(m) }),
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
       return wrap(T(b.translate(center)), h("scale", hash, factor, center), undefined,
-        { runs: runsThrough(m, scaleAffine(factor, center)) });
+        { runs: runsThrough(m, scaleAffine(factor, center)), idMap: idMaps.get(m) });
     },
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),

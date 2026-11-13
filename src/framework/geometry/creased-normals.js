@@ -197,6 +197,28 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
       if (arr) arr.push(t); else incident.set(cv, [t]);
     }
 
+  // A thin triangle is noise only when its facet disagrees with its surface. A
+  // flat cap's triangulation makes thin triangles of its own — three consecutive
+  // rim vertices (sagitta-tall), a long fan from the rim to a bore — and gating
+  // those dropped a rim segment or two from nearly every cylinder top. A thin
+  // triangle lying within COPLANAR_ANGLE of a full-size triangle of its own
+  // surface at one of its corners carries a true normal, so it keeps its lines
+  // (and its own shading: see the micro-ledge rule below);
+  // the boolean slivers the gate is for tilt 18-90° off their neighbours (or have
+  // no normal at all) and stay gated. Blend bands are left out: a band curves, so
+  // a sliver folded across it still lies along SOME band facet at a corner, and
+  // its fan slivers are what the gate was written for.
+  const trueThin = new Uint8Array(nTri);
+  for (let t = 0; t < nTri; t++) {
+    if (thin[t] >= MIN_FACE || polFor(triOID[t]).boundaryLines) continue;
+    const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2];
+    search: for (let k = 0; k < 3; k++)
+      for (const t2 of incident.get(weld[tris[t * 3 + k]])) {
+        if (thin[t2] < MIN_FACE || triOID[t2] !== triOID[t]) continue;
+        if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz >= COPLANAR_COS) { trueThin[t] = 1; break search; }
+      }
+  }
+
   // Micro-ledges. Where two independently tessellated blend surfaces meet — a
   // corner sphere octant against its edge cylinders, buried a hair on purpose (see
   // mesh-fillet's cornerPatches) — the boolean leaves a step a few µm tall whose
@@ -206,6 +228,13 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
   // own (the line pass drops it for the same reason), so one that touches a blend
   // takes the band's analytic normal at each corner, crease and surface filters
   // notwithstanding.
+  //
+  // Except a `trueThin` triangle (above): a flat face's own fan sliver, lying in
+  // the plane of a full-size triangle of its surface. Where ANOTHER solid's fillet
+  // lands on a flat face, the boolean fans the face around the seam in slivers
+  // ~0.02 mm tall and tens of mm long; as ledges their seam corners took that
+  // fillet's normal, 50-110° off the face, and each sliver carried the error
+  // across the whole face as a streak (cloud feedback #265).
   const ledgeNormal = (v) => {
     let ax = 0, ay = 0, az = 0, any = false;
     for (const t2 of incident.get(weld[v])) {
@@ -222,7 +251,7 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
   for (let t = 0; t < nTri; t++) {
     const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2], oid = triOID[t];
     const sharpCos = cosFor(oid); // per-surface crease threshold
-    const ledge = runEval && thin[t] < MIN_FACE;
+    const ledge = runEval && thin[t] < MIN_FACE && !trueThin[t];
     for (let k = 0; k < 3; k++) {
       const v = tris[t * 3 + k];
       const ln = ledge ? ledgeNormal(v) : null;
@@ -279,27 +308,6 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
       positions[o] = vp[vv]; positions[o + 1] = vp[vv + 1]; positions[o + 2] = vp[vv + 2];
       normals[o] = nx / L; normals[o + 1] = ny / L; normals[o + 2] = nz / L;
     }
-  }
-
-  // A thin triangle is noise only when its facet disagrees with its surface. A
-  // flat cap's triangulation makes thin triangles of its own — three consecutive
-  // rim vertices (sagitta-tall), a long fan from the rim to a bore — and gating
-  // those dropped a rim segment or two from nearly every cylinder top. A thin
-  // triangle lying within COPLANAR_ANGLE of a full-size triangle of its own
-  // surface at one of its corners carries a true normal, so it keeps its lines;
-  // the boolean slivers the gate is for tilt 18-90° off their neighbours (or have
-  // no normal at all) and stay gated. Blend bands are left out: a band curves, so
-  // a sliver folded across it still lies along SOME band facet at a corner, and
-  // its fan slivers are what the gate was written for.
-  const trueThin = new Uint8Array(nTri);
-  for (let t = 0; t < nTri; t++) {
-    if (thin[t] >= MIN_FACE || polFor(triOID[t]).boundaryLines) continue;
-    const fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2];
-    search: for (let k = 0; k < 3; k++)
-      for (const t2 of incident.get(weld[tris[t * 3 + k]])) {
-        if (thin[t2] < MIN_FACE || triOID[t2] !== triOID[t]) continue;
-        if (fn[t2 * 3] * fx + fn[t2 * 3 + 1] * fy + fn[t2 * 3 + 2] * fz >= COPLANAR_COS) { trueThin[t] = 1; break search; }
-      }
   }
 
   // Feature edge segments for CAD-style edge lines: draw a line where the

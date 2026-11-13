@@ -490,16 +490,16 @@ describe("selection popover: controls region", () => {
     expect(c.build.mock.calls[0][1]).toEqual({ subPart: "body", hit: { triIndex: 3 } });
     expect(spot.querySelector(".pf-selection-controls").hidden).toBe(false);
     c.build.mockImplementation(() => null);
-    p.refreshControls();
+    p.open({ subPart: "body", anchor: at, hit: { triIndex: 4 } });
     expect(spot.querySelector(".pf-selection-controls").hidden).toBe(true);
     p.detach();
   });
-  it("disposes on close and on rebuild; the slot is still reported when the region is hidden", () => {
+  it("disposes on close and on reopen; the slot is still reported when the region is hidden", () => {
     const dispose = vi.fn();
     const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls(() => ({ dispose })) });
     const reports = []; p.onSlotChange((r) => reports.push(r));
     p.open({ subPart: "body", anchor: at });
-    p.refreshControls();
+    p.open({ subPart: "body", anchor: at });
     expect(dispose).toHaveBeenCalledTimes(1);
     p.close("dismiss");
     expect(dispose).toHaveBeenCalledTimes(2);

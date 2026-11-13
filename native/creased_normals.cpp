@@ -243,12 +243,31 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
     return true;
   };
 
+  const uint32_t* incStart = s->incStart.data();
+  const uint32_t* incList = s->incList.data();
+  // trueThin: a thin triangle within coplanarCos of a full-size triangle of its
+  // own surface at one of its corners keeps its lines, and is no micro-ledge in
+  // the normals pass below (the JS `trueThin`).
+  // Blend surfaces never do.
+  std::vector<uint8_t> trueThin(nTri, 0);
+  for (uint32_t t = 0; t < nTri; t++) {
+    const Tri& T = tri[t];
+    if (T.thin >= MIN_FACE || pol[T.pol].boundaryLines) continue;
+    const double fx = T.fn[0], fy = T.fn[1], fz = T.fn[2];
+    for (int k = 0; k < 3 && !trueThin[t]; k++) {
+      const uint32_t cv = weld[tris[t * 3 + k]];
+      for (uint32_t i = incStart[cv]; i < incStart[cv + 1]; i++) {
+        const Tri& T2 = tri[incList[i] / 3];
+        if (T2.thin < MIN_FACE || T2.oid != T.oid) continue;
+        if ((double)T2.fn[0] * fx + (double)T2.fn[1] * fy + (double)T2.fn[2] * fz >= coplanarCos) { trueThin[t] = 1; break; }
+      }
+    }
+  }
+
   s->positions.resize((size_t)nTri * 9);
   s->normals.resize((size_t)nTri * 9);
   float* positions = s->positions.data();
   float* normals = s->normals.data();
-  const uint32_t* incStart = s->incStart.data();
-  const uint32_t* incList = s->incList.data();
   // Vertex by vertex: every corner at a canonical vertex reads the same
   // neighbours, so they are gathered once into `nb` (in incidence order) and
   // stay in cache for all of that vertex's corners. Each corner's normal
@@ -269,7 +288,7 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       const double sharpCos = P.creaseCos;
       const uint32_t v = tris[corner];
       const size_t o = (size_t)corner * 3, vv = (size_t)v * np;
-      if (anyEval && T.thin < MIN_FACE) {
+      if (anyEval && T.thin < MIN_FACE && !trueThin[corner / 3]) {
         double ax = 0, ay = 0, az = 0; bool any = false;
         for (uint32_t i = 0; i < d; i++) {
           if (nb[i].thin < MIN_FACE) continue;
@@ -303,24 +322,6 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       if (L == 0 || std::isnan(L)) L = 1;
       positions[o] = vp[vv]; positions[o + 1] = vp[vv + 1]; positions[o + 2] = vp[vv + 2];
       normals[o] = (float)(nx / L); normals[o + 1] = (float)(ny / L); normals[o + 2] = (float)(nz / L);
-    }
-  }
-
-  // trueThin: a thin triangle within coplanarCos of a full-size triangle of its
-  // own surface at one of its corners keeps its lines (the JS `trueThin`).
-  // Blend surfaces never do.
-  std::vector<uint8_t> trueThin(nTri, 0);
-  for (uint32_t t = 0; t < nTri; t++) {
-    const Tri& T = tri[t];
-    if (T.thin >= MIN_FACE || pol[T.pol].boundaryLines) continue;
-    const double fx = T.fn[0], fy = T.fn[1], fz = T.fn[2];
-    for (int k = 0; k < 3 && !trueThin[t]; k++) {
-      const uint32_t cv = weld[tris[t * 3 + k]];
-      for (uint32_t i = incStart[cv]; i < incStart[cv + 1]; i++) {
-        const Tri& T2 = tri[incList[i] / 3];
-        if (T2.thin < MIN_FACE || T2.oid != T.oid) continue;
-        if ((double)T2.fn[0] * fx + (double)T2.fn[1] * fy + (double)T2.fn[2] * fz >= coplanarCos) { trueThin[t] = 1; break; }
-      }
     }
   }
 

@@ -46,6 +46,21 @@ test("a fillet's blend faces carry the radius; a rebuild from cache records the 
   expect(b.origins).toEqual(a.origins);
 });
 
+test("a label after a translate, a rotate or a scale keeps the records (label replays onto the canonical base)", () => {
+  const box = (k, p) => k.box({ min: [0, 0, 0], max: [p.w, p.w, p.h] });
+  const t = buildWith((k, p) => box(k, p).translate([p.x, 0, 0]).label("Body"), { w: 10, h: 4, x: 7 });
+  expect(keysAt(t, faceWithNormal(t, [0, 0, 1]))).toEqual(["x", "h", "w"]);
+  for (const a of [0, 30, 37.3]) {
+    const r = buildWith((k, p) => box(k, p).rotate(p.a, [0, 0, 0], [0, 0, 1]).label("Body"), { w: 10, h: 4, a });
+    expect(keysAt(r, faceWithNormal(r, [0, 0, 1]))).toEqual(["a", "h", "w"]);
+  }
+  const s = buildWith((k, p) => box(k, p).scale(p.s, [0, 0, 0]).label("Body"), { w: 10, h: 4, s: 1.3 });
+  expect(keysAt(s, faceWithNormal(s, [0, 0, 1]))).toEqual(["s", "h", "w"]);
+  // label THEN translate: the translate's read comes first, as for any transform.
+  const lt = buildWith((k, p) => box(k, p).label("Body").translate([p.x, 0, 0]), { w: 10, h: 4, x: 7 });
+  expect(keysAt(lt, faceWithNormal(lt, [0, 0, 1]))).toEqual(["x", "h", "w"]);
+});
+
 test("a spread of the params records nothing; a label keeps the records; no provenance means no fields", () => {
   const m = buildWith((k, p) => { const q = { ...p }; return k.box({ min: [0, 0, 0], max: [q.w, q.w, q.w] }); }, { w: 5 });
   expect(m.originIds).toBeUndefined();

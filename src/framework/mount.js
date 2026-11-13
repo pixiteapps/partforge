@@ -1103,12 +1103,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         panelRef?.revealParams(keys, keys[0]);
         if (!paneShown || !railShown) for (const cb of [...revealListeners]) cb({ keys });
       };
+      let schemaKeys = null; // the schema's control keys in panel order (the schema never changes)
       const spotControls = {
         build(container, { subPart, hit }) {
           let derived = {};
           try { derived = resolveDerived(part, params); } catch { /* derived stays {} */ }
           const faceKeys = faceKeysOf(viewer.getSubOrigins?.(subPart) ?? null, hit);
-          const schemaKeys = controlNodes(buildTree(desugar(part.parameters))).map((n) => n.key);
+          schemaKeys ??= controlNodes(buildTree(desugar(part.parameters))).map((n) => n.key);
           // The piece's keys are a set (sorted); the fallback takes them in the panel's order.
           const pieceSet = new Set(spotPieceKeys.get(subPart) ?? subPartParamKeys(part, view(), params, displayReadsOf, subPart));
           const pieceKeys = [...schemaKeys.filter((k) => pieceSet.has(k)), ...[...pieceSet].filter((k) => !schemaKeys.includes(k))];
@@ -1120,7 +1121,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             try { point = locateHandle(part, params, derived, handle); } catch { /* not located */ }
             if (handleOnPiece(handle, subPart, { point, bounds })) for (const k of handleParamKeys(handle)) excluded.add(k);
           }
-          const relevant = recordedRelevantKeys(part, view(), params, displayReadsOf);
+          // The rail's relevance pass has run for these params (and on every delivery).
+          const relevant = lastRelevant ?? recordedRelevantKeys(part, view(), params, displayReadsOf);
           const drawable = new Set(schemaKeys.filter((k) => relevant === RELEVANT_ALL || relevant.has(k)));
           const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, excluded, drawable });
           if (!keys.length) return null;
@@ -1359,6 +1361,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // so a sub-part's entry is its in-flight job's until the cycle's last reply.
     const dispatched = new Map(); // sub-part -> { view, params } its latest job was sent with
     let updateRelevance = () => {}; // assigned once the panel exists; message handlers call it
+    let lastRelevant = null; // what updateRelevance last computed (every param, view and delivery change)
     const loop = createRegenLoop({
       // A pose drag holds every dispatch until release (see the pose mode block),
       // unless it rebuilds live: then only the sub-parts it made stale, never `owed`
@@ -2008,6 +2011,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       let derived = {};
       try { derived = resolveDerived(part, params); } catch { /* diagnosed by lint/build */ }
       const relevant = recordedRelevantKeys(part, view(), params, displayReadsOf);
+      lastRelevant = relevant;
       panel.refresh({ relevant, derived });
       spotPanel?.refresh({ relevant, derived });
       if (poseMode) syncPoseVisible(relevant);

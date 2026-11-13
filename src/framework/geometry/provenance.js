@@ -4,10 +4,10 @@
 // author-facing kernel or Solid op call that returns a Solid is a BOUNDARY: the
 // params read since the previous boundary (an ordered read log, expanded by
 // `expand`) are attached to the face runs that op minted or moved. Records are
-// keyed by run lineage (runKey(id, mat), run-lineage.js) and read back per
-// triangle at mesh time (originsFor), matched by id and a 1e-3 transform
-// tolerance — runKey's 1e-4 rounding can split a structural transform from the
-// kernel's float32 one, so it is only the storage key.
+// keyed by run lineage (runKey(id, mat), run-lineage.js) and matched — at a
+// boundary against its inputs' runs and at mesh time per triangle (originsFor) —
+// by id and a 1e-3 transform tolerance: runKey's 1e-4 rounding can split a
+// structural transform from the kernel's float32 one, so it is only the storage key.
 //
 // A Proxy rather than a backend hook: the solid cache returns the same wrapper on
 // a hit without re-running the op, and the backend calls its own ops internally
@@ -64,9 +64,13 @@ export function createProvenance({ log, expand }) {
     if (!entries) byId.set(id, (entries = new Map()));
     entries.set(key, { mat: mat ?? IDENTITY12, key });
   };
-  // Exact key first; else the tolerant match originsFor uses, since a restamp's
-  // runs carry the kernel's float32 transform and its operand's a structural one.
-  const recordOf = (id, mat) => table.get(runKey(id, mat)) ?? lookup(id, mat ?? IDENTITY12) ?? [];
+  const recordOf = (id, mat) => lookup(id, mat ?? IDENTITY12) ?? [];
+
+  // Whether some input run has this id and a transform within MAT_TOL of `mat`:
+  // a result's structural lineage and a restamp's mesh-read lineage can differ by
+  // float32 rounding, which an exact runKey compare would read as a new run.
+  const sameRun = (inRuns, { id, mat }) =>
+    inRuns.some((r) => r.id === id && maxDiff(r.mat ?? IDENTITY12, mat ?? IDENTITY12) <= MAT_TOL);
 
   function boundary(op, receiver, args, run) {
     const result = run();
@@ -84,14 +88,14 @@ export function createProvenance({ log, expand }) {
       return result;
     }
     const inputs = [...(isSolid(receiver) ? [receiver] : []), ...solidsIn(args)];
-    const inputKeys = new Set(inputs.flatMap((s) => s._runs().map((r) => runKey(r.id, r.mat))));
+    const inRuns = inputs.flatMap((s) => s._runs());
     let oldOf = null;
     if (result._idMap instanceof Map) {
       oldOf = new Map();
       for (const [oldId, newId] of result._idMap) oldOf.set(newId, oldId);
     }
     for (const r of runs) {
-      if (inputKeys.has(runKey(r.id, r.mat))) continue;
+      if (sameRun(inRuns, r)) continue;
       const oldId = oldOf?.get(r.id);
       set(r.id, r.mat, dedupe([...slice, ...(oldId !== undefined ? recordOf(oldId, r.mat) : [])]));
     }
