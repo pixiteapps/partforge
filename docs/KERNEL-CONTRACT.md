@@ -117,6 +117,15 @@ once, under the same never-mid-bracket rule: the worker calls it on each booted 
 before an export job, because a display build's retained solids and the export's own
 build share one WASM heap, and on a very large part the cache alone can leave too little
 heap for the export. The next display build after an export is cold.
+`beginProvenance(prov)` / `endProvenance()` (Manifold only) bracket a build whose kernel
+is wrapped by `provenance.js`'s `provenanceKernel`: while a recorder is active, `toMesh`
+adds `originIds` (a `Uint16Array`, one per triangle, 0 = none, else a 1-based index) and
+`origins` (the param keys each face run was built from, newest read first). With none
+active `toMesh` is unchanged, and `toSTL` never carries them. The records are keyed by
+run (original ID and transform), and a cached op returns the solid its first run made, so
+every op that mints an original ID must be a cache node too: `box`, `sphere` and
+`cylinder` are cached for that reason, cheap as they are. An uncached minting op gets a
+fresh ID each build and orphans its records behind the first cached op downstream.
 `setCacheBudget(bytes)` bounds the bytes the cache's retained solids may hold (the
 Manifold backend estimates each from its triangle and vertex counts); `trimCache()`
 then drops whole partitions, least recently built first, until they fit. A trim frees
@@ -469,16 +478,13 @@ Known limitation: the OCCT backend ignores `shading` — a loft forced to OCCT
 via `meta.backend` draws its facet corner edges as B-rep feature lines. The
 hint is honored on the Manifold path, which is where lofts preview by default.
 
-`label()`ing a compound solid (one spanning more than one original surface)
-collapses it to a single shading surface that inherits the majority policy of
-its registered constituent surfaces, weighted by triangle count. A constituent
-with no registered policy of its own (e.g. a plain boolean tool) still votes,
-as SMOOTH — the policy it actually renders with — and an exact tie resolves to
-the no-lines (faceted) policy. Two exceptions preserve their surface partition
-through labeling instead of collapsing: fillet/chamfer blend bands (base +
-blend re-stamp as two surfaces), and provenance-sectored lofts (every sector
-and band-group run re-stamps 1:1) — in both cases all the resulting surfaces
-carry the one label, so hover/pick still reads a single feature.
+`label()`ing a solid re-stamps each of its face runs as a new surface 1:1, so
+the surface partition survives labeling (a face's identity is what spot controls
+and per-face provenance read). Every new surface inherits the shading policy of
+the surface it replaces; a face with no registered policy of its own (e.g. a
+plain boolean tool) shades SMOOTH, the policy it actually renders with. All the
+resulting surfaces carry the one label, so hover/pick still reads a single
+feature.
 
 **Selectors** (`fillet`/`chamfer` `edges` selector, `shell` `open` face selector) are
 declarative objects, criteria AND-combined:

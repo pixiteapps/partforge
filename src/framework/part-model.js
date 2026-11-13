@@ -52,8 +52,14 @@ export function resolveParamsAttributed(part, params, sanitize) {
 // Record-through views of a resolved (p, d) into one read sink. Everything that
 // reads them — viewSubParts' enabled(), build(), place(), expect(p, d) — lands in
 // the sink with no change to the reader.
+// Only a sink that keeps a log (newReadSink({ log: true })) gets the ordered log
+// and the deep d recorder; every other caller records the key sets alone.
 export function recordedParams({ p, d }, sink) {
-  return { p: recorder(p, sink.raw, { through: true }), d: recorder(d, sink.dSeen, { through: true }) };
+  const log = sink.log ?? null;
+  return {
+    p: recorder(p, sink.raw, { through: true, log }),
+    d: recorder(d, sink.dSeen, { through: true, log, deep: log !== null }),
+  };
 }
 
 // `reads` (optional): a newReadSink() (read-recorder.js). When given, the returned

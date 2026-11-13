@@ -43,6 +43,10 @@ export const KERNEL_OPTIONAL_OPS = [
   // pre-0.69 behavior (console.warn only). See KERNEL-CONTRACT.md § "Feature-skip
   // warnings channel".
   "takeBuildWarnings",
+  // Param provenance (provenance.js): while a recorder is active, toMesh adds
+  // per-triangle originIds/origins. Manifold only; a host that never calls them
+  // gets toMesh unchanged.
+  "beginProvenance", "endProvenance",
 ];
 
 // Ops every Solid must implement (including the sugar addSugar() attaches).

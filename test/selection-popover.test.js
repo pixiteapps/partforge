@@ -478,3 +478,115 @@ describe("selection popover: toStage", () => {
     p.detach();
   });
 });
+
+describe("selection popover: controls region", () => {
+  const controls = (impl) => ({ build: vi.fn(impl) });
+  it("builds between the head and the slot, passes the hit, hides when build returns null", () => {
+    const c = controls((el, spot) => { el.append(Object.assign(document.createElement("i"), { textContent: spot.subPart })); return { dispose: vi.fn() }; });
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: c });
+    p.open({ subPart: "body", anchor: at, hit: { triIndex: 3 } });
+    const spot = p.element.querySelector(".pf-selection-spot");
+    expect([...spot.children].map((e) => e.className)).toEqual(["pf-selection-head", "pf-selection-controls", "pf-selection-slot"]);
+    expect(c.build.mock.calls[0][1]).toEqual({ subPart: "body", hit: { triIndex: 3 } });
+    expect(spot.querySelector(".pf-selection-controls").hidden).toBe(false);
+    c.build.mockImplementation(() => null);
+    p.open({ subPart: "body", anchor: at, hit: { triIndex: 4 } });
+    expect(spot.querySelector(".pf-selection-controls").hidden).toBe(true);
+    p.detach();
+  });
+  it("disposes on close and on reopen; the slot is still reported when the region is hidden", () => {
+    const dispose = vi.fn();
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls(() => ({ dispose })) });
+    const reports = []; p.onSlotChange((r) => reports.push(r));
+    p.open({ subPart: "body", anchor: at });
+    p.open({ subPart: "body", anchor: at });
+    expect(dispose).toHaveBeenCalledTimes(1);
+    p.close("dismiss");
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(reports.some((r) => r.state === "open")).toBe(true);
+    p.detach();
+  });
+  // Layout stub: popover height = 40 head + region (own height, capped by its
+  // max-height) + slot, capped by the popover's max-height.
+  function tallLayout(p, ctlH) {
+    const ctl = p.element.querySelector(".pf-selection-controls");
+    const slotEl = p.element.querySelector(".pf-selection-slot");
+    const ctlNow = () => { const c = parseFloat(ctl.style.maxHeight); return ctl.hidden ? 0 : Number.isFinite(c) ? Math.min(ctlH, c) : ctlH; };
+    Object.defineProperty(p.element, "offsetWidth", { configurable: true, get: () => 320 });
+    Object.defineProperty(ctl, "offsetHeight", { configurable: true, get: () => ctlNow() });
+    Object.defineProperty(p.element, "offsetHeight", { configurable: true, get: () => {
+      const natural = 40 + ctlNow() + (parseFloat(slotEl.style.height) || 0);
+      const cap = parseFloat(p.element.style.maxHeight);
+      return Number.isFinite(cap) ? Math.min(natural, cap) : natural;
+    } });
+    slotEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 320, height: parseFloat(slotEl.style.height) || 0 });
+    return { ctl, slotEl };
+  }
+  const mid = { x: 400, y: 300, visible: true };
+  const make = (ctlH) => {
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: controls(() => ({ dispose() {} })) });
+    return { p, ...tallLayout(p, ctlH) };
+  };
+  it("a tall region scrolls while the slot keeps its floor", () => {
+    const { p, ctl, slotEl } = make(900);
+    p.setSlotHeight(300);
+    p.open({ subPart: "body", anchor: mid });
+    expect(parseFloat(ctl.style.maxHeight)).toBeGreaterThan(0);
+    expect(slotEl.style.height).toBe("44px");
+    // a second place() keeps the same cap and slot
+    const before = [ctl.style.maxHeight, slotEl.style.height];
+    p.setAnchor({ ...mid });
+    p.setAnchor({ ...mid });
+    expect([ctl.style.maxHeight, slotEl.style.height]).toEqual(before);
+    p.detach();
+  });
+  it("does not cap the region when the slot shrink alone makes it fit", () => {
+    const { p, ctl, slotEl } = make(100);
+    p.open({ subPart: "body", anchor: mid });
+    // 600 stage: room 278 each side (600 stage, 12 gutter, 10 gap). 40 + 100 + 300 = 440 > 288: slot shrinks to 138.
+    p.setSlotHeight(300);
+    expect(slotEl.style.height).toBe("138px");
+    expect(ctl.style.maxHeight).toBe("");
+    p.detach();
+  });
+  it("caps the region to the post-shrink room when it still does not fit", () => {
+    const { p, ctl, slotEl } = make(900);
+    p.open({ subPart: "body", anchor: mid });
+    p.setSlotHeight(300);
+    expect(slotEl.style.height).toBe("44px");
+    // maxHeight 278: 278 - (40 + 44) = 194 for the region
+    expect(ctl.style.maxHeight).toBe("194px");
+    p.detach();
+  });
+  it("a scrolled region keeps its scroll across a re-placement", () => {
+    const { p, ctl } = make(900);
+    p.open({ subPart: "body", anchor: mid });
+    p.setSlotHeight(300);
+    // The browser resets a scroller's scrollTop when its cap is cleared to
+    // measure; happy-dom does no layout, so mimic that on the style write.
+    let top = 0;
+    Object.defineProperty(ctl, "scrollTop", { configurable: true, get: () => top, set: (v) => { top = v; } });
+    const style = new Proxy(ctl.style, {
+      get: (t, k) => { const v = Reflect.get(t, k, t); return typeof v === "function" ? v.bind(t) : v; },
+      set: (t, k, v) => { if (k === "maxHeight" && v === "") top = 0; return Reflect.set(t, k, v, t); },
+    });
+    Object.defineProperty(ctl, "style", { configurable: true, get: () => style });
+    ctl.scrollTop = 120;
+    p.setAnchor({ ...mid }); // what a slider write from the region does
+    expect(ctl.scrollTop).toBe(120);
+    p.detach();
+  });
+  it("a build that throws leaves the region hidden and the popover open and dismissable", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = controls(() => { throw new Error("boom"); });
+    const p = attachSelectionPopover({ stage, canvas, slot: true, parts: partsStub(ROWS()), controls: c });
+    expect(p.open({ subPart: "body", anchor: at })).toBe(true);
+    expect(p.isOpen()).toBe(true);
+    expect(p.element.querySelector(".pf-selection-controls").hidden).toBe(true);
+    stage.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+    expect(p.isOpen()).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    p.detach();
+  });
+});

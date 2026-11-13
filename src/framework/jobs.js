@@ -16,7 +16,11 @@ import { safeName } from "./safe-name.js";
 import { vectorControlAllows, vectorSourceAllowed, isNoVectorSource } from "./vector-source.js";
 import { vectorsFor, ensureVectors } from "./vectors.js";
 import { exportSubParts, resolveParamsAttributed, recordedParams, buildPosed } from "./part-model.js";
-import { newReadSink, expandReads } from "./read-recorder.js";
+import { newReadSink, expandReads, orderedReads } from "./read-recorder.js";
+import { nudgeAttribution } from "./derive-nudge.js";
+import { createProvenance, provenanceKernel } from "./geometry/provenance.js";
+import { controlNodes } from "./panel/model.js";
+import { desugar } from "./panel/legacy.js";
 import { probeSubPartPose } from "./pose-probe-core.js";
 
 export const FONT_SOURCE_CACHE_MAX = 4;
@@ -168,7 +172,20 @@ async function scoreMatchTargets(built, targets, onProgress) {
 // A progressive generate hands over its built sub-parts at most this often (ms).
 const PROGRESSIVE_BATCH_MS = 300;
 const transferOf = (meshes) => meshes.flatMap((m) =>
-  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
+  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer, m.originIds?.buffer].filter(Boolean));
+
+// The nudged derive attribution for one generate job (ranks piece keys; never
+// gates). Run once per job, lazily, and shared by its sub-parts; null when the
+// probe throws.
+function nudgedFor(part, p) {
+  try {
+    const steps = new Map();
+    for (const n of controlNodes(desugar(part.parameters))) {
+      if ((n.type === "slider" || n.type === "number") && Number.isFinite(n.step)) steps.set(n.key, n.step);
+    }
+    return nudgeAttribution(part, p, { steps });
+  } catch { return null; }
+}
 
 // The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
 const HEAP_TRAP_RE = /out of bounds memory access|memory access out of bounds|Cannot enlarge memory|out of memory/i;
@@ -438,17 +455,28 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // Otherwise the pose is baked and both halves' reads are recorded, as before.
     // The probe runs on the plain p/d, never the recorders, so place reads cannot
     // land in a canonical stamp.
+    let nudged = null, nudgeDone = false; // computed lazily: a job that builds nothing derives nothing extra
     const displayWithReads = (name) => {
       const sp = part.parts[name];
-      const sink = newReadSink();
+      if (!nudgeDone) { nudgeDone = true; nudged = nudgedFor(part, p); }
+      const sink = newReadSink({ log: true });
       sink.attribution = attribution;
       const rec = recordedParams({ p, d }, sink);
       const canonical = probeSubPartPose(sp, { view: msg.view, purpose: "display", p, d }, { scope: "place" }).trusted === true;
+      const prov = kernel.beginProvenance
+        ? createProvenance({ log: sink.log, expand: (e) => orderedReads(e, { nudged, attribution }) })
+        : null;
+      // The generate loop's finally ends provenance, so a throwing build still does.
+      if (prov) kernel.beginProvenance(prov);
+      const bk = prov ? provenanceKernel(kernel, prov) : kernel;
       const solid = canonical
-        ? sp.build(kernel, rec.p, rec.d)
-        : buildPosed(kernel, part, name, { purpose: "display", view: msg.view, p: rec.p, d: rec.d });
+        ? sp.build(bk, rec.p, rec.d)
+        : buildPosed(bk, part, name, { purpose: "display", view: msg.view, p: rec.p, d: rec.d });
       for (const key of assetSink.raw) sink.raw.add(key);
-      return { solid, reads: expandReads(sink), frame: canonical ? "canonical" : "posed" };
+      const reads = expandReads(sink);
+      const ordered = orderedReads(sink.log, { nudged, attribution });
+      const pieceKeys = ordered ? [...new Set(ordered)].sort() : [...reads];
+      return { solid, reads, pieceKeys, frame: canonical ? "canonical" : "posed" };
     };
     // Explicit selection (headless exportParts) overrides view-derived selection.
     const selected = () =>
@@ -476,10 +504,12 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       for (const [i, name] of msg.subparts.entries()) {
         if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
         try {
-          const { solid, reads, frame } = displayWithReads(name);
+          const { solid, reads, pieceKeys, frame } = displayWithReads(name);
           const m = solid.toMesh({ quality: "preview" });
-          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features, reads, frame });
+          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features,
+            ...(m.originIds ? { originIds: m.originIds, origins: m.origins } : {}), reads, pieceKeys, frame });
         } finally {
+          kernel.endProvenance?.();
           for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
           if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
           kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)

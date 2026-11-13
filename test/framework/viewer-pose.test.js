@@ -219,3 +219,20 @@ test("getSubMeshPayload is null for a sub-part with nothing delivered, or no suc
   expect(viewer.getSubMeshPayload("nope")).toBeNull();
   viewer.dispose();
 });
+
+// --- getSubOrigins / getSubBounds: spot controls ------------------------------
+test("keeps origins on the geometry and answers posed bounds", () => {
+  const viewer = makeViewer();
+  viewer.setSubGeometry("body", { ...triangle(), originIds: new Uint16Array([1]), origins: [["w"]] });
+  expect(viewer.getSubOrigins("body")).toEqual({ originIds: new Uint16Array([1]), origins: [["w"]] });
+  expect(viewer.getSubBounds("body").min[0]).toBeCloseTo(0);
+  viewer.setSubPose("body", new THREE.Matrix4().makeTranslation(5, 0, 0).toArray());
+  expect(viewer.getSubBounds("body").min[0]).toBeCloseTo(5);
+  expect(viewer.getSubBounds("body").max[0]).toBeCloseTo(6);
+  expect(viewer.getSubOrigins("none")).toBeNull();
+  expect(viewer.getSubBounds("none")).toBeNull();
+  expect("originIds" in viewer.getSubMeshPayload("body")).toBe(false);
+  viewer.setSubGeometry("body", triangle());
+  expect(viewer.getSubOrigins("body")).toBeNull();
+  viewer.dispose();
+});

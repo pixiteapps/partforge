@@ -23,6 +23,8 @@
 // The DOM is created here, so no host markup declares it — same contract as
 // rail.js's seam, and the reason this composes with partforge-cloud's
 // hand-built sandbox scaffold without that scaffold knowing anything about it.
+
+import { RAIL_NARROW_BREAKPOINT } from "./rail-state.js";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Hand-authored in lucide's 24x24 / 2px-stroke idiom so these sit beside
@@ -99,7 +101,7 @@ function buildIcon(paths) {
 // below can recognize it; omitting it costs the drawer its close button.
 export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = {}) {
   if (!shell || !stage || !rail) {
-    return { setHostPane: () => {}, setRailLayout: () => {}, detach: () => {} };
+    return { setHostPane: () => {}, setRailLayout: () => {}, showPane: () => false, detach: () => {} };
   }
 
   let pane = "stage"; // the standalone user's choice
@@ -189,6 +191,15 @@ export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = 
   apply();
 
   return {
+    // Show a pane as the tab bar would ("More in the panel"). False when a host
+    // holds the pane lease: the host draws the pane, so it has to be told instead.
+    showPane: (next) => {
+      if (hostPane !== null || !PANES.includes(next)) return false;
+      if (window.innerWidth >= RAIL_NARROW_BREAKPOINT) return true; // side by side: already shown
+      pane = next;
+      apply();
+      return true;
+    },
     // 'stage' | 'rail' takes the lease; anything else (including null) releases
     // it and restores the standalone bar and the user's own last choice.
     setHostPane: (next) => {

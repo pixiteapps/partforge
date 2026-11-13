@@ -882,10 +882,10 @@ if (p.drain > 0) s = s.cut(k.cylinder({ r: d.drainR, h: p.floor + 4 }).at([0, 0,
   a cutting tool's label lands on the faces it leaves behind (the hole's wall).
 - Label **after** shaping compound tools (e.g. after an `intersect` clip) and
   either before or after transforms — labels ride through `at`/`rotate`/etc.
-  Labeling a compound collapses it to ONE shading surface — the majority
-  policy of its registered surfaces (by triangle count) applies to the whole
-  solid, so a faceted policy also suppresses line-drawing on the compound's
-  internal seams.
+  Labeling a compound keeps each face run as its own shading surface: every
+  new surface inherits the policy of the surface it replaces (a face with no
+  policy shades smooth), so a faceted face keeps its lines and a smooth one
+  does not gain any.
 - **Same label merges; distinct siblings need distinct names.** The same label on
   several solids merges into one feature — label a ring of four bolt holes
   `"Mounting holes"` and they hover/highlight as one. Conversely, when two similar
@@ -4476,8 +4476,22 @@ instead of (or in addition to) the built-in `#part` bar:
   it did is settled by the time `runtime.ready` resolves, so check
   `runtime.selection.isOpen()` after `ready`, not straight after `mount()` (a first build
   that fails tries again on the first one that succeeds). `runtime.selection` is `null`
-  without the option. `runtime.controlsFor(selection)` is the intended source for a future
-  page of the controls that shape the picked spot.
+  without the option.
+
+  Between the head row and the slot the popover also shows up to three controls for the
+  clicked face: the parameters of the operation that created it, newest first. It is
+  rebuilt on each click, not on each rebuild. Parameters a pose handle on that piece
+  drags are left out. A face with no record, a part on OCCT, and a click on a section
+  cap fall back to the piece's own build reads, first three in the panel's order. Those
+  leave out the piece's `enabled()` and `place()` reads, so they can be fewer than
+  `runtime.controlsFor` lists. `selectionPopover: { slot, controls: false }` turns the
+  region off. "More in the panel" makes the rail visible where partforge places it (the
+  narrow layout's Controls pane, a collapsed rail, an overlay drawer) and flashes the
+  rows. `runtime.selection.onReveal(({ keys }) => …)` fires when only the host can show
+  them: while it holds the pane lease (`runtime.setHostPane`) or docks the rail
+  (`runtime.setRailLayout({ mode: "dock", … })`). Reads that sit
+  next to the op that uses them attribute best; a build that computes every number
+  first and then issues ops charges all of them to its first op.
 
 Pass `onViewChange(name)` to `mount()` to be told the active view: it fires once
 synchronously during mount with the initial resolved view (before `runtime.ready` settles),

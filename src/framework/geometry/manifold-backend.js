@@ -16,7 +16,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, SMOOTH, BLEND } from "./shading-policy.js";
+import { loftShadingPolicy, BLEND } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshOffset, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -24,6 +24,7 @@ import { SEGS, circleSegs, doubleCurvatureSegs } from "./circle-segs.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { KernelCapabilityError } from "./errors.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
+import { composeAffine, dedupeRuns, mirrorAffine, rotateAffine, scaleAffine, translateAffine } from "./run-lineage.js";
 
 // A boolean whose operand was already broken. See `judged` below.
 const invalidOperand = (op, index, status) => new Error(
@@ -202,8 +203,51 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // bad cut → hole → bad cut → anything). embind knows whether a handle is
   // gone, so both owners ask before deleting instead of trusting the other.
   const del = (o) => { if (!o?.isDeleted?.()) o?.delete?.(); };
+  // Run lineage (run-lineage.js): per Manifold, the runs its mesh carries as
+  // [{ id: originalID, mat: runTransform | null }], answered STRUCTURALLY — a
+  // transform composes its operand's runs, a boolean concatenates its operands' —
+  // so asking never forces Manifold to evaluate a lazy CSG tree. Keyed on the
+  // Manifold rather than the wrapper so every re-wrap of one object (clone, a
+  // skipped fillet, hoist/replay, a cache hit) shares the answer. A value is a
+  // thunk until first asked, then the memoized array. With nothing recorded, a
+  // fresh original (originalID() >= 0, identity transform) is its own single
+  // run; anything else (a restamp that rebuilt from a mesh, a mixed solid built
+  // outside these paths) reads the mesh ONCE — the documented fallback.
+  const lineage = new WeakMap();
+  const idMaps = new WeakMap(); // restamping ops: old originalID -> new
+  const noteRuns = (mm, runs) => { if (!lineage.has(mm)) lineage.set(mm, runs); return mm; };
+  const meshRuns = (mm) => {
+    const g = mm.getMesh();
+    try {
+      const roid = g.runOriginalID, rt = g.runTransform;
+      const runs = [];
+      for (let r = 0; r < roid.length; r++)
+        runs.push({ id: roid[r], mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null });
+      return dedupeRuns(runs);
+    } finally {
+      g.delete?.();
+    }
+  };
+  const runsOf = (mm) => {
+    let v = lineage.get(mm);
+    if (Array.isArray(v)) return v;
+    if (typeof v === "function") v = v();
+    else { const id = mm.originalID(); v = id !== -1 ? [{ id, mat: null }] : meshRuns(mm); }
+    lineage.set(mm, v);
+    return v;
+  };
+  // `mm`'s runs carried by the affine `A` (applied after each run's own transform).
+  const runsThrough = (mm, A) => () => runsOf(mm).map((r) => ({ id: r.id, mat: composeAffine(A, r.mat) }));
+  // A boolean's runs: every operand's, deduplicated by run key.
+  const runsOfAll = (solids) => () => dedupeRuns(solids.flatMap((s2) => s2._runs()));
+
+  // A cached solid outlives its round's cleanup(), and its operands may not (an
+  // uncached cylinder, a translate intermediate), so its lineage is resolved here,
+  // while they are all alive. Structural lineage costs no mesh read; only a solid
+  // with no recorded lineage and originalID() -1 reads its mesh, once.
   const cached = (hash, computeM) => cache.lookup(hash, () => {
     const m = computeM();                 // already T()-tracked by the op
+    runsOf(m);
     return { value: wrap(m, hash), pin: m, dispose: () => del(m) };
   });
 
@@ -217,7 +261,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     const { hoisted, residuals } = hoistCommonSuffix(solids.map((s2) => s2._canon.chain));
     if (!hoisted.length) return null;
     const ops = solids.map((s2, i) => replay(wrap(s2._canon.m, s2._canon.hash), residuals[i]));
-    const canonical = cached(h(opName, ops.map((s2) => s2._hash)), () => evaluate(ops));
+    const canonical = cached(h(opName, ops.map((s2) => s2._hash)), () => noteRuns(evaluate(ops), runsOfAll(ops)));
     return replay(canonical, hoisted);
   };
 
@@ -256,9 +300,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
 
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
+  let activeProv = null; // provenance.js recorder, between beginProvenance/endProvenance
   function meshOut(m, asStl) {
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
+    // Per-triangle param provenance, only while a build has provenance active.
+    const o = !asStl && activeProv ? activeProv.originsFor(g) : null;
+    if (o) { r.originIds = o.originIds; r.origins = o.origins; }
     g.delete?.();
     return r;
   }
@@ -322,9 +370,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // are sub-MIN_EDGE thin, so the line pass gates them, and closed sliver DEBRIS is
   // swept above; the visible cost is a modestly larger mesh, bounded by
   // mesh-fillet-perf.test.js. Shading is unchanged (BLEND shades like SMOOTH), and
-  // label() on a blend result already handles a mixed-original mesh (the majority
-  // vote below).
-  // Fresh ids for a blend-aware re-stamp (label(), the roundAll decouple): ONE base id
+  // label() on a blend result re-stamps every run 1:1, so the distinction survives it.
+  // Fresh ids for the roundAll decouple's blend-aware re-stamp: ONE base id
   // for every non-blend run, and one fresh id PER blend surface — each keeps its BLEND
   // policy and its analytic descriptor (runTransform rides through the MeshGL
   // round-trip, so the descriptor's original frame stays valid). Folding the band
@@ -354,12 +401,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     try {
       const raw = run()._m;
       const baseOids = runOids(baseM);
-      for (const oid of runOids(raw)) if (!baseOids.has(oid)) oidPolicies.set(oid, BLEND);
+      // the result's runs: the base's plus the blend tools', read off the mesh this
+      // already materializes (a debris sweep below only ever drops runs)
+      const rawRuns = meshRuns(raw);
+      for (const { id: oid } of rawRuns) if (!baseOids.has(oid)) oidPolicies.set(oid, BLEND);
       // debris sweep AFTER simplify: the boolean's own femto-components are joined by
       // ones simplify() itself pinches off while collapsing seam slivers (measured:
       // 4-triangle atto-scale bubbles, one with negative volume, after a rim fillet
       // over vertical-fillet bands) — sweeping first missed those
-      return dropDebris(T(raw.simplify(SIMPLIFY_EPS)));
+      return noteRuns(dropDebris(T(raw.simplify(SIMPLIFY_EPS))), rawRuns);
     } catch (e) {
       if (e instanceof UnsupportedEdgeError) throw new KernelCapabilityError(`${op}: ${e.message}`);
       throw e;
@@ -436,7 +486,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // Decouple from the fillet cache's pin: cached() will pin the object this
         // returns under the roundAll hash, and one WASM object must never sit
         // under two cache entries (double-dispose on eviction). The decouple is
-        // blend-AWARE, the same re-stamp label() performs: a blanket asOriginal()
+        // blend-AWARE: a blanket asOriginal()
         // folded blend and base into one fresh surface, erasing the distinction
         // the band-boundary lines need — a roundAll'd prism rendered with no
         // feature lines at all, unlike the identical geometry from fillet().
@@ -447,13 +497,24 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const g0 = filleted._m.getMesh();
         try {
           const isBlend = (oid) => !!oidPolicies.get(oid)?.boundaryLines;
-          if (![...new Set(g0.runOriginalID)].some(isBlend)) return T(filleted._m.asOriginal());
-          const { baseId, blendIdFor } = reserveBlendRestamp(new Set(g0.runOriginalID));
-          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => blendIdFor.get(o) ?? baseId);
+          const oids0 = new Set(g0.runOriginalID);
+          if (![...oids0].some(isBlend)) {
+            const o = T(filleted._m.asOriginal());
+            idMaps.set(o, new Map([...oids0].map((oid) => [oid, o.originalID()])));
+            return o;
+          }
+          const { baseId, blendIdFor } = reserveBlendRestamp(oids0);
+          const idMap = new Map([...oids0].map((oid) => [oid, blendIdFor.get(oid) ?? baseId]));
+          const rt = g0.runTransform;
+          const runs = dedupeRuns(Array.from(g0.runOriginalID, (oid, r) =>
+            ({ id: idMap.get(oid), mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null })));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o) => idMap.get(o));
           // The constructor re-welds, and that can pinch a latent sliver off a
           // component as fresh femto-debris (the same rebirth dropDebris's own
           // compose() loop guards against) — sweep the reconstruction too.
-          return dropDebris(T(new Manifold(g0)));
+          const o = noteRuns(dropDebris(T(new Manifold(g0))), runs);
+          idMaps.set(o, idMap);
+          return o;
         } finally {
           g0.delete?.();
         }
@@ -521,12 +582,24 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // can delegate to their throwing `_`-prefixed twins above without re-deriving
   // the cache key or the capability checks. Declared as a binding the closures
   // capture: every reference runs after addSugar has returned.
-  const wrap = (m, hash, canon = { m, hash, chain: [] }) => {
+  //
+  // `runs` (a thunk or an array) is this solid's run lineage, when the op knows it
+  // structurally; `idMap` (old originalID -> new) marks a restamping op's result.
+  // Both are recorded against `m` (see `lineage` above), so re-wraps share them.
+  // A rigid transform moves runs without renaming them, so its result inherits
+  // its operand's idMap: label's replay below hands the provenance recorder the
+  // TRANSFORMED labelled solid, and only the idMap tells it which old id each
+  // fresh id came from (without it, a label after a translate kept no records).
+  const wrap = (m, hash, canon = { m, hash, chain: [] }, { runs, idMap } = {}) => {
+    if (runs) noteRuns(m, runs);
+    if (idMap) idMaps.set(m, idMap);
     const self = addSugar({
     _m: m,
     _hash: hash,
     _canon: canon,
-    cut: (t) => cached(h("cut", hash, t._hash), () => judged("cut", [m, t._m], T(m.subtract(t._m)))),
+    _runs: () => runsOf(m),
+    ...(idMaps.has(m) ? { _idMap: idMaps.get(m) } : {}),
+    cut: (t) => cached(h("cut", hash, t._hash), () => noteRuns(judged("cut", [m, t._m], T(m.subtract(t._m))), runsOfAll([self, t]))),
     // THROWING forms. These are the composition primitives — internal callers
     // that have their own recovery (prismRoundAllFast, which answers a failed
     // fillet by falling back to the reference Minkowski roundAll) must use
@@ -603,147 +676,71 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // tree — no materialized intermediate union (the unionRaw memory note applies)
     cutAll: (tools) => cached(h("cutAll", hash, tools.map((t) => t._hash)), () => {
       const ms = [m, ...tools.map((t) => t._m)];
-      return judged("cutAll", ms, T(Manifold.difference(ms)));
+      return noteRuns(judged("cutAll", ms, T(Manifold.difference(ms))), runsOfAll([self, ...tools]));
     }),
-    intersect: (t) => cached(h("intersect", hash, t._hash), () => judged("intersect", [m, t._m], T(m.intersect(t._m)))),
-    union: (t) => cached(h("union", [hash, t._hash]), () => judged("union", [m, t._m], unionRaw([m, t._m]))),
+    intersect: (t) => cached(h("intersect", hash, t._hash), () =>
+      noteRuns(judged("intersect", [m, t._m], T(m.intersect(t._m))), runsOfAll([self, t]))),
+    union: (t) => cached(h("union", [hash, t._hash]), () =>
+      noteRuns(judged("union", [m, t._m], unionRaw([m, t._m])), runsOfAll([self, t]))),
     clone: () => wrap(m, hash),
-    // Name this solid's surface for hover/pick feature attribution. asOriginal()
-    // stamps a fresh originalID that survives transforms and booleans, so every
-    // surviving triangle of this surface can be traced back to the label. The
-    // registry entry lives exactly as long as the cache pins the solid — eviction
+    // Name this solid's surface for hover/pick feature attribution. Fresh reserved
+    // originalIDs survive transforms and booleans, so every surviving triangle of
+    // this surface can be traced back to the label. The registry entries live exactly as long as the cache pins the solid — eviction
     // disposes both, so the registry can't grow unboundedly across regenerates.
     label: (name) => {
       // Labeling only re-stamps surface ids, so it commutes with the trailing
       // transform. This is load-bearing rather than an optimization: the common
       // authoring idiom labels each piece AFTER positioning it, which would give every
       // copy its own canonical base and stop the hoist below from ever firing.
-      if (canon.chain.length) return replay(wrap(canon.m, canon.hash).label(name), canon.chain);
+      if (canon.chain.length) {
+        // The replayed result is a fresh wrapper over a transformed Manifold: hand
+        // it the base label's id map, or provenance would see runs with new ids and
+        // no way back to the records made under the old ones.
+        const base = wrap(canon.m, canon.hash).label(name);
+        const out = replay(base, canon.chain);
+        if (base._idMap && out !== base) { idMaps.set(out._m, base._idMap); out._idMap = base._idMap; }
+        return out;
+      }
       const lh = h("label", hash, name);
       return cache.lookup(lh, () => {
-        // Blend-aware re-stamp. If this mesh carries blend surfaces (the boundaryLines
-        // policy), one asOriginal() would fold band and base into a single surface and
-        // erase the band-boundary overlay on exactly the solids parts label — every
-        // real part labels its top-level solids. Re-stamp onto fresh reserved ids
-        // instead, one base id and one per blend surface (reserveBlendRestamp, which
-        // also carries each band's analytic normals): the label covers all of them
-        // (same string → one feature entry), the
-        // distinction survives labeling and every later boolean, and reserved ids are
-        // fresh so cached-solid reuse under another label cannot collide — the same
-        // guarantee asOriginal() gives the plain path below.
+        // Re-stamp every distinct originalID 1:1 onto fresh reserved ids. Folding
+        // them into one id (asOriginal(), or one base id beside the blend ids) would
+        // erase per-face provenance: the sector creases and dividing lines of a
+        // sectored loft, the band-boundary lines of a blend, the seam between a loft
+        // and the tool that hollowed it, and the face a later pick names. Instead
+        // each new id inherits its old id's shading policy and analytic surface
+        // (an id with no policy keeps none and shades SMOOTH by default), and every
+        // new id maps to the one label string — creased-normals merges ids with the
+        // same label into one feature entry. Reserved ids are fresh, so reusing a
+        // cached solid under another label cannot collide.
         const g0 = m.getMesh();
-        const oids0 = new Set(g0.runOriginalID);
-        // Sector-aware re-stamp: a provenance-sectored loft (the `sector` policy
-        // marker) must keep every run's identity — folding them (either the plain
-        // asOriginal below or the blend path's two-group stamp) would erase the
-        // sector creases and dividing lines the runs exist to draw. Re-stamp every
-        // distinct id 1:1 onto fresh reserved ids: each keeps its policy (blend
-        // runs riding along keep BLEND), all map to the one label string, and the
-        // fresh ids give the same reuse-under-another-label guarantee as
-        // asOriginal(). Unregistered ids (plain boolean tools) stay unregistered —
-        // they shade SMOOTH by default exactly as before.
-        if ([...oids0].some((oid) => !!oidPolicies.get(oid)?.sector)) {
-          const olds = [...oids0];
+        let o, idMap, runs;
+        try {
+          const olds = [...new Set(g0.runOriginalID)];
           const base2 = Manifold.reserveIDs(olds.length);
-          const mapId = new Map(olds.map((o2, i2) => [o2, base2 + i2]));
-          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o2) => mapId.get(o2));
-          const o = T(new Manifold(g0));
+          idMap = new Map(olds.map((o2, i2) => [o2, base2 + i2]));
+          const rt = g0.runTransform;
+          runs = dedupeRuns(Array.from(g0.runOriginalID, (oid, r) =>
+            ({ id: idMap.get(oid), mat: rt?.length >= (r + 1) * 12 ? affineAt(rt, r) : null })));
+          g0.runOriginalID = Uint32Array.from(g0.runOriginalID, (o2) => idMap.get(o2));
+          // The constructor re-welds, and that can pinch a latent sliver off as
+          // fresh femto-debris (the fillet restamp above sweeps for the same reason).
+          o = noteRuns(dropDebris(T(new Manifold(g0))), runs);
+        } finally {
           g0.delete?.();
-          const setIds = [];
-          for (const [oldId, newId] of mapId) {
-            featureLabels.set(newId, name);
-            const pol = oidPolicies.get(oldId);
-            if (pol !== undefined) oidPolicies.set(newId, pol);
-            const surf = blendSurfaces.get(oldId); // analytic normals ride the 1:1 stamp too
-            if (surf) blendSurfaces.set(newId, surf);
-            setIds.push(newId);
-          }
-          return { value: wrap(o, lh), pin: o, dispose: () => {
-            for (const id2 of setIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
-            o.delete?.();
-          } };
         }
-        if ([...oids0].some(keepsOwnId)) {
-          const { baseId, blendIdFor, blendIds } = reserveBlendRestamp(oids0);
-          // base-group policy: the same triangle-weighted majority vote as the plain
-          // path, but over the NON-blend runs only — blend runs would elect BLEND for
-          // the base group and flag BOTH sides of every boundary seam, which is
-          // exactly the no-line state this path exists to avoid.
-          const ri = g0.runIndex, roid = g0.runOriginalID;
-          const weightByKey = new Map();
-          let bestWeight = -1, basePol;
-          for (let r = 0; r < roid.length; r++) {
-            if (blendIdFor.has(roid[r])) continue;
-            const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
-            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
-            const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
-            weightByKey.set(key, weight);
-            const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && basePol?.sameSurfaceLines);
-            if (better) { bestWeight = weight; basePol = pol; }
-          }
-          g0.runOriginalID = Uint32Array.from(roid, (o2) => blendIdFor.get(o2) ?? baseId);
-          const o = T(new Manifold(g0));
-          g0.delete?.();
-          featureLabels.set(baseId, name);
-          for (const id2 of blendIds) featureLabels.set(id2, name);
-          if (basePol !== undefined) oidPolicies.set(baseId, basePol);
-          return { value: wrap(o, lh), pin: o, dispose: () => {
-            featureLabels.delete(baseId); oidPolicies.delete(baseId);
-            for (const id2 of blendIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
-            o.delete?.();
-          } };
+        for (const [oldId, newId] of idMap) {
+          featureLabels.set(newId, name);
+          const pol = oidPolicies.get(oldId);
+          if (pol !== undefined) oidPolicies.set(newId, pol);
+          const surf = blendSurfaces.get(oldId);
+          if (surf) blendSurfaces.set(newId, surf);
         }
-        g0.delete?.();
-        const prevId = typeof m.originalID === "function" ? m.originalID() : -1;
-        const o = T(m.asOriginal());
-        const id = o.originalID();
-        featureLabels.set(id, name);
-        // labeling re-stamps the originalID — carry the surface's shading policy along.
-        // A boolean upstream of this label() (e.g. a faceted loft().intersect(tool),
-        // as the vase does to hollow itself) leaves the solid spanning more than one
-        // original surface, so originalID() reports -1 ("mixed") rather than a single
-        // id — the direct lookup below misses even though the loft's policy is right
-        // there. Fall back to the mesh's own run table and recover it via a
-        // triangle-count-weighted majority vote across all surfaces feeding this
-        // mesh (a plain tool like a box has no registered policy of its own, but
-        // still votes SMOOTH — see below).
-        let inherited = prevId !== -1 ? oidPolicies.get(prevId) : undefined;
-        // Skip the mesh scan entirely when no surface anywhere has a registered
-        // policy (e.g. planter's labeled prism compound) — getMesh() forces a
-        // full mesh materialization and parts with no lofts must not pay for it.
-        if (inherited === undefined && prevId === -1 && oidPolicies.size > 0) {
-          const g = m.getMesh();
-          // Triangle-count-weighted majority: walk the run table with runIndex
-          // (each run r spans triangles ri[r]/3..ri[r+1]/3 — same arithmetic
-          // creased-normals.js uses) and tally triangle counts per registered
-          // policy, keyed by VALUE (creaseAngle/sameSurfaceLines), not object
-          // reference — a majority-by-object-identity check would silently
-          // break if policies were ever constructed per-op instead of shared
-          // singletons. A run whose original surface has NO registered policy
-          // (a plain boolean tool, e.g. a box) still gets a vote: at render
-          // time an unregistered surface shades SMOOTH (buildGeometry's
-          // default), so counting it as an abstention would let the vote
-          // disagree with what's actually drawn — it contributes its triangle
-          // weight to SMOOTH instead. The policy spanning the most triangles
-          // wins; an exact tie favors the FACETED-like policy
-          // (sameSurfaceLines: false) — deterministic, and biased toward
-          // honest-print rendering over silently smoothing facets away.
-          const ri = g.runIndex, roid = g.runOriginalID;
-          const weightByKey = new Map();  // policy key -> triangle count
-          let bestWeight = -1, bestPol;
-          for (let r = 0; r < roid.length; r++) {
-            const pol = oidPolicies.get(roid[r]) ?? SMOOTH;
-            const key = `${pol.creaseAngle}/${pol.sameSurfaceLines}/${!!pol.boundaryLines}`;
-            const weight = (weightByKey.get(key) || 0) + (ri[r + 1] / 3 - ri[r] / 3);
-            weightByKey.set(key, weight);
-            const better = weight > bestWeight || (weight === bestWeight && !pol.sameSurfaceLines && bestPol?.sameSurfaceLines);
-            if (better) { bestWeight = weight; bestPol = pol; }
-          }
-          g.delete?.();
-          inherited = bestPol;
-        }
-        if (inherited !== undefined) oidPolicies.set(id, inherited);
-        return { value: wrap(o, lh), pin: o, dispose: () => { featureLabels.delete(id); oidPolicies.delete(id); o.delete?.(); } };
+        const newIds = [...idMap.values()];
+        return { value: wrap(o, lh, undefined, { runs, idMap }), pin: o, dispose: () => {
+          for (const id2 of newIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
+          o.delete?.();
+        } };
       });
     },
     boundingBox: () => {
@@ -754,21 +751,28 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     genus: () => m.genus(),
     isEmpty: () => m.isEmpty(),
     translate: (v) => wrap(T(m.translate(v)), h("translate", hash, v),
-      { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] }),
+      { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "translate", v }] },
+      { runs: runsThrough(m, translateAffine(v)), idMap: idMaps.get(m) }),
     rotate: (deg, center, axis) => {
       const nz = (axis[0] !== 0) + (axis[1] !== 0) + (axis[2] !== 0);
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = nz <= 1
         ? T(a.rotate([axis[0] * deg, axis[1] * deg, axis[2] * deg]))   // basis axis — euler is exact; unchanged
         : T(a.transform(axisAngleMat4(axis, deg)));                    // general axis-angle
+      // A basis-axis euler rotate turns by the component itself (axis [0,0,2] turns
+      // 2·deg): rotateAffine normalizes the axis, so hand it the scaled angle.
+      const turn = nz <= 1 ? deg * Math.hypot(axis[0], axis[1], axis[2]) : deg;
       return wrap(T(b.translate(center)), h("rotate", hash, deg, center, axis),
-        { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] });
+        { m: canon.m, hash: canon.hash, chain: [...canon.chain, { op: "rotate", deg, center, axis }] },
+        { runs: runsThrough(m, rotateAffine(turn, center, axis)), idMap: idMaps.get(m) });
     },
-    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane)),
+    mirror: (plane) => wrap(T(m.mirror(PLANE_NORMAL[plane])), h("mirror", hash, plane), undefined,
+      { runs: runsThrough(m, mirrorAffine(PLANE_NORMAL[plane])), idMap: idMaps.get(m) }),
     scale: (factor, center) => { // factor validated (and center defaulted) by addSugar
       const a = T(m.translate([-center[0], -center[1], -center[2]]));
       const b = T(a.scale([factor, factor, factor]));
-      return wrap(T(b.translate(center)), h("scale", hash, factor, center));
+      return wrap(T(b.translate(center)), h("scale", hash, factor, center), undefined,
+        { runs: runsThrough(m, scaleAffine(factor, center)), idMap: idMaps.get(m) });
     },
     toMesh: () => meshOut(m, false),
     toSTL: () => Promise.resolve(meshOut(m, true)),
@@ -778,9 +782,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   };
 
   const kernel = finishKernel({
+    // The primitives are cache nodes, cheap as they are: a cached op downstream (a
+    // boolean, a label) hands back the solid its first run made, whose runs carry
+    // that run's originalIDs. A primitive re-minted per build would get a fresh id
+    // each time and every provenance record made before the cached op would be
+    // orphaned from the second build on. Hash-consed, equal args are one solid
+    // with one id, for as long as anything built from it is retained.
     cylinder: (rb, rt, h2, { center = false } = {}) => {
       const n = segsAt(Math.max(rb, rt)); // a cone is sized by its wider end
-      return wrap(T(Manifold.cylinder(h2, rb, rt, n, center)), h("cylinder", rb, rt, h2, center, n));
+      return cached(h("cylinder", rb, rt, h2, center, n), () => T(Manifold.cylinder(h2, rb, rt, n, center)));
     },
     // Compound op: hashed ATOMICALLY from its own args, so it is a single cache
     // node — its internal cylinders/cut are never retained. The template for
@@ -789,7 +799,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const body = T(Manifold.cylinder(height, od / 2, od / 2, segsAt(od / 2), false));
       const tool0 = T(Manifold.cylinder(height + 4, bore / 2, bore / 2, segsAt(bore / 2), false));
       const tool = T(tool0.translate([0, 0, -2])); // raw ops: track each result
-      return T(body.subtract(tool));
+      return noteRuns(T(body.subtract(tool)),
+        [{ id: body.originalID(), mat: null }, { id: tool0.originalID(), mat: translateAffine([0, 0, -2]) }]);
     }),
     // Rounded box: ONE hand-meshed ring stack (no booleans) whose cross-
     // sections follow the normative formula (rounded-solids.js / the design
@@ -801,16 +812,18 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // One count serves every corner and rim arc, so it is sized for the largest.
         const rMax = Math.max(round.side, round.top, round.bottom);
         const solid = T(loftMesh(wasm, roundedBoxRings(size, round, segsAt(rMax), roundedBoxArcSamples(segsAt(rMax), dcAt(rMax)))));
-        return center ? T(solid.translate([0, 0, -size[2] / 2])) : solid;
+        if (!center) return solid;
+        const lift = [0, 0, -size[2] / 2];
+        return noteRuns(T(solid.translate(lift)), runsThrough(solid, translateAffine(lift)));
       }),
     // Sized by the double-curvature rule (circle-segs.js: a sphere spends the per-circle
     // count squared), on both tiers — the hash carries the count, so a sphere built at
     // one tier never masquerades as the other's in the cache.
-    sphere: (r) => wrap(T(Manifold.sphere(r, dcAt(r))), h("sphere", r, dcAt(r))),
-    box: (min, max) => {
+    sphere: (r) => cached(h("sphere", r, dcAt(r)), () => T(Manifold.sphere(r, dcAt(r)))),
+    box: (min, max) => cached(h("box", min, max), () => {
       const cube = T(Manifold.cube([max[0] - min[0], max[1] - min[1], max[2] - min[2]]));
-      return wrap(T(cube.translate(min)), h("box", min, max));
-    },
+      return noteRuns(T(cube.translate(min)), runsThrough(cube, translateAffine(min)));
+    }),
     prism: (pts, height, { twist = 0, scaleTop = 1 } = {}) =>
       cached(h("prism", pts, height, twist, scaleTop, segs), () => {
         // Even/odd like `extrude` below and like the OCCT prism, so the outline's
@@ -997,7 +1010,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     union: (solids) => solids.length === 1
       ? solids[0]
       : hoistBoolean("union", solids, (ops) => judgedUnion(ops.map((s) => s._m)))
-        ?? cached(h("union", solids.map((s) => s._hash)), () => judgedUnion(solids.map((s) => s._m))),
+        ?? cached(h("union", solids.map((s) => s._hash)), () => noteRuns(judgedUnion(solids.map((s) => s._m)), runsOfAll(solids))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). The master Manifold is kernel-lifetime (untracked —
     // see `imports` above); wrap() is free, so every call is cheap.
@@ -1079,6 +1092,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     _offsetRegions: offsetRegions,
     beginSubPart: (name) => cache.begin(name),
     endSubPart: () => cache.end(),
+    // Param provenance (provenance.js): while active, toMesh adds originIds/origins.
+    beginProvenance: (prov) => { activeProv = prov; },
+    endProvenance: () => { activeProv = null; },
     sweepCache: () => cache.sweep(),
     dropCache: () => cache.clear(),
     setCacheBudget: (bytes) => cache.setBudget(bytes),

@@ -87,52 +87,42 @@ test("an invalid shading enum value throws the loud enum error", () => {
   expect(() => k.loft({ rings: RINGS, shading: "flat" })).toThrow('loft: shading must be "smooth" | "faceted"');
 });
 
-// Regression: the faceted-vase hollows itself with loft().intersect(box).label(...)
-// — label() runs on the INTERSECT's result, not directly on the loft, so the
-// solid's own originalID() is "mixed" (-1) at that point (it now spans the
-// loft's surface plus the box's). The naive carry-forward only checked a single
-// prior id and silently dropped the policy whenever it was -1, so the labeled
-// solid fell back to the SMOOTH default and its own facet creases (very much
-// bent, by construction) all drew lines — a spiral wireframe.
-test("label() after an intermediate boolean still recovers the loft's policy (vase hollowing)", () => {
+// The faceted-vase hollows itself with loft().intersect(box).label(...) — label()
+// runs on the INTERSECT's result, which spans the loft's surface plus the box's.
+// label() re-stamps every original id 1:1, so each surface keeps its own policy:
+// the loft's walls stay FACETED (flat, no same-surface lines) and the box's face
+// carries none (SMOOTH by default). The only lines are the loft/box seam, exactly
+// what the unlabeled intersect draws.
+test("label() after an intermediate boolean keeps each surface's own policy (vase hollowing)", () => {
   const tool = k.box({ min: [-30, -30, 2], max: [30, 30, 15] }); // no policy of its own
+  const plain = k.loft({ rings: RINGS }).intersect(tool).toMesh();
   const m = k.loft({ rings: RINGS }).intersect(tool).label("Faceted wall").toMesh();
   const w = wallTris(m);
   expect(w.total).toBeGreaterThan(0);
-  expect(w.flat).toBe(w.total);
-  expect(m.edges.length).toBe(0); // faceted policy still wins — no same-surface lines
-  expect(m.features).toEqual(["Faceted wall"]); // labeled compound reports the label as its feature
+  expect(w.flat).toBe(w.total); // the loft's walls keep FACETED
+  expect(m.edges.length).toBeGreaterThan(0); // the loft/box seam at z=2 draws...
+  for (let i = 2; i < m.edges.length; i += 3) expect(m.edges[i]).toBeCloseTo(2, 6); // ...and nothing else
+  expect(Array.from(m.edges)).toEqual(Array.from(plain.edges)); // label() changed no line
+  expect(Array.from(m.normals)).toEqual(Array.from(plain.normals)); // nor any normal
+  expect(m.features).toEqual(["Faceted wall"]);
 });
 
-// Regression: union() of two lofts with DIFFERENT inferred policies also collapses to
-// -1 ("mixed") originalID under label(), same as the intersect-hollowing case above —
-// but here there's no unambiguous single policy to inherit (unlike a plain box tool,
-// both surfaces are policy-bearing). Majority-by-triangle-count breaks the tie: a 2-ring
-// loft has 2*sides wall+cap triangles regardless of size (a geometric fact, not a size
-// one), so a 12-sided 2-ring loft (48 tris, faceted) is smaller than a 64-sided 2-ring
-// loft (256 tris, smooth) — SMOOTH would win a naive vote. Give the 12-sided loft many
-// more RINGS (not more sides — that would also just increase facet count fairly) so its
-// wall-quad count dominates: 16 rings = 15 gaps, 15 gaps * 12 sides * 2 = 360 wall tris +
-// 24 cap tris = 384 total, comfortably ahead of the 64-sided loft's 256.
-//
-// The deciding observable is `edges` rather than `wallTris().flat`: after label()
-// every surviving triangle shares ONE originalID, so `sameSurfaceLines` is either on
-// for the WHOLE mesh or off for the WHOLE mesh — FACETED (sameSurfaceLines:false)
-// winning means zero edges anywhere, including the 90°-bend cap rims that a SMOOTH
-// win would always draw. (`wallTris().flat` alone doesn't discriminate here: even
-// FACETED's 10° creaseAngle is wide enough to still smooth the 64-gon's ~5.6°
-// between-facet corners, so some triangles read "flat" under either policy.)
-test("label() on a union of differently-shaded lofts inherits the majority policy by triangle count", () => {
+// union() of two lofts with DIFFERENT inferred policies: label() keeps each one's
+// own, so the FACETED loft draws no same-surface lines while the SMOOTH loft keeps
+// its 90° cap-rim lines — the same picture as the unlabeled union.
+test("label() on a union of differently-shaded lofts keeps each loft's own policy", () => {
   const manyRingsFaceted = [];
   for (let i = 0; i < 16; i++) manyRingsFaceted.push({ sides: 12, radius: 20, z: i * 2 });
-  const facetedLoft = k.loft({ rings: manyRingsFaceted }); // 15 gaps * 12 sides * 2 = 360 wall tris + 24 cap = 384 tris, FACETED (< 32 sides)
-  const smoothLoft = k
-    .loft({ rings: [{ sides: 64, radius: 20, z: 0 }, { sides: 64, radius: 20, z: 10 }] }) // 256 tris, SMOOTH (>= 32 sides)
-    .translate([100, 0, 0]); // keep the two solids disjoint so union() doesn't reshape either
-  const m = facetedLoft.union(smoothLoft).label("Body").toMesh();
-  const w = wallTris(m);
-  expect(w.total).toBeGreaterThan(0);
-  expect(m.edges.length).toBe(0); // FACETED's majority weight wins — same-surface lines fully suppressed
+  const make = () => k.loft({ rings: manyRingsFaceted }) // FACETED (< 32 sides)
+    .union(k.loft({ rings: [{ sides: 64, radius: 20, z: 0 }, { sides: 64, radius: 20, z: 10 }] }) // SMOOTH (>= 32 sides)
+      .translate([100, 0, 0])); // disjoint, so union() reshapes neither
+  const plain = make().toMesh();
+  const m = make().label("Body").toMesh();
+  let faceted = 0, smooth = 0;
+  for (let i = 0; i < m.edges.length; i += 6) (m.edges[i] < 50 ? faceted++ : smooth++);
+  expect(faceted).toBe(0); // the faceted loft keeps FACETED: no lines
+  expect(smooth).toBeGreaterThan(0); // the smooth loft keeps SMOOTH: cap rims draw
+  expect(Array.from(m.edges)).toEqual(Array.from(plain.edges));
   expect(m.features).toEqual(["Body"]);
 });
 

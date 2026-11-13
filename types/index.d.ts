@@ -222,7 +222,11 @@ export interface MountOptions {
    */
   onPick?: (event: PickEvent) => void;
   /** Opt in to the selection popover (requires `onPick`): a pick opens a popover at the spot with the sub-part's appearance controls, and with `slot: true` an empty region the host floats its own UI over (`runtime.selection`). */
-  selectionPopover?: { slot: boolean };
+  selectionPopover?: {
+    slot: boolean;
+    /** Show up to three sliders for the clicked face's parameters in the popover; `false` turns the controls region off. Default on. */
+    controls?: boolean;
+  };
   /**
    * Bound, in MB, on the geometry worker's solid cache — the built solids it keeps so
    * an edit rebuilds only what changed. Unbounded by default. Past the bound the least
@@ -619,6 +623,14 @@ export interface SelectionRuntime {
    * marker, including one the host held itself.
    */
   onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" }) => void): () => void;
+  /**
+   * Fires when "More in the panel" is pressed while only the host can show the rail:
+   * it holds the pane lease (`runtime.setHostPane`) or docks the rail
+   * (`runtime.setRailLayout({ mode: "dock" })`). `keys` are the parameter keys the
+   * popover was showing, so the host can show its own panel. A collapsed rail or an
+   * overlay drawer partforge opens itself, and this does not fire.
+   */
+  onReveal(cb: (event: { keys: string[] }) => void): () => void;
   close(): void;
   isOpen(): boolean;
 }

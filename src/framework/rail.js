@@ -90,7 +90,7 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // ?pickserver with no #panel/elements.rail hits this path.
     const root = document.documentElement;
     root.style.setProperty("--pf-rail-w", "0px");
-    return { layoutChanged: () => {}, detach: () => root.style.removeProperty("--pf-rail-w") };
+    return { layoutChanged: () => {}, reveal: () => true, detach: () => root.style.removeProperty("--pf-rail-w") };
   }
 
   const root = document.documentElement;
@@ -383,6 +383,24 @@ export function attachRail({ rail, toggle, shell = rail?.parentElement, storage 
     // Deliberately unconditional: attachMobileTabs reports every setRailLayout
     // call, no-change ones included, and a bare re-apply is idempotent.
     layoutChanged: () => apply(),
+    // Make the rail visible where partforge places it ("More in the panel"):
+    // open an overlay drawer, or expand a collapsed wide rail (persisted, as the
+    // toggle would). False under a dock lease, whose sheet only the host can
+    // show. Narrow with no lease is mobile-tabs' pane, and the persisted collapse
+    // is left alone there, as apply() leaves it.
+    reveal: () => {
+      const layout = hostLayout();
+      if (layout === "dock") return false;
+      if (layout === "overlay") {
+        if (!shell.hasAttribute("data-pf-rail-open")) {
+          shell.toggleAttribute("data-pf-rail-open", true);
+          apply();
+        }
+        return true;
+      }
+      if (state.collapsed && window.innerWidth >= RAIL_NARROW_BREAKPOINT) commit({ collapsed: false, width: state.width });
+      return true;
+    },
     detach: () => {
       settleKeys();
       seam.removeEventListener("pointerdown", onPointerDown);
