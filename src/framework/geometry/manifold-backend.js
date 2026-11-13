@@ -901,16 +901,20 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // A Shape2D `profile` (curve-native, possibly multi-region) materializes through
     // csFor — one memoized tessellation per shape+LOD — and folds into the cache key
     // by `_hash` like any other solid operand.
-    extrude: (profile, height, { twist = 0, scaleTop = 1 } = {}) => {
+    // `_twistDivisions` is screwSweep's (kernel-front.js): the twist split at the
+    // thread's own step instead of the flat 5°. Not an author option — it reaches
+    // here only through the positional form the options validator never sees.
+    extrude: (profile, height, { twist = 0, scaleTop = 1, _twistDivisions } = {}) => {
       const shape = profile && profile._shape2d ? profile : null;
-      return cached(h("extrude", shape ? shape._hash : profile, height, twist, scaleTop, segs), () => {
+      const divKey = _twistDivisions === undefined ? [] : [_twistDivisions];
+      return cached(h("extrude", shape ? shape._hash : profile, height, twist, scaleTop, segs, ...divKey), () => {
         const cs = shape ? csFor(shape) : (() => {
           const { outer, holes } = tessellateProfile(profile, segsAt);
           return T(CrossSection.ofPolygons([outer, ...holes], "EvenOdd"));
         })();
         if (cs.isEmpty()) throw emptyProfile("extrude");
         if (twist === 0 && scaleTop === 1) return T(cs.extrude(height));
-        const nDiv = Math.max(1, Math.ceil(Math.abs(twist) / 5));
+        const nDiv = _twistDivisions ?? Math.max(1, Math.ceil(Math.abs(twist) / 5));
         return T(cs.extrude(height, nDiv, twist, [scaleTop, scaleTop]));
       });
     },

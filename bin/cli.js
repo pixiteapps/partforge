@@ -22,8 +22,8 @@ import {
 import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../src/framework/pick-request/token-store.js";
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
-import { pairKey } from "../src/framework/collide/pairs.js";
 import { parseSweepBudget } from "./sweep-budget.js";
+import { sweepText } from "./sweep-text.js";
 import { sniffMediaType } from "../src/framework/ingest/sniff.js";
 import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
 import { installNodeDom } from "../src/framework/ingest/node-dom.js";
@@ -338,7 +338,9 @@ const commands = {
       if (!flags["no-verify"]) {
         // Seeded with the report above, as the inspect job seeds it: verify reuses the
         // measurement where it can and its sweep rows always, so nothing sweeps twice.
-        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline });
+        const v = verify(kernel, part, { process: flags.process, view: report.view, seed: { params: {}, result: report }, deadline: sweepDeadline,
+          // the unswept-motion scan gets the sweeps' budget too: the CLI is where they run in full
+          motionBudgetMs: CLI_SWEEP_BUDGET_MS });
         if (!flags.json) printVerify(v);
         report.verify = v;
         // Tri-state: `null` is a withheld verdict (nothing declared, or a check
@@ -596,23 +598,6 @@ const commands = {
     }
   },
 };
-
-// One sweep row (oracle/sweep.js) for the `sweeps:` line: clear with its tightest pair,
-// a contact with where it starts, its pair, the param driving it and (a param sweep)
-// the contact-free range, or why it stopped short. A row's `ms` is never printed.
-const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
-function sweepText(s) {
-  if (s.skipped) return `${s.name} skipped (${s.skipped})`;
-  const capped = s.capped ? " (capped)" : "";
-  if (s.clear) {
-    const m = s.minClearance;
-    return `${s.name} clear${m ? ` (min ${m.distance.toFixed(2)}mm ${pairKey(m.a, m.b)})` : ""}${capped}`;
-  }
-  const c = s.contacts[0];
-  const free = s.freeRange ? `, free [${s.freeRange.map(fmtV).join(", ")}]` : "";
-  const more = s.contacts.length > 1 ? ` (+${s.contacts.length - 1} more)` : "";
-  return `${s.name} CONTACT at ${fmtV(c.from)} ${pairKey(c.a, c.b)}${c.unresolved ? " (unresolved)" : ""} driven by ${c.driver ?? "?"}${free}${more}${capped}`;
-}
 
 function printMeasure(r) {
   console.log(`${r.part} / ${r.view}`);

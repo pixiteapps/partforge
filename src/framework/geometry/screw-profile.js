@@ -1,3 +1,5 @@
+import { segsForSagitta } from "./circle-segs.js";
+
 // Screw motion as a transverse cross-section. A profile point (r, z) in the axial
 // half-plane travels to (r·cos θ, r·sin θ, z + pitch·θ/2π) under screw motion, and
 // that whole solid is reproduced EXACTLY by extruding a polar-remapped section with
@@ -7,19 +9,59 @@
 // The subtlety that makes this correct rather than nearly-correct: the map sends
 // profile POINTS to polar, but the EDGES between them become straight chords where
 // the true surface needs spiral arcs. Undensified, an ISO tooth loses ~42% of its
-// volume. So every segment is subdivided to a fixed 5° polar step — fixed, not a
-// per-call tolerance, so both backends see the identical polygon and the solid
-// cache keys stay stable. "Every segment" includes the contour's implicit closing
+// volume. So every segment is subdivided to one polar step, sized from the profile
+// alone (screwStepsPerTurn below) — never from the quality tier or the backend — so
+// both backends see the identical polygon and the solid cache keys stay stable. "Every segment" includes the contour's implicit closing
 // edge, except in the periodic case where that edge is a single polar point.
 
-// Degrees of polar sweep per emitted point. Matches Manifold's twist division
-// resolution (nDiv = ceil(|twist|/5) in manifold-backend.js), so the angular and
-// axial sampling of the same solid agree. Converges to 0.03% of the exact volume.
-export const SCREW_STEP_DEG = 5;
+// How finely the screw motion is sampled. One count drives BOTH directions: the
+// polar step every profile segment is densified at here, and the twist divisions
+// Manifold's extrude takes per turn (kernel-front.js passes it as
+// `_twistDivisions`), so the angular and axial sampling of the same solid agree.
+//
+// It used to be a flat 5° — 72 steps a turn — whatever the thread's size. Spent on
+// a 1.5 mm-radius M3 thread that is a chord sagitta of 0.0014 mm, a hundredth of
+// any printer's resolution, and because a thread's triangle count is QUADRATIC in
+// the step (it is the cross-section's point count times the twist divisions), it
+// was paid squared: eleven 50–80-turn M3 screws came to 7.7 M triangles, which is
+// what feedback #244's 3MF export could not write.
+//
+// So the step is sized by chord tolerance at the profile's largest radius — the
+// same 0.01 mm the print tier holds every circle to (circle-segs.js), through the
+// same `segsForSagitta` formula — and clamped:
+//
+// - CAP at the old 72 a turn. A thread large enough to need more keeps exactly the
+//   density it always had; nothing gets finer than before. From about r = 10.5 mm
+//   up a thread is unchanged (an M20's 10 mm radius is 71).
+// - FLOOR at SCREW_MIN_STEPS a turn (24, 15° facets), so a tiny thread never
+//   reads as a polygon under close zoom.
+//
+// It is the same count on both quality tiers and both backends, on purpose: a
+// thread previews exactly as it exports, OCCT's B-rep (which twists natively and
+// reads only the cross-section) matches Manifold's mesh, and the solid cache key
+// is a function of the profile alone. Measured on ISO metric threads: an M3
+// is 28 steps a turn (6.5× fewer triangles), an M6 39 (3.3×), an M2 the floor 24
+// (8.7×). The chords sit inside the exact surface, so the solid reads up to 0.01 mm
+// small at the crest — 0.8% of an M3 rod's volume, 0.4% of an M6's — which is
+// what the print tier's circles already do and a tenth of any printer's resolution.
+export const SCREW_SAGITTA_TOL = 0.01; // mm — circle-segs.js SAGITTA_TOL.print
+export const SCREW_MIN_STEPS = 24;
+export const SCREW_MAX_STEPS = 72; // the old flat 5°
+
+// Steps per full turn for an axial [[r, z]] profile. Never throws: a profile with
+// no finite positive radius takes the floor, and screwCrossSection reports what is
+// actually wrong with it.
+export function screwStepsPerTurn(profile) {
+  let maxR = 0;
+  if (Array.isArray(profile))
+    for (const p of profile) if (Array.isArray(p) && Number.isFinite(p[0]) && p[0] > maxR) maxR = p[0];
+  return segsForSagitta(maxR, SCREW_SAGITTA_TOL, SCREW_MIN_STEPS, SCREW_MAX_STEPS);
+}
 
 const EPS = 1e-9;
 
-export function screwCrossSection(profile, pitch, { lefthand = false } = {}) {
+export function screwCrossSection(profile, pitch, { lefthand = false, stepsPerTurn = screwStepsPerTurn(profile) } = {}) {
+  const stepDeg = 360 / stepsPerTurn;
   if (!Array.isArray(profile) || profile.length < 2)
     throw new Error("screwSweep: profile must be an array of at least 2 [r, z] points");
   if (!(pitch > 0)) throw new Error("screwSweep: pitch must be > 0");
@@ -45,7 +87,7 @@ export function screwCrossSection(profile, pitch, { lefthand = false } = {}) {
   const dense = [];
   const densify = ([r0, z0], [r1, z1], { includeStart }) => {
     const span = Math.abs((360 * (z1 - z0)) / pitch);
-    const steps = Math.max(1, Math.ceil(span / SCREW_STEP_DEG));
+    const steps = Math.max(1, Math.ceil(span / stepDeg - 1e-9));
     for (let j = includeStart ? 0 : 1; j < steps; j++)
       dense.push([r0 + ((r1 - r0) * j) / steps, z0 + ((z1 - z0) * j) / steps]);
   };

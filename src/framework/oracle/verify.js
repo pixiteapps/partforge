@@ -1,6 +1,10 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
+import { runSweeps, normalizeSweeps } from "./sweep.js";
+import { relativePlacements, samePlacements } from "../collide/sweep-targets.js";
+import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
+import { sweepContactBlocks } from "../collide/pairs.js";
 import { heldCheck } from "./held.js";
 import { flexMembers } from "./flex-members.js";
 import { resolveProfile, overhangAngleFor, bedContactFor, footprintFor, rootFilletFor, strainFor, flexTiltFor } from "./dfm-profiles.js";
@@ -9,6 +13,7 @@ import { relevanceHash } from "../param-deps.js";
 import { SUBPART_METRICS, VIEW_METRICS, sidesSpecError, FLEX_ROOT_HINT, worstFlexRoot } from "../verify-metrics.js";
 import { processById } from "../process/registry.js";
 import { SHEET_DOC_ID, SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
+import { uncoveredMotions, motionHint } from "../collide/motion-coverage.js";
 // Re-exported for the callers that read them from here; their one home is sheet/constants.js.
 export { SHEET_CHECKS_NOTICE, SHEET_READ_ERROR_HINT } from "../sheet/constants.js";
 
@@ -159,7 +164,7 @@ function check(scope, subpart, metric, spec, registry, factsObj, accept = []) {
     // (sweepContacts when every declared sweep stopped short): unevaluated, as a quick
     // lap's gates are.
     const withheld = reg.withheld?.(factsObj);
-    if (withheld) return { ...base, actual, status: "skip", pass: null, unevaluated: true, message: withheld, hint: partHint ?? reg.withheldHint };
+    if (withheld) return { ...base, actual, status: "skip", pass: null, unevaluated: true, message: withheld, hint: partHint ?? (typeof reg.withheldHint === "function" ? reg.withheldHint(factsObj) : reg.withheldHint) };
     return { ...base, actual, status: "skip", pass: null, message: reg.skipMessage ?? "unavailable" };
   }
   const { pass, message } = evaluateAssertion(parseAssertion(expr), actual);
@@ -214,6 +219,8 @@ const PRINT_POSE_NOTE = "measured in the print (export) pose";
 // SHEET_CHECKS_NOTICE (sheet/constants.js) stands in for a sheet's budget-gated
 // volunteered checks when its 2-D budget ran out (measure()'s `sheet.evaluated` false):
 // one warning, never `unevaluated` — a check nobody declared must not withhold a verdict.
+// The one exception is motion: a moving piece no declared sweep covers withholds verify.ok
+// (sweepCoverage, below; spec 2026-11-12-moving-fits-swept-design.md, decision 2).
 
 // A DECLARED sheet check the budget withheld: `unevaluated`, as a quick lap's is, so it
 // withholds verify.ok — and it says how to get a verdict. Either the budget ran out
@@ -284,18 +291,105 @@ function sheetRowChecks(s, declaredExp) {
 // stopped would vanish from the verdict. One warning per reason, naming every sweep.
 const SWEEP_TIMEOUT_HINT = "these sweeps did not fit the report's time budget, so nothing checked their motion for contact; run them on their own — `npx partforge measure <part>` gives sweeps a longer budget, or declare fewer at a time in verify.sweeps (one sweep per run when each is long)";
 const SWEEP_UNREADABLE_HINT = "these sweeps could not run (the error follows each name), so nothing checked their motion for contact; `npx partforge lint` names an unknown param, handle, preset or animation — fix the sweep's target or remove it";
+// SWEEPS WHERE THE MOTION IS (spec 2026-11-12-moving-fits-swept-design.md, A: "Every view
+// is scanned, whatever view is being verified"). The hosting app verifies a part's FIRST
+// view, and a hinge often turns only in a later one (`assembly`), so each declared sweep
+// ENTRY runs in EVERY view where it moves something: the verified view's rows (`ownRows`,
+// from measure) first, then each other view in `part.views` order, under the same
+// deadline; those rows carry `view`. Every view, not the first that moves it: two views can
+// pose one motion differently (an exploded view lifts the lid clear while `assembly` swings
+// it through the base), and motion coverage credits a declared sweep in every view.
+// Entries, not declarations: a handle expands to one entry per DOF ("<key>.<param>").
+// A view that shows the same sub-parts and poses an entry's moving pieces against every
+// other one (the set the engine collides, non-exportable pieces included) exactly
+// as a view already swept for that entry (sweep-targets.js relativePlacements, at the
+// motion scan's samples) would give the same row, so it is not swept again; an entry that
+// rebuilds a sub-part is never matched, and runs in every view that moves it. An entry that
+// cannot run (unreadable, no motion) is reported once. Past the deadline an entry still
+// costs the geometry-free motion scan in each view that finds it there, and gets a
+// `skipped: "timeout"` row carrying that view, which names it in the timed-out warning.
+// Never throws: a view or entry that cannot be read adds nothing.
+function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
+  const decl = part.verify?.sweeps;
+  if (!decl || typeof decl !== "object" || Array.isArray(decl)) return [];
+  const full = { ...part.defaults, ...params };
+  const reported = new Set(ownRows.map((r) => r.name));
+  const swept = new Map(); // entry name → relativePlacements of each view it was swept in
+  const remember = (name, at) => { if (at) swept.set(name, [...(swept.get(name) ?? []), at]); };
+  const placementsOf = (v, s) => {
+    try { return relativePlacements(part, v, full, s); } catch { return null; }
+  };
+  const entriesIn = (v) => {
+    try { return normalizeSweeps(part, v, params); } catch { return []; }
+  };
+  for (const s of entriesIn(view)) if (!s.skip && reported.has(s.name)) remember(s.name, placementsOf(view, s));
+  const out = [];
+  for (const other of Object.keys(part.views ?? {})) {
+    if (other === view) continue;
+    const run = [], at = new Map();
+    for (const s of entriesIn(other)) {
+      if (s.skip) { if (!reported.has(s.name)) run.push(s); continue; }
+      const here = placementsOf(other, s);
+      if (here && swept.get(s.name)?.some((seen) => samePlacements(seen, here))) continue;
+      at.set(s.name, here);
+      run.push(s);
+    }
+    if (!run.length) continue;
+    let rows;
+    try {
+      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, entries: run });
+    } catch {
+      continue;
+    }
+    if (rows.length) kernel.cleanup?.();
+    for (const r of rows) {
+      reported.add(r.name);
+      remember(r.name, at.get(r.name));
+      out.push({ ...r, view: other });
+    }
+  }
+  return out;
+}
+
 function sweepNotices(rows) {
   const out = [];
   const note = (expr, message, hint) => out.push({ scope: "view", subpart: null, metric: "sweeps", kind: "warn", expr,
     actual: null, status: "warn", pass: null, message, hint, volunteered: true });
   // A row stopped after it found a contact names it: that contact is real, and the gate counts it.
+  // a row run in another view (sweepsElsewhere) names it: one entry can have a row per view
+  const named = (r) => (r.view ? `${r.name} (view ${JSON.stringify(r.view)})` : r.name);
   const timedOut = rows.filter((r) => r.skipped === "timeout").map((r) => {
-    const c = r.contacts?.[0];
-    return c ? `${r.name} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : r.name;
+    const c = r.contacts?.find((x) => sweepContactBlocks(r, x));
+    return c ? `${named(r)} (contact found at ${Number.isInteger(c.from) ? c.from : c.from.toFixed(2)}: ${pairKey(c.a, c.b)})` : named(r);
   });
   if (timedOut.length) note("ran", `${timedOut.length} sweep(s) stopped at the time budget: ${timedOut.join(", ")}`, SWEEP_TIMEOUT_HINT);
-  const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${r.name} (${r.error})` : r.name));
+  const unreadable = rows.filter((r) => r.skipped === "unreadable").map((r) => (r.error ? `${named(r)} (${r.error})` : named(r)));
   if (unreadable.length) note("readable", `${unreadable.length} sweep(s) could not run: ${unreadable.join(", ")}`, SWEEP_UNREADABLE_HINT);
+  return out;
+}
+
+// A motion no declared sweep covers (collide/motion-coverage.js; spec
+// 2026-11-12-moving-fits-swept-design.md, A) is the exception to the volunteered rule: one
+// DECLARED, `unevaluated` check per motion param, so it holds verify.ok at null until a
+// sweep is declared. Every view is scanned, whatever view is verified, and the hint names
+// the view the motion is in. Geometry-free, so a quick lap reports it too. Coverage is the
+// DECLARATION (decision 4): a declared sweep that stopped short keeps sweepNotices' warning
+// and adds no check here. A part whose motion cannot be probed gets no check, never a throw.
+// A scan that ran out of its time budget adds one VOLUNTEERED warning (it never moves ok):
+// the motions it found are still withheld, and it says nothing about the ones it did not reach.
+const MOTION_SCAN_PARTIAL_HINT = "the scan for moving pieces with no sweep stopped at its time budget, so params it did not reach were not checked — this says nothing about whether they move a piece; declare a sweep in verify.sweeps for every param that poses one piece against another";
+// `budgetMs`: verify's `motionBudgetMs` (the CLI hands it its sweep budget, so the verify
+// golden, which runs that without a deadline, never depends on the machine); unset, the
+// scan's own default.
+function sweepCoverage(part, budgetMs) {
+  let scan = { motions: [], partial: false };
+  try { scan = uncoveredMotions(part, undefined, undefined, budgetMs === undefined ? {} : { budgetMs }); } catch { /* unprobeable: lint reports what it can */ }
+  const out = scan.motions.map((entry) => ({ scope: "view", subpart: null, metric: "sweepCoverage", expr: entry.param,
+    actual: null, status: "skip", pass: null, unevaluated: true,
+    message: `no sweep declared for "${entry.param}"`, hint: motionHint(entry) }));
+  if (scan.partial) out.push({ scope: "view", subpart: null, metric: "sweepCoverage", kind: "warn", expr: "finished",
+    actual: null, status: "warn", pass: null, message: "the motion check did not finish in its time budget",
+    hint: MOTION_SCAN_PARTIAL_HINT, volunteered: true });
   return out;
 }
 
@@ -465,8 +559,16 @@ function flexChecks(facts, flex) {
 // supports and MEASURE NOTHING. What that leaves unchecked is reported as
 // `unevaluated` rather than quietly downgraded, and one unevaluated gate withholds
 // `ok` — a fast lap yields facts, never a verdict.
-export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline } = {}) {
+// `deadline` (an absolute Date.now() reading) bounds every sweep this verify runs, here and
+// in other views; absent, it is the report share counted from the call.
+// The result: { ok, view, sweeps?, cases, failures, warnings, … }. `sweeps` holds the rows
+// of the declared sweeps run in the other views where they move something (sweepsElsewhere),
+// each row with that `view`; absent when there are none.
+export function verify(kernel, part, { process, view, measureFn = defaultMeasure, seed, quick = false, deadline, motionBudgetMs } = {}) {
   view = view ?? Object.keys(part.views)[0];
+  // Every sweep of one verify, in this view and in others, shares ONE deadline: the
+  // caller's, else the report share counted from here (measure's own default).
+  const sweepDeadline = deadline ?? Date.now() + REPORT_SHARE_MS;
   const profileSpec = process ?? part.verify?.process;
   const profile = profileSpec ? resolveProfile(profileSpec) : null;
 
@@ -576,7 +678,8 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // still answers for its sweeps: they read the motion and the part, never min wall or
   // overhang — so the CLI, which seeds verify with a measurement taken without min wall,
   // never sweeps twice, whatever the case order), else "defaults", else the first case.
-  // `deadline` (the caller's, e.g. the CLI's longer budget) reaches that one measure.
+  // `deadline` (the caller's, e.g. the CLI's longer budget, else verify's own) reaches that
+  // one measure, and then the sweeps run in other views (sweepsElsewhere).
   const seedSweeps = !seedAdmitted && seed?.result?.view === view && Array.isArray(seed.result.sweeps)
     ? { params: full(seed.params), rows: seed.result.sweeps } : null;
   const sameParams = (a, b) => {
@@ -596,7 +699,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // the same way a min-wall seed is: the extra key is simply never read here.)
     const measured = measureFn(kernel, part, view, params,
       { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps,
-        ...(sweeps && deadline !== undefined ? { deadline } : {}) });
+        ...(sweeps ? { deadline: sweepDeadline } : {}) });
     const result = graft ? { ...measured, sweeps: graft } : measured;
     entries.push({ params: fp, result });
     return result;
@@ -621,6 +724,11 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     if (i < 0) i = expanded.findIndex((c) => c.name === "defaults");
     measureCase(expanded[Math.max(i, 0)].params, true);
   }
+  // The sweeps run in every other view where they move something; their rows join the
+  // one entry that carries this view's (a copy: a seed's result is the caller's object).
+  const swept = part.verify?.sweeps && !quick ? entries.find((e) => Array.isArray(e.result?.sweeps)) : null;
+  const elsewhere = swept ? sweepsElsewhere(kernel, part, view, swept.params, swept.result.sweeps, sweepDeadline) : [];
+  if (elsewhere.length) swept.result = { ...swept.result, sweeps: [...swept.result.sweeps, ...elsewhere] };
   // The sweep rows reach one case only (the one that ran them, or the reused seed), so
   // their stopped-short notices are raised once, on the first case whose facts carry them.
   let sweepsNoticed = false;
@@ -638,6 +746,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     if (facts.sweeps && !sweepsNoticed) { sweepsNoticed = true; checks = [...checks, ...sweepNotices(facts.sweeps)]; }
     return { name, params, checks };
   });
+  // Appended once per verify, to the first case, as sweepNotices are.
+  const coverage = sweepCoverage(part, motionBudgetMs);
+  if (coverage.length && caseResults.length) caseResults[0].checks = [...caseResults[0].checks, ...coverage];
   // VACUOUS VERIFY. A part that declares nothing — no profile, an empty or absent
   // `expect` — used to come back `ok: true` with zero checks, and every reader
   // (the CLI's exit code, the cloud agent's "verify passes" stop rule) took that
@@ -677,7 +788,9 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   const unevaluated = all.filter((c) => c.unevaluated);
   const warnings = all.filter((c) => c.status === "warn");
   const costs = all.filter((c) => c.status === "cost");
-  if (evaluated === 0 && unevaluated.length === 0) {
+  // An unswept motion (sweepCoverage) is about the part's motion, not its expectations, so
+  // it does not stand in for this notice: a part declaring nothing else still hears it.
+  if (evaluated === 0 && unevaluated.every((c) => c.metric === "sweepCoverage")) {
     warnings.push({ case: null, scope: "part", subpart: null, metric: "expectations", kind: "warn", expr: "evaluated",
       actual: 0, status: "warn", pass: null,
       message: declaresAnything ? "no expectation could be evaluated" : "no expectations declared",
@@ -691,6 +804,10 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     // part on which nothing was evaluated has no verdict to give.
     ok: failures.length ? false : unevaluated.length || evaluated === 0 ? null : true,
     view,
+    // The rows of the sweeps run in another view (sweepsElsewhere), each with its `view`;
+    // absent when none ran elsewhere. measure() keeps to its own view, so this is the only
+    // place they surface (the inspect job appends them to its report's measure.sweeps).
+    ...(elsewhere.length ? { sweeps: elsewhere } : {}),
     cases: caseResults,
     failures,
     warnings,

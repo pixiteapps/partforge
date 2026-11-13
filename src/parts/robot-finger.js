@@ -97,9 +97,11 @@ export default {
     print: { label: "Print" },
   },
   // The links never interpenetrate, and each tongue keeps its running clearance to the
-  // fork it swings in (GAP on each side) — the near miss there is intended.
+  // fork it swings in (GAP on each side) — the near miss there is intended. The curl sweep
+  // checks the links never touch anywhere along the motion, not only at the defaults.
   verify: {
     process: "fdm-pla",
     expect: { _view: { overlaps: 0, clearance: { "proximal×middle": ">=0.3", "middle×distal": ">=0.3" } } },
+    sweeps: { curl: { param: "curl", clearance: 0 } },
   },
 };

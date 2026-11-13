@@ -21,9 +21,12 @@ test("lidAngle animates without a rebuild (no animation-track-rebuilds note)", (
   expect(notes).not.toContain("animation-track-rebuilds");
 });
 
-test("verify passes: the assembly has no overlaps", () => {
+// The assembly has no overlaps, and the lid's swing (its declared lidAngle sweep, gated by
+// sweepContacts) touches nothing it may not: the closed lid resting on the body is allowed.
+test("verify passes: no overlaps, and the lid swings clear", () => {
   const v = verify(k, part);
   expect(v.ok).toBe(true);
+  expect(v.unevaluated).toEqual([]);
 });
 
 test("the 3MF of every printed piece lays them out apart", async () => {

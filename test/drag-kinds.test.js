@@ -141,6 +141,20 @@ describe("rotary drag", () => {
     }
     expect(worst).toBeLessThanOrEqual(30);
   });
+  it("reads the pointer on the grabbed point's own rotation plane, not the axis origin's", () => {
+    // a crank knob 30 mm up its axis, seen obliquely: the pointer kept on the knob as it
+    // turns reads exactly the knob's turn (the origin's plane, 30 mm below, did not)
+    const c = cam([-1, -0.4, -0.8]);
+    const lift = (q) => [q[0], q[1], 30];
+    const p = lift(onCircle(0, 10));
+    const s = startDrag("rotary", { point: p, axis, ...c.pointerAt(p) });
+    const start = s.angleDeg;
+    let t;
+    for (let deg = 10; deg <= 120; deg += 10) {
+      t = dragTarget(s, c.pointerAt(lift(onCircle(deg, 10))));
+      expect(t.angleDeg - start).toBeCloseTo(deg, 6);
+    }
+  });
   it("radius-0 point gives radius 1 and a finite target", () => {
     const c = cam([0, 0, -1], [0, 1, 0]);
     const p = [0, 0, 0];

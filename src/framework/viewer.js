@@ -5,6 +5,7 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { smoothLineMaterial } from "./smooth-lines.js";
 import { UltraHDRLoader } from "three/addons/loaders/UltraHDRLoader.js";
 import { buildCadMaterial, buildPhysicalMaterial } from "./materials/physical.js";
 import { grainAxisFor, setGrainAxis } from "./materials/patterns.js";
@@ -281,11 +282,12 @@ export function createViewer(container, part, {
     renderRequested = true;
     if (graceMs > 0) renderUntil = Math.max(renderUntil, performance.now() + graceMs);
   }
-  // performance.now() of the last camera move or pose change, for the cel
-  // ground's map-size schedule (prepareCelGround). Set in every mode: it is
-  // only read in cel, and a stale stamp is simply "settled".
+  // performance.now() of the last pose change, for the cel ground's map-size
+  // schedule (prepareCelGround). Set in every mode: it is only read in cel, and
+  // a stale stamp is simply "settled". A camera move does not set it: the live
+  // ground light is world-fixed, so an orbit leaves the shadow map as it was.
   let celMovedAt = null;
-  controls.addEventListener("change", () => { celMovedAt = performance.now(); requestRender(); });
+  controls.addEventListener("change", () => requestRender());
 
   // --- lights + grid --------------------------------------------------------
   const liveLights = addViewerLights(scene);
@@ -348,9 +350,10 @@ export function createViewer(container, part, {
 
   // CAD-style feature edge lines (anti-aliased "fat" lines), one per sub-part.
   const EDGE_ANGLE = 35; // deg — last-ditch threshold for payloads with no kernel edge data
-  const lineMaterial = new LineMaterial({ // ~10% lighter, 1 px by default
-    color: THEME.dark.line, linewidth: edgeWidth, transparent: edgeOpacity < 1, opacity: edgeOpacity,
-  });
+  // smoothLineMaterial feathers the sides (and makes it blend); clones keep it.
+  const lineMaterial = smoothLineMaterial(new LineMaterial({ // ~10% lighter, 1 px by default
+    color: THEME.dark.line, linewidth: edgeWidth, opacity: edgeOpacity,
+  }));
   lineMaterial.resolution.set(1, 1); // real size set by resize() below
   const subLines = Object.fromEntries(
     names.map((n) => [n, new LineSegments2(new LineSegmentsGeometry(), lineMaterial)])
@@ -1083,7 +1086,7 @@ export function createViewer(container, part, {
   // Cel's ground follows the same floor rules. The plane is fitted to the
   // visible bounds with their bottom dropped to the HELD floor, so an animation
   // that lifts the part off its base never lifts the plane into it. The shadow
-  // itself is a live shadow map, re-rendered every frame, so there is no
+  // itself is a live shadow map, re-rendered whenever a caster moves, so there is no
   // growHeldShadow twin: whatever the pose reaches, the map sees. Called after
   // placeGround (which, in cel, forgets an unheld record) so the cel floor is
   // the one `lastGround` keeps. A borrowed capture (`live: false`) fits the
@@ -1118,8 +1121,9 @@ export function createViewer(container, part, {
   // the key up-left of the viewer, the ground light following it, its world
   // elevation clamped by aim — so every canonical view is lit the same way, as
   // CAD's capture lights do. Like the realistic contact shadow, the map runs
-  // small while the camera or a pose moves and full once it has settled — a 2048² VSM blur every frame of
-  // an orbit is what a phone cannot keep up with. A mountPreview viewer (a
+  // small while a pose moves and full once it has settled (an orbit does not
+  // re-render it at all) — a 2048² VSM blur every frame of
+  // a drag is what a phone cannot keep up with. A mountPreview viewer (a
   // turntable or an animation, always moving) and a coarse pointer stay small.
   // A small frame asks for the frames that follow it, so the settled full-size
   // frame lands without further input.
@@ -1127,6 +1131,7 @@ export function createViewer(container, part, {
   const celFullMap = frameSwept || framePoses?.length || isCoarsePointer() ? CEL.ground.mapSizeSmall : CEL.ground.mapSize;
   const celFullMapSize = () => celFullMap;
   const _celGroundLight = celGroundLightWorld();
+  const _celClipPlane = new THREE.Plane();
   function prepareCelGround(cam) {
     // Casters are the ink prepass's members: exactly the sub-parts drawn
     // opaque (subPartVisibility's `inked`), so an authored ghost, a user
@@ -1153,6 +1158,12 @@ export function createViewer(container, part, {
     const want = moving ? CEL.ground.mapSizeSmall : full;
     if (want !== celMapSize) { celGround.setMapSize(want); celMapSize = want; }
     if (want !== full) requestRender(SHADOW_SETTLE_MS);
+    // three re-renders the map only when told (autoUpdate is off in cel): on a
+    // change to what it is rendered from, and on every capture, whose
+    // camera-relative light leaves the live map to be re-rendered after it.
+    // The cutaway's plane clips the casters, so it is part of that.
+    const clipPlane = cutaway.getPlane?.(_celClipPlane) ?? null;
+    if (celGround.shadowChanged({ capture: !onCanvas, clipPlane })) renderer.shadowMap.needsUpdate = true;
   }
   // Out of cel: the ground leaves the scene, the casters stop casting, and the
   // renderer's shadow map goes back to how cel found it.
@@ -1160,9 +1171,11 @@ export function createViewer(container, part, {
     if (!celGround) return;
     scene.remove(celGround.light, celGround.light.target, celGround.plane);
     celGround.setCasters([]);
+    celGround.invalidate();
     if (celShadowWas) {
       renderer.shadowMap.enabled = celShadowWas.enabled;
       renderer.shadowMap.type = celShadowWas.type;
+      renderer.shadowMap.autoUpdate = celShadowWas.autoUpdate;
       celShadowWas = null;
     }
   }
@@ -1343,9 +1356,11 @@ export function createViewer(container, part, {
         celGround = createCelGround({ mapSize: celFullMapSize() });
         celMapSize = celFullMapSize();
       }
-      celShadowWas ??= { enabled: renderer.shadowMap.enabled, type: renderer.shadowMap.type };
+      celShadowWas ??= { enabled: renderer.shadowMap.enabled, type: renderer.shadowMap.type, autoUpdate: renderer.shadowMap.autoUpdate };
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.VSMShadowMap;
+      renderer.shadowMap.autoUpdate = false; // prepareCelGround asks for each re-render
+      celGround.invalidate();
       celGround.setLook(celField(currentTheme).shadow); // the theme may have changed while in another mode
       celGround.plane.material.needsUpdate = true;
       scene.add(celGround.light, celGround.light.target, celGround.plane);
@@ -1413,7 +1428,7 @@ export function createViewer(container, part, {
     floor.receiveShadow = true;
     lit.add(sun, sun.target, floor);
     const quad = new THREE.PlaneGeometry(2, 2);
-    unlit.add(new THREE.Mesh(quad, celInk.material));
+    unlit.add(new THREE.Mesh(quad, celInk.material), new THREE.Mesh(quad, celInk.resolveMaterial));
     for (const n of names) {
       const geo = subCache[n];
       if (!geo) continue; // unbuilt: compiles when first shown
@@ -2649,7 +2664,7 @@ export function createViewer(container, part, {
     const opacity = lineOpacityForMode();
     lineMaterial.color.set(color);
     lineMaterial.opacity = opacity;
-    lineMaterial.transparent = opacity < 1;
+    lineMaterial.transparent = true; // always: the feathered edges blend
     for (const m of fadeLineMats.values()) m.color.set(color);
   }
 
@@ -3354,7 +3369,7 @@ export function createViewer(container, part, {
     // live viewer shows. A dedicated LineMaterial in the style's colour and width
     // (renderOffscreen sizes its resolution to the target, as for every capture); added
     // after framing so it can't perturb the bbox.
-    const lineMat = new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, transparent: st.edges.opacity < 1, opacity: st.edges.opacity });
+    const lineMat = smoothLineMaterial(new LineMaterial({ color: st.edges.color, linewidth: st.edges.widthPx, opacity: st.edges.opacity }));
     for (const mesh of built) {
       const edges = mesh.geometry.userData.edges;
       if (!edges) continue;
@@ -3581,7 +3596,10 @@ export function createViewer(container, part, {
   // A restored context has re-uploaded everything but drawn nothing, and a
   // returning tab may have had its drawing buffer discarded.
   const onRedrawNeeded = () => requestRender();
-  renderer.domElement.addEventListener("webglcontextrestored", onRedrawNeeded);
+  // A restored context also lost the cel ground's shadow map, which cel only
+  // re-renders when told to.
+  const onContextRestored = () => { celGround?.invalidate(); requestRender(); };
+  renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
   document.addEventListener("visibilitychange", onRedrawNeeded);
 
   const onContextLostEvent = (event) => {
@@ -3790,7 +3808,7 @@ export function createViewer(container, part, {
     for (const type of INPUT_EVENTS) container.removeEventListener(type, onStageInput, { capture: true });
     window.removeEventListener("keydown", onKeyInput, { capture: true });
     window.removeEventListener("keyup", onKeyInput, { capture: true });
-    renderer.domElement.removeEventListener("webglcontextrestored", onRedrawNeeded);
+    renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
     document.removeEventListener("visibilitychange", onRedrawNeeded);
     contextLostListeners.clear();
     controls.removeEventListener("start", onControlsStart);

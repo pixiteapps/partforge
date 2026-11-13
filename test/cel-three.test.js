@@ -92,14 +92,16 @@ function stubRenderer(buffer, bound = null) {
 }
 describe("createCelInk render", () => {
   const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
-  it("draws the quad into the target that was bound, and restores it", () => {
+  it("draws the masks offscreen, resolves them into the target that was bound, and restores it", () => {
     const bound = { width: 64, height: 48 };
     const r = stubRenderer([800, 600], bound);
     const ink = createCelInk();
     ink.render(r, scene, cam, { pixelScale: 1, field: null });
     const renders = r.calls.filter((c) => c[0] === "render");
-    expect(renders).toHaveLength(2);
-    expect(renders[1][2]).toBe(bound);
+    expect(renders).toHaveLength(3); // prepass, masks, resolve
+    expect(renders[1][2]).not.toBe(bound);
+    expect(renders[1][2].texture).toBe(ink.resolveMaterial.uniforms.tInk.value);
+    expect(renders[2][2]).toBe(bound);
     expect(r.calls.at(-1)).toEqual(["set", bound]);
     ink.dispose();
   });
@@ -109,6 +111,17 @@ describe("createCelInk render", () => {
     expect(ink.material.uniforms.uBgDots.value).toBe(0);
     ink.render(stubRenderer([64, 48]), scene, cam, { field: { color: new THREE.Color(CEL.field.color), dots: true } });
     expect(ink.material.uniforms.uBgDots.value).toBe(CEL.field.dots);
+    ink.dispose();
+  });
+  it("smooths the ink mask in the resolve and composites over the frame", () => {
+    const ink = createCelInk();
+    expect(ink.material.blending).toBe(THREE.NoBlending);
+    const r = ink.resolveMaterial;
+    expect(r.transparent).toBe(true);
+    expect(r.fragmentShader).toContain("ink = (b < lMin || b > lMax) ? a : b;");
+    ink.render(stubRenderer([64, 48]), scene, cam, {});
+    expect(r.uniforms.tInk.value.minFilter).toBe(THREE.LinearFilter);
+    expect([r.uniforms.uRes.value.x, r.uniforms.uRes.value.y]).toEqual([64, 48]);
     ink.dispose();
   });
   it("floors every sampling radius at one texel (NearestFilter target)", () => {
@@ -133,7 +146,24 @@ describe("createCelInk render", () => {
     // The same capture size again reuses the capture target rather than reallocating.
     ink.render(stubRenderer([800, 600], bound), scene, cam, { pixelScale: 1, field: null });
     expect(u.tNormal.value).toBe(captureTex);
-    expect(ink.prepassMaterial.isMeshNormalMaterial).toBe(true);
+    ink.dispose();
+  });
+  it("the prepass draws a clipped mesh's exposed inside as the cutaway cap: plane normal at plane depth", () => {
+    const ink = createCelInk();
+    const m = ink.prepassMaterial;
+    expect(m.isShaderMaterial && m.clipping).toBe(true);
+    expect(m.side).toBe(THREE.DoubleSide);
+    expect(m.fragmentShader).toContain("#include <clipping_planes_fragment>");
+    expect(m.fragmentShader).toContain("if (!gl_FrontFacing)");
+    expect(m.fragmentShader).toContain("gl_FragDepth = depth");
+    const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 50);
+    ink.render(stubRenderer([64, 48]), scene, ortho, { clippingPlanes: [new THREE.Plane(new THREE.Vector3(1, 0, 0), 0)] });
+    expect(m.uniforms.uOrtho.value).toBe(1);
+    expect(m.uniforms.uProj.value.equals(ortho.projectionMatrix)).toBe(true);
+    expect(m.clippingPlanes).toHaveLength(1);
+    ink.render(stubRenderer([64, 48]), scene, cam, {});
+    expect(m.uniforms.uOrtho.value).toBe(0);
+    expect(m.clippingPlanes).toEqual([]);
     ink.dispose();
   });
   it("skips a 1x1 drawing buffer entirely", () => {
@@ -214,5 +244,104 @@ describe("createCelGround", () => {
     g.aim(cam, { azimuthDeg: -35, elevationDeg: 60 });
     const d = g.light.position.clone().sub(g.light.target.position).normalize();
     expect(Math.asin(d.y) * 180 / Math.PI).toBeGreaterThanOrEqual(CEL.ground.minWorldElevationDeg - 1e-6);
+  });
+});
+
+// The ground's shadow map re-renders only when what it is rendered from
+// changes (the viewer turns three's per-frame update off in cel). The live
+// light is world-fixed, so a camera move must never count.
+describe("createCelGround shadowChanged", () => {
+  function setup() {
+    const g = createCelGround({ mapSize: 1024 });
+    const scene = new THREE.Scene(), pivot = new THREE.Group();
+    scene.add(pivot, g.light, g.light.target, g.plane);
+    const a = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+    const b = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 5));
+    b.position.x = 12;
+    pivot.add(a, b);
+    g.fit(new THREE.Box3().setFromObject(pivot));
+    g.aimWorld(celLightWorld());
+    g.setCasters([a, b]);
+    const cam = new THREE.PerspectiveCamera(45, 1, 1, 1000);
+    cam.position.set(50, 40, 50); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+    // the first frame always renders; after it, an untouched frame does not
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    return { g, scene, pivot, a, b, cam };
+  }
+  it("an orbit, pan or zoom (camera only, world-fixed light re-aimed) needs no update", () => {
+    const { g, cam } = setup();
+    for (let i = 0; i < 5; i++) {
+      cam.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.3); cam.position.multiplyScalar(0.9);
+      cam.lookAt(1, 0, 2); cam.updateMatrixWorld();
+      g.aimWorld(celLightWorld());
+      expect(g.shadowChanged()).toBe(false);
+    }
+  });
+  it("a pose change (a caster's matrix) needs an update", () => {
+    const { g, b } = setup();
+    b.matrixAutoUpdate = false;
+    b.matrix.makeRotationY(0.2); b.matrixWorldNeedsUpdate = true;
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+  it("a parent's move needs an update", () => {
+    const { g, pivot } = setup();
+    pivot.position.y = 3;
+    expect(g.shadowChanged()).toBe(true);
+  });
+  it("new geometry, or geometry edited in place, needs an update", () => {
+    const { g, a } = setup();
+    a.geometry = new THREE.BoxGeometry(8, 8, 8);
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    a.geometry.attributes.position.needsUpdate = true;
+    expect(g.shadowChanged()).toBe(true);
+  });
+  it("a caster set or visibility change needs an update", () => {
+    const { g, a, b, pivot } = setup();
+    g.setCasters([a]);
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    g.setCasters([a, b]);
+    expect(g.shadowChanged()).toBe(true);
+    pivot.visible = false;
+    expect(g.shadowChanged()).toBe(true);
+    pivot.visible = true;
+    expect(g.shadowChanged()).toBe(true);
+  });
+  it("a refit, a map-size switch or a disposed map needs an update", () => {
+    const { g, pivot } = setup();
+    pivot.scale.setScalar(1); // untouched
+    g.fit(new THREE.Box3(new THREE.Vector3(-20, 0, -20), new THREE.Vector3(20, 15, 20)));
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+    g.setMapSize(512);
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+  it("the cutaway's plane turning on, moving or turning off needs an update", () => {
+    const { g } = setup();
+    const p = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+    expect(g.shadowChanged({ clipPlane: p })).toBe(true);
+    expect(g.shadowChanged({ clipPlane: p })).toBe(false);
+    p.constant = 2;
+    expect(g.shadowChanged({ clipPlane: p })).toBe(true);
+    expect(g.shadowChanged({ clipPlane: null })).toBe(true);
+  });
+  it("a capture always re-renders and leaves the live map to re-render after it", () => {
+    const { g, cam } = setup();
+    g.aim(cam, { azimuthDeg: CEL.light.azimuthDeg, elevationDeg: CEL.ground.elevationDeg });
+    expect(g.shadowChanged({ capture: true })).toBe(true);
+    expect(g.shadowChanged({ capture: true })).toBe(true);
+    g.aimWorld(celLightWorld());
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
+  });
+  it("invalidate forces the next live frame to re-render", () => {
+    const { g } = setup();
+    g.invalidate();
+    expect(g.shadowChanged()).toBe(true);
+    expect(g.shadowChanged()).toBe(false);
   });
 });
