@@ -76,3 +76,11 @@ test("dispose rejects a pending kit", async () => {
   ctl.dispose("viewer disposed");
   await expect(done).rejects.toThrow("viewer disposed");
 });
+
+test("a kit that cannot be delivered rejects the export instead of hanging", async () => {
+  const { ctl, sent } = setup();
+  const done = ctl.exportKit({ sections: { "3d": { parts: ["a"] } } });
+  const onKit = vi.fn(() => { throw new Error("sink failed"); });
+  expect(ctl.handleMessage({ type: "kit", jobId: sent[0].msg.jobId, name: "x", entries }, vi.fn(), onKit)).toBe(true);
+  await expect(done).rejects.toThrow("sink failed");
+});

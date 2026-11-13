@@ -60,3 +60,17 @@ test("no geometry is built", () => {
   const trap = { ...printedOnly, parts: { a: { label: "A", views: ["all"], build: () => { throw new Error("built"); } } } };
   expect(() => describeKitRows(trap, {})).not.toThrow();
 });
+
+test("a laser part whose stock cannot be evaluated is still a laser part: listed in its cut section, unticked in 3D", () => {
+  const broken = {
+    ...laserFixture,
+    parts: { ...laserFixture.parts, left: { ...laserFixture.parts.left, sheet: { ...laserFixture.parts.left.sheet, thickness: () => { throw new Error("no thickness"); } } } },
+  };
+  const kit = describeKitRows(broken, {});
+  const three = kit.sections.find((s) => s.id === "3d");
+  expect(three.parts.find((r) => r.name === "left")).toEqual({ name: "left", label: "Side (L)", default: false });
+  const laser = kit.sections.find((s) => s.id === "laser");
+  const left = laser.parts.find((r) => r.name === "left");
+  expect(left).toEqual({ name: "left", label: "Side (L)", default: true });
+  expect(laser.options.stock.groups).toEqual([{ group: "birch plywood|3.00", label: "Birch Plywood 3 mm" }]);
+});

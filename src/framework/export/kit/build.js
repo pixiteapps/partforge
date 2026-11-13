@@ -32,7 +32,7 @@ function readSections(request) {
       throw fail(`${SECTION_LABELS[id]}: parts must be a list of part names`);
     read.set(id, { id, parts: section.parts, options });
   }
-  if (read.size === 0) throw new Error("no exportable parts selected");
+  if (read.size === 0) throw fail("no exportable parts selected");
   return [...cutSectionIds(), "3d"].filter((id) => read.has(id)).map((id) => read.get(id));
 }
 

@@ -115,7 +115,8 @@ export function createExportController({ send, currentView, title, defaultBacken
     }
     if (m.type === "kit") {
       pending.delete(m.jobId);
-      deliverKit({ entries: m.entries, name: m.name }, kitSink, sink);
+      // A sink that throws, or a zip that fails, must settle the export, not strand it.
+      try { deliverKit({ entries: m.entries, name: m.name }, kitSink, sink); } catch (err) { entry.reject(err); return true; }
       entry.resolve();
       return true;
     }

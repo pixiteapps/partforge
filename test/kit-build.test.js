@@ -175,6 +175,11 @@ describe("everything is checked before anything is built", () => {
     expect(r.message).toBe("cut kit options: 3D files: none of the checked parts can be exported");
   });
 
+  test("a request with no sections is an options error", async () => {
+    const r = await refusal(laserFixture, { sections: {} });
+    expect(r.message).toBe("cut kit options: no exportable parts selected");
+  });
+
   test("a later section's missing parts stop an earlier section's build", async () => {
     const r = await refusal(boardFixture, { sections: { laser: { parts: ["lid"] }, "cnc-router": { parts: ["lid"] } } });
     expect(r.message).toBe("cut kit options: none of the checked parts is a CNC-routed part");
