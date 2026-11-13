@@ -674,18 +674,23 @@ the installed package, so let the publish finish before bumping the dep there.
   be evaluated is still listed in its cut section) and `runtime.exportKit({ sections,
   sets, onProgress })`, one `export-kit` job (never epoch-guarded). The job's `kit`
   reply goes through `download.js`'s `deliverKit` to the host's `onKit({ entries,
-  name })` sink, or with no sink a lone model is saved bare and anything else zipped
-  as `<name>-kit.zip`; a delivery that throws rejects the export's Promise. A kit
+  name })` sink, or with no sink a kit whose only model file is a single one is saved
+  as that bare file (README and parts list left out) and anything else zipped as
+  `<name>-kit.zip` (models stored, the rest deflated); a delivery that throws rejects the export's Promise. A kit
   with a STEP 3D section runs on OCCT as ONE job. Entries are `{ path, kind, data }`:
   `print/` for 3D files, `laser/` and `cnc/` (each with `sheets/` and `parts/`) for
   cut drawings, `README.txt` and `parts.csv` at the root.
   `export/bundle.js`'s `buildBundle` (`exportParts({ format: "bundle", options })`) is a
   wrapper for one release: it maps the old options onto a section request and zips the
-  entries. `jobs.js` reaches the kit only through `loadBundle`, a literal dynamic
-  import: `test/worker-layering.test.js` keeps every `export/` module and process
-  exporter out of worker boot (the main thread imports `formats.js` alone, through
-  `export-rows.js` for `listExportFormats()` and through `src/index.js` for the
-  options surface). The kit never loads `./oracle/*`
+  entries. `jobs.js` reaches the kit through two literal dynamic imports, `loadKit`
+  (`export/kit/build.js`, the `export-kit` job) and `loadBundle` (`export/bundle.js`,
+  the old `export-bundle` job): `test/worker-layering.test.js` keeps every `export/`
+  module and process exporter out of worker boot. On the main thread, `mount.js`
+  statically imports `export/kit/describe.js` (with `formats.js`, `readme.js` and
+  `kit/options.js` behind it), `download.js` imports `export/kit/entries.js`,
+  `export-rows.js` imports `formats.js`, and `src/index.js` re-exports from
+  `formats.js`, `kit/entries.js` and `kit/options.js`; none of them builds a kit, and
+  `process/exporters.js`'s per-process exporters stay dynamic imports. The kit never loads `./oracle/*`
   (`test/kit-layering.test.js` walks it and runs a real kit with every oracle module
   mocked to throw) — which is why `resolveProfile`, read by the 3MF/STEP bed layout,
   lives in `process/registry.js` — so the README's check lines are worded by
