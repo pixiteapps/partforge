@@ -43,7 +43,7 @@ test("the kit subsection says what an author acts on, in at most 600 characters"
   expect(kit.length).toBeLessThanOrEqual(600);
   for (const needle of [
     'format: "bundle"', '"own-laser"', '"service"', "cut kit options:", "README.txt", "parts.csv",
-    "sheets/", "parts/", "print/", "-marks.dxf", "export: { name }", "`thickness`",
+    "sheets/", "parts/", "print/", "laser/", "cnc/", "cut & print kit", "-marks.dxf", "-xN", "export: { name }", "`thickness`",
   ]) expect(kit, `"The kit" never mentions ${needle}`).toContain(needle);
 });
 
@@ -51,11 +51,19 @@ test("the headless-export docs carry the host's half of the kit", () => {
   const s = sectionOf("Wiring a part into a runnable app");
   for (const needle of [
     "listExportFormats()", '"bundle"', "sheet: { process, material, thickness, group }", "options?",
-    "<title>-kit.zip", "README.txt", "-marks.dxf", "stock: [{ group, size: [w, h] }]",
-    "EXPORT_FORMATS", "KIT_DEFAULTS", "validateKitOptions", "KIT_OPTIONS_ERROR", "cut kit options:",
+    "describeKit()", "exportKit(", "onKit", "<name>-kit.zip", "README.txt", "-marks.dxf", "stock: [{ group, size: [w, h] }]",
+    "cnc-router", "model-stl", "EXPORT_FORMATS", "KIT_DEFAULTS", "validateKitOptions", "KIT_OPTIONS_ERROR", "cut kit options:",
   ]) expect(s, `headless export never mentions ${needle}`).toContain(needle);
   // "*" is the fallback for groups with no entry of their own (formats.js resolveStock),
   // never an override of every group
   expect(s).toContain('a `"*"` entry sizes every group that has no entry of its own');
   expect(s).not.toContain('`"*"` for every group');
+});
+
+test("the guide no longer teaches the old kit layout", () => {
+  const kit = kitSubsection();
+  for (const stale of ["ZIP", "laid-out `sheets/`", "a `parts/` file per distinct piece"]) expect(kit).not.toContain(stale);
+  const s = sectionOf("Wiring a part into a runnable app");
+  expect(s).not.toContain("`print/<name>[-xN].stl`");
+  expect(s).not.toContain("`<title>-kit.zip`: `README.txt`");
 });

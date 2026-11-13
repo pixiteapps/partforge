@@ -668,6 +668,17 @@ the installed package, so let the publish finish before bumping the dep there.
   section (`model-section.js`) writes `print/<name>.stl` per part, or one
   `print/<forge>.3mf|step`, through `src/framework/export-models.js` — the same functions
   jobs.js's export-stl/step/3mf jobs call, so a kit's model is the plain download's bytes.
+  A host reads the kit through the mount handle: `runtime.describeKit()`
+  (`kit/describe.js`, main thread, no geometry: each section's parts and options as
+  plain data, a part placed by its DECLARED sheet process so one whose stock cannot
+  be evaluated is still listed in its cut section) and `runtime.exportKit({ sections,
+  sets, onProgress })`, one `export-kit` job (never epoch-guarded). The job's `kit`
+  reply goes through `download.js`'s `deliverKit` to the host's `onKit({ entries,
+  name })` sink, or with no sink a lone model is saved bare and anything else zipped
+  as `<name>-kit.zip`; a delivery that throws rejects the export's Promise. A kit
+  with a STEP 3D section runs on OCCT as ONE job. Entries are `{ path, kind, data }`:
+  `print/` for 3D files, `laser/` and `cnc/` (each with `sheets/` and `parts/`) for
+  cut drawings, `README.txt` and `parts.csv` at the root.
   `export/bundle.js`'s `buildBundle` (`exportParts({ format: "bundle", options })`) is a
   wrapper for one release: it maps the old options onto a section request and zips the
   entries. `jobs.js` reaches the kit only through `loadBundle`, a literal dynamic

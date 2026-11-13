@@ -73,6 +73,64 @@ export interface KitOptions {
   twoSided?: "one-file" | "two-files";
 }
 
+/** The kit's sections: `3d` (model files), `laser` and `cnc-router` (cut drawings). */
+export type KitSectionId = "3d" | "laser" | "cnc-router";
+
+/** One option of a kit section, as `describeKit()` reports it: its allowed `values` or numeric `range` (mm), and its default. `stock` has neither. */
+export interface KitOptionSpec {
+  values?: string[];
+  range?: [number, number];
+  default: unknown;
+}
+
+/** One part row of a kit section. `sheet` is omitted when the part's stock cannot be evaluated at the live params. */
+export interface KitPartRow {
+  name: string;
+  label: string;
+  /** Whether the section offers this part ticked. In `3d`, sheet parts are `false`. */
+  default: boolean;
+  sheet?: ExportableSheetInfo;
+}
+
+/** One section of `describeKit()`. A cut section's `options.stock.groups` lists its stock groups. */
+export interface KitSectionInfo {
+  id: KitSectionId;
+  label: string;
+  parts: KitPartRow[];
+  options: Record<string, KitOptionSpec> & { stock?: KitOptionSpec & { groups?: Array<{ group: string; label: string }> } };
+}
+
+/** What `runtime.describeKit()` returns: the kit's sections at the live params, and the `sets` range. */
+export interface KitDescription {
+  sets: { range: [number, number]; default: number };
+  sections: KitSectionInfo[];
+}
+
+/** What `exportKit()` is asked for: per section the parts and options, and how many sets. A section left out is not built. */
+export interface KitRequest {
+  sections: Partial<Record<KitSectionId, { parts: string[]; options?: Record<string, unknown> }>>;
+  /** Whole number, 1–20: how many of each cut piece. Default 1. */
+  sets?: number;
+  quality?: "preview" | "print";
+  onProgress?: (phase: string) => void;
+}
+
+/** What each kit entry holds. */
+export type KitEntryKind = "model-stl" | "model-3mf" | "model-step" | "drawing-svg" | "drawing-dxf" | "text" | "table";
+
+/** One file of a kit. `path` is `print/…`, `laser/…`, `cnc/…`, `README.txt` or `parts.csv`. */
+export interface KitEntry {
+  path: string;
+  kind: KitEntryKind;
+  data: Uint8Array;
+}
+
+/** What `mount({ onKit })` receives: the kit's files, and the forge's file-name base (the zip is `<name>-kit.zip`). */
+export interface KitPayload {
+  entries: KitEntry[];
+  name: string;
+}
+
 /**
  * A semantic click result: which sub-part was hit, where (in the sub-part's own
  * local frame, quantized to 0.01 mm), the snapped surface normal, and only the
@@ -242,6 +300,12 @@ export interface MountOptions {
   progressiveBuild?: boolean;
   /** Receive exported bytes instead of partforge's own DOM download. */
   onDownload?: (file: DownloadPayload) => void;
+  /**
+   * Receive the download kit's files instead of partforge saving them. Without it, a kit
+   * whose only file is one model is saved bare (through `onDownload` if given) and any
+   * other kit as `<name>-kit.zip`.
+   */
+  onKit?: (kit: KitPayload) => void;
   /** The active view (tab) name — emitted once on mount, then on every change. */
   onViewChange?: (view: string) => void;
   /**
@@ -785,6 +849,19 @@ export interface PartRuntime {
    * build/export failure or an empty selection.
    */
   exportParts(opts: ExportPartsOptions): Promise<void>;
+  /**
+   * The download kit's sections at the live params — which parts each holds, their
+   * defaults and each section's options as plain data. Builds no geometry. A part is
+   * listed in a cut section by its declared sheet process, even when its stock cannot
+   * be evaluated (its row then has no `sheet`).
+   */
+  describeKit(): KitDescription;
+  /**
+   * Build the kit in one worker job and deliver it to your `onKit` sink (or save it).
+   * Resolves once delivered; rejects on a build or delivery failure, or an option the
+   * kit cannot honour (message starts `"cut kit options:"`).
+   */
+  exportKit(request: KitRequest): Promise<void>;
   /**
    * Pay the exact kernel's cold boot ahead of an export. STEP is pinned to
    * OCCT, whose ~11 MB WASM loads on its first job, so a Manifold-previewed
