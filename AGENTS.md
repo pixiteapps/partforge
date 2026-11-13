@@ -319,6 +319,13 @@ the installed package, so let the publish finish before bumping the dep there.
   LineMaterial quad a pixel and feathers its sides, so those materials always blend. The ground shadow has two VSM
   pitfalls: the plane must sit strictly inside the shadow map's xy bounds, and
   the depth slab must be thin; the light's world elevation is clamped to 40°.
+  The map is NOT re-rendered every frame: cel turns three's
+  `shadowMap.autoUpdate` off and `prepareCelGround` asks for a render only when
+  cel-ground's `shadowChanged` signature moves (casters, their visibility,
+  geometry or pose, the light's frame, the map size, the cutaway's plane) and on
+  every capture (camera-relative light; the live map re-renders after it). An
+  orbit re-renders nothing. Anything new that changes what casts must show up in
+  that signature.
   The key light is WORLD-FIXED on the canvas and camera-relative in a capture
   (0.186.1): `CEL.light` is a view-space direction read at the viewer's
   DEFAULT camera pose, `CEL.light.at` = (18, 12, 18) — NOT a pure iso, which

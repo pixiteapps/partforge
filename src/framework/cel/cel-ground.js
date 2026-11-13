@@ -91,6 +91,53 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
     if (light.shadow.mapPass) { light.shadow.mapPass.dispose(); light.shadow.mapPass = null; }
   }
 
+  // What the shadow map was last rendered from (shadowChanged). The live view's
+  // light is world-fixed, so an orbit, pan or zoom leaves every number here as
+  // it was and the map is reused; a capture aims the light camera-relative and
+  // always re-renders, leaving the live map stale behind it.
+  let lastSig = null;
+  let stale = true;
+  const sig = [];
+  function signature(clipPlane) {
+    sig.length = 0;
+    sig.push(light.shadow.mapSize.x, light.shadow.map ? 1 : 0);
+    const sc = light.shadow.camera;
+    sig.push(sc.left, sc.right, sc.top, sc.bottom, sc.near, sc.far);
+    light.updateWorldMatrix(true, false);
+    light.target.updateWorldMatrix(true, false);
+    for (const e of light.matrixWorld.elements) sig.push(e);
+    for (const e of light.target.matrixWorld.elements) sig.push(e);
+    if (clipPlane) sig.push(1, clipPlane.normal.x, clipPlane.normal.y, clipPlane.normal.z, clipPlane.constant);
+    else sig.push(0);
+    sig.push(casters.length);
+    for (const m of casters) {
+      // three's shadow pass draws a caster only if it and every ancestor are visible
+      let shown = 1;
+      for (let o = m; o; o = o.parent) if (!o.visible) { shown = 0; break; }
+      const pos = m.geometry?.attributes?.position;
+      sig.push(m.id, shown, m.geometry?.id ?? -1, pos?.version ?? -1, m.geometry?.index?.version ?? -1);
+      m.updateWorldMatrix(true, false);
+      for (const e of m.matrixWorld.elements) sig.push(e);
+    }
+    return sig;
+  }
+  /**
+   * Whether the shadow map must re-render this frame: anything it is rendered
+   * from changed since the last render (casters, their visibility, geometry or
+   * pose, the light's frame or frustum, the map size, the cutaway's plane), or
+   * this render is a capture, or one came after the last live render.
+   */
+  function shadowChanged({ capture = false, clipPlane = null } = {}) {
+    if (capture) { stale = true; lastSig = null; return true; }
+    const now = signature(clipPlane);
+    let changed = stale || !lastSig || lastSig.length !== now.length;
+    if (!changed) for (let i = 0; i < now.length; i++) if (now[i] !== lastSig[i]) { changed = true; break; }
+    if (changed) { lastSig = now.slice(); stale = false; }
+    return changed;
+  }
+  /** Forget what the map was rendered from: the next live frame re-renders it. */
+  function invalidate() { stale = true; lastSig = null; }
+
   function setCasters(meshes) {
     const next = new Set(meshes);
     for (const m of casters) if (!next.has(m)) m.castShadow = false;
@@ -104,5 +151,5 @@ export function createCelGround({ mapSize = CEL.ground.mapSize } = {}) {
     light.shadow.dispose();
   }
 
-  return { light, plane, fit, aim, aimWorld, setLook, setMapSize, setCasters, dispose };
+  return { light, plane, fit, aim, aimWorld, setLook, setMapSize, setCasters, shadowChanged, invalidate, dispose };
 }
