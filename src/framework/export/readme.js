@@ -34,6 +34,10 @@ const LIMITS_LINE = "Layout packs bounding boxes only: no nesting into holes, an
 // text around them, for the same reason.
 export const cleanLabel = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, "");
 
+// A stock group as people read it: "Birch Plywood 3 mm". The kit's sheet headings and
+// describeKit's stock groups share it.
+export const stockGroupLabel = (material, thickness) => `${cleanLabel(material)} ${fmtMm(thickness)} mm`;
+
 // One RFC 4180 cell. A cell starting with = + - or @ is a formula to Excel, Numbers and
 // Sheets, so it gets a leading ' first — before quoting, so no quote can be closed
 // around it.

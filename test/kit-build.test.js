@@ -130,6 +130,11 @@ describe("laser and routed parts in one kit", () => {
     expect(readme).toContain("laser/sheets/walnut-18mm/sheet-1-of-1.svg | walnut | 18.00 mm | 300 × 300 mm | 1 |");
   });
 
+  test("two sections on the same stock print its stock note once", async () => {
+    const r = await kit(shared, { sections: { laser: { parts: both }, "cnc-router": { parts: both } } });
+    expect(r.text("README.txt").match(/This kit assumes 18\.00 mm walnut/g)).toHaveLength(1);
+  });
+
   test("a section naming none of its own parts is refused", async () => {
     const r = await refusal(shared, { sections: { laser: { parts: ["plinth"] } } });
     expect(r.message).toBe("cut kit options: none of the checked parts is a laser-cut part");
@@ -163,6 +168,11 @@ describe("everything is checked before anything is built", () => {
       .toBe("cut kit options: sets must be a whole number from 1 to 20, got 0");
     expect((await refusal(laserFixture, { sections: { pdf: { parts: PRINTS } } })).message)
       .toBe('cut kit options: unknown section "pdf" — the sections are 3d, laser, cnc-router');
+  });
+
+  test("a 3D section naming no exportable part is an options error", async () => {
+    const r = await refusal(laserFixture, { sections: { "3d": { parts: ["nope"] } } });
+    expect(r.message).toBe("cut kit options: 3D files: none of the checked parts can be exported");
   });
 
   test("a later section's missing parts stop an earlier section's build", async () => {

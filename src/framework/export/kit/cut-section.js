@@ -20,7 +20,7 @@ import { canonicalDrawingKey, routedPalette, splitFaces } from "../drawing.js";
 import { renderSvg } from "../svg.js";
 import { renderDxf } from "../dxf.js";
 import { layoutGroup, marginFitsStock } from "../layout.js";
-import { cleanLabel } from "../readme.js";
+import { cleanLabel, stockGroupLabel } from "../readme.js";
 import { makeEntry } from "./entries.js";
 import { SECTION_FOLDERS, SECTION_LABELS, SECTION_NOUNS } from "./options.js";
 import { kitName, namer, dedupe, clipPhase } from "./names.js";
@@ -129,13 +129,13 @@ export function prepareCutSection(ctx, id, names, options, sets) {
   const nameOf = (name) => cleanLabel(label(name));
   const sheetNames = names.filter((name) => isSheetPart(part.parts[name]) && part.parts[name].sheet.process === id);
   if (sheetNames.length === 0) throw new Error(`${KIT_OPTIONS_ERROR} none of the checked parts is a ${SECTION_NOUNS[id]} part`);
-  // The cut-piece count is sheet sub-parts × sets — exactly what the merged pieces sum
+  // The section's cut-piece count is its sheet sub-parts × sets — exactly what the merged pieces sum
   // to — so it is checked before the builds it would otherwise waste. The remedy named
   // is one that can work: past the cap at a single set, only fewer parts will do.
   const cutCount = sheetNames.length * sets;
   if (cutCount > KIT_LIMITS.pieces) {
     const remedy = sheetNames.length > KIT_LIMITS.pieces ? "check fewer sheet parts" : "lower sets";
-    throw new Error(`${KIT_OPTIONS_ERROR} the kit has ${cutCount} pieces — at most ${KIT_LIMITS.pieces}; ${remedy}`);
+    throw new Error(`${KIT_OPTIONS_ERROR} ${SECTION_LABELS[id]}: ${cutCount} pieces — at most ${KIT_LIMITS.pieces} in one section; ${remedy}`);
   }
 
   // Stock groups from each part's material and thickness alone, so a stock entry that
@@ -147,7 +147,7 @@ export function prepareCutSection(ctx, id, names, options, sets) {
     if (!groups.has(meta.group)) {
       const material = cleanLabel(meta.material);
       groups.set(meta.group, { group: meta.group, material, thickness: meta.thickness,
-        label: `${material} ${fmtMm(meta.thickness)} mm`, first: name });
+        label: stockGroupLabel(meta.material, meta.thickness), first: name });
     }
     groupOf.set(name, meta.group);
   }

@@ -349,7 +349,7 @@ describe("caps", () => {
         [`p${i}`, sheetPart({ ...ply, label: `P${i}`, profile: (kk) => kk.shape2d(rect(10, 10 + i)) })])),
     };
     const r = await kit(many, { options: { sets: 20 } });
-    expect(r.error).toBe("cut kit options: the kit has 220 pieces — at most 200; lower sets");
+    expect(r.error).toBe("cut kit options: Laser-cut parts: 220 pieces — at most 200 in one section; lower sets");
   });
 
   test("more than 200 checked sheet parts at one set asks for fewer parts, not fewer sets", async () => {
@@ -359,7 +359,7 @@ describe("caps", () => {
         [`p${i}`, sheetPart({ ...ply, label: `P${i}`, profile: (kk) => kk.shape2d(rect(10, 10)) })])),
     };
     const r = await kit(lots);
-    expect(r.error).toBe("cut kit options: the kit has 201 pieces — at most 200; check fewer sheet parts");
+    expect(r.error).toBe("cut kit options: Laser-cut parts: 201 pieces — at most 200 in one section; check fewer sheet parts");
     expect(r.phases.some((ph) => ph.startsWith("building"))).toBe(false);
   });
 

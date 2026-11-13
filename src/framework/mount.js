@@ -33,6 +33,7 @@ import { createViewTabs } from "./view-tabs.js";
 import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } from "./selection/index.js";
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportableRows, exportFormatList } from "./export-rows.js";
+import { describeKitRows } from "./export/kit/describe.js";
 import { createExportController, backendForFormat } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
@@ -91,7 +92,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState }) {
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -212,6 +213,11 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // no export (a test) lists none.
     listExportFormats: listExportFormats ?? (() => []),
     exportParts,
+    // The download kit: describeKit() → { sets, sections } at the live params (no
+    // geometry), and exportKit({ sections, sets, onProgress }) → resolves once the kit's
+    // entries are handed to onKit (or saved, with no onKit).
+    describeKit,
+    exportKit,
     // Pay the exact kernel's cold boot ahead of an export. STEP is pinned to
     // OCCT, whose ~11 MB WASM loads on its first job, so a Manifold-previewed
     // part's STEP export otherwise pays that boot inside the export itself.
@@ -347,6 +353,11 @@ function createCleanupStack() {
 //                                         // headless export of a chosen subset; resolves when the file is
 //                                         // written (handed to your onDownload sink, or downloaded directly
 //                                         // if you don't supply one), rejects on failure
+//   runtime.describeKit();                // { sets, sections: [{ id, label, parts, options }] } — the
+//                                         // download kit's sections at the live params (no geometry)
+//   await runtime.exportKit({ sections: { "3d": { parts: ["base"], options: { format: "stl" } } }, sets: 1 });
+//                                         // the kit's entries go to your onKit({ entries, name }) sink;
+//                                         // with none, the bare model or a <name>-kit.zip is downloaded
 //   runtime.setHostPane("rail");  // narrow layout only: show just the controls
 //                                 // rail ('stage' | 'rail'), suppressing the
 //                                 // built-in tab bar. null hands selection back.
@@ -546,7 +557,7 @@ function createCleanupStack() {
 // Every `elements` entry defaults to the legacy global-ID lookup (below), resolved
 // exactly once here — submodules take element refs and never query the document.
 // `container`/`controls` remain as deprecated aliases for elements.viewer/.controls.
-export function mount(part, { createWorker, elements = {}, onBuild, onPick, pickHint = "Click to edit", onDownload, onViewChange, onParamsCommit, onAnnotationSend,
+export function mount(part, { createWorker, elements = {}, onBuild, onPick, pickHint = "Click to edit", onDownload, onKit, onViewChange, onParamsCommit, onAnnotationSend,
                               fontCatalog,
                               imageCatalog,
                               onAssetUpload,
@@ -1705,7 +1716,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // --- shared message handler ------------------------------------------------
     function onWorkerMessage({ data }) {
       // Headless exportParts() correlation: consume its own replies first.
-      if (exportCtl.handleMessage(data, onDownload)) return;
+      if (exportCtl.handleMessage(data, onDownload, onKit)) return;
       // captureView's off-loop build channel: consume its replies before the
       // live `meshes` case — capture-meshes must never touch live cache/display.
       // Like exportCtl, it also claims a disposed mount's late capture reply on
@@ -2276,6 +2287,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       listExportableParts: () => exportableRows(part, params),
       listExportFormats: exportFormatList,
       exportParts: (opts) => exportCtl.exportParts(opts),
+      describeKit: () => describeKitRows(part, params),
+      exportKit: (opts) => exportCtl.exportKit(opts),
       warmExportKernel: () => exportCtl.warmKernel(),
       animation: animCtl?.runtime ?? null,
       measure: {

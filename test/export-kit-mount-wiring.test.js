@@ -74,3 +74,12 @@ test("the main entry exports the kit's options surface", async () => {
   expect(main.KIT_DEFAULTS.sets).toBe(1);
   expect(main.validateKitOptions({}).destination).toBe("own-laser");
 });
+
+test("makeHandle passes describeKit and exportKit through", async () => {
+  const base = { ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} };
+  const describeKit = () => ({ sets: { range: [1, 20], default: 1 }, sections: [] });
+  const exportKit = async (opts) => opts.sets;
+  const handle = makeHandle({ ...base, describeKit, exportKit });
+  expect(handle.describeKit()).toEqual({ sets: { range: [1, 20], default: 1 }, sections: [] });
+  await expect(handle.exportKit({ sections: {}, sets: 3 })).resolves.toBe(3);
+});

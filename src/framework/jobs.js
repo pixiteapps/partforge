@@ -47,6 +47,8 @@ let changeTracker = null;
 // a session that never downloads a kit. test/worker-layering.test.js keeps every one of
 // them out of worker boot, and test/kit-layering.test.js keeps the kit off ./oracle/*.
 const loadBundle = () => import("./export/bundle.js");
+// The kit as entries (export-kit), lazily the same way.
+const loadKit = () => import("./export/kit/build.js");
 
 // HOST JOBS — the extension seam. A host registers its own job types with
 // `runWorker(part, { jobs: { <type>: handler } })`, threaded here as `opts.jobs`, and
@@ -68,6 +70,8 @@ const loadBundle = () => import("./export/bundle.js");
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
 //   { type:"export-bundle", view, params, parts, options }
 //                                               → { type:"download", data, filename, mime }  (the cut & print kit, a ZIP)
+//   { type:"export-kit", view, params, sections, sets, name, quality }
+//                                               → { type:"kit", name, entries: [{ path, kind, data }] }  (each data transferred)
 // A generate also accepts `opts.isStale` — a caller-supplied predicate checked at each
 // sub-part boundary — and answers { type:"superseded" } instead of `meshes` when it
 // stops early (a build that ended without meshes, not an error; see KERNEL-CONTRACT.md).
@@ -541,6 +545,14 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const { buildBundle } = await loadBundle();
       const { data, filename } = await buildBundle({ kernel, part, msg, p, d, posed, label, exportName, names: selected(), onProgress, fileBase });
       post({ type: "download", data, filename, mime: "application/zip", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "export-kit") {
+      // The download kit as a list of entries; the main thread zips it, or hands it to
+      // the host (export-controller.js deliverKit). Option problems throw "cut kit
+      // options:" errors, posted by the catch below.
+      const { buildKit } = await loadKit();
+      const entries = await buildKit({ kernel, part, msg, p, d, posed, label, exportName, onProgress, fileBase,
+        selectedFrom: (names) => selectExportable(part, p, names) }, { sections: msg.sections, sets: msg.sets });
+      post({ type: "kit", jobId: msg.jobId, name: fileBase, entries }, [...new Set(entries.map((e) => bufferOf(e.data)))]);
     } else if (msg.type === "warm-kernel") {
       // Deliberately empty. worker.js awaits kernelFor() before calling handle(),
       // so REACHING this branch is the whole result: the backend this job was

@@ -5,12 +5,14 @@
 // multiplies a model: the README and parts list say how many to print.
 import { buildStlFiles, build3mfFile, buildStepFile } from "../../export-models.js";
 import { cleanLabel } from "../readme.js";
+import { KIT_OPTIONS_ERROR } from "../formats.js";
 import { makeEntry } from "./entries.js";
+import { SECTION_LABELS } from "./options.js";
 import { kitName, namer, clipPhase, bytesOf } from "./names.js";
 
 // `names` is ctx.selectedFrom() of the section's parts.
 export function prepareModelSection(names, options) {
-  if (names.length === 0) throw new Error("no exportable parts selected");
+  if (names.length === 0) throw new Error(`${KIT_OPTIONS_ERROR} ${SECTION_LABELS["3d"]}: none of the checked parts can be exported`);
   return { names, format: options.format };
 }
 

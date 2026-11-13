@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { unzipSync } from "fflate";
-import { triggerDownload, downloadParts } from "../src/framework/download.js";
+import { triggerDownload, downloadParts, deliverKit } from "../src/framework/download.js";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -66,5 +66,36 @@ describe("downloadParts with a sink", () => {
     const sink = vi.fn();
     downloadParts({ parts: [{ name: "../../.ssh/authorized", data: new Uint8Array([9]) }], ext: "stl", mime: "model/stl" }, "part.zip", sink);
     expect(sink.mock.calls[0][0].filename).toBe("ssh-authorized.stl");
+  });
+});
+
+describe("deliverKit", () => {
+  const stl = { path: "print/lid.stl", kind: "model-stl", data: new Uint8Array([7]) };
+  const readme = { path: "README.txt", kind: "text", data: new Uint8Array([8]) };
+  const csv = { path: "parts.csv", kind: "table", data: new Uint8Array([9]) };
+  const svg = { path: "laser/parts/lid.svg", kind: "drawing-svg", data: new Uint8Array([10]) };
+
+  it("hands the entries to onKit when the host gives one, and saves nothing itself", () => {
+    const onKit = vi.fn();
+    const onDownload = vi.fn();
+    deliverKit({ entries: [stl, readme, csv], name: "box" }, onKit, onDownload);
+    expect(onKit).toHaveBeenCalledWith({ entries: [stl, readme, csv], name: "box" });
+    expect(onDownload).not.toHaveBeenCalled();
+  });
+
+  it("with no onKit, saves one model bare under its base name, without the README", () => {
+    const onDownload = vi.fn();
+    deliverKit({ entries: [stl, readme, csv], name: "box" }, undefined, onDownload);
+    expect(onDownload).toHaveBeenCalledWith({ data: stl.data, filename: "lid.stl", mime: "model/stl" });
+  });
+
+  it("with no onKit, zips every entry as <name>-kit.zip otherwise", () => {
+    const onDownload = vi.fn();
+    deliverKit({ entries: [stl, svg, readme, csv], name: "box" }, undefined, onDownload);
+    expect(onDownload).toHaveBeenCalledTimes(1);
+    const { data, filename, mime } = onDownload.mock.calls[0][0];
+    expect(filename).toBe("box-kit.zip");
+    expect(mime).toBe("application/zip");
+    expect(Object.keys(unzipSync(data)).sort()).toEqual(["README.txt", "laser/parts/lid.svg", "parts.csv", "print/lid.stl"]);
   });
 });

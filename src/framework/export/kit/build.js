@@ -11,6 +11,7 @@
 import { strToU8 } from "fflate";
 import { KIT_OPTIONS_ERROR, isPlainObject } from "../formats.js";
 import { renderReadme, renderPartsCsv, cleanLabel } from "../readme.js";
+import { sheetGroup } from "../../sheet/constants.js";
 import { makeEntry, assertEntries } from "./entries.js";
 import { SECTION_LABELS, cutSectionIds, validateSectionOptions, validateSets } from "./options.js";
 import { prepareCutSection, buildCutSection } from "./cut-section.js";
@@ -33,6 +34,15 @@ function readSections(request) {
   }
   if (read.size === 0) throw new Error("no exportable parts selected");
   return [...cutSectionIds(), "3d"].filter((id) => read.has(id)).map((id) => read.get(id));
+}
+
+// Two cut sections on the same material and thickness assume the same stock: say so once.
+function onePerStock(notes) {
+  const seen = new Set();
+  return notes.filter((n) => {
+    const key = sheetGroup(n.material, n.thickness);
+    return !seen.has(key) && seen.add(key);
+  });
 }
 
 export async function buildKit(ctx, request) {
@@ -61,7 +71,7 @@ export async function buildKit(ctx, request) {
     title: cleanLabel(part.meta?.title ?? ctx.fileBase),
     cut: cut.map((c) => c.cut),
     flip: cut.find((c) => c.flip)?.flip,
-    stockNotes: cut.flatMap((c) => c.stockNotes),
+    stockNotes: onePerStock(cut.flatMap((c) => c.stockNotes)),
     sheets: cut.flatMap((c) => c.sheets),
     pieces: cut.flatMap((c) => c.pieces),
     router: cut.flatMap((c) => c.router),
