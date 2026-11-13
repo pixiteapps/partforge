@@ -23,6 +23,8 @@
 // The DOM is created here, so no host markup declares it — same contract as
 // rail.js's seam, and the reason this composes with partforge-cloud's
 // hand-built sandbox scaffold without that scaffold knowing anything about it.
+
+import { RAIL_NARROW_BREAKPOINT } from "./rail-state.js";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Hand-authored in lucide's 24x24 / 2px-stroke idiom so these sit beside
@@ -193,6 +195,7 @@ export function attachMobileTabs({ shell, stage, rail, toggle, onRailLayout } = 
     // holds the pane lease: the host draws the pane, so it has to be told instead.
     showPane: (next) => {
       if (hostPane !== null || !PANES.includes(next)) return false;
+      if (window.innerWidth >= RAIL_NARROW_BREAKPOINT) return true; // side by side: already shown
       pane = next;
       apply();
       return true;

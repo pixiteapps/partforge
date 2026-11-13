@@ -174,3 +174,16 @@ test("only: draws the named controls in schema order and nothing else", () => {
   expect(root.querySelector(".sec-header")).toBeNull();
   panel.dispose();
 });
+
+test("only: a control inside a titled group is drawn bare — no group header, no fold", () => {
+  const parameters = [{ id: "c", title: "Cabinet", controls: [
+    { key: "width", label: "Width", type: "slider", min: 1, max: 10 },
+    { type: "group", title: "Advanced", controls: [{ key: "lip", label: "Lip", type: "slider", min: 0, max: 5 }] }] }];
+  const root = document.createElement("div");
+  const panel = buildControls(root, parameters, { width: 2, lip: 1 }, () => {}, () => {}, { bare: true, only: new Set(["lip"]) });
+  expect([...root.querySelectorAll("input[type=range]")].map((i) => i.closest(".slider").querySelector("label").textContent)).toEqual(["Lip"]);
+  expect(root.querySelector(".adv-header")).toBeNull();
+  expect(root.querySelector(".adv-wrap")).toBeNull();
+  expect(root.querySelector(".feat-group")).not.toBeNull();
+  panel.dispose();
+});

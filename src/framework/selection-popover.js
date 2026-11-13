@@ -317,7 +317,6 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     setAnchor,
     setSlotHeight,
     showPage,
-    refreshControls: () => { if (!isOpen() || !ctlEl) return; buildControls(); place(); },
     close: (reason) => close(reason === "dismiss" || reason === "hide" || reason === "gone" ? reason : undefined),
     isOpen,
     getState: () => (isOpen() ? { subPart: current.subPart, page } : null),

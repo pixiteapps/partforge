@@ -29,7 +29,8 @@ function indexNodes(nodes, map) {
 }
 
 // Keep only the control nodes whose key is in `only`, and the groups that
-// still hold one. Presets and displays never survive a subset.
+// still hold one — each kept group BARE (spot controls draw rows, never a
+// group's header or fold). Presets and displays never survive a subset.
 function pruneTree(nodes, only) {
   const out = [];
   for (const node of nodes ?? []) {
@@ -37,7 +38,7 @@ function pruneTree(nodes, only) {
       if (only.has(node.key)) out.push(node);
     } else if (node.kind === "group") {
       const children = pruneTree(node.children, only);
-      if (children.length) out.push({ ...node, children });
+      if (children.length) out.push({ ...node, children, bare: true });
     }
   }
   return out;

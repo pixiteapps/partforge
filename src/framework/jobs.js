@@ -174,22 +174,17 @@ const PROGRESSIVE_BATCH_MS = 300;
 const transferOf = (meshes) => meshes.flatMap((m) =>
   [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer, m.originIds?.buffer].filter(Boolean));
 
-// The nudged derive attribution for one generate job (ranks piece keys; never gates).
-// Memoized on the kernel by the params' JSON, so a job's sub-parts share one probe.
-function nudgedFor(kernel, part, p, params) {
-  let key;
-  try { key = JSON.stringify(params); } catch { key = null; }
-  if (key !== null && kernel._nudgeMemo?.key === key && kernel._nudgeMemo.part === part) return kernel._nudgeMemo.value;
-  let value = null;
+// The nudged derive attribution for one generate job (ranks piece keys; never
+// gates). Run once per job, lazily, and shared by its sub-parts; null when the
+// probe throws.
+function nudgedFor(part, p) {
   try {
     const steps = new Map();
     for (const n of controlNodes(desugar(part.parameters))) {
       if ((n.type === "slider" || n.type === "number") && Number.isFinite(n.step)) steps.set(n.key, n.step);
     }
-    value = nudgeAttribution(part, p, { steps });
-  } catch { value = null; }
-  if (key !== null) kernel._nudgeMemo = { key, part, value };
-  return value;
+    return nudgeAttribution(part, p, { steps });
+  } catch { return null; }
 }
 
 // The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
@@ -463,7 +458,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     let nudged = null, nudgeDone = false; // computed lazily: a job that builds nothing derives nothing extra
     const displayWithReads = (name) => {
       const sp = part.parts[name];
-      if (!nudgeDone) { nudgeDone = true; nudged = nudgedFor(kernel, part, p, msg.params); }
+      if (!nudgeDone) { nudgeDone = true; nudged = nudgedFor(part, p); }
       const sink = newReadSink({ log: true });
       sink.attribution = attribution;
       const rec = recordedParams({ p, d }, sink);
