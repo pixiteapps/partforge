@@ -35,7 +35,7 @@ import { attachPickToggle, attachHoverLabels, attachPicker, formatSelection } fr
 import { createPickRequestClient, resolvePickServerUrl, PICK_SERVER_DEFAULT_URL } from "./pick-request/index.js";
 import { exportableRows, exportFormatList } from "./export-rows.js";
 import { describeKitRows } from "./export/kit/describe.js";
-import { createExportController, backendForFormat } from "./export-controller.js";
+import { createExportController } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
