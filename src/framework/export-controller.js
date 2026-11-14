@@ -2,7 +2,7 @@
 // Owns the jobId correlation for headless exportParts(): matches worker
 // replies (progress/download/error) back to the Promise that started them.
 // Pure — no DOM, no worker; `send` and the sink are injected.
-import { triggerDownload, downloadParts } from "./download.js";
+import { triggerDownload, downloadParts, deliverKit } from "./download.js";
 import { safeName } from "./safe-name.js";
 
 // The one place the "which backend does this export format need" policy lives.
@@ -71,6 +71,36 @@ export function createExportController({ send, currentView, title, defaultBacken
     return meshed.then((meshes) => job({ meshes }));
   }
 
+  // The download kit (export/kit/build.js): one `export-kit` job whose `kit` reply is
+  // handed to the host's onKit sink (deliverKit). `sections` maps a section id to
+  // { parts, options }. A kit with a STEP 3D section runs on OCCT as ONE job, laser and
+  // router drawings included, so its entries reach the sink together, once; every other
+  // kit runs on the default backend.
+  // A STEP 3D section with organic sub-parts meshes them on Manifold first, as a plain
+  // STEP export does (exportParts), and the kit job carries them as `meshes`.
+  function exportKit({ sections, sets, quality = "print", onProgress } = {}) {
+    const view = currentView(), params = currentParams();
+    const step = sections?.["3d"]?.options?.format === "step";
+    const backend = step ? "occt" : defaultBackend();
+    const job = (extra) => {
+      const jobId = `export-${controller}-${nextId++}`;
+      return new Promise((resolve, reject) => {
+        pending.set(jobId, { resolve, reject, onProgress });
+        send({ type: "export-kit", jobId, sections, sets, view, params, name: title(), quality, ...extra }, backend);
+      });
+    };
+    if (!step) return job({});
+    let organic;
+    try { organic = organicFor({ view, params, parts: sections["3d"].parts }); } catch (e) { return Promise.reject(e); }
+    if (organic.length === 0) return job({});
+    const jobId = `mesh-${controller}-${nextId++}`;
+    const meshed = new Promise((resolve, reject) => {
+      pending.set(jobId, { resolve, reject, onProgress });
+      send({ type: "mesh-subparts", jobId, parts: organic, view, params, quality: "print" }, "manifold");
+    });
+    return meshed.then((meshes) => job({ meshes }));
+  }
+
   // Pay a backend's cold boot on purpose, before anything needs it. STEP is
   // pinned to OCCT (backendForFormat), whose ~11 MB WASM loads lazily on its
   // first job — so for a Manifold-previewed part the STEP export IS that boot,
@@ -91,8 +121,8 @@ export function createExportController({ send, currentView, title, defaultBacken
 
   // Returns true iff this message is a reply to an export-controller job (so
   // the caller can skip legacy handling): a pending job is settled, any other
-  // is dropped. `sink` is partforge's onDownload.
-  function handleMessage(m, sink) {
+  // is dropped. `sink` is partforge's onDownload, `kitSink` its onKit.
+  function handleMessage(m, sink, kitSink) {
     const jobId = m?.jobId;
     const entry = jobId != null ? pending.get(jobId) : undefined;
     // A controller's id with nothing pending here: a job this controller
@@ -114,6 +144,13 @@ export function createExportController({ send, currentView, title, defaultBacken
       pending.delete(m.jobId);
       const zipName = `${safeName(title(), "parts")}.zip`; // title() is the part's meta.title — untrusted
       downloadParts(m, zipName, sink);
+      entry.resolve();
+      return true;
+    }
+    if (m.type === "kit") {
+      pending.delete(m.jobId);
+      // A sink that throws, or a zip that fails, must settle the export, not strand it.
+      try { deliverKit({ entries: m.entries, name: m.name }, kitSink, sink); } catch (err) { entry.reject(err); return true; }
       entry.resolve();
       return true;
     }
@@ -142,5 +179,5 @@ export function createExportController({ send, currentView, title, defaultBacken
     pending.clear();
   }
 
-  return { exportParts, warmKernel, handleMessage, dispose };
+  return { exportParts, exportKit, warmKernel, handleMessage, dispose };
 }

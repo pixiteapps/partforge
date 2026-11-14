@@ -89,7 +89,7 @@ describe("an off-grid circle stays round in the SVG", () => {
       const r = c.r + (c.grows ? h : -h);
       const local = [c.center[0] - c.min[0] + h, c.center[1] - c.min[1] + h];
       const kitFiles = await kit(forge(c), { kerf });
-      for (const [file, at] of [["parts/p.svg", [0, 0]], ["sheets/birch-plywood-3mm/sheet-1-of-1.svg", [MARGIN, MARGIN]]]) {
+      for (const [file, at] of [["laser/parts/p.svg", [0, 0]], ["laser/sheets/birch-plywood-3mm/sheet-1-of-1.svg", [MARGIN, MARGIN]]]) {
         const svg = parseSvg(kitFiles.text(file));
         const [sub] = svg.groups.find((g) => g.attrs.id === c.layer).paths[0].subpaths;
         const dev = svgRadialDeviation(sub, svg.height, [local[0] + at[0], local[1] + at[1]], r);
@@ -100,7 +100,7 @@ describe("an off-grid circle stays round in the SVG", () => {
     test.each([0, 0.15])("kerf %s: the service DXF writes it as an exact CIRCLE", async (kerf) => {
       const h = kerf / 2;
       const r = c.r + (c.grows ? h : -h);
-      const dxf = parseDxf((await kit(forge(c), { kerf, destination: "service" })).text("parts/p.dxf"));
+      const dxf = parseDxf((await kit(forge(c), { kerf, destination: "service" })).text("laser/parts/p.dxf"));
       const circles = dxf.entities.filter((e) => e.type === "CIRCLE");
       expect(circles).toHaveLength(1);
       expect(circles[0].center[0]).toBeCloseTo(c.center[0] - c.min[0] + h, 5);
@@ -224,7 +224,7 @@ describe("laser-box.js: every cut file reads back at its piece's size, never mir
 
     // The sheets: every placed outline is one of the pieces, turned or not, CCW.
     const placed = [];
-    for (const file of r.names.filter((n) => n.startsWith("sheets/"))) {
+    for (const file of r.names.filter((n) => n.startsWith("laser/sheets/"))) {
       const rings = destination === "own-laser"
         ? svgRings(parseSvg(r.text(file)), "cut-outer")
         : dxfCutRings(parseDxf(r.text(file))).filter((x) => x.area > 0);
@@ -380,7 +380,7 @@ describe("#233's exact-curve helpers read back as arcs, at their Shape2D's size"
 
     const placed = [];
     for (const [key, piece] of Object.entries(CURVE_PIECES)) {
-      const file = `parts/${key}.${ext}`;
+      const file = `laser/parts/${key}.${ext}`;
       expect(r.names, file).toContain(file);
       const t = want[key];
       const size = sizeOf(t.box).map((x) => x + kerf);
@@ -435,7 +435,7 @@ describe("#233's exact-curve helpers read back as arcs, at their Shape2D's size"
     }
 
     // The sheet(s): every placed outline one of the pieces, turned or not, and nothing faceted.
-    const sheets = r.names.filter((n) => n.startsWith("sheets/") && n.endsWith(`.${ext}`));
+    const sheets = r.names.filter((n) => n.startsWith("laser/sheets/") && n.endsWith(`.${ext}`));
     expect(sheets.length).toBeGreaterThan(0);
     const left = [...placed];
     for (const file of sheets) {
@@ -450,6 +450,6 @@ describe("#233's exact-curve helpers read back as arcs, at their Shape2D's size"
     }
     expect(left).toEqual([]);
     const lineCount = (names) => names.flatMap((f) => cutPrims(f, r.text(f))).reduce((n, x) => n + x.lines, 0);
-    expect(lineCount(sheets), "the sheets carry the pieces' lines, no more").toBe(lineCount(Object.keys(CURVE_PIECES).map((key) => `parts/${key}.${ext}`)));
+    expect(lineCount(sheets), "the sheets carry the pieces' lines, no more").toBe(lineCount(Object.keys(CURVE_PIECES).map((key) => `laser/parts/${key}.${ext}`)));
   });
 });

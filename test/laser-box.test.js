@@ -42,8 +42,8 @@ test("builds and measures clean at defaults: nothing interpenetrates in the disp
 });
 
 test("the sheet panels' EXPORT assembly is the assembled box — zero pairwise overlap (decision 10)", () => {
-  // The printed hinges export in their print pose at the origin (so the kit counts
-  // them ×2); the sheets keep their assembled pose, so a STEP of the box opens assembled.
+  // The printed hinges export in their print pose at the origin (so the kit's
+  // two hinge files are identical); the sheets keep their assembled pose, so a STEP of the box opens assembled.
   const { p, d } = resolveParams(part, {});
   const solids = SHEETS.map((n) => buildPosed(k, part, n, { purpose: "export", view: "box", p, d }));
   for (let i = 0; i < solids.length; i++)

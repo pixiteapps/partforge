@@ -3526,3 +3526,33 @@ test("carried pose pins come back on a remount: joint pins ('<handle>:<joint>') 
   expect(pose.setPins).toHaveBeenCalledWith(["grow:tip", "grow:elbow", "grow:palm.wristPitch"]);
   handle.dispose();
 });
+
+test("describeKit reads the kit's sections at the live params; exportKit's reply reaches onKit", async () => {
+  const { workers, createWorker } = makeWorkers();
+  const part = makePart();
+  part.defaults.t = 3;
+  const build = (k) => k.box({ min: [0, 0, 0], max: [40, 20, 3] });
+  part.parts.panel = { label: "Panel", views: ["main"], build,
+    sheet: { process: "laser", material: "Birch Plywood", thickness: (p) => p.t, profile: () => null,
+      score: null, engrave: null, pose: null, generatedBuild: build } };
+  const onKit = vi.fn();
+  const onDownload = vi.fn();
+  const runtime = mount(part, { createWorker, elements: makeElements(), onKit, onDownload });
+  finishFirstBuild(workers);
+  runtime.setParams({ t: 4 });
+  const kit = runtime.describeKit();
+  expect(kit.sections.map((s) => s.id)).toEqual(["3d", "laser"]);
+  expect(kit.sections[1].parts).toStrictEqual([{ name: "panel", label: "Panel", default: true,
+    sheet: { process: "laser", material: "Birch Plywood", thickness: 4, group: "birch plywood|4.00" } }]);
+
+  const sections = { laser: { parts: ["panel"] }, "3d": { parts: ["body"], options: { format: "step" } } };
+  const done = runtime.exportKit({ sections, sets: 2 });
+  const msg = workers.occt.postMessage.mock.calls.map(([m]) => m).find((m) => m.type === "export-kit");
+  expect(msg).toMatchObject({ sections, sets: 2, quality: "print", params: expect.objectContaining({ t: 4 }) });
+  const entries = [{ path: "README.txt", kind: "text", data: new Uint8Array([1]) }];
+  workers.occt.onmessage({ data: { type: "kit", jobId: msg.jobId, name: "part", entries } });
+  await expect(done).resolves.toBeUndefined();
+  expect(onKit).toHaveBeenCalledWith({ entries, name: "part" });
+  expect(onDownload).not.toHaveBeenCalled();
+  runtime.dispose();
+});

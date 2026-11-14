@@ -2,9 +2,8 @@
 // exportSubParts / resolveParams / buildPosed — lives in part-model.js, a leaf, so
 // the oracle and the collision check can share it without importing this async,
 // kernel-bound module back.
-import { meshTo3MF } from "./geometry/threemf.js";
-import { printColor } from "./materials/resolve.js";
-import { exportablePartNames } from "./export-select.js";
+import { selectExportable } from "./export-select.js";
+import { buildStlFiles, buildStepFile, build3mfFile, exportPieceError } from "./export-models.js";
 import { fontControlAllows, fontSourceAllowed, isNoFontSource } from "./font-source.js";
 import { fontsFor, resolveFonts, forgetFontSource } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
@@ -49,9 +48,8 @@ let changeTracker = null;
 // a session that never downloads a kit. test/worker-layering.test.js keeps every one of
 // them out of worker boot, and test/kit-layering.test.js keeps the kit off ./oracle/*.
 const loadBundle = () => import("./export/bundle.js");
-// The 3MF/STEP bed layout (export/bed-layout.js, which reads the DFM profile table) loads
-// the same way, on the first 3MF/STEP job.
-const loadBedLayout = () => import("./export/bed-layout.js");
+// The kit as entries (export-kit), lazily the same way.
+const loadKit = () => import("./export/kit/build.js");
 
 // HOST JOBS — the extension seam. A host registers its own job types with
 // `runWorker(part, { jobs: { <type>: handler } })`, threaded here as `opts.jobs`, and
@@ -73,6 +71,8 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 //   { type:"export-step", view, params }        → { type:"download", data, filename, mime }
 //   { type:"export-bundle", view, params, parts, options }
 //                                               → { type:"download", data, filename, mime }  (the cut & print kit, a ZIP)
+//   { type:"export-kit", view, params, sections, sets, name, quality }
+//                                               → { type:"kit", name, entries: [{ path, kind, data }] }  (each data transferred)
 // A generate also accepts `opts.isStale` — a caller-supplied predicate checked at each
 // sub-part boundary — and answers { type:"superseded" } instead of `meshes` when it
 // stops early (a build that ended without meshes, not an error; see KERNEL-CONTRACT.md).
@@ -84,22 +84,6 @@ const loadBedLayout = () => import("./export/bed-layout.js");
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
 
-// An organic sub-part's mesh (export-step's `meshes`): its bounds for the bed layout, and
-// a copy moved by the layout's offset.
-function meshBounds(positions) {
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) {
-    const v = positions[i + a];
-    if (v < min[a]) min[a] = v;
-    if (v > max[a]) max[a] = v;
-  }
-  return { min, max };
-}
-function shiftMesh({ positions, indices }, o) {
-  const p = Float32Array.from(positions);
-  for (let i = 0; i < p.length; i += 3) { p[i] += o[0]; p[i + 1] += o[1]; p[i + 2] += o[2]; }
-  return { positions: p, indices };
-}
 
 // One caller-supplied match target as a reference mask, or null when it is not one we
 // can score. Every field here is untrusted wire data, so shape is checked rather than
@@ -188,22 +172,6 @@ const PROGRESSIVE_BATCH_MS = 300;
 const transferOf = (meshes) => meshes.flatMap((m) =>
   [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer,
     m.bindings?.frameA.buffer, m.bindings?.frameB.buffer, m.bindings?.weight.buffer].filter(Boolean));
-
-// The WASM traps that mean the kernel ran out of heap (or was corrupted by doing so).
-const HEAP_TRAP_RE = /out of bounds memory access|memory access out of bounds|Cannot enlarge memory|out of memory/i;
-
-// A piece of a many-piece export failed: say WHICH piece, how far the export got, and
-// — when it is the heap that ran out — the one remedy the user can apply. The raw
-// message stays LAST, after a colon, so a host's own trap classifier still matches it.
-function exportPieceError(thrown, { kernel, piece, index, count }) {
-  const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
-  if (count < 2 || err?.code) return err; // one piece: the error already names it; coded errors are routed, not shown
-  const raw = String(err?.message || err);
-  const advice = HEAP_TRAP_RE.test(raw)
-    ? " ran out of memory — export fewer parts at a time (each export needs room for the parts it builds)"
-    : " failed";
-  return new Error(`exporting "${piece}" (part ${index + 1} of ${count})${advice}: ${raw}`, { cause: thrown });
-}
 
 export async function handle(kernel, part, msg, post, opts = {}) {
   const isStale = opts.isStale ?? (() => false);
@@ -472,9 +440,11 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     // Explicit selection (headless exportParts) overrides view-derived selection.
     const selected = () =>
       msg.parts
-        ? exportablePartNames(part, p).filter((name) => msg.parts.includes(name))
+        ? selectExportable(part, p, msg.parts)
         : exportSubParts(part, msg.view, p);
     const fileBase = safeName(msg.name ?? msg.view); // STEP/3MF single-file name base (part-derived → untrusted)
+    // What the model exports (export-models.js) need from this job.
+    const modelCtx = () => ({ kernel, part, posed, label, exportName, onProgress, quality: msg.quality ?? "print" });
 
     if (msg.type === "generate") {
       const t0 = Date.now();
@@ -574,62 +544,17 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     } else if (msg.type === "export-stl") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const out = [];
-      for (const [i, name] of names.entries()) {
-        onProgress(`building ${label(name)}`);
-        try {
-          out.push({ name: exportName(name), data: await posed(name, "export", onProgress).toSTL({ quality: msg.quality ?? "print" }) });
-        } catch (thrown) {
-          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
-        }
-        // Each file is JS-owned once toSTL returns, so this piece's solids can go now.
-        // Without it a many-piece export held every piece's print-quality build until
-        // the job ended — the 105-plate forge of feedback #212 ran out of heap at
-        // about the 100th plate.
-        kernel.cleanup?.();
-      }
+      const files = await buildStlFiles(modelCtx(), names);
+      const out = files.map(({ name, data }) => ({ name, data }));
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));
     } else if (msg.type === "export-step") {
-      // 3MF/STEP hold every selected piece in one file; printed views-map pieces export as
-      // built, so they are laid out apart (export/bed-layout.js). Sheet pieces keep their
-      // assembled pose. STL is one file per piece and is never laid out.
-      //
       // `msg.meshes` (name → { positions, indices }) are organic sub-parts the Manifold worker
-      // already built and meshed in their export pose (export-controller.js): they are not
-      // built here, they are laid out by their mesh's bounds, and each reaches toSTEP as a
-      // small stand-in solid carrying its mesh, which the writer turns into a tessellated
-      // solid. Without `meshes` this is the export it always was.
+      // already built and meshed in their export pose (export-controller.js); buildStepFile
+      // writes each as a tessellated solid instead of building it here.
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const meshes = msg.meshes ?? {};
-      const { layoutExportPieces, laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
-      // A failed build names its sub-part, as STL and 3MF do — above all a k.implicit
-      // call the probe did not see, which reaches OCCT and throws here.
-      const buildPiece = (name, i) => {
-        onProgress(`building ${label(name)}`);
-        try { return posed(name, "export", onProgress); }
-        catch (thrown) { throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length }); }
-      };
-      let bodies;
-      if (names.some((name) => meshes[name])) {
-        const pieces = names.map((name, i) => {
-          if (meshes[name]) return { name, mesh: meshes[name], box: meshBounds(meshes[name].positions) };
-          const solid = buildPiece(name, i);
-          return { name, solid, box: laidOutOnBed(part, name) ? solid.boundingBox() : null };
-        });
-        const offsets = exportLayoutOffsets(part, pieces.filter((pc) => laidOutOnBed(part, pc.name)));
-        bodies = pieces.map(({ name, solid, mesh }) => {
-          const o = offsets.get(name);
-          const color = printColor(part.parts[name]?.display);
-          if (!mesh) return { name: exportName(name), solid: o ? solid.translate(o) : solid, color };
-          return { name: exportName(name), solid: kernel.box({ size: [1, 1, 1] }), color, mesh: o ? shiftMesh(mesh, o) : mesh };
-        });
-      } else {
-        bodies = layoutExportPieces(part, names.map((name, i) => ({ name, solid: buildPiece(name, i) }))).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
-      }
-      onProgress("writing STEP file");
-      const data = await kernel.toSTEP(bodies);
+      const { data } = await buildStepFile({ ...modelCtx(), meshes: msg.meshes }, names);
       post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "mesh-subparts") {
       // The Manifold half of a STEP export with organic sub-parts (export-controller.js):
@@ -651,31 +576,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      // One piece in the kernel at a time, as export-stl: build, read the bounds the bed
-      // layout needs, mesh into JS-owned arrays, free — then lay out from the bounds and
-      // shift the meshes (translation only, so this is the layout layoutExportPieces makes).
-      const { laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
-      const built = [];
-      for (const [i, name] of names.entries()) {
-        onProgress(`building ${label(name)}`);
-        try {
-          const solid = posed(name, "export", onProgress);
-          const box = laidOutOnBed(part, name) ? solid.boundingBox() : null;
-          const { positions, indices } = solid.toIndexedMesh({ quality: msg.quality ?? "print" });
-          built.push({ name, box, positions, indices });
-        } catch (thrown) {
-          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length });
-        }
-        kernel.cleanup?.();
-      }
-      const offsets = exportLayoutOffsets(part, built.filter((b) => b.box));
-      const meshes = built.map(({ name, positions, indices }) => {
-        const o = offsets.get(name);
-        if (o) for (let j = 0; j < positions.length; j += 3) { positions[j] += o[0]; positions[j + 1] += o[1]; positions[j + 2] += o[2]; }
-        return { name: exportName(name), positions, indices, color: printColor(part.parts[name]?.display) };
-      });
-      onProgress("writing 3MF file");
-      const data = meshTo3MF(meshes);
+      const { data } = await build3mfFile(modelCtx(), names);
       post({ type: "download", data, filename: `${fileBase}.3mf`, mime: "model/3mf", jobId: msg.jobId }, [bufferOf(data)]);
     } else if (msg.type === "export-bundle") {
       // The cut & print kit: sheet parts drawn flat from their 2-D declaration and laid
@@ -685,6 +586,14 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       const { buildBundle } = await loadBundle();
       const { data, filename } = await buildBundle({ kernel, part, msg, p, d, posed, label, exportName, names: selected(), onProgress, fileBase });
       post({ type: "download", data, filename, mime: "application/zip", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "export-kit") {
+      // The download kit as a list of entries; the main thread zips it, or hands it to
+      // the host (export-controller.js deliverKit). Option problems throw "cut kit
+      // options:" errors, posted by the catch below.
+      const { buildKit } = await loadKit();
+      const entries = await buildKit({ kernel, part, msg, p, d, posed, label, exportName, onProgress, fileBase,
+        selectedFrom: (names) => selectExportable(part, p, names) }, { sections: msg.sections, sets: msg.sets });
+      post({ type: "kit", jobId: msg.jobId, name: fileBase, entries }, [...new Set(entries.map((e) => bufferOf(e.data)))]);
     } else if (msg.type === "warm-kernel") {
       // Deliberately empty. worker.js awaits kernelFor() before calling handle(),
       // so REACHING this branch is the whole result: the backend this job was

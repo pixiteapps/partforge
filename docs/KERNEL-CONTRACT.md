@@ -920,7 +920,7 @@ host replaces the worker: `Failed to fetch dynamically imported module`
 ([ERROR-PATTERNS.md#kernel-chunk-import-failed](ERROR-PATTERNS.md#kernel-chunk-import-failed)).
 
 **Epoch guard.** Generates supersede each other; exports (`export-stl`/`export-step`/
-`export-3mf`/`export-bundle`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's
+`export-3mf`/`export-bundle`/`export-kit`), `inspect`, and `lint` are **never** epoch-guarded — cancelling a user's
 export because an edit landed would be wrong. A generate that is stale by the time the
 job pump reaches it is skipped and never builds at all. A generate already running
 re-checks staleness at each sub-part boundary and, if it has been superseded, stops

@@ -663,20 +663,46 @@ the installed package, so let the publish finish before bumping the dep there.
   `partforge/geometry` must never load it, and the whole stage must stay
   worker-safe (`test/kit-export-guards.test.js`, which also pins the exporter ids
   to `process/registry.js`'s).
-- **`src/framework/export/bundle.js`** - the cut & print kit itself,
-  `exportParts({ format: "bundle", options })`. `buildBundle` validates the options
-  before anything builds, draws every sheet part through its process's exporter,
-  merges identical pieces and prints into `-xN` files, lays each stock group out
-  (`layout.js`), writes the sheets, pieces and prints plus `readme.js`'s plain-text
-  README.txt and parts.csv, and zips them — asserting every entry name unique and
-  safe first. `jobs.js` reaches it only through `loadBundle`, a literal dynamic
-  import: `test/worker-layering.test.js` keeps every `export/` module and process
-  exporter out of worker boot (the main thread imports `formats.js` alone, through
-  `export-rows.js` for `listExportFormats()` and through `src/index.js` for the
-  options surface). The kit never loads `./oracle/*`
+- **`src/framework/export/kit/`** - the cut & print kit, built section by section.
+  `build.js`'s `buildKit(ctx, request)` checks every requested section's options
+  (`options.js`: `validateSectionOptions`, `validateSets`, `sectionOptionSchema`,
+  `cutSectionIds()` — the process exporters that have a folder in `SECTION_FOLDERS`)
+  and parts before anything builds, then builds each section and appends `readme.js`'s
+  README.txt (one cutting block per cut section) and parts.csv, and asserts every entry
+  against `entries.js`'s `KIT_KINDS`. A cut section (`cut-section.js`: `laser` under
+  `laser/`, `cnc-router` under `cnc/`) draws only parts of its own process, merges
+  identical pieces into `-xN` files and lays each stock group out (`layout.js`); the 3D
+  section (`model-section.js`) writes `print/<name>.stl` per part, or one
+  `print/<forge>.3mf|step`, through `src/framework/export-models.js` — the same functions
+  jobs.js's export-stl/step/3mf jobs call, so a kit's model is the plain download's bytes.
+  A host reads the kit through the mount handle: `runtime.describeKit()`
+  (`kit/describe.js`, main thread, no geometry: each section's parts and options as
+  plain data, a part placed by its DECLARED sheet process so one whose stock cannot
+  be evaluated is still listed in its cut section) and `runtime.exportKit({ sections,
+  sets, onProgress })`, one `export-kit` job (never epoch-guarded). The job's `kit`
+  reply goes through `download.js`'s `deliverKit` to the host's `onKit({ entries,
+  name })` sink, or with no sink a kit holding one model file and nothing else but the
+  README and parts list is saved as that bare model file (README and parts list left out)
+  and any other kit zipped as
+  `<name>-kit.zip` (models stored, the rest deflated); a delivery that throws rejects the export's Promise. A kit
+  with a STEP 3D section runs on OCCT as ONE job. Entries are `{ path, kind, data }`:
+  `print/` for 3D files, `laser/` and `cnc/` (each with `sheets/` and `parts/`) for
+  cut drawings, `README.txt` and `parts.csv` at the root.
+  `export/bundle.js`'s `buildBundle` (`exportParts({ format: "bundle", options })`) is a
+  wrapper for one release: it maps the old options onto a section request and zips the
+  entries. `jobs.js` reaches the kit through two literal dynamic imports, `loadKit`
+  (`export/kit/build.js`, the `export-kit` job) and `loadBundle` (`export/bundle.js`,
+  the old `export-bundle` job): `test/worker-layering.test.js` keeps every `export/`
+  module and process exporter out of worker boot. On the main thread, `mount.js`
+  statically imports `export/kit/describe.js` (with `formats.js`, `readme.js` and
+  `kit/options.js` behind it), `download.js` imports `export/kit/entries.js`,
+  `export-rows.js` imports `formats.js`, and `src/index.js` re-exports from
+  `formats.js`, `kit/entries.js` and `kit/options.js`; none of them builds a kit, and
+  `process/exporters.js`'s per-process exporters stay dynamic imports. The kit never loads `./oracle/*`
   (`test/kit-layering.test.js` walks it and runs a real kit with every oracle module
-  mocked to throw), so the README's check lines are worded by `checkMessage`, a
-  restatement of `assert-dsl.js` that a test holds equal to it.
+  mocked to throw) — which is why `resolveProfile`, read by the 3MF/STEP bed layout,
+  lives in `process/registry.js` — so the README's check lines are worded by
+  `checkMessage`, a restatement of `assert-dsl.js` that a test holds equal to it.
 - **`src/framework/domains/`** - domain modules (spec
   `docs/superpowers/specs/2026-10-29-domain-modules-design.md`). A **domain** is a
   depth past the core - sheet parts, kinematics, organic parts - as one folder

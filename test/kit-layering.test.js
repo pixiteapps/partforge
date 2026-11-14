@@ -102,3 +102,21 @@ test("an export-bundle job runs to a download with every oracle module unloadabl
     expect(posts.find((m) => m.type === "download")?.filename).toBe("no-oracle-kit.zip");
   }
 });
+
+test("an export-kit job runs to its entries with every oracle module unloadable", async () => {
+  const k = await bootManifoldKernel();
+  const part = {
+    meta: { title: "No Oracle" }, defaults: { t: 3 }, views: { all: { label: "All" } },
+    parts: {
+      panel: sheetPart({ label: "Panel", views: ["all"], material: "birch plywood", thickness: (p) => p.t,
+        profile: (kk) => kk.shape2d([[0, 0], [60, 0], [60, 30], [0, 30]]) }),
+      foot: { label: "Foot", views: ["all"], build: (kk) => kk.box({ size: [8, 8, 4] }) },
+    },
+  };
+  const posts = [];
+  await handle(k, part, { type: "export-kit", jobId: 1, view: "all", params: {}, name: "No Oracle", quality: "preview",
+    sections: { laser: { parts: ["panel"] }, "3d": { parts: ["foot"], options: { format: "3mf" } } } }, (m) => posts.push(m));
+  expect(loaded, "oracle modules the kit tried to load").toEqual([]);
+  expect(posts.find((m) => m.type === "error")?.message).toBeUndefined();
+  expect(posts.find((m) => m.type === "kit")?.entries.map((e) => e.path)).toContain("print/no-oracle.3mf");
+});
