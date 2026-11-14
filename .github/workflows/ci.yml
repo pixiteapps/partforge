@@ -18,8 +18,11 @@ jobs:
   # Only enforced when the PR changes something that actually SHIPS. package.json's
   # `files` field publishes src, bin and types; a PR touching only docs, tests or
   # workflows has nothing to release and is exempt — including this job's own PR.
+  # Only a PR into main is checked: publish.yml runs on main alone, so a PR into an
+  # integration branch releases nothing, and its version moves when that branch
+  # merges to main.
   version:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -55,9 +58,10 @@ jobs:
     # Chromium/apt download, a test that never settles — runs to GitHub's 6-hour
     # default and holds the PR's checks for that long; with one it fails in
     # minutes and a re-run usually clears it.
-    # Set at roughly 4x a healthy run (the job takes ~7 min, npm test ~3, the
-    # Playwright install ~20 s), so a slow day still passes.
-    timeout-minutes: 30
+    # Set at roughly 3x a healthy run: npm test takes 12-15 min on a runner since
+    # the implicit engine's suite (core-parity and the implicit speed gates are most
+    # of it), the Playwright install ~20 s, so a slow day still passes.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -73,7 +77,7 @@ jobs:
       # checker both see straight through.
       - run: npm run lint:dead
       - run: npm test
-        timeout-minutes: 15
+        timeout-minutes: 30
       # The shipped .d.ts files are hand-written, so nothing but tsc catches it when
       # they drift from the JS they describe.
       - run: npm run typecheck

@@ -394,6 +394,17 @@ describe("extremeVertex — scan reuse", () => {
     expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 0, 0)).toArray()).toEqual([10, 0, 0]);
     expect(extremeVertex(md, 0, +1, new THREE.Vector3(10, 20, 30)).toArray()).toEqual([10, 20, 30]);
   });
+
+  // A pose-drag skin (viewer.setSubVertices) rewrites the SAME positions array in place
+  // and bumps the attribute version, which the caller passes along.
+  it("re-scans when the positions are rewritten in place under a new version", () => {
+    const positions = new Float32Array([0, 0, 0, 10, 0, 0, 0, 5, 0]);
+    const md = [{ positions, matrix: new THREE.Matrix4(), version: 1 }];
+    expect(extremeVertex(md, 0, +1, new THREE.Vector3()).x).toBe(10);
+    positions[3] = 30;
+    md[0].version = 2;
+    expect(extremeVertex(md, 0, +1, new THREE.Vector3()).x).toBe(30);
+  });
 });
 
 describe("placeDims — edge and span", () => {

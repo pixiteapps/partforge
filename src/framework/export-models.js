@@ -68,21 +68,73 @@ export async function buildStlFiles(ctx, names, { sizes = false } = {}) {
   return out;
 }
 
+// An organic sub-part's mesh (ctx.meshes): its bounds for the bed layout, and a copy
+// moved by the layout's offset.
+function meshBounds(positions) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) {
+    const v = positions[i + a];
+    if (v < min[a]) min[a] = v;
+    if (v > max[a]) max[a] = v;
+  }
+  return { min, max };
+}
+function shiftMesh({ positions, indices }, o) {
+  const p = Float32Array.from(positions);
+  for (let i = 0; i < p.length; i += 3) { p[i] += o[0]; p[i + 1] += o[1]; p[i + 2] += o[2]; }
+  return { positions: p, indices };
+}
+
 // Every part in one STEP file. 3MF/STEP hold every selected piece in one file; printed
 // views-map pieces export as built, so they are laid out apart (export/bed-layout.js).
 // Sheet pieces keep their assembled pose. Returns { data, sizes? } — sizes keyed by part.
+//
+// `ctx.meshes` (name → { positions, indices }) are organic sub-parts already built and
+// meshed in their export pose by the Manifold worker (export-controller.js): they are
+// not built here, they are laid out by their mesh's bounds, and each reaches toSTEP as a
+// small stand-in solid carrying its mesh, which the writer turns into a tessellated
+// solid. Without `meshes` this is the plain export.
 export async function buildStepFile(ctx, names, { sizes = false } = {}) {
   const { kernel, part, posed, label, exportName, onProgress } = ctx;
-  const { layoutExportPieces } = await loadBedLayout();
-  const extents = new Map();
-  const solids = layoutExportPieces(part, names.map((name) => {
+  const meshes = ctx.meshes ?? {};
+  const { layoutExportPieces, laidOutOnBed, exportLayoutOffsets } = await loadBedLayout();
+  // A failed build names its sub-part, as STL and 3MF do — above all a k.implicit
+  // call the probe did not see, which reaches OCCT and throws here.
+  const buildPiece = (name, i) => {
     onProgress(`building ${label(name)}`);
-    const solid = posed(name, "export", onProgress);
-    if (sizes) extents.set(name, sizeOfBox(solid.boundingBox()));
-    return { name, solid };
-  })).map(({ name, solid }) => ({ name: exportName(name), solid, color: printColor(part.parts[name]?.display) }));
+    try { return posed(name, "export", onProgress); }
+    catch (thrown) { throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: names.length }); }
+  };
+  const extents = new Map();
+  const colorOf = (name) => printColor(part.parts[name]?.display);
+  let bodies;
+  if (!names.some((name) => meshes[name])) {
+    bodies = layoutExportPieces(part, names.map((name, i) => {
+      const solid = buildPiece(name, i);
+      if (sizes) extents.set(name, sizeOfBox(solid.boundingBox()));
+      return { name, solid };
+    })).map(({ name, solid }) => ({ name: exportName(name), solid, color: colorOf(name) }));
+  } else {
+    const pieces = names.map((name, i) => {
+      if (meshes[name]) {
+        const box = meshBounds(meshes[name].positions);
+        if (sizes) extents.set(name, sizeOfBox(box));
+        return { name, mesh: meshes[name], box };
+      }
+      const solid = buildPiece(name, i);
+      const box = laidOutOnBed(part, name) || sizes ? solid.boundingBox() : null;
+      if (sizes) extents.set(name, sizeOfBox(box));
+      return { name, solid, box };
+    });
+    const offsets = exportLayoutOffsets(part, pieces.filter((pc) => laidOutOnBed(part, pc.name)));
+    bodies = pieces.map(({ name, solid, mesh }) => {
+      const o = offsets.get(name);
+      if (!mesh) return { name: exportName(name), solid: o ? solid.translate(o) : solid, color: colorOf(name) };
+      return { name: exportName(name), solid: kernel.box({ size: [1, 1, 1] }), color: colorOf(name), mesh: o ? shiftMesh(mesh, o) : mesh };
+    });
+  }
   onProgress("writing STEP file");
-  const data = await kernel.toSTEP(solids);
+  const data = await kernel.toSTEP(bodies);
   return { data, ...(sizes ? { sizes: extents } : {}) };
 }
 
