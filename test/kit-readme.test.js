@@ -8,16 +8,16 @@ import {
 
 const ownLaser = {
   title: "Box\u0007 kit",
-  destination: "own-laser", cutFormat: "svg", kerf: 0.15,
+  cut: [{ label: "Laser-cut parts", folder: "laser", destination: "own-laser", cutFormat: "svg", kerf: 0.15,
+    scale: [{ label: "Front", nominal: [160, 80], drawn: [160.15, 80.15] }], marksFiles: [], hasSheets: true, anyTwoSided: false }],
   stockNotes: [
     { material: "Birch plywood", thickness: 3, control: "Sheet thickness" },
     { material: "Acrylic", thickness: 2.7, control: null },
   ],
-  scale: [{ label: "Front", nominal: [160, 80], drawn: [160.15, 80.15] }],
-  sheets: [{ file: "sheets/birch-plywood-3mm/sheet-1-of-1.svg", material: "Birch plywood", thickness: 3, size: [300, 300], pieces: 3, used: 41.6 }],
+  sheets: [{ file: "laser/sheets/birch-plywood-3mm/sheet-1-of-1.svg", material: "Birch plywood", thickness: 3, size: [300, 300], pieces: 3, used: 41.6 }],
   pieces: [
-    { file: "parts/front.svg", labels: ["Front"], material: "Birch plywood", thickness: 3, size: [160, 80], quantity: 1 },
-    { file: "parts/left-x2.svg", labels: ["Left", "Right"], material: "Birch plywood", thickness: 3, size: [110, 80], quantity: 2 },
+    { file: "laser/parts/front.svg", labels: ["Front"], material: "Birch plywood", thickness: 3, size: [160, 80], quantity: 1 },
+    { file: "laser/parts/left-x2.svg", labels: ["Left", "Right"], material: "Birch plywood", thickness: 3, size: [110, 80], quantity: 2 },
   ],
   printed: [{ file: "print/hinge-x2.stl", labels: ["Hinge (left)", "Hinge (right)"], quantity: 2 }],
   clearances: [{ label: "Finger clearance", value: 0.1, unit: "mm" }],
@@ -32,18 +32,18 @@ const ownLaser = {
 
 const service = {
   title: "Tray",
-  destination: "service", cutFormat: "dxf", kerf: 0,
+  cut: [{ label: "Laser-cut parts", folder: "laser", destination: "service", cutFormat: "dxf", kerf: 0,
+    scale: [{ label: "Base", nominal: [400, 250], drawn: [400, 250] }], marksFiles: ["laser/parts/base-marks.dxf"], hasSheets: false, anyTwoSided: false }],
   stockNotes: [{ material: "MDF", thickness: 6, control: "Thickness" }],
-  scale: [{ label: "Base", nominal: [400, 250], drawn: [400, 250] }],
   sheets: [],
   pieces: [
-    { file: "parts/base.dxf", marksFile: "parts/base-marks.dxf", labels: ["Base"], material: "MDF", thickness: 6, size: [400, 250], quantity: 1 },
-    { file: "parts/lid.dxf", marksFile: null, labels: ["Lid"], material: "MDF", thickness: 6, size: [100, 50], quantity: 1 },
+    { file: "laser/parts/base.dxf", marksFile: "laser/parts/base-marks.dxf", labels: ["Base"], material: "MDF", thickness: 6, size: [400, 250], quantity: 1 },
+    { file: "laser/parts/lid.dxf", marksFile: null, labels: ["Lid"], material: "MDF", thickness: 6, size: [100, 50], quantity: 1 },
   ],
   printed: [], clearances: [], settings: [],
   checks: ["Base: 2 != 1 — the profile is not exactly one piece"],
-  oversized: ["Base: 400.0 × 250.0 mm does not fit a 300 × 300 mm sheet after its 5 mm margin (MDF 6 mm) — cut it from parts/base.dxf"],
-  renamed: ["parts/base-2.dxf: base (renamed: parts/base.dxf is Base)"],
+  oversized: ["Base: 400.0 × 250.0 mm does not fit a 300 × 300 mm sheet after its 5 mm margin (MDF 6 mm) — cut it from laser/parts/base.dxf"],
+  renamed: ["laser/parts/base-2.dxf: base (renamed: laser/parts/base.dxf is Base)"],
 };
 
 describe("renderReadme", () => {
@@ -62,12 +62,12 @@ describe("renderReadme", () => {
       "",
       "SHEETS",
       "file | material | thickness | size | pieces | used",
-      "sheets/birch-plywood-3mm/sheet-1-of-1.svg | Birch plywood | 3.00 mm | 300 × 300 mm | 3 | 42%",
+      "laser/sheets/birch-plywood-3mm/sheet-1-of-1.svg | Birch plywood | 3.00 mm | 300 × 300 mm | 3 | 42%",
       "",
       "PIECES",
       "file | labels | material | thickness | size | quantity",
-      "parts/front.svg | Front | Birch plywood | 3.00 mm | 160.00 × 80.00 mm | 1",
-      "parts/left-x2.svg | Left, Right | Birch plywood | 3.00 mm | 110.00 × 80.00 mm | 2",
+      "laser/parts/front.svg | Front | Birch plywood | 3.00 mm | 160.00 × 80.00 mm | 1",
+      "laser/parts/left-x2.svg | Left, Right | Birch plywood | 3.00 mm | 110.00 × 80.00 mm | 2",
       "",
       "PRINTED PARTS",
       "file | labels | quantity",
@@ -102,22 +102,22 @@ describe("renderReadme", () => {
       "Scale check — measure one cut piece against its line:",
       "Base: nominal 400.00 × 250.00 mm; this file draws the same (no kerf applied)",
       "DXF layers: CUT (colour 1), SCORE (colour 5), ENGRAVE (colour 7) — set ENGRAVE to fill; R12 has no hatch.",
-      "Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: parts/base-marks.dxf.",
+      "Score and engrave marks are in their own files, not in the cut files — send them with the cut files if you want the marks made: laser/parts/base-marks.dxf.",
       "Test-cut one joint first.",
       "",
       "PIECES",
       "file | labels | material | thickness | size | quantity",
-      "parts/base.dxf | Base | MDF | 6.00 mm | 400.00 × 250.00 mm | 1",
-      "parts/lid.dxf | Lid | MDF | 6.00 mm | 100.00 × 50.00 mm | 1",
+      "laser/parts/base.dxf | Base | MDF | 6.00 mm | 400.00 × 250.00 mm | 1",
+      "laser/parts/lid.dxf | Lid | MDF | 6.00 mm | 100.00 × 50.00 mm | 1",
       "",
       "CHECKS",
       "Base: 2 != 1 — the profile is not exactly one piece",
       "",
       "OVERSIZED PIECES",
-      "Base: 400.0 × 250.0 mm does not fit a 300 × 300 mm sheet after its 5 mm margin (MDF 6 mm) — cut it from parts/base.dxf",
+      "Base: 400.0 × 250.0 mm does not fit a 300 × 300 mm sheet after its 5 mm margin (MDF 6 mm) — cut it from laser/parts/base.dxf",
       "",
       "RENAMED FILES",
-      "parts/base-2.dxf: base (renamed: parts/base.dxf is Base)",
+      "laser/parts/base-2.dxf: base (renamed: laser/parts/base.dxf is Base)",
       "",
       "LIMITS",
       "Layout packs bounding boxes only: no nesting into holes, and grain direction is ignored.",
@@ -126,9 +126,10 @@ describe("renderReadme", () => {
   });
 
   test("a service kit with sheets says they are for reference; one with no marks names no marks file", () => {
-    const sheets = [{ file: "sheets/mdf-6mm/sheet-1-of-1.dxf", material: "MDF", thickness: 6, size: [600, 400], pieces: 2, used: 50 }];
-    const text = renderReadme({ ...service, sheets, pieces: service.pieces.map((pc) => ({ ...pc, marksFile: null })) });
-    expect(text).toContain("\nThe sheets in sheets/ are for reference only — a cutting service lays out the pieces itself.\n");
+    const sheets = [{ file: "laser/sheets/mdf-6mm/sheet-1-of-1.dxf", material: "MDF", thickness: 6, size: [600, 400], pieces: 2, used: 50 }];
+    const text = renderReadme({ ...service, sheets, cut: [{ ...service.cut[0], marksFiles: [], hasSheets: true }],
+      pieces: service.pieces.map((pc) => ({ ...pc, marksFile: null })) });
+    expect(text).toContain("\nThe sheets in laser/sheets/ are for reference only — a cutting service lays out the pieces itself.\n");
     expect(text).not.toContain("marks");
     expect(renderReadme(ownLaser)).not.toContain("sheets/ are for reference");
   });
@@ -164,11 +165,12 @@ describe("renderReadme", () => {
 
 const routerKit = {
   title: "Board",
-  destination: "cnc-router", cutFormat: "dxf", kerf: 0, flip: "left-right", twoSided: "one-file", anyTwoSided: false,
+  cut: [{ label: "CNC-routed parts", folder: "cnc", destination: "cnc-router", cutFormat: "dxf", kerf: 0,
+    scale: [{ label: "Plinth", nominal: [100, 60], drawn: [100, 60] }], marksFiles: [], hasSheets: false, anyTwoSided: false }],
+  flip: "left-right",
   stockNotes: [{ material: "walnut", thickness: 18, control: "Board thickness" }],
-  scale: [{ label: "Plinth", nominal: [100, 60], drawn: [100, 60] }],
   sheets: [],
-  pieces: [{ file: "parts/plinth.dxf", marksFile: null, farFile: null, labels: ["Plinth"], material: "walnut", thickness: 18, size: [100, 60], quantity: 1 }],
+  pieces: [{ file: "cnc/parts/plinth.dxf", marksFile: null, farFile: null, labels: ["Plinth"], material: "walnut", thickness: 18, size: [100, 60], quantity: 1 }],
   router: [{ labels: ["Plinth"], material: "walnut", thickness: 18, twoSided: false, farFile: null,
     pockets: [{ w: 30, h: 20, depth: 11.43, label: "vault", face: "near" }],
     drills: [{ d: 3.4, count: 2, depth: 10, through: false, label: null, face: "near" }],
@@ -195,7 +197,7 @@ describe("renderReadme — CNC router", () => {
       "",
       "PIECES",
       "file | labels | material | thickness | size | quantity",
-      "parts/plinth.dxf | Plinth | walnut | 18.00 mm | 100.00 × 60.00 mm | 1",
+      "cnc/parts/plinth.dxf | Plinth | walnut | 18.00 mm | 100.00 × 60.00 mm | 1",
       "",
       "ROUTER OPERATIONS",
       "Plinth (walnut 18.00 mm) — depths from each op's own face:",
@@ -219,7 +221,7 @@ describe("renderReadme — CNC router", () => {
 
   test("a two-sided piece: the far rows, the flip and alignment notes, and the order of work", () => {
     const twoSided = {
-      ...routerKit, anyTwoSided: true,
+      ...routerKit, cut: [{ ...routerKit.cut[0], anyTwoSided: true }],
       router: [{ ...routerKit.router[0], twoSided: true, farFile: null,
         pockets: [...routerKit.router[0].pockets, { w: 30, h: 10, depth: 6, label: "recess", face: "far" }] }],
       layers: [...routerKit.layers, { name: "FAR_POCKET_6MM", face: "far", colour: "20", depth: "6.00 mm" }],
@@ -235,15 +237,44 @@ describe("renderReadme — CNC router", () => {
       "LAYERS (one colour per layer across the kit):",
     ].join("\n"));
     expect(text).toContain("\nFAR_POCKET_6MM | far | 20 | 6.00 mm\n");
-    expect(text).toContain("\nTwo-sided pieces: machine the far side first, flip, then the near side and the through cut last, so the board holds the piece until the end. Sheet layouts in sheets/ carry near-side work only; far-side work is in the per-piece files.\nTest-cut one joint first.\n");
+    expect(text).toContain("\nTwo-sided pieces: machine the far side first, flip, then the near side and the through cut last, so the board holds the piece until the end. Sheet layouts in cnc/sheets/ carry near-side work only; far-side work is in the per-piece files.\nTest-cut one joint first.\n");
 
-    const twoFiles = renderReadme({ ...twoSided, flip: "end-over-end", twoSided: "two-files",
-      router: [{ ...twoSided.router[0], farFile: "parts/plinth-far.dxf" }] });
+    const twoFiles = renderReadme({ ...twoSided, flip: "end-over-end",
+      router: [{ ...twoSided.router[0], farFile: "cnc/parts/plinth-far.dxf" }] });
     expect(twoFiles).toContain("Far-side layers (FAR_*) are drawn as seen after flipping the board end over end, matching a VCarve two-sided job with Flip Direction = Vertical.");
-    expect(twoFiles).toContain("\nFar-side work is in parts/plinth-far.dxf; its REFERENCE outline is for alignment, not cutting.\n");
+    expect(twoFiles).toContain("\nFar-side work is in cnc/parts/plinth-far.dxf; its REFERENCE outline is for alignment, not cutting.\n");
     expect(twoFiles).not.toContain("the CUT outline is for alignment only");
     expect(renderReadme(routerKit)).not.toContain("Two-sided pieces");
     expect(renderReadme(routerKit)).not.toContain("Far-side layers (FAR_*) are drawn");
+  });
+});
+
+describe("renderReadme — sections", () => {
+  test("two cut sections: one cutting block each, headed by its label, between the stock notes and the test cut", () => {
+    const text = renderReadme({ ...routerKit, cut: [ownLaser.cut[0], routerKit.cut[0]], stockNotes: [...ownLaser.stockNotes.slice(0, 1), ...routerKit.stockNotes] });
+    const block = text.slice(text.indexOf("BEFORE YOU CUT\n"), text.indexOf("\n\nPIECES\n"));
+    expect(block.split("\n")).toEqual([
+      "BEFORE YOU CUT",
+      'This kit assumes 3.00 mm Birch plywood — if yours differs, change "Sheet thickness" and re-download.',
+      'This kit assumes 18.00 mm walnut — if yours differs, change "Board thickness" and re-download.',
+      "Laser-cut parts:",
+      "Kerf: 0.15 mm applied to the cut lines only. Set kerf in ONE place — these download options, or your laser software / cutting service — never both.",
+      "Scale check — measure one cut piece against its line:",
+      "Front: nominal 160.00 × 80.00 mm; this file draws 160.15 × 80.15 with 0.15 mm kerf",
+      "Colours: engrave = filled black #000000, score = blue #0000FF, cut = red #FF0000 (inner cuts come before outer cuts).",
+      "CNC-routed parts:",
+      "Kerf: none — a CNC router's CAM applies the tool offset.",
+      "Scale check — measure one cut piece against its line:",
+      "Plinth: nominal 100.00 × 60.00 mm; this file draws the same (no kerf applied)",
+      expect.stringMatching(/^DXF layers: CUT \(colour 1\) is the through cut;/),
+      "Test-cut one joint first.",
+    ]);
+  });
+
+  test("a kit with no cut section has no BEFORE YOU CUT", () => {
+    const text = renderReadme({ ...ownLaser, cut: [], stockNotes: [], sheets: [], pieces: [] });
+    expect(text).not.toContain("BEFORE YOU CUT");
+    expect(text).toContain("PRINTED PARTS\nfile | labels | quantity\nprint/hinge-x2.stl");
   });
 });
 

@@ -1,5 +1,6 @@
 import { zipSync } from "fflate";
 import { safeName } from "./safe-name.js";
+import { KIT_KINDS, MODEL_KINDS, bareEntry } from "./export/kit/entries.js";
 
 // Browser file-download helpers. Pure DOM/Blob utilities with no app state — the
 // worker produces the bytes; these just hand them to the browser as a download.
@@ -33,4 +34,20 @@ export function downloadParts({ parts, ext, mime }, zipName, sink) {
   const entries = {};
   for (const p of parts) entries[`${safeName(p.name)}.${ext}`] = new Uint8Array(p.data);
   triggerDownload(zipSync(entries, { level: 0 }), zipName, "application/zip", sink);
+}
+
+// Hand a built kit — its entries { path, kind, data } and the forge's file base `name` —
+// to the host's onKit sink. With no onKit, partforge saves it itself: the one model of a
+// kit that has one bare (its README and parts list left out), else every entry zipped as
+// `<name>-kit.zip`, through triggerDownload (so onDownload, when given, still gets the
+// final bytes). Entry paths were checked against their kind's pattern in the worker
+// (assertEntries), so they are safe zip paths, and each entry's data is already a
+// Uint8Array. Model files are stored (level 0 — a 3MF is itself a zip, and deflating
+// mesh bytes buys little for the time it costs); drawings and text are deflated.
+export function deliverKit({ entries, name }, onKit, onDownload) {
+  if (typeof onKit === "function") { onKit({ entries, name }); return; }
+  const bare = bareEntry(entries);
+  if (bare) return triggerDownload(bare.data, bare.path.slice(bare.path.lastIndexOf("/") + 1), KIT_KINDS[bare.kind].mime, onDownload);
+  const files = Object.fromEntries(entries.map((e) => [e.path, [e.data, { level: MODEL_KINDS.has(e.kind) ? 0 : 6 }]]));
+  triggerDownload(zipSync(files), `${name}-kit.zip`, "application/zip", onDownload);
 }

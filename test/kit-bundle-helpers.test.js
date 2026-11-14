@@ -2,9 +2,8 @@
 // disambiguation, dedupe whose hash only nominates, and the 2-D check wording the
 // README prints — held equal to verify's own wording, which the kit may not import.
 import { describe, expect, test } from "vitest";
-import {
-  KIT_ENTRY_RE, kitName, uniqueName, dedupe, checkMessage, sheetWarnings,
-} from "../src/framework/export/bundle.js";
+import { kitName, uniqueName, dedupe } from "../src/framework/export/kit/names.js";
+import { checkMessage, sheetWarnings } from "../src/framework/export/kit/cut-section.js";
 import { parseAssertion, evaluateAssertion } from "../src/framework/oracle/assert-dsl.js";
 import { evaluateCase } from "../src/framework/oracle/verify.js";
 import { SHEET_METRICS } from "../src/framework/process/registry.js";
@@ -19,7 +18,7 @@ describe("kitName", () => {
     ["", "part"],
     ["日本語", "part"],
     ["birch plywood-2.7mm", "birch-plywood-2.7mm"],
-    // every entry segment must start with [a-z0-9] (KIT_ENTRY_RE): safeName keeps a
+    // every entry segment must start with [a-z0-9] (kit/entries.js): safeName keeps a
     // leading underscore, so kitName strips it — a name is never refused for it
     ["_left", "left"],
     ["__init__", "init__"],
@@ -41,21 +40,6 @@ describe("uniqueName", () => {
     expect(taken.has("parts/front-2-x2.svg")).toBe(true);
     expect(taken.has("parts/front-2-x2-marks.dxf")).toBe(true);
   });
-});
-
-describe("KIT_ENTRY_RE", () => {
-  test.each([
-    "README.txt", "parts.csv",
-    "sheets/birch-plywood-3mm/sheet-1-of-2.svg", "sheets/acrylic-2.7mm/sheet-12-of-12.dxf",
-    "parts/front.svg", "parts/left-x2.dxf", "parts/front-x2-marks.dxf", "parts/front-2-x2.svg",
-    "print/hinge-x2.stl", "print/knob.3mf",
-  ])("accepts %s", (name) => expect(name).toMatch(KIT_ENTRY_RE));
-
-  test.each([
-    "../README.txt", "readme.txt", "sheets/a/sheet-1.svg", "sheets/../sheet-1-of-1.svg",
-    "parts/Front.svg", "parts/-front.svg", "parts/.front.svg", "parts/front.png", "parts/sub/front.svg",
-    "print/hinge.step", "print/hinge.svg",
-  ])("refuses %s", (name) => expect(name).not.toMatch(KIT_ENTRY_RE));
 });
 
 describe("dedupe", () => {

@@ -1,5 +1,6 @@
 // The two lists an embedder's export UI is drawn from — the exportable sub-parts and
 // the formats — behind the mount handle's listExportableParts()/listExportFormats().
+// The kit's sections (describeKit(), export/kit/describe.js) are read from the same rows.
 //
 // Main-thread only: mount.js imports it. Deliberately NOT part of export-select.js,
 // which jobs.js imports at worker boot — export/formats.js must stay out of the

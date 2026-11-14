@@ -2311,7 +2311,7 @@ the assembled view, and `minWall` and the overhang check skip sheet parts.
 
 ### The kit
 
-Sheet parts download as one ZIP, the **cut & print kit** (`format: "bundle"`): `README.txt`, `parts.csv`, laid-out `sheets/`, a `parts/` file per distinct piece (plus `-marks.dxf` for a cutting service), `print/` for printed parts. Identical pieces share one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"`, `"cnc-router"`), kerf, stock size and a two-sided routed piece's flip and file count are chosen at download: draw nominal, bind `thickness` to the measured control. A choice it cannot honour fails with `cut kit options:`.
+Every forge downloads as a kit of sections: **3D files** (`print/`), **Laser-cut parts** (`laser/`), **CNC-routed parts** (`cnc/`), the **cut & print kit**. Cut sections hold `sheets/` and a `parts/` file per piece (`-marks.dxf` for a service); `README.txt`, `parts.csv`. Identical pieces share one `-xN` file named from `export: { name }`, else the key. Destination (`"own-laser"`, `"service"`), kerf and stock are chosen at download: draw nominal, bind `thickness` to the measured control. A refusal starts `cut kit options:`. `format: "bundle"` stays one release.
 
 ### Limits
 
@@ -2367,7 +2367,7 @@ function hinge(k, p, d) {
 }
 
 // Each hinge is built in its PRINT pose (above); the box view stands it up on the back
-// panel. Identical builds, so the kit still prints "hinge" ×2.
+// panel. Identical builds, so the kit lists two hinges.
 const hingePose = (i) => (s, p, d) => s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]);
 
 // Tongue slots for both hinges, cut where the tongues really land (world → sheet).
@@ -2433,7 +2433,7 @@ export default {
     hingeL: { label: "Hinge (left)", views: { box: hingePose(0) }, display: { material: "pla-print" },
       export: { name: "hinge" }, build: hinge },
     hingeR: { label: "Hinge (right)", views: { box: hingePose(1) }, display: { material: "pla-print" },
-      build: hinge },    // identical solid: the kit prints "hinge" ×2
+      build: hinge },    // identical solid: the kit lists two hinges
   },
   views: { box: { label: "Box" } },
   // `process` = the PRINTED parts' profile; sheet parts get the laser checks instead.
@@ -2447,7 +2447,7 @@ CNC-routed parts from flat stock — hardwood, plywood, MDF, acrylic — for a 2
 CAM (Vectric VCarve, Carbide Create, Easel, Carveco): a through cut, flat-floored
 pockets at a depth, drilled holes at a depth, and operations done with another tool
 afterwards. Build each piece with `routedPart()` from `partforge/geometry`; the cut &
-print kit's **CNC router** destination writes one DXF per piece with one layer per depth,
+print kit's **CNC-routed parts** section writes one DXF per piece with one layer per depth,
 and a README table of every operation. A routed part is also the 3D sub-part — assembly,
 renders and STEP all come from the one declaration — so model it once.
 
@@ -2543,7 +2543,7 @@ piece's centre so they read as the router sees the far face. Two kit options app
 piece with far work: `flip` — `"left-right"` (the default, VCarve's Flip Direction =
 Horizontal) or `"end-over-end"` (Vertical) — sets the mirror axis; `twoSided` —
 `"one-file"` (the default: both faces' layers in the piece's one DXF) or `"two-files"`
-(the far layers in `parts/<name>-far.dxf`, behind the mirrored outline on `REFERENCE`
+(the far layers in `cnc/parts/<name>-far.dxf`, behind the mirrored outline on `REFERENCE`
 for alignment). In the CAM, line the far vectors' outline up on the piece's outline as
 seen from the bottom; the README says so and orders the work far side first, through
 cut last. `routedBreakthrough` counts a near and a far pocket that overlap and together
@@ -2564,7 +2564,7 @@ Each measured row carries `sheet.routed` — the operations table — beside the
 
 ### Limits
 
-- Far-side `reference` lines and far-side work in the sheets/ layouts are not drawn;
+- Far-side `reference` lines and far-side work in the `cnc/sheets/` layouts are not drawn;
   two-sided jobs are per-piece files.
 - No tool-radius, dogbone or inside-corner checks: the CAM owns those.
 - No depth per extra op beyond its footprint and the solid's deepest point; the
@@ -4497,34 +4497,64 @@ returns instead:
   name its stock group in the kit's `stock` option.
 - `runtime.listExportFormats() → [{ id, label, ext, mime, needsSheet }]` — the formats
   `exportParts` writes in this version, as fresh copies of `EXPORT_FORMATS`. `needsSheet`
-  marks the one that needs a sheet part checked: `"bundle"`, the cut & print kit.
+  marks the one that needs a sheet part checked: `"bundle"`, the one-call cut & print kit
+  (kept for one release; new hosts use `describeKit()` and `exportKit()` below).
 - `runtime.exportParts({ parts, format, quality?, onProgress, options? }) → Promise<void>` — build
   the given `parts` (sub-part names) in `format` (`"stl" | "step" | "3mf" | "bundle"`), streaming
   phase strings to `onProgress(phase)`. Resolves once the file is written (handed to your
   `onDownload` sink, or downloaded directly if you don't supply one); rejects on
   build/export failure or an empty selection. Placement uses the current
   view. STEP is routed to OCCT automatically. Only `"bundle"` reads `options`.
-- **The cut & print kit** (`format: "bundle"`) writes one `<title>-kit.zip`: `README.txt`
-  (the thickness each material assumes, the kerf applied, a scale check per piece, the
-  colour or DXF-layer legend, every 2-D check that warned), `parts.csv`,
-  `sheets/<material>-<t>mm/sheet-<i>-of-<n>.svg` (the pieces laid out on the user's
-  stock), `parts/<name>[-xN].svg` (one per distinct piece; identical pieces merge) and
-  `print/<name>[-xN].stl` or `.3mf` (the printed parts, in their export pose). With
-  `destination: "service"` each piece is a cut-only `.dxf` plus a `-marks.dxf` for its
-  score and engrave lines, and the DXF sheets are for reference. With `destination: "cnc-router"` every routed piece is one DXF carrying all its layers
-  (depth per layer), laser pieces are written as for a service, and kerf must be 0. Every `options` key is
-  optional: `destination` (`"own-laser"`, the default, `"service"` or `"cnc-router"`), `kerf` (0–0.5 mm,
-  applied to the cut lines only), `stock: [{ group, size: [w, h] }]` (a row's
-  `sheet.group`; a `"*"` entry sizes every group that has no entry of its own; 300 × 300
-  mm when `stock` is omitted), `margin` (5 mm),
-  `spacing` (3 mm), `printFormat` (`"stl"` or `"3mf"`) and `sets` (1–20). The main entry
+- **The download kit.** Every forge downloads as a kit: a list of sections, each one kind of
+  output. `runtime.describeKit()` reads them at the live params without building geometry:
+  `{ sets: { range, default }, sections: [{ id, label, parts, options }] }`. The sections are
+  `3d` ("3D files": every exportable part, sheet parts unticked by default), `laser`
+  ("Laser-cut parts") and `cnc-router` ("CNC-routed parts"); a cut section is listed only
+  when the forge has parts of that process. A part belongs to a cut section by the process
+  it declares, so it stays listed there even when its material or thickness cannot be
+  evaluated at the live params (its row then has no `sheet`, and the section's own error
+  names the problem at download). Each `parts` row is `{ name, label, default, sheet? }`,
+  and each section's `options` are its settings as plain data (a key's `values` or
+  `range`, and its `default`; a cut section's `options.stock.groups` lists its stock groups
+  as `{ group, label }`).
+  `await runtime.exportKit({ sections, sets, quality?, onProgress })` builds it as ONE worker
+  job; `sections` maps a section id to `{ parts, options }`, and a section left out is not
+  built. It resolves once the kit is delivered and rejects if the build or the delivery
+  fails. A kit whose 3D section is STEP runs on OCCT, laser and router drawings included.
+  The kit is a list of entries `{ path, kind, data }` (`data` a `Uint8Array`), handed to
+  `mount({ onKit })` as `onKit({ entries, name })`. With no `onKit`, partforge delivers it
+  through `onDownload` or the DOM: a kit holding one model file and nothing else but the
+  README and parts list is saved as that bare model file (README and parts list left out);
+  any other kit, one with a cut drawing or more than one model, is saved as `<name>-kit.zip`. The paths: `print/<name>.stl` (one per part) or
+  `print/<name>.3mf|step` (one file, printed parts laid out on the bed) for 3D files;
+  `laser/` and `cnc/` for cut drawings, each holding `sheets/<material>-<t>mm/sheet-<i>-of-<n>.svg`
+  (pieces laid out on the stock) and `parts/<name>[-xN].svg` (one per distinct piece;
+  identical pieces merge); and `README.txt` and `parts.csv` at the root. `kind` is one of
+  `model-stl`, `model-3mf`, `model-step`, `drawing-svg`, `drawing-dxf`, `text`, `table`.
+  Section options: `3d` takes `format` (`"stl"` default, `"3mf"`, `"step"`); `laser` takes
+  `destination` (`"own-laser"` default, SVG sheets, or `"service"`: a cut-only `.dxf` per piece plus a
+  `-marks.dxf` for its score and engrave lines, the DXF sheets for reference), `kerf` (0–0.5 mm,
+  applied to the cut lines only), `colors` (`"lightburn"`), `stock`, `margin` and `spacing`;
+  `cnc-router` takes `stock`, `margin`, `spacing`, `flip` (`"left-right"` or `"end-over-end"`) and
+  `twoSided` (`"one-file"` or `"two-files"`): every routed piece is one DXF carrying all its
+  layers (depth per layer), and a router has no kerf. `stock: [{ group, size: [w, h] }]`
+  (a row's `sheet.group`; a `"*"` entry sizes every group that has no entry of its own; 300 × 300
+  mm when omitted); `margin` defaults to 5 mm and `spacing` to 3 mm. `sets` (1–20, request-level)
+  is how many of each cut piece to cut, and, when the kit has a cut section, how many of each
+  printed part the README and `parts.csv` say to print (one otherwise). Every option key is optional. The main entry
   exports `EXPORT_FORMATS`, `KIT_DEFAULTS`, `validateKitOptions` and `KIT_OPTIONS_ERROR`
   for a host that draws its own options screen. An option the kit cannot honour — an
-  unknown key, a kerf that closes a slot, a piece bigger than an own laser's sheet, a
-  margin that leaves no room on the sheet, a stock entry naming no group, more than 200
-  pieces or 50 sheets of one material —
+  unknown key or section, a kerf that closes a slot, a piece bigger than an own laser's sheet, a
+  margin that leaves no room on the sheet, a stock entry naming no group, a request with no
+  sections, more than 200 pieces in a section or 50 sheets of one material —
   rejects with a message starting `cut kit options:`: the user's setting to change, not
-  the part's code.
+  the part's code. The README lists the thickness each material assumes, the kerf applied,
+  a scale check per piece, the colour or DXF-layer legend and every 2-D check that warned.
+- **`format: "bundle"`** (one release) still writes one `<title>-kit.zip` in one call: it maps its
+  `options` (`destination`, `kerf`, `stock`, `margin`, `spacing`, `printFormat`, `sets`, `flip`,
+  `twoSided`) onto a kit request — each checked sheet part into its own process's section, the
+  rest into `3d` in `printFormat` — and always zips, even for one model. With
+  `destination: "cnc-router"` laser pieces are written as for a service, and kerf must be 0.
 - `runtime.warmExportKernel() → Promise<boolean>` — pay OCCT's cold boot *before* an
   export needs it. Because STEP is pinned to OCCT and OCCT's ~11 MB WASM loads on its
   first job, a part whose preview ran on Manifold pays that whole boot inside its first
