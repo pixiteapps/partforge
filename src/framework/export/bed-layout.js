@@ -6,7 +6,7 @@
 // over each piece's XY bounding box — the cut kit's packer (layout.js) without
 // rotation, sheets or margins — `spacing` apart, every piece resting at z = 0.
 // Legacy (array views + place) pieces never come here: their author placed them.
-import { resolveProfile } from "../oracle/dfm-profiles.js";
+import { resolveProfile } from "../process/registry.js";
 import { formOf } from "../sub-part-views.js";
 import { isSheetPart } from "../sheet/constants.js";
 

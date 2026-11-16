@@ -33,7 +33,7 @@ function hinge(k, p, d) {
 }
 
 // Each hinge is built in its PRINT pose (above); the box view stands it up on the back
-// panel. Identical builds, so the kit still prints "hinge" ×2.
+// panel. Identical builds, so the kit lists two hinges.
 const hingePose = (i) => (s, p, d) => s.rotateX(90).at([d.hingeX[i], p.depth / 2 + HINGE.leafT, d.axisZ]);
 
 // Tongue slots for both hinges, cut where the tongues really land (world → sheet).
@@ -99,7 +99,7 @@ export default {
     hingeL: { label: "Hinge (left)", views: { box: hingePose(0) }, display: { material: "pla-print" },
       export: { name: "hinge" }, build: hinge },
     hingeR: { label: "Hinge (right)", views: { box: hingePose(1) }, display: { material: "pla-print" },
-      build: hinge },    // identical solid: the kit prints "hinge" ×2
+      build: hinge },    // identical solid: the kit lists two hinges
   },
   views: { box: { label: "Box" } },
   // `process` = the PRINTED parts' profile; sheet parts get the laser checks instead.

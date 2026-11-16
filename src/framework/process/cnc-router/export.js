@@ -1,8 +1,8 @@
 // The cnc-router exporter: one resolved routed piece → one Drawing whose layers carry
 // their own DXF name and colour (drawing.js ROUTED_COLORS). Loaded only through
-// process/exporters.js. Kerf never applies: the CAM offsets for the tool, and
-// validateKitOptions has already refused a kerf for this destination — the check here
-// is the belt for a laser destination carrying a routed piece.
+// process/exporters.js. Kerf never applies: the CAM offsets for the tool, and the kit's
+// CNC-routed section has no kerf option (a routed piece is only ever drawn there) — the
+// check here is the belt for a direct call that passes one.
 //
 // Colours: `ctx.palette` (drawing.js routedPalette, built by the kit over EVERY routed
 // piece) when given, so one depth is one colour across the kit; without it — a direct

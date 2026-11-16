@@ -74,6 +74,26 @@ export const PRINT_PROFILES = Object.freeze((() => {
   return out;
 })());
 
+// A profile spec as a full profile: a profile id, or an inline object whose `base`
+// (recursively) names one, its own keys over the base's. Lives beside the table it reads
+// so export/bed-layout.js can resolve a bed without reaching ./oracle/* (the cut & print
+// kit lays out 3MF and STEP files, and must never load the oracle —
+// test/kit-layering.test.js); oracle/dfm-profiles.js re-exports it.
+export function resolveProfile(spec) {
+  if (typeof spec === "string") {
+    if (!(spec in PRINT_PROFILES)) {
+      throw new Error(`unknown process profile: "${spec}" (known: ${Object.keys(PRINT_PROFILES).join(", ")})`);
+    }
+    return { ...PRINT_PROFILES[spec] };
+  }
+  if (spec && typeof spec === "object") {
+    const base = spec.base ? resolveProfile(spec.base) : {};
+    const { base: _drop, ...overrides } = spec;
+    return { ...base, ...overrides };
+  }
+  throw new Error(`invalid process profile: ${JSON.stringify(spec)}`);
+}
+
 // The print process owning a profile spec: a profile id, or an inline object whose
 // `base` (recursively) names one. Anything else is null.
 export function printProcessFor(spec) {

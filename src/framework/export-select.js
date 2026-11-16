@@ -13,3 +13,10 @@ export function exportablePartNames(part, params) {
     return sp.enabled ? !!sp.enabled(params) : true;
   });
 }
+
+// The names a caller asked for, kept only while exportable and enabled, in definition
+// order — an export's selection when it names its parts (a headless exportParts, a kit
+// section). A name that is gone, disabled or not exportable is dropped.
+export function selectExportable(part, params, names) {
+  return exportablePartNames(part, params).filter((name) => names.includes(name));
+}

@@ -3,6 +3,8 @@ import { beforeAll, describe, it, expect } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { bootOcctKernel } from "../src/testing.js";
 import { meshTo3MF } from "../src/framework/geometry/threemf.js";
+import { handle } from "../src/framework/jobs.js";
+import { sheetPart } from "../src/framework/geometry/polygon.js";
 
 let k;
 beforeAll(async () => { k = await bootOcctKernel(); }, 120000);
@@ -80,4 +82,31 @@ describe("OCCT toSTEP", () => {
     expect(text).toMatch(/ENDSEC|DATA;/);   // STEP structure
     expect(ab.byteLength).toBeGreaterThan(500);
   });
+});
+
+// A kit asking for STEP runs as one job on OCCT (export-controller.js exportKit), so the
+// laser drawings are built on OCCT too.
+describe("the kit on OCCT", () => {
+  it("a laser part plus a STEP 3D section returns the drawings and one .step", async () => {
+    const part = {
+      meta: { title: "Occt Kit" }, defaults: { t: 3 }, views: { all: { label: "All" } },
+      parts: {
+        panel: sheetPart({ label: "Panel", views: ["all"], material: "birch plywood", thickness: (p) => p.t,
+          profile: (kk) => kk.shape2d([[0, 0], [60, 0], [60, 30], [0, 30]]) }),
+        foot: { label: "Foot", views: ["all"], build: (kk) => kk.box({ size: [8, 8, 4] }) },
+      },
+    };
+    const posts = [];
+    await handle(k, part, { type: "export-kit", jobId: "export-1-1", view: "all", params: {}, name: "Occt Kit", quality: "preview",
+      sections: { laser: { parts: ["panel"] }, "3d": { parts: ["foot"], options: { format: "step" } } } }, (m) => posts.push(m));
+    expect(posts.find((m) => m.type === "error")?.message).toBeUndefined();
+    const kit = posts.find((m) => m.type === "kit");
+    expect(kit.jobId).toBe("export-1-1");
+    expect(kit.name).toBe("occt-kit");
+    const paths = kit.entries.map((e) => e.path);
+    expect(paths.filter((x) => x.startsWith("laser/")).length).toBeGreaterThan(0);
+    expect(paths.filter((x) => x.endsWith(".step"))).toEqual(["print/occt-kit.step"]);
+    const step = kit.entries.find((e) => e.kind === "model-step");
+    expect(new TextDecoder().decode(step.data)).toMatch(/ISO-10303/);
+  }, 120000);
 });

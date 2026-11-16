@@ -1,22 +1,8 @@
 // The profiles live on the print process descriptors (process/fdm, process/resin);
-// PROFILES is the registry's merged map, re-exported so every import keeps working.
-import { PRINT_PROFILES as PROFILES } from "../process/registry.js";
-export { PROFILES };
-
-export function resolveProfile(spec) {
-  if (typeof spec === "string") {
-    if (!(spec in PROFILES)) {
-      throw new Error(`unknown process profile: "${spec}" (known: ${Object.keys(PROFILES).join(", ")})`);
-    }
-    return { ...PROFILES[spec] };
-  }
-  if (spec && typeof spec === "object") {
-    const base = spec.base ? resolveProfile(spec.base) : {};
-    const { base: _drop, ...overrides } = spec;
-    return { ...base, ...overrides };
-  }
-  throw new Error(`invalid process profile: ${JSON.stringify(spec)}`);
-}
+// PROFILES is the registry's merged map, re-exported so every import keeps working, and
+// so is resolveProfile, which lives beside it.
+import { PRINT_PROFILES as PROFILES, resolveProfile } from "../process/registry.js";
+export { PROFILES, resolveProfile };
 
 // The one legal `verify.orientation` value today. Z is up everywhere in partforge
 // and the bed is a sub-part's own lowest Z, so "print" is a declaration, not a

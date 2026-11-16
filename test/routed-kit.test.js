@@ -1,36 +1,21 @@
-// The cut & print kit with routed parts: the cnc-router destination, routed pieces
-// written whole under every destination, the README's ROUTER OPERATIONS table.
+// The cut & print kit with routed parts, through the old one-call kit job: routed pieces
+// go to the CNC section (cnc/) whatever the destination, laser pieces to the laser
+// section (laser/), and the README's ROUTER OPERATIONS table.
 import { beforeAll, describe, expect, test } from "vitest";
 import { strFromU8, unzipSync } from "fflate";
 import { bootManifoldKernel, handle } from "../src/testing.js";
-import { sheetPart, routedPart } from "../src/framework/geometry/polygon.js";
+import { routedPart } from "../src/framework/geometry/polygon.js";
 import { DESTINATIONS, validateKitOptions } from "../src/framework/export/formats.js";
 import { README_HEADINGS } from "../src/framework/export/readme.js";
 import { PROCESSES } from "../src/framework/process/registry.js";
 import { parseDxf } from "./helpers/dxf-subset.js";
 import plinth from "./fixtures/routed-plinth-part.js";
+import { boardFixture as fixture } from "./fixtures/kit-fixtures.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const rect = (w, h) => [[0, 0], [w, 0], [w, h], [0, h]];
-const fixture = {
-  meta: { title: "Board" },
-  parameters: [{ id: "stock", title: "Stock", controls: [{ key: "t", label: "Board thickness", unit: "mm", min: 6, max: 30, step: 1 }] }],
-  defaults: { t: 18 },
-  views: { all: { label: "All" } },
-  parts: {
-    plinth: routedPart({ views: ["all"], label: "Plinth", material: "walnut", thickness: (p) => p.t, export: { name: "plinth" },
-      profile: (kk) => kk.shape2d(rect(100, 60)),
-      pockets: () => [{ region: rect(30, 20).map(([x, y]) => [x + 10, y + 10]), depth: 11.43, label: "vault" }],
-      drills: () => [{ at: [50, 30], d: 3.4, depth: 10 }, { at: [60, 30], d: 3.4, depth: 10 }],
-      extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([85, 15, 13]), footprint: rect(10, 10).map(([x, y]) => [x + 80, y + 10]), label: "notch", method: "chisel, 10 mm" }],
-      reference: () => [[[0, 30], [100, 30]]] }),
-    lid: sheetPart({ views: ["all"], label: "Lid", material: "birch plywood", thickness: 3,
-      profile: (kk) => kk.shape2d(rect(40, 40)), score: () => [[[5, 5], [35, 5]]] }),
-  },
-};
-
 async function kit(part, options, parts = Object.keys(part.parts)) {
   const posts = [];
   await handle(k, part, { type: "export-bundle", jobId: 7, parts, view: "all", params: {}, name: part.meta.title, quality: "preview", options }, (m) => posts.push(m));
@@ -55,11 +40,11 @@ describe("the cnc-router kit", () => {
   test("one layered DXF per routed piece, laser pieces as for a service, README table and legend", async () => {
     const r = await kit(fixture, { destination: "cnc-router" });
     expect(r.error).toBeNull();
-    expect(r.names).toContain("parts/plinth.dxf");
-    expect(r.names).not.toContain("parts/plinth-marks.dxf");
-    expect(r.names).toContain("parts/lid.dxf");
-    expect(r.names).toContain("parts/lid-marks.dxf");
-    const plinth = parseDxf(r.text("parts/plinth.dxf"));
+    expect(r.names).toContain("cnc/parts/plinth.dxf");
+    expect(r.names).not.toContain("cnc/parts/plinth-marks.dxf");
+    expect(r.names).toContain("laser/parts/lid.dxf");
+    expect(r.names).toContain("laser/parts/lid-marks.dxf");
+    const plinth = parseDxf(r.text("cnc/parts/plinth.dxf"));
     expect(plinth.layers.map((l) => l.name)).toEqual(["REFERENCE", "SECONDARY", "DRILL_D3.4_10MM", "POCKET_11.43MM", "CUT"]);
     expect(plinth.entities.filter((e) => e.type === "CIRCLE")).toHaveLength(2);
     const readme = r.text("README.txt");
@@ -73,26 +58,28 @@ describe("the cnc-router kit", () => {
     expect(readme).toContain("DXF layers: CUT (colour 1) is the through cut; POCKET_<depth>MM and DRILL_D<dia>_<depth>MM / _THRU carry one depth each; SECONDARY outlines operations done with another tool (see ROUTER OPERATIONS); REFERENCE is layout only. FAR_* layers are the same operations on the far face, drawn mirrored (see the flip note under each two-sided piece). Laser pieces keep CUT/SCORE/ENGRAVE.");
   });
 
-  test("a routed piece under the service and own-laser destinations is still written whole", async () => {
+  test("a routed piece goes to the CNC section, written whole, whatever the destination", async () => {
     const svc = await kit(fixture, { destination: "service" }, ["plinth"]);
-    expect(svc.names).toEqual(expect.arrayContaining(["parts/plinth.dxf"]));
-    expect(svc.names).not.toContain("parts/plinth-marks.dxf");
-    expect(parseDxf(svc.text("parts/plinth.dxf")).layers.map((l) => l.name)).toContain("POCKET_11.43MM");
+    expect(svc.names.filter((n) => /\/parts\//.test(n))).toEqual(["cnc/parts/plinth.dxf"]);
+    expect(parseDxf(svc.text("cnc/parts/plinth.dxf")).layers.map((l) => l.name)).toContain("POCKET_11.43MM");
     const own = await kit(fixture, { destination: "own-laser" }, ["plinth"]);
-    expect(own.names).toContain("parts/plinth.svg");
-    expect(own.text("parts/plinth.svg")).toContain('stroke="#E07000"');
+    expect(own.names).toEqual(svc.names);
+    for (const n of own.names) expect(own.text(n)).toBe(svc.text(n));
   });
 
   test("a routed piece too big for the router's stock is listed in the README, not refused", async () => {
     const r = await kit(fixture, { destination: "cnc-router", stock: [{ group: "*", size: [80, 80] }] }, ["plinth"]);
     expect(r.error).toBeNull();
-    expect(r.names).toContain("parts/plinth.dxf");
+    expect(r.names).toContain("cnc/parts/plinth.dxf");
     expect(r.text("README.txt")).toMatch(/\nOVERSIZED PIECES\nPlinth: 100\.0 × 60\.0 mm does not fit a 80 × 80 mm sheet/);
   });
 
-  test("a kerf with a routed piece under a laser destination is the exporter's refusal, naming the piece", async () => {
-    const r = await kit(fixture, { destination: "service", kerf: 0.2 }, ["plinth"]);
-    expect(r.error).toContain('cut kit options: kerf does not apply to a CNC router — the CAM applies the tool offset; set kerf to 0 ("Plinth")');
+  test("a kerf set for laser parts never reaches a routed piece", async () => {
+    const r = await kit(fixture, { destination: "service", kerf: 0.2 });
+    expect(r.error).toBeNull();
+    expect(r.text("README.txt")).toContain("Kerf: 0.20 mm applied to the cut lines only.");
+    expect(r.text("README.txt")).toContain("Kerf: none — a CNC router's CAM applies the tool offset.");
+    expect(parseDxf(r.text("cnc/parts/plinth.dxf")).layers.map((l) => l.name)).toContain("CUT");
   });
 
   // Two routed pieces whose drawings match but whose operations do not must stay two
@@ -106,7 +93,7 @@ describe("the cnc-router kit", () => {
   test("routed pieces differing only in an extra op's depth are not merged", async () => {
     const r = await kit(pair({ notchTop: 13 }, { notchTop: 10 }), { destination: "cnc-router" });
     expect(r.error).toBeNull();
-    expect(r.names).toEqual(expect.arrayContaining(["parts/left.dxf", "parts/right.dxf"]));
+    expect(r.names).toEqual(expect.arrayContaining(["cnc/parts/left.dxf", "cnc/parts/right.dxf"]));
     expect(r.names.some((n) => /-x2\./.test(n))).toBe(false);
     const readme = r.text("README.txt");
     expect(readme).toContain("extra | near | notch | 10.00 × 10.00 mm | to 5.00 mm | chisel, 10 mm");
@@ -116,21 +103,21 @@ describe("the cnc-router kit", () => {
   test("routed pieces differing only in a pocket's depth are not merged", async () => {
     const r = await kit(pair({ pocketDepth: 11.43 }, { pocketDepth: 6 }), { destination: "cnc-router" });
     expect(r.error).toBeNull();
-    expect(r.names).toEqual(expect.arrayContaining(["parts/left.dxf", "parts/right.dxf"]));
+    expect(r.names).toEqual(expect.arrayContaining(["cnc/parts/left.dxf", "cnc/parts/right.dxf"]));
     expect(r.names.some((n) => /-x2\./.test(n))).toBe(false);
   });
 
   test("identical routed pieces still merge", async () => {
     const r = await kit(pair({}, {}), { destination: "cnc-router" });
     expect(r.error).toBeNull();
-    expect(r.names).toContain("parts/left-x2.dxf");
+    expect(r.names).toContain("cnc/parts/left-x2.dxf");
   });
 });
 
 test("the docs' worked example builds a cnc-router kit with every layer family", async () => {
   const r = await kit(plinth, { destination: "cnc-router" });
   expect(r.error).toBeNull();
-  const dxf = parseDxf(r.text(r.names.find((n) => /^parts\/.*\.dxf$/.test(n))));
+  const dxf = parseDxf(r.text(r.names.find((n) => /^cnc\/parts\/.*\.dxf$/.test(n))));
   const names = dxf.layers.map((l) => l.name);
   expect(names).toEqual(expect.arrayContaining(["REFERENCE", "SECONDARY", "DRILL_D3.43_10MM", "POCKET_6MM", "POCKET_11.43MM", "CUT"]));
 });
@@ -142,7 +129,7 @@ test("a routed part with an empty extra footprint builds a cnc-router kit with n
       extra: (kk) => [{ solid: kk.box({ size: [10, 10, 10] }).translate([85, 15, 13]), footprint: kk.shape2d(rect(10, 10)).cut(rect(20, 20)), label: "notch", method: "chisel" }] }) } };
   const r = await kit(part, { destination: "cnc-router" });
   expect(r.error).toBeNull();
-  const names = parseDxf(r.text("parts/plinth.dxf")).layers.map((l) => l.name);
+  const names = parseDxf(r.text("cnc/parts/plinth.dxf")).layers.map((l) => l.name);
   expect(names).not.toContain("SECONDARY");
   expect(names).toContain("CUT");
 });
@@ -157,9 +144,9 @@ test("a pocket depth carries one colour across the kit, and the README legend li
   const r = await kit(part, { destination: "cnc-router" });
   expect(r.error).toBeNull();
   const colourOf = (file) => parseDxf(r.text(file)).layers.find((l) => l.name === "POCKET_11.43MM").color;
-  expect(colourOf("parts/a.dxf")).toBe(40);
-  expect(colourOf("parts/b.dxf")).toBe(40);
-  const sheet = r.names.find((n) => n.startsWith("sheets/"));
+  expect(colourOf("cnc/parts/a.dxf")).toBe(40);
+  expect(colourOf("cnc/parts/b.dxf")).toBe(40);
+  const sheet = r.names.find((n) => n.startsWith("cnc/sheets/"));
   expect(parseDxf(r.text(sheet)).layers.find((l) => l.name === "POCKET_11.43MM").color).toBe(40);
   const readme = r.text("README.txt");
   expect(readme).toContain("layer | face | colour | depth");
@@ -195,9 +182,9 @@ describe("two-sided pieces", () => {
   test("one-file (default): one DXF with FAR_ layers, sheets carry near layers only, README face column and flip note", async () => {
     const r = await kit(lid, { destination: "cnc-router" });
     expect(r.error).toBeNull();
-    expect(r.names.filter((n) => n.startsWith("parts/"))).toEqual(["parts/lid.dxf"]);
-    expect(parseDxf(r.text("parts/lid.dxf")).layers.map((l) => l.name)).toEqual(["POCKET_3MM", "FAR_DRILL_D5_8MM", "FAR_POCKET_6MM", "CUT"]);
-    const sheet = r.names.find((n) => n.startsWith("sheets/"));
+    expect(r.names.filter((n) => n.startsWith("cnc/parts/"))).toEqual(["cnc/parts/lid.dxf"]);
+    expect(parseDxf(r.text("cnc/parts/lid.dxf")).layers.map((l) => l.name)).toEqual(["POCKET_3MM", "FAR_DRILL_D5_8MM", "FAR_POCKET_6MM", "CUT"]);
+    const sheet = r.names.find((n) => n.startsWith("cnc/sheets/"));
     expect(parseDxf(r.text(sheet)).layers.map((l) => l.name)).toEqual(["POCKET_3MM", "CUT"]);
     const readme = r.text("README.txt");
     expect(readme).toContain("Lid (walnut 18.00 mm) — depths from each op's own face:");
@@ -212,16 +199,15 @@ describe("two-sided pieces", () => {
   });
   test("two-files: a near file and a -far file whose outline is REFERENCE, never CUT", async () => {
     const r = await kit(lid, { destination: "cnc-router", twoSided: "two-files", flip: "end-over-end" });
-    expect(r.names.filter((n) => n.startsWith("parts/"))).toEqual(["parts/lid-far.dxf", "parts/lid.dxf"]);
-    expect(parseDxf(r.text("parts/lid.dxf")).layers.map((l) => l.name)).toEqual(["POCKET_3MM", "CUT"]);
-    const far = parseDxf(r.text("parts/lid-far.dxf"));
+    expect(r.names.filter((n) => n.startsWith("cnc/parts/"))).toEqual(["cnc/parts/lid-far.dxf", "cnc/parts/lid.dxf"]);
+    expect(parseDxf(r.text("cnc/parts/lid.dxf")).layers.map((l) => l.name)).toEqual(["POCKET_3MM", "CUT"]);
+    const far = parseDxf(r.text("cnc/parts/lid-far.dxf"));
     expect(far.layers.map((l) => l.name)).toEqual(["REFERENCE", "FAR_DRILL_D5_8MM", "FAR_POCKET_6MM"]);
     expect(far.entities.find((e) => e.type === "CIRCLE").center).toEqual([80, 50]);
     const readme = r.text("README.txt");
     expect(readme).toContain("flipping the board end over end, matching a VCarve two-sided job with Flip Direction = Vertical.");
-    expect(readme).toContain("Far-side work is in parts/lid-far.dxf; its REFERENCE outline is for alignment, not cutting.");
-    expect(r.text("parts.csv")).toContain("parts/lid-far.dxf");
-    expect(r.text("parts.csv")).toMatch(/parts\/lid-far\.dxf,far,/);
+    expect(readme).toContain("Far-side work is in cnc/parts/lid-far.dxf; its REFERENCE outline is for alignment, not cutting.");
+    expect(r.text("parts.csv")).toMatch(/\ncnc\/parts\/lid-far\.dxf,far,/);
   });
   test("a one-sided piece ignores twoSided and writes no -far file; its kit is byte-identical to the default", async () => {
     const a = await kit(fixture, { destination: "cnc-router" }, ["plinth"]);
@@ -230,14 +216,13 @@ describe("two-sided pieces", () => {
     for (const n of a.names) expect(b.text(n)).toBe(a.text(n));
     expect(a.text("README.txt")).not.toContain("Two-sided pieces");
   });
-  test("own-laser and service kits mirror and split the same way", async () => {
+  test("the laser destination does not change a two-sided routed piece's files", async () => {
     const own = await kit(lid, { destination: "own-laser", twoSided: "two-files" }, ["lid"]);
-    expect(own.names).toEqual(expect.arrayContaining(["parts/lid.svg", "parts/lid-far.svg"]));
-    expect(own.text("parts/lid-far.svg")).toContain('id="far-pocket-6"');
     const service = await kit(lid, { destination: "service", twoSided: "two-files" }, ["lid"]);
     expect(service.error).toBeNull();
-    expect(service.names).toEqual(expect.arrayContaining(["parts/lid.dxf", "parts/lid-far.dxf"]));
-    expect(parseDxf(service.text("parts/lid-far.dxf")).layers.map((l) => l.name)).toEqual(["REFERENCE", "FAR_DRILL_D5_8MM", "FAR_POCKET_6MM"]);
-    expect(service.names).not.toContain("parts/lid-marks.dxf");
+    expect(service.names.filter((n) => n.startsWith("cnc/parts/"))).toEqual(["cnc/parts/lid-far.dxf", "cnc/parts/lid.dxf"]);
+    expect(parseDxf(service.text("cnc/parts/lid-far.dxf")).layers.map((l) => l.name)).toEqual(["REFERENCE", "FAR_DRILL_D5_8MM", "FAR_POCKET_6MM"]);
+    expect(own.names).toEqual(service.names);
+    for (const n of own.names) expect(own.text(n)).toBe(service.text(n));
   });
 });
