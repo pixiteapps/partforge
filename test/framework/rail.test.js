@@ -592,3 +592,34 @@ test("detach restores the toggle's original hidden state", () => {
     Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
   }
 });
+
+test("reveal(): expands a collapsed rail, opens an overlay drawer, refuses a dock, keeps a narrow collapse", () => {
+  const { shell, rail, toggle, storage, handle } = setup({ withToggle: true });
+  toggle.click();
+  expect(rail.hasAttribute("inert")).toBe(true);
+  expect(handle.reveal()).toBe(true);
+  expect(rail.hasAttribute("inert")).toBe(false);
+  expect(JSON.parse(storage.read()).collapsed).toBe(false);
+
+  shell.dataset.pfRailLayout = "overlay";
+  expect(handle.reveal()).toBe(true);
+  expect(shell.hasAttribute("data-pf-rail-open")).toBe(true);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+  shell.dataset.pfRailLayout = "dock";
+  shell.removeAttribute("data-pf-rail-open");
+  expect(handle.reveal()).toBe(false);
+  expect(shell.hasAttribute("data-pf-rail-open")).toBe(false);
+
+  delete shell.dataset.pfRailLayout;
+  handle.layoutChanged();
+  toggle.click(); // collapse again, then go narrow
+  const original = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { value: 600, configurable: true });
+  try {
+    expect(handle.reveal()).toBe(true); // the pane is mobile-tabs' to show
+    expect(JSON.parse(storage.read()).collapsed).toBe(true);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { value: original, configurable: true });
+  }
+});

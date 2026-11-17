@@ -107,8 +107,8 @@ const bevelRegion = (k, region, h, bottom, top, record) => {
   // rings, as a real chamfer would look), not the loft op's own facet-vs-
   // smooth ring-count inference. Left to infer, a <32-point profile (any
   // ordinary polygon) registers FACETED, which drops the bevel band's own
-  // corner crease lines and, via label()'s majority vote, can strip ALL
-  // edge lines from a labeled beveled solid.
+  // corner crease lines, and a label() would carry that faceted policy
+  // over to the band's faces 1:1.
   if (b || t) s = s.intersect(k.loft({ rings: outerRings(outer, h, b, t), shading: "smooth" }));
   const cutters = [];
   for (const hole of holes) {

@@ -12,7 +12,8 @@ export { worldToSubPartLocal };
 // isEnabled): while it returns true a click neither raycasts, flashes, nor
 // picks — no resync bookkeeping the way an event-driven setActive would need.
 // onPick receives (selection, anchor): where the marker this click flashed
-// landed on the canvas, in CSS px from its top-left.
+// landed on the canvas, in CSS px from its top-left, and the raw hit (internal:
+// subPart, triIndex, onCutPlane) — the public Selection gains nothing.
 export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
   let active = false;
   const drag = createDragTracker();
@@ -40,7 +41,7 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     // staleness, never units.
     const rect = viewer.domElement.getBoundingClientRect();
     const anchor = projectToScreen(viewer.camera, hit.pointWorld, rect.width, rect.height);
-    onPick(selection, { x: anchor.x, y: anchor.y });
+    onPick(selection, { x: anchor.x, y: anchor.y }, hit);
   }
 
   viewer.domElement.addEventListener("pointerdown", drag.onDown);

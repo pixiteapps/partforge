@@ -128,7 +128,7 @@ describe("the deferred union on the Manifold preview kernel", () => {
     k._setProvisionalUnions(true);
     const bad = wasm.Manifold.cylinder(0, 1, 1, 8); // InvalidConstruction, as an empty profile's extrude
     expect(bad.status()).not.toBe("NoError");
-    const badSolid = { _m: bad, _hash: "bad-operand", _canon: { m: bad, hash: "bad-operand", chain: [] } };
+    const badSolid = { _m: bad, _hash: "bad-operand", _canon: { m: bad, hash: "bad-operand", chain: [] }, _runs: () => [] };
     inBracket(k, () => {
       const s = k.union([k.implicit(TWO_BONE(0)), badSolid]); // deferred: no throw yet
       expect(() => s.toMesh()).toThrow(/union: operand 1 is not a valid solid/);
@@ -147,7 +147,7 @@ describe("the deferred union on the Manifold preview kernel", () => {
     const k = kernel();
     k._setProvisionalUnions(true);
     const bad = wasm.Manifold.cylinder(0, 1, 1, 8);
-    const badSolid = { _m: bad, _hash: "bad-operand-2", _canon: { m: bad, hash: "bad-operand-2", chain: [] } };
+    const badSolid = { _m: bad, _hash: "bad-operand-2", _canon: { m: bad, hash: "bad-operand-2", chain: [] }, _runs: () => [] };
     inBracket(k, () => {
       const s = k.union([k.implicit(TWO_BONE(0)), badSolid]);
       expect(() => s.mirror("YZ").toMesh()).toThrow(/union: operand 1 is not a valid solid/);
