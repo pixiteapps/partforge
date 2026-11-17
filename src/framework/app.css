@@ -896,7 +896,7 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-selection-popover {
   position: absolute; z-index: 31;
   width: min(320px, calc(100% - 24px)); overflow: visible;
-  padding: 8px; display: flex; flex-direction: column;
+  padding: 8px 12px 10px; display: flex; flex-direction: column;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
   border-radius: 16px; box-shadow: var(--pf-shadow-float);
   color: var(--pf-text); font-size: 12px;
@@ -908,12 +908,13 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-selection-popover[data-side="below"] .pf-selection-tail { top: -7px; border-right: 0; border-bottom: 0; }
 .pf-selection-popover[data-side="above"] .pf-selection-tail { bottom: -7px; border-left: 0; border-top: 0; }
-/* The 4px of padding (taken back by the negative margin) keeps a control's
-   3px focus ring inside the scroller, which would otherwise clip it. */
-.pf-selection-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 4px; margin: -4px; }
+/* The padding (taken back by the negative margin) keeps a control's 3px focus ring
+   inside the scroller, which would otherwise clip it; sideways it is the whole 12px
+   gutter, so the controls' rule can reach the popover's edge without being clipped. */
+.pf-selection-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 4px 12px; margin: -4px -12px; }
 .pf-selection-popover:focus { outline: none; }
-.pf-selection-spot { display: flex; flex-direction: column; gap: 6px; }
-.pf-selection-head { display: flex; align-items: center; gap: 2px; }
+.pf-selection-spot { display: flex; flex-direction: column; gap: 8px; }
+.pf-selection-head { display: flex; align-items: center; gap: 2px; margin: 0 -6px 0 -6px; }
 .pf-selection-open {
   flex: 1; min-width: 0; display: grid; grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr);
   align-items: center; gap: 8px; padding: 3px 6px; border: 0; border-radius: 999px;
@@ -931,13 +932,24 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 /* The host's slot: an empty, sized region its UI floats over. */
 .pf-selection-slot { flex: none; border-radius: 12px; }
 /* The controls region: the rail's rows, moved into the popover. */
-.pf-selection-controls { display: flex; flex-direction: column; min-height: 0; overflow: auto; padding-top: 6px; border-top: 1px solid var(--pf-border); }
-.pf-selection-controls .section { padding: 0; }
-.pf-selection-controls .slider { margin: 6px 0; }
-.pf-selection-more {
-  align-self: flex-start; border: 0; background: none; padding: 2px 0 4px; font: inherit; font-size: 11px;
-  color: var(--pf-muted-2); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+/* The rule runs edge to edge (the popover's 12px gutter taken back), so the head
+   reads as the card's title and the sliders as its body. */
+.pf-selection-controls {
+  display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto;
+  margin: 0 -12px; padding: 10px 12px 2px; border-top: 1px solid var(--pf-border);
 }
+.pf-selection-controls .section { padding: 0; }
+.pf-selection-controls .slider { margin: 0; }
+/* Number boxes share one right edge whatever the unit: the value column is a fixed
+   width with the box first, so "mm", "°" and no unit all leave the box in place. */
+.pf-selection-controls .row .val:has(> .num) { width: 78px; justify-content: flex-start; }
+.pf-selection-more {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px;
+  margin: -4px 0 0; border: 0; background: none; padding: 2px 0; border-radius: 4px;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--pf-accent); cursor: pointer;
+}
+.pf-selection-more::after { content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.pf-selection-more:hover { text-decoration: underline; text-underline-offset: 3px; }
 .pf-selection-more:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 .pf-selection-open:focus-visible, .pf-selection-eye:focus-visible, .pf-selection-close:focus-visible {
   outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
