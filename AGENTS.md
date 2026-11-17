@@ -248,6 +248,7 @@ the installed package, so let the publish finish before bumping the dep there.
   `rail.js` now also refuses below the breakpoint (previously reachable only
   with custom host CSS, since the seam is `display: none` there).
 - **`src/framework/materials/overrides.js`** (the per-sub-part display override model), **`sub-part-list.js`**, **`parts-list.js`**, **`appearance-card.js`** - the Parts section and appearance card inside the View style popover (spec 2026-10-13); viewing keys never reach exports or agent captures.
+  The selection popover (`selection-popover.js`) also has a controls region: up to three sliders for the clicked face's params, resolved by the pure `selection/spot-keys.js` (face keys, else the piece's reads; minus keys a pose handle on that piece drags; capped, "More in the panel" when cut) from per-face provenance the worker records (`geometry/provenance.js` wraps the kernel at each author op boundary, `geometry/run-lineage.js` keys face runs; Manifold only, OCCT falls back to piece reads) and `derive-nudge.js` (nudge-sampled derive attribution, ranking only - never gates a rebuild). `selectionPopover: { controls: false }` opts out; `runtime.selection.onReveal` reports the "More" press when the host holds the pane lease.
 - **`src/framework/materials/`** - the material library and realistic-mode
   rendering. `presets.js` (the preset table), `environments.js` (the
   environment records), `resolve.js` (display-block -> library lookup, never

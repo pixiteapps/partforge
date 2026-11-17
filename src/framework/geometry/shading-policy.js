@@ -18,9 +18,9 @@ export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false 
 export const BLEND = Object.freeze({ creaseAngle: 35, sameSurfaceLines: true, boundaryLines: true });
 
 // Loft sector policies: identical crease/line behavior to SMOOTH/FACETED, plus the
-// `sector` marker label() uses to preserve a sectored loft's runs 1:1 when it
-// re-stamps original IDs (a plain asOriginal would fold the sectors into one
-// surface and erase every provenance crease and dividing line).
+// `sector` marker that marks a sectored loft's runs. label() re-stamps every run 1:1
+// and each new id inherits its old id's policy, so the sector marker rides along
+// and every provenance crease and dividing line survives.
 export const LOFT_SECTOR_SMOOTH = Object.freeze({ ...SMOOTH, sector: true });
 export const LOFT_SECTOR_FACETED = Object.freeze({ ...FACETED, sector: true });
 

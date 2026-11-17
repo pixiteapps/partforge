@@ -930,6 +930,15 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-selection-eye:hover, .pf-selection-close:hover { background: var(--pf-surface-2); color: var(--pf-text); }
 /* The host's slot: an empty, sized region its UI floats over. */
 .pf-selection-slot { flex: none; border-radius: 12px; }
+/* The controls region: the rail's rows, moved into the popover. */
+.pf-selection-controls { display: flex; flex-direction: column; min-height: 0; overflow: auto; padding-top: 6px; border-top: 1px solid var(--pf-border); }
+.pf-selection-controls .section { padding: 0; }
+.pf-selection-controls .slider { margin: 6px 0; }
+.pf-selection-more {
+  align-self: flex-start; border: 0; background: none; padding: 2px 0 4px; font: inherit; font-size: 11px;
+  color: var(--pf-muted-2); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.pf-selection-more:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 .pf-selection-open:focus-visible, .pf-selection-eye:focus-visible, .pf-selection-close:focus-visible {
   outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
 }
