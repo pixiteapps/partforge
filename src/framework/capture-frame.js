@@ -134,6 +134,22 @@ export function cropRenderFrame(crop, { aspect, long }) {
   };
 }
 
+// A capture at a FIXED output size (width × height), cropped to cover: the live
+// framing scaled until it fills the output on both axes, centred, the overflow
+// on the longer axis cut off equally on both sides. Same viewOffset mechanism as
+// the recentred crop above, so it is a pixel-exact crop of what the viewer shows
+// with no second encode. `aspect` is the live camera's.
+export function coverRenderFrame({ aspect, width, height }) {
+  const a = aspect > 0 && Number.isFinite(aspect) ? aspect : 1;
+  const wide = a >= width / height;
+  const fullWidth = wide ? height * a : width;
+  const fullHeight = wide ? height : width / a;
+  return {
+    width, height,
+    viewOffset: { fullWidth, fullHeight, x: (fullWidth - width) / 2, y: (fullHeight - height) / 2 },
+  };
+}
+
 // The whole pipeline for captureCurrentFromScene: the render frame that puts
 // the visible geometry in the middle, or null when the current framing should
 // be kept as-is (part cropped by the viewport, already centred, or nothing to

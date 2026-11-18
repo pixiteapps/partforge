@@ -13,7 +13,7 @@
 // version 2, sharing the surface's vertices since version 3); a version-1 file
 // decodes with none.
 //
-// A file that carries a baked autoplay animation (encoder version 4) plays it
+// A file that carries a baked animation (encoder version 4; any of the view's since 0.194.0) plays it
 // once drawn, through preview-player.js — poses, opacities and camera cues off
 // the viewer's own frame loop, still with no part code. `animate: false` shows
 // the opening pose and no player (the editor's own boot preview goes through
@@ -264,12 +264,14 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   // Once it stops — paused by a press (hold), by its button, or done — the preview's own
   // params take those values, so getParams keeps answering what the meshes show. The
   // live params (not the file's) are the base, so a dragged untracked key survives.
-  // Only the animation the file baked is followed: a part whose autoplay animation is
-  // another one (renamed, or changed since the file was written) is a still for params.
-  let anim = player && decoded.animation ? viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null : null;
-  if (anim && decoded.animation.name !== anim.name) {
-    console.warn(`partforge: preview animation "${decoded.animation.name}" is not the part's autoplay animation "${anim.name}"`);
-    anim = null;
+  // Only the animation the file baked is followed, found by its name among the view's
+  // declared animations — autoplay or not (0.194.0: a host may bake any of them). A file
+  // naming an animation the view no longer declares (renamed, or removed since the file
+  // was written) is a still for params.
+  let anim = null;
+  if (player && decoded.animation) {
+    anim = viewAnimations(part).get(view)?.find((a) => a.name === decoded.animation.name) ?? null;
+    if (!anim) console.warn(`partforge: preview animation "${decoded.animation.name}" is not an animation of view "${view}"`);
   }
   const following = () => {
     if (!player || !anim || reducedMotion || !player.started()) return false;
@@ -397,6 +399,22 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     dragReadout: () => readout?.text() ?? null,
     lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
   };
+}
+
+const CAPTURE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_CAPTURE_EDGE = 8192;
+
+// capture()'s options, checked before anything waits: a bad one is the caller's
+// bug, never something a decode or a disposal should hide.
+export function validateCapture({ width = 640, height = 480, type = "image/jpeg", quality = 0.85 } = {}) {
+  for (const [key, v] of [["width", width], ["height", height]]) {
+    if (!Number.isInteger(v) || v < 1 || v > MAX_CAPTURE_EDGE) {
+      throw new TypeError(`mountPreview: capture ${key} must be an integer from 1 to ${MAX_CAPTURE_EDGE}`);
+    }
+  }
+  if (!CAPTURE_TYPES.has(type)) throw new TypeError(`mountPreview: capture type must be one of ${[...CAPTURE_TYPES].join(", ")}`);
+  if (typeof quality !== "number" || !(quality >= 0 && quality <= 1)) throw new TypeError("mountPreview: capture quality must be a number from 0 to 1");
+  return { width, height, type, quality };
 }
 
 function previewPart({ meshes, view, meta }) {
@@ -625,6 +643,20 @@ export function mountPreview(container, options = {}) {
     return live ? fn(live.viewer) : fallback;
   };
 
+  // One frame of the preview as it is on screen now — camera, render mode, the
+  // animation's current pose — rendered offscreen at exactly width × height and
+  // cropped to cover (0.194.0). The viewer's own captureCurrent path, so pick
+  // markers and hover tint stay out and the grid is hidden. Waits for `ready`;
+  // rejects once disposed, when the file will not decode, or with nothing drawn.
+  async function capture(opts = {}) {
+    const { width, height, type, quality } = validateCapture(opts);
+    try { await ready; } catch (error) { throw new Error(`mountPreview: capture failed — ${error?.message ?? error}`, { cause: error }); }
+    if (disposed || !live) throw new Error("mountPreview: capture after the preview was disposed");
+    const url = live.viewer.captureCurrent({ width, height, type, quality });
+    if (!url) throw new Error("mountPreview: capture found no preview to draw");
+    return url;
+  }
+
   return {
     ready,
     drawn,
@@ -646,6 +678,7 @@ export function mountPreview(container, options = {}) {
       if (errors.length > 1) throw new AggregateError(errors, "partforge mountPreview cleanup failed");
     },
     getView: () => live?.view ?? null,
+    capture,
     // A copy of the preview's params (with `part`); null before ready, without part and once disposed.
     getParams: () => (posing && preview.params ? { ...posing.getParams() } : null),
     // mount()'s pose surface on the file's meshes; the no-op stand-in without `part`.

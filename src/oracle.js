@@ -23,6 +23,9 @@ export { samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP } from ".
 // The params a preview file's meshes sit at (the live params under its baked
 // animation's t = 0 values), for a host that writes or checks a file's partforgeParams.
 export { openingParams } from "./framework/preview-pose.js";
+// Every view and its animations, plus the default view (0.194.0): what a host bakes a
+// preview per (view, animation) for, with no kernel.
+export { listViewAnimations } from "./framework/view-catalog.js";
 export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
 // A handle drag played headlessly (derive only): which params a handle writes, and whether it reaches.
