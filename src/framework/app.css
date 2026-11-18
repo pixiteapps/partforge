@@ -950,6 +950,26 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 }
 .pf-selection-more::after { content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
 .pf-selection-more:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* While rows sit below a squeezed controls region its bottom edge fades out. */
+.pf-selection-controls.has-more-below {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+}
+/* Touch screens: bigger hit areas, same look. The slider's input grows to 36px with
+   its extra height taken back by negative margins, so the row keeps its spacing and
+   only the strip a finger can land on widens; the thumb grows to 20px. The eye and
+   close buttons grow to 40px, the head's extra height taken back by its margins. The info buttons
+   stand down here — 17x12px beside the label, they catch taps meant for the slider,
+   and the same hints are on the rail. */
+@media (pointer: coarse) {
+  .pf-selection-controls input[type="range"] { height: 36px; margin: -9px 0; }
+  .pf-selection-controls input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -8.5px; }
+  .pf-selection-controls input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; }
+  .pf-selection-controls .info { display: none; }
+  .pf-selection-eye, .pf-selection-close { width: 40px; height: 40px; }
+  .pf-selection-head { margin-top: -6px; margin-bottom: -6px; }
+  .pf-selection-more { padding: 10px 0 8px; margin: -12px 0 0; }
+}
 .pf-selection-more:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 .pf-selection-open:focus-visible, .pf-selection-eye:focus-visible, .pf-selection-close:focus-visible {
   outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent);
