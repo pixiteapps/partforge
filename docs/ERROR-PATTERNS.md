@@ -951,7 +951,7 @@ between the Manifold preview and the OCCT STEP export.
 
 ## implicit-step-export
 
-- **Symptom:** A STEP export of a part with a `k.implicit` sub-part fails with `implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part reached OCCT because …`, or with `sub-part "<name>" calls k.implicit and shell, which no backend can build together`.
+- **Symptom:** A STEP export of a part with a `k.implicit` sub-part fails with `implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached OCCT because …`, or with `sub-part "<name>" calls k.implicit and shell, which no backend can build together`.
 - **Cause:** A STEP export finds the organic sub-parts with the geometry-free probe, meshes them on Manifold and writes them as tessellated solids; every other sub-part is built on OCCT. The first message means a sub-part's `k.implicit` call was not seen — it is made only after reading a geometry query (`boundingBox()`, `contains()`, …), which the probe answers with a placeholder — or `meta.backend: "occt"` pins the part. The second means one sub-part needs both backends.
 - **Fix:** Make the `k.implicit` call unconditional (decide from params, not from a measured solid), and pin `meta.backend: "manifold"` rather than `"occt"`. For a hollow organic body, use an `onion` node inside the `k.implicit` spec instead of `shell`; keep a `shell`ed CAD body in its own sub-part.
 
@@ -960,6 +960,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** A thin part of a `k.implicit` body (a plate, a fin, a nail) breaks into pieces, grows holes or handles, or vanishes; the build warns `implicit: thinnest feature (… mm) is under 2 grid cells`, and lint warns `implicit-thin-feature`.
 - **Cause:** The body is meshed on a grid (`preview` for the preview, `resolution` for print and export). A feature thinner than two grid cells falls between samples.
 - **Fix:** Give the thin feature its own `k.implicit` with a finer `preview` and `resolution`, and union it onto the body — a fine grid over a small feature is cheap, a fine grid over the whole body is not (`src/parts/organic-hand.js` does this for its nails). Or thicken the feature. Lowering `preview`/`resolution` for the whole body also works when the body is small.
+
+## implicit-with-occt-fallback
+
+- **Symptom:** `implicit: OCCT cannot build k.implicit (it is mesh-native), and the Manifold build stopped at` a quoted fillet or chamfer message — from `partforge measure` or `render` after it prints `retrying on the OCCT backend`; an STL or 3MF export of the same part fails on OCCT too. Setting `meta.backend: "manifold"` changes nothing. The preview may show every sub-part.
+- **Cause:** A `fillet` or `chamfer` somewhere in the part (often in an ordinary CAD sub-part) needs OCCT: it has a function selector, or it selects an edge the mesh backend cannot blend. The preview builds each sub-part on its own backend, but the CLI, STL and 3MF build the whole part on one, and no single backend builds both that fillet and `k.implicit`.
+- **Fix:** Make the fillet the quoted message names mesh-buildable: replace a function selector with an object selector (`{ dir }`, `{ inPlane, at }`, `{ near }`); for an edge the mesh backend refuses, reduce the radius, select fewer edges, or use `chamfer`. Lint reports the function-selector case as `implicit-needs-manifold`. A `shell` beside `k.implicit` is the same conflict; use an `onion` node for a hollow organic body.
 
 ## kernel-internal-error
 

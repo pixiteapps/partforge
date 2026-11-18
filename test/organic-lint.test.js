@@ -196,6 +196,21 @@ test("implicit-needs-manifold: a Manifold pin beside a shell is not this rule's 
   expect(of(r, "manifold-backend-uses-occt-op")).toHaveLength(1);
 });
 
+test("implicit-needs-manifold: a function-selector fillet in any sub-part is an error, whatever the pin", () => {
+  // measure, STL and 3MF build the whole part on one backend: the fillet needs OCCT, k.implicit Manifold.
+  const parts = (edges) => ({
+    grip: { views: ["main"], build: (k) => k.implicit({ root: { kind: "sphere", r: 5 } }) },
+    plate: { views: ["main"], build: (k) => k.box({ size: [9, 9, 3] }).fillet({ r: 1, edges }) },
+  });
+  for (const meta of [{ title: "T" }, { title: "T", backend: "manifold" }]) {
+    const [f, ...rest] = of(lintPart(partWith(null, { meta, parts: parts((e) => e.inDirection("Z")) })), "implicit-needs-manifold");
+    expect(rest).toEqual([]);
+    expect(f.severity).toBe("error");
+    expect(f.message).toMatch(/`fillet` with a function selector needs OCCT/);
+  }
+  expect(of(lintPart(partWith(null, { parts: parts({ dir: "Z" }) })), "implicit-needs-manifold")).toEqual([]);
+});
+
 test("implicit-needs-manifold: quiet on Manifold and without k.implicit", () => {
   expect(of(lintPart(implicitPart({ root: { kind: "sphere", r: 5 } }, { meta: { title: "T", backend: "manifold" } })), "implicit-needs-manifold")).toEqual([]);
   expect(of(lintPart(partWith((k) => k.box({ size: [1, 1, 1] }), { meta: { title: "T", backend: "occt" } })), "implicit-needs-manifold")).toEqual([]);

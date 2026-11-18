@@ -41,6 +41,8 @@ import { meshToStl } from "./mesh-stl.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
 import { writeStep } from "./occt-step.js";
 import { implicitFrames } from "./implicit/frame-report.js";
+// One literal on one line: test/organic-docs.test.js holds the guide's copy to it.
+const IMPLICIT_ON_OCCT = "implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached OCCT because meta.backend pins it there, because a fillet or chamfer in the part needs OCCT (a function selector, or an edge the mesh backend cannot blend — the CLI, STL and 3MF build the whole part on one backend), or because the geometry-free probe did not see the k.implicit call (one made only after reading a geometry query); set `meta.backend: \"manifold\"`, give that fillet or chamfer an object selector or a shape the mesh backend can blend, and make the k.implicit call unconditional";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 // Heightfield sew-time warning threshold, in triangles. Measured by the plan's
@@ -760,10 +762,13 @@ export function createOcctKernel(replicad) {
   // k.implicit is mesh-native: its booleans are mesh booleans, which OCCT cannot
   // run on a triangulated body. A STEP export meshes implicit sub-parts on Manifold
   // and writes them as tessellated solids (export-controller.js, occt-step.js), so a
-  // sub-part reaches this throw only when it was routed here: a meta.backend pin, or a
-  // k.implicit call the geometry-free probe could not see.
+  // sub-part reaches this throw only when it was routed here: a meta.backend pin, a
+  // fillet or chamfer that fell back to OCCT in a job that builds the whole part on one
+  // backend (the CLI, STL, 3MF), or a k.implicit call the geometry-free probe could not
+  // see. No `.code`: an export wraps an uncoded error with the piece's name
+  // (exportPieceError), and the CLI's retry knows this one by its opening words (bin/cli.js).
   const implicit = () => {
-    throw new Error("implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part reached OCCT because meta.backend pins it there, or because the geometry-free probe did not see the call (one made only after reading a geometry query); set `meta.backend: \"manifold\"` and make the k.implicit call unconditional");
+    throw new Error(IMPLICIT_ON_OCCT);
   };
   // Its frame report meshes nothing, so OCCT runs it like Manifold does.
   const frameReport = (spec) => implicitFrames(spec, { images });

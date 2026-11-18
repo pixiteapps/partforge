@@ -50,12 +50,21 @@ export all work on it.
 throws:
 
 ```text
-implicit: OCCT cannot build k.implicit (it is mesh-native) — this sub-part reached OCCT because meta.backend pins it there, or because the geometry-free probe did not see the call (one made only after reading a geometry query); set `meta.backend: "manifold"` and make the k.implicit call unconditional
+implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached OCCT because meta.backend pins it there, because a fillet or chamfer in the part needs OCCT (a function selector, or an edge the mesh backend cannot blend — the CLI, STL and 3MF build the whole part on one backend), or because the geometry-free probe did not see the k.implicit call (one made only after reading a geometry query); set `meta.backend: "manifold"`, give that fillet or chamfer an object selector or a shape the mesh backend can blend, and make the k.implicit call unconditional
 ```
 
 - Set **`meta.backend: "manifold"`** on a part with implicit bodies. STL, 3MF and the
   CLI build the whole part on one backend, and without the pin a `shell` (an OCCT-only
   op) in any sub-part would send the implicit sub-part to OCCT too.
+- **Keep every `fillet` and `chamfer` in the part mesh-buildable**, in the ordinary
+  sub-parts too. The preview builds each sub-part on its own backend, but `measure`,
+  `verify`, STL and 3MF build the whole part on one, so a fillet that falls back to
+  OCCT takes the implicit sub-part with it and the build fails. Use the object selectors
+  (`{ dir }`, `{ inPlane, at }`, `{ near }`), never a function selector (lint:
+  `implicit-needs-manifold`). A fillet can also fall back at build time, on an edge the
+  mesh backend cannot blend (mixed convexity, a bend tighter than the radius); lint
+  cannot see that, and `partforge measure` then names the fillet that stopped the
+  Manifold build. Change its radius or edges, or `chamfer` instead.
 - **STEP export writes a hybrid file.** The ordinary sub-parts are exact B-rep solids,
   as always. Each sub-part whose build calls `k.implicit` is meshed on Manifold at the
   print grid (`resolution`) in its export pose and written as a tessellated solid
@@ -417,7 +426,7 @@ The domain adds lint rules and no verify metrics. Lint runs every `k.implicit` a
 | Rule | Severity | Reports |
 |---|---|---|
 | `implicit-spec-invalid` | error | The engine's compiler rejects the spec: a bad node or field, a frame cycle, a formula error, a contact below the root, an attach naming a missing label, an undeclared image. The message is the build's own error. Image names are checked only against a static `images` object. |
-| `implicit-needs-manifold` | error | `k.implicit` in a part that builds on OCCT: `meta.backend: "occt"`, or a `shell` that routes the part there. |
+| `implicit-needs-manifold` | error | `k.implicit` in a part that builds on OCCT: `meta.backend: "occt"`, a `shell` that routes the part there, or a `fillet`/`chamfer` with a function selector in any sub-part (whatever the pin). |
 | `implicit-thin-feature` | warning | The thinnest feature is under 2 cells of the preview grid (the spec's `preview`, or the automatic choice) or the print grid. |
 | `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. |
 | `implicit-lipschitz-low` | warning | An `expr` formula, sampled on 512 points of its `box`, changes faster per mm than its `lipschitz`. A spot check, not a proof. Formulas that read a texture are skipped. |

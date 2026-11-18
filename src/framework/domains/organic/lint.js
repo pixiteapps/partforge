@@ -107,6 +107,26 @@ function sampledSlope(L, [lo, hi]) {
 const plainCsg = (spec) => !(spec.detail?.length) && [...specNodes(spec.root)].every((n) =>
   CAD_KINDS.has(n.kind) && !n.round && !(n.k > 0));
 
+// The fillet/chamfer ops whose function selector only OCCT can run.
+const FN_SELECTOR_OPS = new Set(["fillet", "chamfer"]);
+
+/** implicit-needs-manifold's routing half: an OCCT pin, or an unpinned shell. */
+function routing(ctx) {
+  // A Manifold pin wins over a shell's routing (manifold-backend-uses-occt-op reports
+  // the shell), so only an OCCT pin or an unpinned shell lands k.implicit on OCCT.
+  if (ctx.part?.meta?.backend === "manifold") return [];
+  const pinned = ctx.part?.meta?.backend === "occt";
+  const routed = [...ctx.probe().solidUsed].filter((op) => ROUTED.has(op));
+  if (!pinned && routed.length === 0) return [];
+  const cause = pinned ? "meta.backend pins OCCT" : `\`${routed.join("`, `")}\` routes the part to OCCT`;
+  return [err("implicit-needs-manifold",
+    `the build calls k.implicit, which only the Manifold backend can build, but ${cause}`,
+    pinned
+      ? "Remove `meta.backend: \"occt\"` (or set it to \"manifold\"): the OCCT build throws on k.implicit."
+      : "Build the OCCT-only feature in a separate part, or replace it with a mesh-friendly construction: the OCCT build throws on k.implicit.",
+    "meta.backend")];
+}
+
 export const ORGANIC_LINT_RULES = [
   {
     id: "implicit-spec-invalid",
@@ -119,19 +139,17 @@ export const ORGANIC_LINT_RULES = [
     id: "implicit-needs-manifold",
     run: (ctx) => {
       if (!implicitCalls(ctx).some((c) => c.op === "implicit")) return [];
-      // A Manifold pin wins over a shell's routing (manifold-backend-uses-occt-op reports
-      // the shell), so only an OCCT pin or an unpinned shell lands k.implicit on OCCT.
-      if (ctx.part?.meta?.backend === "manifold") return [];
-      const pinned = ctx.part?.meta?.backend === "occt";
-      const routed = [...ctx.probe().solidUsed].filter((op) => ROUTED.has(op));
-      if (!pinned && routed.length === 0) return [];
-      const cause = pinned ? "meta.backend pins OCCT" : `\`${routed.join("`, `")}\` routes the part to OCCT`;
-      return [err("implicit-needs-manifold",
-        `the build calls k.implicit, which only the Manifold backend can build, but ${cause}`,
-        pinned
-          ? "Remove `meta.backend: \"occt\"` (or set it to \"manifold\"): the OCCT build throws on k.implicit."
-          : "Build the OCCT-only feature in a separate part, or replace it with a mesh-friendly construction: the OCCT build throws on k.implicit.",
-        "meta.backend")];
+      // A fillet or chamfer with a function selector needs OCCT whatever the pin says:
+      // the mesh backend throws NEEDS_OCCT on it, and the CLI, STL and 3MF then build the
+      // whole part on OCCT, where k.implicit throws. (A fallback over an edge class the
+      // mesh fillet cannot blend is geometry, which lint cannot see.)
+      const fnOps = [...new Set(ctx.probe().calls
+        .filter((c) => c.fn && c.scope !== "shape2d" && FN_SELECTOR_OPS.has(c.op)).map((c) => c.op))];
+      const selectors = fnOps.length === 0 ? [] : [err("implicit-needs-manifold",
+        `the build calls k.implicit, which only the Manifold backend can build, but \`${fnOps.join("`, `")}\` with a function selector needs OCCT`,
+        "Use an object selector ({ dir }, { inPlane, at }, { near }) so it runs on Manifold: measure, STL and 3MF build the whole part on one backend. See ERROR-PATTERNS.md#implicit-with-occt-fallback.",
+        "parts")];
+      return [...selectors, ...routing(ctx)];
     },
   },
   {

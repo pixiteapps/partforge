@@ -9,6 +9,10 @@ beforeAll(async () => { k = await bootOcctKernel(); }, 120_000);
 
 test("OCCT refuses k.implicit, saying how a sub-part got there", () => {
   expect(() => k.implicit({ root: { kind: "sphere", r: 1 } })).toThrow(/implicit: OCCT cannot build k.implicit/);
+  // Uncoded on purpose: exportPieceError names the piece only for an uncoded error.
+  let code = "unset";
+  try { k.implicit({ root: { kind: "sphere", r: 1 } }); } catch (e) { code = e.code; }
+  expect(code).toBeUndefined();
 });
 
 test("implicitFrames runs on OCCT", () => {

@@ -38,3 +38,14 @@ test("PARTFORGE_BACKEND=occt forces the OCCT kernel (n/a topology)", () => {
     { encoding: "utf8", env: { ...process.env, PARTFORGE_BACKEND: "occt" } });
   expect(out).toMatch(/watertight n\/a/);
 });
+
+test("measure names the fillet when a part needs k.implicit and an OCCT-only fillet", () => {
+  // The Manifold build stops at the fillet, the OCCT retry at k.implicit: the message must
+  // name the fillet rather than send the author to meta.backend.
+  let err;
+  try { execFileSync("node", ["bin/cli.js", "measure", "test/fixtures/implicit-occt-fillet-part.js", "--no-lint"], { encoding: "utf8", stdio: "pipe" }); }
+  catch (e) { err = e; }
+  expect(err?.status).toBe(1);
+  expect(err.stderr).toMatch(/the Manifold build stopped at "fillet: function selectors need the OCCT backend"/);
+  expect(err.stderr).toMatch(/pattern: ERROR-PATTERNS\.md#implicit-with-occt-fallback/);
+});
