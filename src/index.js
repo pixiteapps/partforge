@@ -19,3 +19,6 @@ export { SECTION_LABELS, cutSectionIds } from "./framework/export/kit/options.js
 // Which view mount() opens on — for a host that builds a part outside the viewer
 // (a cached preview, a server-side render) and must agree with it.
 export { resolveDefaultView } from "./framework/default-view.js";
+// Every view and the animations it declares (0.194.0): a host caching a preview per
+// (view, animation) keys on these names.
+export { listViewAnimations } from "./framework/view-catalog.js";

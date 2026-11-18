@@ -49,7 +49,7 @@ export interface EncodePreviewInput {
   /** The view these meshes show; names the scene and lands in the file's extras as `partforgeView`. */
   view?: string | null;
   /**
-   * The view's autoplay animation as `samplePreviewAnimation` returns it (encoder
+   * One of the view's animations as `samplePreviewAnimation` returns it — the autoplay one, or any named one since 0.194.0 (encoder
    * version 4). Each sampled sub-part's node gets a rest transform `rel(0)` and,
    * when it moves, LINEAR `translation` + `rotation` channels in seconds, where
    * `rel(t) = M(t) · base⁻¹`; the top-level extras gain `partforgeAnimation`

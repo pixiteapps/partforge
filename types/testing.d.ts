@@ -14,6 +14,7 @@ export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Sol
 // Declared in oracle.d.ts (its own surface); testing.js re-exports all of oracle.js.
 export {
   samplePreviewAnimation, PREVIEW_SAMPLE_HZ, PREVIEW_SAMPLE_CAP, openingParams,
+  listViewAnimations, type ViewAnimationCatalog, type ViewCatalogEntry, type ViewAnimationEntry,
   type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
   type NormalizedAnimationStep, type NormalizedAnimationCue,
   dragHandle, type DragRequest, type DragResult,

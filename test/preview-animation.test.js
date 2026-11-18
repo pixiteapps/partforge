@@ -162,3 +162,29 @@ test("every pose the sampler returns passes the encoder's rigidity test", () => 
   for (const s of out.samples) for (const m of Object.values(s.poses)) expect(isRigid(m)).toBe(true);
   for (const m of Object.values(out.base)) expect(isRigid(m)).toBe(true);
 });
+
+// 0.194.0: a named animation, not only the autoplay one, so a host can cache a
+// preview per (view, animation) and let an owner choose which one plays.
+describe("the animation option", () => {
+  test("samples a named non-autoplay animation", () => {
+    const out = samplePreviewAnimation(hingedBox, "box", {}, { buildReads: allReads(hingedBox), animation: "open" });
+    expect(out.anim.name).toBe("open");
+    expect(out.anim.autoplay).toBe(false);
+    // open swings the lid to 110° and stops there: its last pose is not its first
+    expect(out.samples.at(-1).poses.lid).not.toEqual(out.samples[0].poses.lid);
+  });
+  test("unknown name returns null", () => {
+    expect(samplePreviewAnimation(hingedBox, "box", {}, { buildReads: allReads(hingedBox), animation: "nope" })).toBeNull();
+    // a name declared on another view does not count either
+    expect(samplePreviewAnimation(hingedBox, "elsewhere", {}, { buildReads: allReads(hingedBox), animation: "open" })).toBeNull();
+  });
+  test("undefined still picks autoplay", () => {
+    const out = samplePreviewAnimation(hingedBox, "box", {}, { buildReads: allReads(hingedBox), animation: undefined });
+    expect(out.anim.name).toBe("cycle");
+  });
+  test("a named animation still has to be bakeable", () => {
+    const part = withLid({ build: (k, p) => k.box({ min: [0, 0, 0], max: [p.width, p.depth, p.wall + p.lidAngle / 10] }) });
+    const reads = (name) => (name === "lid" ? new Set(["width", "depth", "wall", "lidAngle"]) : new Set(["width"]));
+    expect(samplePreviewAnimation(part, "box", {}, { buildReads: reads, animation: "open" })).toBeNull();
+  });
+});

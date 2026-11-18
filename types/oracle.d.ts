@@ -94,19 +94,56 @@ export const PREVIEW_SAMPLE_HZ: 30;
 export const PREVIEW_SAMPLE_CAP: 600;
 
 /**
- * Decide whether the view's autoplay animation can be baked into the preview
+ * Decide whether one of the view's animations can be baked into the preview
  * GLB — every tracked param place-only (the build reads none, and place() is a
  * rigid motion at every sample) and the shown sub-parts constant — and if so
  * sample the place matrices along its timeline. `buildReads(name)` returns the
- * param keys that sub-part's build read, or `null` when unknown. Returns `null`
- * when there is no autoplay animation or any check fails; never throws.
+ * param keys that sub-part's build read, or `null` when unknown. `animation`
+ * (0.194.0) names the animation: omitted (or `undefined`), the view's autoplay
+ * animation; a string, that animation of this view whether or not it autoplays.
+ * Returns `null` when there is no such animation or any check fails; never throws.
  */
 export function samplePreviewAnimation(
   part: PartDefinition,
   view: string,
   params?: Record<string, ParamValue>,
-  options?: { buildReads: (name: string) => ReadonlySet<string> | null },
+  options?: { buildReads: (name: string) => ReadonlySet<string> | null; animation?: string },
 ): PreviewAnimationInput | null;
+
+/** One animation in `listViewAnimations`' catalog. */
+export interface ViewAnimationEntry {
+  /** The key it is declared under in the view's `animations`. */
+  name: string;
+  /** Its `label`, else its name. */
+  label: string;
+  autoplay: boolean;
+}
+
+/** One view in `listViewAnimations`' catalog. */
+export interface ViewCatalogEntry {
+  /** The key it is declared under in `views`. */
+  name: string;
+  /** Its `label`, else its name. */
+  label: string;
+  /** In declaration order; `[]` when the view declares none. */
+  animations: ViewAnimationEntry[];
+}
+
+/** What `listViewAnimations` returns. */
+export interface ViewAnimationCatalog {
+  /** The view `mount()` opens on (`resolveDefaultView`); `null` for a part with no views. */
+  defaultView: string | null;
+  /** Every view, in declaration order. */
+  views: ViewCatalogEntry[];
+}
+
+/**
+ * 0.194.0: every view of a part and the animations each declares, in declaration
+ * order, plus the default view — the names a host keys a per-(view, animation)
+ * preview cache on. Pure: no kernel, no build. A malformed animation is left out,
+ * as the viewer leaves it out (lint reports it).
+ */
+export function listViewAnimations(part: PartDefinition): ViewAnimationCatalog;
 
 /**
  * The params a preview file's meshes sit at: `{ ...part.defaults, ...params }` with

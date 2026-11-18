@@ -104,9 +104,15 @@ export function buildIdentity(part, view, { p, d }, name) {
 
 const sameSet = (a, b) => a.length === b.length && a.every((name) => b.includes(name));
 
-export function samplePreviewAnimation(part, view, params = {}, { buildReads } = {}) {
+// `animation` names the animation to bake (0.194.0): undefined means the view's
+// autoplay animation, as before; a string means that animation of THIS view, by
+// name, autoplay or not — null when the view declares none by that name.
+export function samplePreviewAnimation(part, view, params = {}, { buildReads, animation } = {}) {
   try {
-    const anim = viewAnimations(part).get(view)?.find((a) => a.autoplay) ?? null;
+    const list = viewAnimations(part).get(view) ?? [];
+    const anim = (animation !== undefined
+      ? list.find((a) => a.name === animation)
+      : list.find((a) => a.autoplay)) ?? null;
     if (!anim || typeof buildReads !== "function") return null;
     if (!(Number.isFinite(anim.totalDuration) && anim.totalDuration > 0)) return null;
     // A NaN step duration normalizes to a total of 1 (animation.js's `|| 1`),
