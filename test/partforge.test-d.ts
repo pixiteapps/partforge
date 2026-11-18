@@ -6,7 +6,7 @@
 // Everything imports through the package's own subpath specifiers, so this also
 // proves the `exports` map's `types` conditions resolve.
 
-import { mount, mountPreview, resolveDefaultView, EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "partforge";
+import { mount, mountPreview, resolveDefaultView, listViewAnimations, EXPORT_FORMATS, KIT_OPTIONS_ERROR, KIT_DEFAULTS, validateKitOptions } from "partforge";
 import type {
   PreviewRuntime,
   ExportableSheetInfo,
@@ -306,6 +306,13 @@ expectType<void | undefined>(previewRuntime.animation?.replay());
 // @ts-expect-error - the animation handle is read-only
 previewRuntime.animation = null;
 expectType<string | null>(resolveDefaultView(spacer));
+expectType<Promise<string>>(previewRuntime.capture());
+expectType<Promise<string>>(previewRuntime.capture({ width: 320, height: 240, type: "image/png", quality: 0.9 }));
+// @ts-expect-error - capture writes JPEG, PNG or WebP only
+previewRuntime.capture({ type: "image/gif" });
+const catalog = listViewAnimations(spacer);
+expectType<string | null>(catalog.defaultView);
+expectType<boolean | undefined>(catalog.views[0]?.animations[0]?.autoplay);
 expectType<number>(PREVIEW_ENCODER_VERSION);
 expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: spacer, view: "main" }));
 expectType<Promise<Uint8Array>>(encodePreviewGlb({ meshes: [{ name: "a", positions: new Float32Array(9) }], part: { parts: { a: { display: { color: 0xff0000 } } }, meta: { background: 0xffffff, environment: "studio" } } }));

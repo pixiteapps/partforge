@@ -1025,6 +1025,16 @@ export interface PreviewRuntime {
   dispose(): void;
   /** The view the file was written for (`null` until drawn, or when the file names none). */
   getView(): string | null;
+  /**
+   * 0.194.0: one frame of the preview as it is on screen now (camera, render mode,
+   * the animation's current pose), rendered offscreen at exactly `width` × `height`
+   * (integers, 1–8192) and cropped to cover — the live framing scaled to fill it,
+   * centred. Resolves a data URL of `type`; `quality` (0–1) applies to JPEG and
+   * WebP. Waits for `ready`; rejects once disposed or when the file will not decode,
+   * and with a `TypeError` for a bad option. A `background: "transparent"` preview
+   * has no backdrop, so its JPEG comes back on black — ask for `"image/png"`.
+   */
+  capture(options?: { width?: number; height?: number; type?: "image/jpeg" | "image/png" | "image/webp"; quality?: number }): Promise<string>;
   /** 0.187.0+: a copy of the preview's params (seeded from the file's, moved by drags); `null` before `ready`, without `part`, and once disposed. */
   getParams(): Record<string, unknown> | null;
   /**
@@ -1144,3 +1154,21 @@ export function viewSubParts(
  * outside the viewer — a cached preview — opens the same view.
  */
 export function resolveDefaultView(part: PartDefinition): string | null;
+
+/** One view, and the animations it declares, in `listViewAnimations`' catalog. */
+export interface ViewCatalogEntry {
+  /** The key it is declared under in `views`. */
+  name: string;
+  /** Its `label`, else its name. */
+  label: string;
+  /** In declaration order; `[]` when the view declares none. Each label is its `label`, else its name. */
+  animations: Array<{ name: string; label: string; autoplay: boolean }>;
+}
+
+/**
+ * 0.194.0: every view of a part and the animations each declares, in declaration
+ * order, plus `defaultView` (`resolveDefaultView`'s answer, `null` with no views) —
+ * the names a host keys a per-(view, animation) preview cache on. Pure: no kernel,
+ * no build. Also exported from `partforge/oracle`.
+ */
+export function listViewAnimations(part: PartDefinition): { defaultView: string | null; views: ViewCatalogEntry[] };

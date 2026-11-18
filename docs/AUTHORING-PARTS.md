@@ -399,6 +399,13 @@ Rules (all lint-enforced):
   declares a `camera` cue will sweep the camera away from the user's
   persisted framing on every page load, so choose cues for autoplay
   deliberately — the shipped example's `cycle` animation has none.
+- A cached preview (partforge/gltf) bakes the view's `autoplay` animation by
+  default, but a host may bake any animation of the view by name
+  (`samplePreviewAnimation(part, view, params, { buildReads, animation: "open" })`,
+  with `openingParams(part, view, params, sampled.anim)` for the file's params), so
+  every animation should be pose-only if it is to play there. `listViewAnimations(part)`
+  lists each view's animations with their labels, which is how a host offers the
+  choice, so give an animation a `label` people can read.
 
 Headless: `partforge render <part> --animation open --at 0,0.5,1` renders
 tagged stills (`--at` is normalized over the animation's total duration, like

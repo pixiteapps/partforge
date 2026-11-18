@@ -25,7 +25,7 @@ import { orbitPose } from "./camera-orbit.js";
 import { orthoFrustum, perspectiveDistance, isFaceAligned, FACE_ALIGN_COS } from "./projection.js";
 import { depthRangeFor } from "./depth-range.js";
 import { addViewerLights, captureLightPoses, createCaptureLights, createHemisphereLight } from "./viewer-lighting.js";
-import { makeCaptureCamera, recenteredView, captureDepthRange } from "./capture-frame.js";
+import { makeCaptureCamera, recenteredView, captureDepthRange, coverRenderFrame } from "./capture-frame.js";
 import { CANONICAL_VIEWS, cameraPoseForView, cameraCueForPose } from "./view-angles.js";
 
 import { srgbEncodeInPlace, RENDER_STYLES, getRenderStyle, CAD_LIGHT_THEME, CAD_DARK_THEME } from "./renderStyles.js";
@@ -131,8 +131,14 @@ export function thumbnailBackground(background = THUMBNAIL_BG) {
 // past the part's edge framed that crop on purpose. The extent is projected
 // through the same camera the render uses (capture-frame.js), so it is exact;
 // `meshes` are the visible sub-part meshes it reads.
+//
+// `width` and `height` together (0.194.0, mountPreview's capture) fix the output
+// size instead: the live framing cropped to cover it (coverRenderFrame), `size`
+// and `recenter` ignored, scaled down as a pair if either edge passes the texture
+// cap. `type` is the data URL's MIME type (default JPEG; `quality` applies to
+// the lossy ones).
 export function captureCurrentFromScene(
-  { size = 2048, hideGrid = true, quality = 0.9, recenter = false } = {},
+  { size = 2048, hideGrid = true, quality = 0.9, recenter = false, width: outWidth, height: outHeight, type = "image/jpeg" } = {},
   { renderer, liveCamera, target, grid, maxTextureSize, projection = "perspective", orthoHalfH, meshes, sceneBounds },
 ) {
   const MIN_SIZE = 256;
@@ -155,17 +161,26 @@ export function captureCurrentFromScene(
   const fov = liveCamera.fov ?? 45;
   // Null means "keep the viewport framing": part cropped by the viewport,
   // already centred, or nothing to measure.
-  const frame = (recenter && recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long, sceneBounds }))
-    || { width, height };
+  const fixed = outWidth !== undefined && outHeight !== undefined;
+  const frame = fixed
+    ? coverRenderFrame({ aspect, ...fitTextureCap(outWidth, outHeight, maxTextureSize ?? 2048) })
+    : (recenter && recenteredView(pose, { aspect, fov, projection, orthoHalfH, meshes, long, sceneBounds }))
+      || { width, height };
   const before = liveCamera.position.clone();
   const gridWasVisible = grid?.visible;
   if (grid && hideGrid) grid.visible = false;
   try {
-    return renderer.renderOffscreen(pose, { ...frame, fov, quality, projection, orthoHalfH, sceneBounds });
+    return renderer.renderOffscreen(pose, { ...frame, fov, quality, type, projection, orthoHalfH, sceneBounds });
   } finally {
     if (grid && hideGrid) grid.visible = gridWasVisible;
     liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
   }
+}
+
+// A fixed capture size held under the GPU's texture cap, aspect kept.
+function fitTextureCap(width, height, cap) {
+  const k = Math.min(1, cap / Math.max(width, height));
+  return { width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) };
 }
 
 // Options (all default to today's viewer): `transparent` clears the canvas to
@@ -2798,7 +2813,7 @@ export function createViewer(container, part, {
   // VIRTUAL frame's, so the projection is exactly the un-offset one and the
   // output is a pixel-exact crop of what the user framed.
   function renderOffscreen(pose,
-                           { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9,
+                           { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9, type = "image/jpeg",
                              projection = "perspective", orthoHalfH = 1, viewOffset, sceneBounds } = {},
                            renderScene = scene) {
     // A realistic LIVE scene renders HDR into a half-float target and is tone
@@ -2918,7 +2933,7 @@ export function createViewer(container, part, {
       img.data.set(encoded.subarray(src, src + width * 4), y * width * 4);
     }
     ctx.putImageData(img, 0, 0);
-    return canvas.toDataURL("image/jpeg", quality);
+    return canvas.toDataURL(type, quality);
   }
 
   // Pointer feedback excluded from EVERY offscreen render (renderOffscreen),
