@@ -17,6 +17,7 @@ import { planSelectionPlacement } from "./selection-placement.js";
 
 const MIN_SLOT = 44;
 const MAX_SLOT = 2000;
+const CONTROLS_PEEK = 18; // px of the next row shown under the fade; matches app.css
 const ICONS = {
   eyeOff: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>`,
   close: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>`,
@@ -128,6 +129,31 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     }
   }
 
+  // A squeezed controls region ends on a whole row rather than cutting a slider
+  // through its number box, plus a faded sliver of the next row as the cue that
+  // more sits below. Measured with no cap set, so every row sits at its natural spot.
+  function wholeRowsCap(room) {
+    const top = ctlEl.getBoundingClientRect().top;
+    const padBottom = parseFloat(getComputedStyle(ctlEl).paddingBottom) || 0;
+    let fit = 0;
+    for (const row of ctlEl.querySelectorAll(".sec-body > *, .pf-selection-more")) {
+      const r = row.getBoundingClientRect();
+      if (!r.height) continue;
+      const bottom = r.bottom - top + padBottom;
+      if (bottom <= room) fit = Math.max(fit, bottom);
+    }
+    if (!fit) return Math.floor(Math.max(72, room));
+    // A sliver of the next row, under the fade, says there is more to scroll to.
+    return Math.floor(Math.min(room, fit + CONTROLS_PEEK));
+  }
+  // The bottom edge fades while more rows sit below it, and stops fading at the end.
+  function syncControlsFade() {
+    if (!ctlEl) return;
+    const more = ctlEl.scrollHeight - ctlEl.clientHeight - ctlEl.scrollTop > 1;
+    ctlEl.classList.toggle("has-more-below", more);
+  }
+  ctlEl?.addEventListener("scroll", syncControlsFade, { passive: true });
+
   function place() {
     if (!isOpen() || !current?.anchor) return;
     const anchor = toStage(current.anchor);
@@ -169,8 +195,9 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     if (ctlEl) {
       if (page === "spot" && !ctlEl.hidden && natural > plan.maxHeight) {
         const room = plan.maxHeight - (natural - ctlEl.offsetHeight);
-        ctlEl.style.maxHeight = `${Math.max(72, Math.floor(room))}px`;
+        ctlEl.style.maxHeight = `${wholeRowsCap(room)}px`;
       } else ctlEl.style.maxHeight = "";
+      syncControlsFade();
     }
     pop.style.maxHeight = `${plan.maxHeight}px`;
     pop.style.left = `${plan.left}px`;
@@ -179,7 +206,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     tail.hidden = plan.tailOffset === null;
     if (plan.tailOffset !== null) tail.style.left = `${plan.tailOffset - 6}px`;
     body.scrollTop = scrolled;
-    if (ctlEl) ctlEl.scrollTop = ctlScrolled;
+    if (ctlEl) { ctlEl.scrollTop = ctlScrolled; syncControlsFade(); }
     emitSlot();
   }
 
