@@ -301,3 +301,54 @@ test("a suppressed picker neither picks nor flashes, and recovers when the guard
   expect(flashPoint).toHaveBeenCalledTimes(1);
   picker.detach();
 });
+
+test("a click that hits nothing calls onMiss; a drag or a suppressed click does not", () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4));
+  mesh.name = "one";
+  mesh.visible = true;
+  mesh.updateMatrixWorld(true);
+
+  const domElement = document.createElement("div");
+  domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  document.body.appendChild(domElement);
+
+  const onPick = vi.fn();
+  const onMiss = vi.fn();
+  let measuring = false;
+  const picker = attachPicker({ camera, domElement, _subMeshes: { one: mesh }, flashPoint: vi.fn() }, {
+    part,
+    getContext: () => ({ view: "v", params: { a: 1 }, derived: {} }),
+    onPick,
+    onMiss,
+    suppressed: () => measuring,
+  });
+  picker.setActive(true);
+
+  // A corner of the view, well clear of the box.
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 2, clientY: 2, bubbles: true }));
+  expect(onMiss).toHaveBeenCalledTimes(1);
+  expect(onPick).not.toHaveBeenCalled();
+
+  // A hit is a pick, not a miss.
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 100, clientY: 100, bubbles: true }));
+  expect(onPick).toHaveBeenCalledTimes(1);
+  expect(onMiss).toHaveBeenCalledTimes(1);
+
+  // An orbit drag that ends on the background is not a miss.
+  domElement.dispatchEvent(new PointerEvent("pointerdown", { clientX: 2, clientY: 2, bubbles: true }));
+  domElement.dispatchEvent(new PointerEvent("pointermove", { clientX: 60, clientY: 60, bubbles: true }));
+  domElement.dispatchEvent(new PointerEvent("pointerup", { clientX: 60, clientY: 2, bubbles: true }));
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 60, clientY: 2, bubbles: true }));
+  expect(onMiss).toHaveBeenCalledTimes(1);
+
+  // Nor is a suppressed click (measure mode).
+  measuring = true;
+  domElement.dispatchEvent(new MouseEvent("click", { clientX: 2, clientY: 2, bubbles: true }));
+  expect(onMiss).toHaveBeenCalledTimes(1);
+  picker.detach();
+});

@@ -30,6 +30,12 @@ function el(tag, className, attrs = {}) {
   return e;
 }
 
+// Why partforge closed it, for the host's onClose. "clear" is a click on the
+// background, past the part: the user is putting the selection away, so a
+// host should drop what it held for it, where "dismiss" (✕, Escape, an outside
+// click) leaves that to the host.
+const CLOSE_REASONS = new Set(["dismiss", "hide", "gone", "clear"]);
+
 export function attachSelectionPopover({ stage, canvas = null, slot = false, parts, renderThumb = null, getSaveState = () => "screen-only", onClosed = null, toStage = (a) => a, controls = null } = {}) {
   const pop = el("div", "pf-selection-popover", { role: "dialog", "aria-label": "Selected spot", tabindex: "-1" });
   pop.hidden = true;
@@ -344,7 +350,7 @@ export function attachSelectionPopover({ stage, canvas = null, slot = false, par
     setAnchor,
     setSlotHeight,
     showPage,
-    close: (reason) => close(reason === "dismiss" || reason === "hide" || reason === "gone" ? reason : undefined),
+    close: (reason) => close(CLOSE_REASONS.has(reason) ? reason : undefined),
     isOpen,
     getState: () => (isOpen() ? { subPart: current.subPart, page } : null),
     onSlotChange: (cb) => { if (typeof cb !== "function") return () => {}; slotCbs.add(cb); return () => slotCbs.delete(cb); },
