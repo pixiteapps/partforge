@@ -361,3 +361,34 @@ describe("captureCurrentFromScene recenter", () => {
     expect(deps.grid.visible).toBe(true);
   });
 });
+
+// 0.194.0: a fixed output size, cropped to cover (mountPreview's capture).
+import { coverRenderFrame } from "../src/framework/capture-frame.js";
+describe("captureCurrentFromScene at a fixed width × height", () => {
+  const run = (aspect, opts, maxTextureSize = 8192) => {
+    const liveCamera = new THREE.PerspectiveCamera(45, aspect);
+    liveCamera.position.set(18, 12, 18);
+    const renderer = { renderOffscreen: vi.fn(() => "data:image/png;base64,AAAA") };
+    captureCurrentFromScene(opts, { renderer, liveCamera, target: [0, 0, 0], grid: { visible: true }, maxTextureSize });
+    return renderer.renderOffscreen.mock.calls[0][1];
+  };
+  it("a wider live view is cut at the sides", () => {
+    const o = run(2, { width: 400, height: 300, recenter: true, size: 4096 });
+    expect(o).toMatchObject({ width: 400, height: 300, type: "image/jpeg" });
+    expect(o.viewOffset).toEqual({ fullWidth: 600, fullHeight: 300, x: 100, y: 0 });
+  });
+  it("a taller live view is cut top and bottom, and the type passes through", () => {
+    const o = run(1, { width: 400, height: 200, type: "image/png" });
+    expect(o).toMatchObject({ width: 400, height: 200, type: "image/png" });
+    expect(o.viewOffset).toEqual({ fullWidth: 400, fullHeight: 400, x: 0, y: 100 });
+  });
+  it("is scaled down as a pair past the texture cap", () => {
+    const o = run(1, { width: 4000, height: 2000 }, 2048);
+    expect(o).toMatchObject({ width: 2048, height: 1024 });
+  });
+  it("coverRenderFrame keeps the live aspect in the virtual frame", () => {
+    const { viewOffset: v } = coverRenderFrame({ aspect: 4 / 3, width: 640, height: 480 });
+    expect(v.fullWidth / v.fullHeight).toBeCloseTo(4 / 3, 9);
+    expect(v).toMatchObject({ x: 0, y: 0 });
+  });
+});

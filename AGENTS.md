@@ -467,6 +467,19 @@ the installed package, so let the publish finish before bumping the dep there.
   asked (`previewHandles: true`, which the CLI's measure verb passes — the inspect
   path never pays for it). While a baked animation plays, `getParams()` follows the
   player (the live params under its values); a press pauses it and writes them.
+  Since 0.194.0 the file may bake ANY animation of its view, not only the autoplay
+  one: `samplePreviewAnimation`'s `animation` option names it (undefined keeps the
+  autoplay one; an unknown name is null), and `mountPreview` follows the decoded
+  file's animation by NAME among the view's declared animations — it warns and
+  stays a still for params only when the view no longer declares that name.
+  `listViewAnimations(part)` (`view-catalog.js`, main entry and partforge/oracle) is
+  the catalog a host caches per (view, animation) from: every view and its
+  animations in declaration order plus `resolveDefaultView`'s answer.
+  `handle.capture({ width, height, type, quality })` renders the preview's current
+  frame offscreen through `viewer.captureCurrent`, whose `width`/`height` pair
+  crops the live framing to cover (`coverRenderFrame`, capture-frame.js — the same
+  viewOffset mechanism as the recentred crop) and whose `type` picks the data
+  URL's format. `runtime.exportPreview()` still bakes only the autoplay animation.
 - **`src/framework/sheet/`** + **`src/framework/process/`** - sheet parts
   (laser-cut flat stock). `sheet/constants.js` (the vocabulary, importing
   nothing) and `sheet/pose.js` (SheetPose frames: `poseSteps`, `sheetToWorld`,

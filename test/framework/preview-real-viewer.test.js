@@ -2,7 +2,7 @@
 // The cached preview against the REAL viewer, on a fake WebGLRenderer (the
 // mount-realistic.test.js harness): what the user sees across the preview → live
 // swap, the pose exportPreview bakes into its file, and (Task 7) mountPreview.
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ renderer: null }));
 
@@ -1182,7 +1182,7 @@ test("a dragged untracked key survives the player: following and the next press 
   handle.dispose();
 });
 
-test("a file whose animation is not the part's autoplay animation does not follow it, and says so once", async () => {
+test("a file whose animation the view no longer declares does not follow it, and says so once", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const { spin: spec, ...rest } = gearbox.views.gearbox.animations;
   const part = { ...gearbox, views: { ...gearbox.views, gearbox: { ...gearbox.views.gearbox, animations: { ...rest, turn: spec } } } };
@@ -1192,7 +1192,7 @@ test("a file whose animation is not the part's autoplay animation does not follo
   expect(handle.animation.state().status).toBe("playing");
   expect(handle.getParams()).toEqual(handle.__preview.fileParams); // a still, for params
   expect(warn.mock.calls.filter(([m]) => /preview animation/.test(m))).toEqual([
-    ['partforge: preview animation "spin" is not the part\'s autoplay animation "turn"'],
+    ['partforge: preview animation "spin" is not an animation of view "gearbox"'],
   ]);
   handle.dispose();
 });
@@ -1212,4 +1212,78 @@ test("motion.restart during a drag cancels it, then puts the params back to the 
   expect(handle.__preview.params).toEqual(handle.__preview.fileParams);
   expect(ends).toEqual([]); // cancelled, never released
   handle.dispose();
+});
+
+// --- 0.194.0: a baked animation other than the autoplay one, and capture() --------
+test("mountPreview keeps posing a non-autoplay baked animation", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { spin: spec } = gearbox.views.gearbox.animations;
+  // spin is no longer the autoplay animation: "idle" is, and the file bakes spin by name.
+  const part = { ...gearbox, views: { ...gearbox.views, gearbox: { ...gearbox.views.gearbox, animations: {
+    idle: { label: "Idle", duration: 3, autoplay: true, easing: "linear", tracks: { driveAngle: [[0, 0], [1, 90]] } },
+    spin: { ...spec, autoplay: false },
+  } } } };
+  const all = { ...part.defaults };
+  const sampled = samplePreviewAnimation(part, "gearbox", all, { buildReads: () => new Set(), animation: "spin" });
+  const handle = mountPreview(makeStage(), { glb: await partGlb(part, "gearbox", all, sampled), part });
+  await drawn(handle); await settleIdle(handle);
+  playTo(0.4);
+  expect(handle.animation.state().status).toBe("playing");
+  const { t } = handle.animation.state();
+  const named = viewAnimations(part).get("gearbox").find((a) => a.name === "spin");
+  expect(handle.getParams().driveAngle).toBeCloseTo(evaluate(named, t).values.driveAngle, 6);
+  expect(warn.mock.calls.filter(([m]) => /preview animation/.test(String(m)))).toEqual([]);
+  handle.dispose();
+});
+
+describe("capture", () => {
+  let origToDataURL;
+  const shots = [];
+  beforeEach(() => {
+    shots.length = 0;
+    origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function toDataURL(type, quality) {
+      shots.push({ width: this.width, height: this.height, type, quality });
+      return `data:${type};base64,AAAA`;
+    };
+  });
+  afterEach(() => { HTMLCanvasElement.prototype.toDataURL = origToDataURL; });
+
+  test("capture returns a jpeg data URL of the requested size", async () => {
+    const handle = mountPreview(makeStage(), { glb: await gearboxGlb() });
+    await drawn(handle);
+    const url = await handle.capture({ width: 320, height: 200 });
+    expect(url).toMatch(/^data:image\/jpeg;base64,/);
+    expect(shots.at(-1)).toEqual({ width: 320, height: 200, type: "image/jpeg", quality: 0.85 });
+    handle.dispose();
+  });
+
+  test("defaults to 640×480, and passes a type and quality through", async () => {
+    const handle = mountPreview(makeStage(), { glb: await gearboxGlb() });
+    await drawn(handle);
+    await handle.capture();
+    expect(shots.at(-1)).toEqual({ width: 640, height: 480, type: "image/jpeg", quality: 0.85 });
+    const png = await handle.capture({ width: 100, height: 300, type: "image/png", quality: 1 });
+    expect(png).toMatch(/^data:image\/png/);
+    expect(shots.at(-1)).toEqual({ width: 100, height: 300, type: "image/png", quality: 1 });
+    handle.dispose();
+  });
+
+  test("called before ready, it waits for the preview; once disposed it rejects", async () => {
+    const handle = mountPreview(makeStage(), { glb: await gearboxGlb() });
+    const early = handle.capture({ width: 64, height: 64 });
+    await drawn(handle);
+    await expect(early).resolves.toMatch(/^data:image\/jpeg/);
+    handle.dispose();
+    await expect(handle.capture()).rejects.toThrow(/disposed|no preview/);
+  });
+
+  test("a bad size or type throws a TypeError", async () => {
+    const handle = mountPreview(makeStage(), { glb: await gearboxGlb() });
+    await expect(handle.capture({ width: 0 })).rejects.toThrow(TypeError);
+    await expect(handle.capture({ height: 1.5 })).rejects.toThrow(TypeError);
+    await expect(handle.capture({ type: "image/gif" })).rejects.toThrow(TypeError);
+    await expect(handle.capture({ quality: 2 })).rejects.toThrow(TypeError);
+    handle.dispose();
+  });
 });
