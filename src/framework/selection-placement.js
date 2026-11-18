@@ -2,14 +2,14 @@
 // measurements, returns geometry. Moved here from partforge-cloud's
 // pickBubblePlacement.js (2026-10-14) when the pick bubble became partforge's.
 //
-// `tailInset` must stay above the popover's corner radius, or the tail can land
-// on the curve. `gutter` is the clearance kept at each stage edge.
+// `tailInset` must stay above the popover's corner radius (24px) plus the tail's
+// half-width (about 9px), or the tail can land on the curve. `gutter` is the clearance kept at each stage edge.
 export const SELECTION_GUTTER = 12;
 
 export function planSelectionPlacement({ anchor, box, stage }, options = {}) {
   // Destructuring defaults, not a spread: an explicit `undefined` from a caller
   // forwarding options must fall back, not yield NaN.
-  const { gap = 10, tailInset = 28, gutter = SELECTION_GUTTER } = options;
+  const { gap = 10, tailInset = 36, gutter = SELECTION_GUTTER } = options;
   const minLeft = stage.left + gutter;
   const maxLeft = stage.left + stage.width - gutter - box.width;
   const centred = anchor.x - box.width / 2;

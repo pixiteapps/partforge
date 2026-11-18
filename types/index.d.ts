@@ -687,9 +687,12 @@ export interface SelectionRuntime {
    * Why partforge closed it. A host's own `close()` does not fire this.
    * `"gone"` also fires when anything releases the pick marker
    * (`runtime.pickMarker.release()` included). Any close releases every held
-   * marker, including one the host held itself.
+   * marker, including one the host held itself. `"clear"` is a click on the
+   * background, past the part: the user is putting the selection away, so drop
+   * whatever you held for it. `"dismiss"` (✕, Escape, an outside click) leaves
+   * that to you.
    */
-  onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" }) => void): () => void;
+  onClose(cb: (event: { reason: "dismiss" | "hide" | "gone" | "clear" }) => void): () => void;
   /**
    * Fires when "More in the panel" is pressed while only the host can show the rail:
    * it holds the pane lease (`runtime.setHostPane`) or docks the rail
