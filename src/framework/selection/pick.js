@@ -14,7 +14,9 @@ export { worldToSubPartLocal };
 // onPick receives (selection, anchor): where the marker this click flashed
 // landed on the canvas, in CSS px from its top-left, and the raw hit (internal:
 // subPart, triIndex, onCutPlane) — the public Selection gains nothing.
-export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
+// onMiss (optional) fires for a click that hits nothing: the background, past
+// the part. Same guards as a pick — a drag or a suppressed click is neither.
+export function attachPicker(viewer, { part, getContext, onPick, onMiss, suppressed }) {
   let active = false;
   const drag = createDragTracker();
 
@@ -26,7 +28,7 @@ export function attachPicker(viewer, { part, getContext, onPick, suppressed }) {
     // includeSection: in a cutaway the flat cut face is the biggest thing on
     // screen, and it is the one surface with no geometry behind it to hit.
     const hit = raycastViewer(viewer, ev.clientX, ev.clientY, { includeSection: true });
-    if (!hit) return;
+    if (!hit) { onMiss?.(); return; }
     const selection = resolveSelection(part, getContext(), hit);
     viewer.flashPoint([hit.pointWorld.x, hit.pointWorld.y, hit.pointWorld.z]);
     // The anchor is the MARKER's projection, not the pointer's position, even

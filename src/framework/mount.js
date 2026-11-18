@@ -1305,6 +1305,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // of a drag), so it never also picks: takeClick() answers once, and comes
         // first so the claim is spent on this click even when another guard is up.
         suppressed: () => (poseMode?.takeClick() ?? false) || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
+        // A click on the background, past the part, puts the selection away.
+        onMiss: () => { if (selPopover?.isOpen()) selPopover.close("clear"); },
         onPick: (selection, anchor, hit) => {
           onPick({
             selection,

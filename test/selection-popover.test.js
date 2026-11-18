@@ -192,6 +192,17 @@ describe("selection popover: closing", () => {
     expect(p.isOpen()).toBe(false);
     p.detach();
   });
+  it("close('clear') carries its reason; an unknown reason fires no listener", () => {
+    const { p, onClosed, reasons } = opened();
+    p.close("clear");
+    expect(reasons).toEqual(["clear"]);
+    expect(onClosed).toHaveBeenCalledTimes(1);
+    p.open({ subPart: "body", anchor: at });
+    p.close("nonsense");
+    expect(reasons).toEqual(["clear"]);
+    expect(p.isOpen()).toBe(false);
+    p.detach();
+  });
   it("the eye hides the part and closes with hide", () => {
     const { p, parts, reasons } = opened();
     p.element.querySelector(".pf-selection-eye").click();
