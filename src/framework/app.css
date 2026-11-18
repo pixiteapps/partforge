@@ -892,13 +892,16 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-card-reset { font: inherit; font-weight: 500; color: var(--pf-accent); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
 .pf-card button:focus-visible, .pf-card input:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 
-/* The selection popover (selection-popover.js): at the picked spot. */
+/* The selection popover (selection-popover.js): at the picked spot.
+   The corner is concentric with the head's swatch: the swatch (22px) sits 13px in
+   from both outer edges (border 1 + padding 12, and border 1 + padding 9 + the head
+   button's 3), so the radius is 13 + 11 = 24. Change one and change the other. */
 .pf-selection-popover {
   position: absolute; z-index: 31;
   width: min(320px, calc(100% - 24px)); overflow: visible;
-  padding: 8px 12px 10px; display: flex; flex-direction: column;
+  padding: 9px 12px 12px; display: flex; flex-direction: column;
   background: var(--pf-surface); border: 1px solid var(--pf-border);
-  border-radius: 16px; box-shadow: var(--pf-shadow-float);
+  border-radius: 24px; box-shadow: var(--pf-shadow-float);
   color: var(--pf-text); font-size: 12px;
 }
 .pf-selection-popover[hidden], .pf-selection-popover [hidden] { display: none; }
