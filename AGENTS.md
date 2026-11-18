@@ -108,8 +108,10 @@ npx partforge pick-serve                           # request-a-pick: agent asks 
 npx partforge ingest   <file> --out <output-file>  # SVG -> partforge-vector JSON, PNG pass-through, font validation - no browser
 ```
 
-CI (`.github/workflows/ci.yml`) runs `npm test` then the smoke check against
-the app list in ci.yml. Playwright's Chromium is
+CI (`.github/workflows/ci.yml`) runs in parallel jobs: `unit` (lint, typecheck,
+`npm test`), `smoke` (the smoke check against the app list in ci.yml, split over
+two shards — add a new page to the lighter one) and `pose`. The required `test`
+check is a final job that passes only when all of them did. Playwright's Chromium is
 required for the smoke check only: `npm i -D playwright && npx playwright
 install chromium`.
 

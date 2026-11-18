@@ -8,6 +8,12 @@ on:
     branches: [main]
 permissions:
   contents: read
+# A new push to a PR cancels that PR's run still in flight: only the latest commit's
+# result can gate the merge, so the old run only holds runners. Pushes to main are
+# never cancelled — each merge commit keeps its own result.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   # A merge whose version is already on npm publishes NOTHING. publish.yml's guard
   # is npm itself ("is this version published?"), so it correctly does nothing and
@@ -49,20 +55,24 @@ jobs:
             echo "no shippable files changed (src/, bin/, types/) — no release needed"
           fi
 
-  test:
+  # The checks run as parallel jobs, not as steps of one job: run one after another
+  # they took ~18 min, about 12 of it browser checks waiting on each other. The
+  # slowest job now sets the wall time (~6 min).
+  #
+  # Every job and slow step carries a ceiling. Without one a hang — a stalled
+  # Chromium/apt download, a test that never settles — runs to GitHub's 6-hour
+  # default and holds the PR's checks for that long; with one it fails in
+  # minutes and a re-run usually clears it. Ceilings sit at roughly 3-4x a
+  # healthy run, so a slow day still passes.
+  unit:
     runs-on: ubuntu-latest
-    # Every job and slow step carries a ceiling. Without one a hang — a stalled
-    # Chromium/apt download, a test that never settles — runs to GitHub's 6-hour
-    # default and holds the PR's checks for that long; with one it fails in
-    # minutes and a re-run usually clears it.
-    # Set at roughly 4x a healthy run (the job takes ~7 min, npm test ~3, the
-    # Playwright install ~20 s), so a slow day still passes.
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
+          cache: npm
       - run: npm ci
       # Correctness linting. Style is deliberately not linted (see
       # eslint.config.js); what fails here is code that is wrong, not code that
@@ -72,29 +82,112 @@ jobs:
       # and the demo harness — the one class of rot the suite and the type
       # checker both see straight through.
       - run: npm run lint:dead
-      - run: npm test
-        timeout-minutes: 15
       # The shipped .d.ts files are hand-written, so nothing but tsc catches it when
-      # they drift from the JS they describe.
+      # they drift from the JS they describe. Before the suite: it takes seconds.
       - run: npm run typecheck
-      - run: npx playwright install --with-deps chromium # browser for the smoke check
+      - run: npm test # ~5.5 min
+        timeout-minutes: 20
+
+  # The headless smoke check boots each app in real Chromium, catching
+  # worker/WASM/wiring failures that unit tests miss. Pages are split over shards
+  # of roughly equal time (~30-40 s a page); add a new page to the lighter one.
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: a
+            pages: >-
+              demo.html
+              planter.html
+              filleted-box.html
+              text-smoke.html
+              hinged-box.html
+              screw.html
+              mixed-smoke.html
+              propeller.html
+          - shard: b
+            pages: >-
+              import-demo.html
+              lofted-bottle.html
+              emblem.html
+              relief.html
+              robot-arm.html
+              hand.html
+              gearbox.html
+    name: smoke (${{ matrix.shard }})
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
         timeout-minutes: 10
-      # Distinct ports per check: each run spawns `vite --strictPort`, and the prior
+      # Distinct ports per page: each run spawns `vite --strictPort`, and the prior
       # run's vite can still hold its port when the next starts (the npx-wrapper kill
       # orphans the vite child on the Linux runner), so a shared port fails the 2nd run.
-      - run: CHECK_PORT=5179 node scripts/check-app.mjs demo.html
-      - run: CHECK_PORT=5180 node scripts/check-app.mjs planter.html
-      - run: CHECK_PORT=5181 node scripts/check-app.mjs filleted-box.html
-      - run: CHECK_PORT=5182 node scripts/check-app.mjs text-smoke.html --allow-no-cutaway
-      - run: CHECK_PORT=5183 node scripts/check-app.mjs hinged-box.html
-      - run: CHECK_PORT=5184 node scripts/check-app.mjs screw.html
-      - run: CHECK_PORT=5185 node scripts/check-app.mjs mixed-smoke.html # split-backend generate (per-sub-part routing)
-      - run: CHECK_PORT=5186 node scripts/check-app.mjs propeller.html # k.loftSmooth reference part (spline-interpolated airfoil blades)
-      - run: CHECK_PORT=5187 node scripts/check-app.mjs import-demo.html # k.import reference part (STL ghost + deviation gate)
-      - run: CHECK_PORT=5188 node scripts/check-app.mjs lofted-bottle.html # Shape2D loft reference part (curve-mode body + resample-mode shoulder)
-      - run: CHECK_PORT=5189 node scripts/check-app.mjs emblem.html # k.vector2d reference part (ingested vector art)
-      - run: CHECK_PORT=5190 node scripts/check-app.mjs relief.html # k.heightfield reference part (images / type: "image" control, depth map to relief plate)
-      - run: CHECK_PORT=5192 node scripts/check-app.mjs robot-arm.html # goal-mode IK reference part (tool handle, seed, probe)
-      - run: CHECK_PORT=5193 node scripts/check-app.mjs hand.html # angles-mode IK reference part (five lockable digit handles, presets, flat print kit)
-      - run: CHECK_PORT=5194 node scripts/check-app.mjs gearbox.html # rotary-handle reference part (mechanisms domain gear train, wrapped driveAngle)
-      - run: CHECK_PORT=5191 npm run check:pose # Pose mode: drag a handle in real Chromium (ghost path, regen hold, one commit)
+      # Every page is checked even after one fails, so one run reports them all.
+      # text-smoke.html has no cutaway control; mixed-smoke.html is the split-backend
+      # fixture (per-sub-part routing); the rest are reference parts.
+      - name: check pages
+        env:
+          PAGES: ${{ matrix.pages }}
+        run: |
+          port=5179
+          failed=""
+          for page in $PAGES; do
+            flags=""
+            [ "$page" = "text-smoke.html" ] && flags="--allow-no-cutaway"
+            echo "::group::$page"
+            start=$SECONDS
+            if ! CHECK_PORT=$port node scripts/check-app.mjs "$page" $flags; then
+              failed="$failed $page"
+            fi
+            echo "$page took $((SECONDS - start)) s"
+            echo "::endgroup::"
+            port=$((port + 1))
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::smoke check failed:$failed"
+            exit 1
+          fi
+
+  # Pose mode: drag handles in real Chromium (ghost path, regen hold, one commit).
+  # Its own job because it alone takes ~4.5 min.
+  pose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+      - run: CHECK_PORT=5191 npm run check:pose
+
+  # The `main` ruleset requires a check named "test". This job keeps that one name
+  # standing for every job above, so adding or splitting a job never needs a
+  # ruleset change: it passes only when all of them passed. `always()` makes it
+  # run (and fail) when one of them failed or was cancelled, rather than being
+  # skipped — a skipped required check counts as passing.
+  test:
+    needs: [unit, smoke, pose]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every check passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then exit 1; fi
+          done
