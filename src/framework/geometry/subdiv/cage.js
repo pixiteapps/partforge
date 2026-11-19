@@ -22,12 +22,23 @@
 // outside. Tie-break (a tilted face can give two edges the same midpoint value on the
 // first axis, within 1e-9 mm): the smaller midpoint on the second in-plane axis wins,
 // then the edge met first in the stored walk.
+//
+// Mirror (`"yz"` reflects X, `"xz"` Y, `"xy"` Z, through the box center): the cage stays
+// whole and closed, and every point has a twin (`twin`, itself on the plane) and a half
+// (`half`: 1 positive, -1 far, 0 on the plane). Far-side faces are named after their
+// positive twin plus `~`: the far box side's faces, the far half of each side the plane
+// cuts, and every face a change makes there. Changing methods take positive ids only and
+// apply to those faces and their reflections at once: the far points are set to the
+// reflection of their twins, and a point on the plane keeps only the in-plane part of its
+// change. A region sharing an edge with its own reflection extrudes as one region with
+// it, so no wall is left on the plane; its sides are numbered from the positive edge that
+// leaves the plane, counter-clockwise seen from outside, and the far ones carry `~`.
 
 export const MAX_CAGE_FACES = 2000;
 
 const MIN_EDGE = 1e-6;
 const TIE_EPS = 1e-9;
-const MIRRORS = ["yz", "xz", "xy"];
+const MIRRORS = ["yz", "xz", "xy"];   // index = the axis reflected
 const CAGES = new WeakSet();
 
 const fail = (msg) => { throw new Error(`cage: ${msg}`); };
@@ -103,8 +114,12 @@ export function createCage(spec) {
     fail(`box.segs must be three positive integers, not ${JSON.stringify(segs)}`);
   const total = 2 * (segs[0] * segs[1] + segs[1] * segs[2] + segs[0] * segs[2]);
   if (total > MAX_CAGE_FACES) fail(`box.segs make ${total} faces, more than MAX_CAGE_FACES (${MAX_CAGE_FACES})`);
+  const ax = mirror === undefined ? -1 : MIRRORS.indexOf(mirror);
+  if (ax >= 0 && segs[ax] % 2 !== 0)
+    fail(`mirror "${mirror}" needs an even box.segs count across the plane, not ${segs[ax]}`);
 
-  const state = { points: [], faces: new Map(), removed: new Map(), mirror };
+  const state = { points: [], faces: new Map(), removed: new Map(), ax, plane: ax >= 0 ? center[ax] : 0,
+    twin: [], half: [] };
 
   // Box lattice points on the surface, shared by key.
   const lattice = new Map();
@@ -130,7 +145,22 @@ export function createCage(spec) {
         return latticePoint(idx);
       };
       const quad = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
-      state.faces.set(`${side}:${i},${j}`, forward ? quad : quad.reverse());
+      state.faces.set(boxFaceId(side, axis, sign, ia, i, j, ax, segs), forward ? quad : quad.reverse());
+    }
+  }
+  if (ax >= 0) {
+    // Pair lattice points across the plane; set the far ones from their twins so the
+    // cage starts exactly symmetric.
+    for (const [key, p] of lattice) {
+      const idx = key.split(",").map(Number);
+      const t = idx.slice();
+      t[ax] = segs[ax] - idx[ax];
+      state.twin[p] = lattice.get(t.join(","));
+      state.half[p] = Math.sign(2 * idx[ax] - segs[ax]);
+    }
+    for (const p of lattice.values()) {
+      if (state.half[p] === 0) state.points[p][ax] = state.plane;
+      if (state.half[p] < 0) state.points[p] = reflectPoint(state.points[state.twin[p]], ax, state.plane);
     }
   }
 
@@ -139,12 +169,31 @@ export function createCage(spec) {
   return cage;
 }
 
+// A box face's id; with a mirror, a far-side face takes its positive twin's id plus `~`.
+function boxFaceId(side, axis, sign, ia, i, j, ax, segs) {
+  if (ax < 0) return `${side}:${i},${j}`;
+  if (axis === ax) return sign > 0 ? `${side}:${i},${j}` : `+${side.slice(1)}:${i},${j}~`;
+  const across = ia === ax ? i : j;
+  if (2 * across >= segs[ax]) return `${side}:${i},${j}`;
+  const t = segs[ax] - 1 - across;
+  return ia === ax ? `${side}:${t},${j}~` : `${side}:${i},${t}~`;
+}
+
+function reflectPoint(p, ax, plane) {
+  const q = p.slice();
+  q[ax] = 2 * plane - p[ax];
+  return q;
+}
+
 export function isCage(value) {
   return CAGES.has(value);
 }
 
 function makeCage(state) {
-  const { points, faces, removed } = state;
+  const { points, faces, removed, ax, plane, twin, half } = state;
+  const mirrored = ax >= 0;
+  const reflect = (p) => reflectPoint(p, ax, plane);
+  const twinId = (id) => (id.endsWith("~") ? id.slice(0, -1) : `${id}~`);
 
   function resolve(id) {
     if (typeof id !== "string") fail(`a face is named by its id string, not ${JSON.stringify(id)}`);
@@ -157,10 +206,15 @@ function makeCage(state) {
     return fail(`no face "${id}"${near.length ? `; nearest: ${near.join(", ")}` : ""}`);
   }
   const ptsOf = (verts) => verts.map((i) => points[i]);
+  // The faces a changing method names: positive-side ids only.
   const faceList = (face) => {
     const ids = Array.isArray(face) ? face : [face];
     if (ids.length === 0) fail("no faces named");
-    for (const id of ids) resolve(id);
+    for (const id of ids) {
+      if (mirrored && typeof id === "string" && id.endsWith("~"))
+        fail(`face "${id}" is a reflected face; change "${twinId(id)}" and the mirror follows`);
+      resolve(id);
+    }
     if (new Set(ids).size !== ids.length) fail(`a face is named twice in [${ids.join(", ")}]`);
     return ids;
   };
@@ -170,62 +224,153 @@ function makeCage(state) {
   const assertFreeId = (id) => {
     if (faces.has(id) || removed.has(id)) fail(`id "${id}" is already in use`);
   };
+  // An author's id may not reuse an existing id or name a family one already heads.
+  const assertFreeFamily = (id) => {
+    for (const used of [...faces.keys(), ...removed.keys()])
+      if (used === id || used.startsWith(`${id}:`) || used.startsWith(`${id}.`))
+        fail(`id "${id}" is already in use (by "${used}")`);
+  };
+  // Does the region share an edge with its own reflection (so it touches the plane)?
+  const touchesPlane = (ids) => {
+    const own = new Set(ids.flatMap((f) => faces.get(f).map((a, k, v) => `${a}>${v[(k + 1) % 4]}`)));
+    return ids.some((f) => faces.get(twinId(f)).some((a, k, v) => own.has(`${v[(k + 1) % 4]}>${a}`)));
+  };
+  const pushPoint = (pos, h) => {
+    points.push(pos);
+    if (mirrored) { half.push(h); twin.push(points.length - 1); }
+    return points.length - 1;
+  };
+  const pair = (p, q) => { twin[p] = q; twin[q] = p; };
+
+  // New positions for positive-side points → the same map with their twins added: a far
+  // twin is the reflection, a point on the plane keeps only its in-plane change.
+  function withMirror(next) {
+    if (!mirrored) return next;
+    const all = new Map(next);
+    for (const [p, q] of next) {
+      if (half[p] === 0) { const r = q.slice(); r[ax] = plane; all.set(p, r); }
+      else all.set(twin[p], reflect(q));
+    }
+    return all;
+  }
 
   function extrude(face, opts = {}) {
     const ids = faceList(face);
     const region = Array.isArray(face);
     const { by, scale = 1, steps = 1, id } = opts;
     if (id !== undefined && (typeof id !== "string" || id === "")) fail("extrude id must be a non-empty string");
+    if (id !== undefined && id.includes("~")) fail(`extrude id may not contain "~" (it marks reflected faces): "${id}"`);
+    if (id !== undefined) assertFreeFamily(id);
     if (!Number.isInteger(steps) || steps < 1) fail(`extrude steps must be an integer >= 1, not ${JSON.stringify(steps)}`);
     if (!(isNum(by) || isVec3(by))) fail(`extrude by must be a finite number or [x, y, z], not ${JSON.stringify(by)}`);
     if ((isNum(by) ? Math.abs(by) : len(by)) === 0) fail("extrude by has zero length");
     const s = vec3Scale(scale, "extrude scale");
 
-    const loop = boundaryLoop(ids);
-    const normal = unit(ids.reduce((n, f) => add(n, newell(ptsOf(faces.get(f)))), [0, 0, 0]));
+    // A region touching the plane extrudes joined with its reflection; any other mirrored
+    // region extrudes alone and is then copied across.
+    const joined = mirrored && touchesPlane(ids);
+    const all = joined ? [...ids, ...ids.map(twinId)] : ids;
+    const loop = boundaryLoop(all);
+    const nsum = all.reduce((n, f) => add(n, newell(ptsOf(faces.get(f)))), [0, 0, 0]);
+    if (isNum(by) && len(nsum) === 0)
+      fail("extrude by is a number, but the faces' normal sums to zero length; give by as [x, y, z]");
+    const normal = unit(nsum);
     const offset = isNum(by) ? normal.map((x) => x * by) : by.slice();
 
     // Cap positions: every region point moved by `offset`, then scaled about their mean.
-    const regionPts = uniquePoints(ids);
-    const moved = new Map(regionPts.map((p) => [p, add(points[p], offset)]));
-    const about = mean([...moved.values()]);
-    const capPos = new Map([...moved].map(([p, q]) => [p, add(about, mul(sub(q, about), s))]));
-    const capFaces = ids.map((f) => faces.get(f));
+    // Joined: computed for the positive half and the plane, then reflected.
+    const regionPts = uniquePoints(all);
+    const near = joined ? regionPts.filter((p) => half[p] >= 0) : regionPts;
+    const moved = new Map(near.map((p) => [p, add(points[p], offset)]));
+    let about = mean(joined ? regionPts.map((p) => moved.get(p) ?? reflect(moved.get(twin[p]))) : [...moved.values()]);
+    if (joined) { about = about.slice(); about[ax] = plane; }
+    let capPos = new Map([...moved].map(([p, q]) => [p, add(about, mul(sub(q, about), s))]));
+    if (joined) capPos = withMirror(capPos);
+    const capFaces = all.map((f) => faces.get(f));
     if (shortEdge(capFaces, (p) => capPos.get(p)))
       fail(`extrude scale ${JSON.stringify(scale)} makes a cap edge shorter than ${MIN_EDGE} mm`);
 
     const base = id ?? `${ids[0]}>`;
     const capIds = region ? ids.map((_, k) => `${base}:${k}`) : [base];
     const sideId = (m, k) => (m === steps ? `${base}.s${k}` : `${base}.${m}.s${k}`);
+    const edges = joined ? joinedSides(loop) : orderedSides(loop, normal);
     const sideIds = [];
-    for (let m = 1; m <= steps; m++) for (let k = 0; k < loop.length; k++) sideIds.push(sideId(m, k));
-    for (const nid of [...capIds, ...sideIds]) assertFreeId(nid);
-    const count = faces.size - ids.length + capIds.length + sideIds.length;
+    for (let m = 1; m <= steps; m++) for (const { k } of edges) sideIds.push(sideId(m, k));
+    const newIds = [...capIds, ...sideIds];
+    const copies = mirrored && !joined;
+    const farIds = copies ? newIds.map(twinId) : joined ? capIds.map(twinId) : [];
+    for (const nid of [...newIds, ...farIds]) assertFreeId(nid);
+    const count = faces.size + (copies ? 2 : 1) * (newIds.length - ids.length);
     if (count > MAX_CAGE_FACES) fail(`extrude makes ${count} faces, more than MAX_CAGE_FACES (${MAX_CAGE_FACES})`);
 
     // Valid: commit. Rings 1 … steps on the boundary; the cap ring also covers the interior.
+    const firstNew = points.length;
     const ring = [new Map(loop.map((p) => [p, p]))];
     for (let m = 1; m <= steps; m++) {
       const r = new Map();
-      for (const p of m === steps ? regionPts : loop) {
-        r.set(p, points.length);
-        points.push(lerp(points[p], capPos.get(p), m / steps));
+      const srcs = m === steps ? regionPts : loop;
+      const at = (p) => (m === steps ? capPos.get(p).slice() : lerp(points[p], capPos.get(p), m / steps));
+      for (const p of srcs) {
+        if (joined && half[p] < 0) continue;
+        const pos = at(p);
+        if (joined && half[p] === 0) pos[ax] = plane;
+        r.set(p, pushPoint(pos, joined ? half[p] : 1));
+      }
+      if (joined) for (const p of srcs) if (half[p] < 0) {
+        const q = r.get(twin[p]);
+        r.set(p, pushPoint(reflect(points[q]), -1));
+        pair(q, r.get(p));
       }
       ring.push(r);
     }
-    const k0 = firstEdge(ptsOf(loop), normal);
-    const edges = loop.map((_, k) => [loop[(k0 + k) % loop.length], loop[(k0 + k + 1) % loop.length]]);
-    ids.forEach((f, k) => {
-      const verts = faces.get(f);
+    const capOf = (f) => faces.get(f).map((p) => ring[steps].get(p));
+    const made = [];   // [id, verts] of every new positive face, for the copy across
+    all.forEach((f, i) => {
+      const k = i % ids.length;
+      const capId = i < ids.length ? capIds[k] : twinId(capIds[k]);
+      const verts = capOf(f);
       faces.delete(f);
-      removed.set(f, [capIds[k]]);
-      faces.set(capIds[k], verts.map((p) => ring[steps].get(p)));
+      removed.set(f, [capId]);
+      faces.set(capId, verts);
+      made.push([capId, verts]);
     });
-    for (let m = 1; m <= steps; m++) edges.forEach(([a, b], k) => {
+    for (let m = 1; m <= steps; m++) for (const { a, b, k } of edges) {
       const lo = ring[m - 1], hi = ring[m];
-      faces.set(sideId(m, k), [lo.get(a), lo.get(b), hi.get(b), hi.get(a)]);
-    });
+      const sid = sideId(m, k);
+      const verts = [lo.get(a), lo.get(b), hi.get(b), hi.get(a)];
+      faces.set(sid, verts);
+      made.push([sid, verts]);
+    }
+    if (copies) {
+      const last = points.length;
+      for (let q = firstNew; q < last; q++) pair(q, pushPoint(reflect(points[q]), -1));
+      ids.forEach((f) => { removed.set(twinId(f), [twinId(removed.get(f)[0])]); faces.delete(twinId(f)); });
+      for (const [fid, [a, b, c, d]] of made) faces.set(twinId(fid), [twin[a], twin[d], twin[c], twin[b]]);
+    }
     return region ? capIds : capIds[0];
+  }
+
+  // Boundary edges in side order (Task 1's rule), numbered 0 … n-1.
+  function orderedSides(loop, n) {
+    const k0 = firstEdge(ptsOf(loop), n);
+    return loop.map((_, k) => ({ a: loop[(k0 + k) % loop.length], b: loop[(k0 + k + 1) % loop.length], k }));
+  }
+
+  // A joined region's boundary: positive edges numbered counter-clockwise from the one
+  // that leaves the plane; each far edge takes its twin's number plus `~`.
+  function joinedSides(loop) {
+    const n = loop.length;
+    const start = loop.findIndex((p, i) => half[p] === 0 && half[loop[(i + 1) % n]] > 0);
+    if (start < 0) fail("a region touching the mirror plane has no boundary edge leaving it");
+    const edges = loop.map((_, i) => ({ a: loop[(start + i) % n], b: loop[(start + i + 1) % n] }));
+    const number = new Map();
+    for (const e of edges) if (half[e.a] > 0 || half[e.b] > 0) number.set(`${e.a}>${e.b}`, number.size);
+    return edges.map((e) => {
+      if (number.has(`${e.a}>${e.b}`)) return { ...e, k: `${number.get(`${e.a}>${e.b}`)}` };
+      const k = number.get(`${twin[e.b]}>${twin[e.a]}`);
+      if (k === undefined) fail("a region touching the mirror plane has a boundary edge on the plane");
+      return { ...e, k: `${k}~` };
+    });
   }
 
   // The region's boundary as one counter-clockwise loop of point indices (seen from
@@ -262,16 +407,24 @@ function makeCage(state) {
   function move(face, offset) {
     const ids = faceList(face);
     if (!isVec3(offset)) fail(`move offset must be [x, y, z] finite numbers, not ${JSON.stringify(offset)}`);
-    for (const p of uniquePoints(ids)) points[p] = add(points[p], offset);
+    const next = withMirror(new Map(uniquePoints(ids).map((p) => [p, add(points[p], offset)])));
+    for (const [p, q] of next) points[p] = q;
   }
 
   function scale(face, s, opts = {}) {
     const ids = faceList(face);
     const f = vec3Scale(s, "scale");
     const pts = uniquePoints(ids);
-    const about = opts.about ?? mean(pts.map((p) => points[p]));
+    // A region touching the plane scales about its joined region's mean, on the plane.
+    const joined = mirrored && touchesPlane(ids);
+    let about = opts.about;
+    if (about === undefined && joined) {
+      about = mean(uniquePoints([...ids, ...ids.map(twinId)]).map((p) => points[p]));
+      about[ax] = plane;
+    }
+    about ??= mean(pts.map((p) => points[p]));
     if (!isVec3(about)) fail("scale about must be [x, y, z] finite numbers");
-    const next = new Map(pts.map((p) => [p, add(about, mul(sub(points[p], about), f))]));
+    const next = withMirror(new Map(pts.map((p) => [p, add(about, mul(sub(points[p], about), f))])));
     // Every face touching a scaled point, so a neighbour's edge is checked too.
     const touched = [...faces.values()].filter((v) => v.some((p) => next.has(p)));
     if (shortEdge(touched, (p) => next.get(p) ?? points[p]))
