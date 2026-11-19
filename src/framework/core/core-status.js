@@ -49,6 +49,17 @@ export function onCoreFallback(listener) {
   return () => listeners.delete(listener);
 }
 
+// Whether a k.implicit call that finds the core's full build not loaded yet should
+// THROW (code NEEDS_FULL_CORE) instead of meshing in JS: a caller that can load the
+// build and run the work again — the worker's job loop — turns it on for the length of
+// a job, so an organic part is meshed natively from its first build. Off by default:
+// anything else gets the JS engine's identical answer at once. Here, not in core.js,
+// so the job loop can set it without importing the WebAssembly.
+export const NEEDS_FULL_CORE = "NEEDS_FULL_CORE";
+let fullRequired = false;
+export function setFullCoreRequired(on) { const was = fullRequired; fullRequired = !!on; return was; }
+export const fullCoreRequired = () => fullRequired;
+
 // Tests only (via core.js's setCoreForTesting): forget everything recorded.
 export function resetCoreStatus() {
   fallback = null;

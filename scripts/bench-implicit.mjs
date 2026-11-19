@@ -10,7 +10,9 @@ import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owner
 import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { applySurfaceDetail, flattenDetail } from "../src/framework/geometry/implicit/detail.js";
-import { core, setCoreEnabled } from "../src/framework/core/core.js";
+import { core, loadFullCore, setCoreEnabled } from "../src/framework/core/core.js";
+
+await loadFullCore(); // the implicit engine is the core's full build, loaded on demand
 import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { handSpec, vaseSpec } from "../test/fixtures/implicit-trees.js";

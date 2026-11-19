@@ -10,10 +10,13 @@ import { ensureImages } from "../framework/images.js";
 import { ensureVectors } from "../framework/vectors.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
+import { loadFullCore } from "../framework/core/core.js";
 
 export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors } = {}) {
   const wasm = await Module();
   wasm.setup();
+  await loadFullCore(); // k.implicit's native engine (core.js): loaded on demand, and Node has no reason to wait
+
   const kernel = createManifoldKernel(wasm, { quality });
   if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));
     for (const [name, buf] of await resolveFonts(nodeAssetSources(fonts))) kernel._fonts.set(name, parseFont(opentype, buf, name)); }

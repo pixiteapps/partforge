@@ -22,6 +22,7 @@ import { controlNodes } from "./panel/model.js";
 import { desugar } from "./panel/legacy.js";
 import { probeSubPartPose } from "./pose-probe-core.js";
 import { concatMeshPayloads } from "./geometry/mesh-concat.js";
+import { NEEDS_FULL_CORE, setFullCoreRequired } from "./core/core-status.js";
 
 export const FONT_SOURCE_CACHE_MAX = 4;
 
@@ -190,7 +191,29 @@ function nudgedFor(part, p) {
   } catch { return null; }
 }
 
+// A job runs with the native core's full build REQUIRED (core/core-status.js): the
+// first k.implicit call in a worker that has only the base build throws
+// NEEDS_FULL_CORE, and the job is run again once the build is loaded — so an organic
+// part meshes natively from its first preview, and a part with no k.implicit never
+// downloads the engine. The retry starts the job over (sub-parts already built are
+// cache hits; a staged or partial delivery is posted again, which a host applies by
+// sub-part name). One retry: after it the build is loaded, or its load failed and
+// the JS engine answers.
 export async function handle(kernel, part, msg, post, opts = {}) {
+  const was = setFullCoreRequired(true);
+  let retry = false;
+  try {
+    retry = (await runJob(kernel, part, msg, post, opts)) === NEEDS_FULL_CORE;
+    if (retry) {
+      await (await import("./core/core.js")).loadFullCore();
+      await runJob(kernel, part, msg, post, opts);
+    }
+  } finally {
+    setFullCoreRequired(was);
+  }
+}
+
+async function runJob(kernel, part, msg, post, opts) {
   const isStale = opts.isStale ?? (() => false);
   const onProgress = (phase) => post({ type: "progress", phase, jobId: msg.jobId });
   const label = (name) => part.parts[name].label ?? name;
@@ -759,6 +782,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
     // failed job covered, so only those latch to OCCT — not the whole part.
+    if (err?.code === NEEDS_FULL_CORE) return NEEDS_FULL_CORE; // handle() loads it and runs the job again
     if (err?.code === "NEEDS_IMPORT_MESH") post({ type: "needs-import-mesh", jobId: msg.jobId, subparts: msg.subparts });
     else if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId, subparts: msg.subparts });
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });

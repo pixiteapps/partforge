@@ -12,7 +12,7 @@
 //
 // meshImplicitCore runs a whole meshImplicit on one session; implicit/index.js
 // dispatches to it when the core is on.
-import { core, countRefusedMesh, OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
+import { fullCore, countRefusedMesh, OUT_OF_MEMORY, poisonCore, releaseIfIdle } from "./core.js";
 import { CLEANUP, guardCos2 } from "../geometry/implicit/cleanup.js";
 import { DETAIL_STRIDE, flattenDetail } from "../geometry/implicit/detail.js";
 import { implicitResult } from "../geometry/implicit/result.js";
@@ -563,14 +563,15 @@ function acceptsPlan(plan) {
  * `owners`, the default) takes the owner path as meshImplicit does — owner mesher, owner
  * cleanup, crease cut, untangle and the detail's seam fade — and its result gains
  * `vertOwner`, `ownerHeld`, `pinned`, `crease` and `triOwner`. Returns null when the JS must
- * answer instead: the core is off or unavailable, it refused the plan (counted, not reported),
+ * answer instead: the core is off or unavailable, its full build is not loaded yet (core.js
+ * fullCore, which asks for it), it refused the plan (counted, not reported),
  * or it faulted (the instance is poisoned and the fallback reported).
  *
  * `cache` (a createSampleCache(), with an anchored plan) is taken as evaluateLeaves takes it,
  * on the session (NativeSession.sample): `result.stats.cacheHits` counts the leaves it served.
  */
 export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners = true, cache = null } = {}) {
-  const c = core();
+  const c = fullCore();
   if (!c) return null;
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }
   const flat = compiled.detail.length ? flattenDetail(compiled) : null;
