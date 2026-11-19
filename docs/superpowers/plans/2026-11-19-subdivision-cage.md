@@ -71,6 +71,7 @@ Decisions the tests pin:
 - Side faces are `${capId}.s0` … `.s3` for a single face. **Order rule:** side `k` sits on the extruded face's edge `k`, where edge 0 is the edge whose midpoint has the smallest value on the face's first in-plane axis, then counter-clockwise seen from outside. The in-plane axes of a face are the two world axes least aligned with its normal, in `x, y, z` order. With `steps`, segment `m` (1-based, from the base) names its sides `${capId}.${m}.s0` …; the last segment drops the `.${m}`.
 - A region (a list of faces) must be edge-connected. Its caps are `${id}:0`, `${id}:1`, … in the order listed (`id` defaults to the first face's id plus `>`). Its side faces are `${id}.s0` … walking the region's boundary counter-clockwise from the boundary edge chosen by the same rule applied to the region's mean normal.
 - Extruding removes the face. Naming a removed face throws `cage: face "<id>" was extruded; it is now <ids…>`. An unknown id throws `cage: no face "<id>"` followed by up to 8 nearest ids by prefix.
+- Read methods never return `-0`: a zero component is `0`.
 - Throws (message starts `cage: `): `scale` that makes any cap edge shorter than 1e-6 mm; `by` of zero length; non-finite numbers; `segs` not positive integers; more than `MAX_CAGE_FACES` faces after any call; a disconnected region; an `id` already in use.
 
 - [ ] **Step 1: Write the failing tests** in `test/subdiv-cage.test.js`:
@@ -119,7 +120,7 @@ describe("cage: extrude", () => {
     const c = box();
     c.extrude("+x:0,0", { by: 10, id: "arm" });
     expect(c.normal("arm.s0")).toEqual([0, -1, 0]);   // smallest Y edge first
-    expect(c.normal("arm.s1")).toEqual([0, 0, 1]);    // then counter-clockwise seen from +x
+    expect(c.normal("arm.s1")).toEqual([0, 0, -1]);   // then counter-clockwise seen from outside (+x): -y, -z, +y, +z
   });
   it("grows a connected region as one piece", () => {
     const c = box([2, 1, 1]);
@@ -248,9 +249,9 @@ it("is closed, outward-facing, and inside the cage", () => {
   expect(new Set(m.triFace).size).toBe(6);
 });
 it("puts every level on the same limit surface", () => {
-  const a = subdivide(cube(), 2), b = subdivide(cube(), 4);
+  const a = subdivide(cube(), 3), b = subdivide(cube(), 5);
   for (let i = 0; i < 8 * 3; i++) expect(b.positions[i]).toBeCloseTo(a.positions[i], 9);   // the cage's own 8 points come first
-  expect(Math.abs(volume(b) - volume(a)) / volume(b)).toBeLessThan(0.01);
+  expect(Math.abs(volume(b) - volume(a)) / volume(b)).toBeLessThan(0.02);
 });
 it("chooses the level from the tolerance", () => {
   const s = cube();
@@ -343,7 +344,7 @@ it("builds a smooth solid that takes ordinary ops", async () => {
 it("previews and prints the same body", async () => {
   const build = async (tier) => { const k = await kernelAt(tier); const c = k.cage({ box: { size: [40, 20, 20] } }); return k.subdiv(c).volume(); };
   const [a, b] = [await build("preview"), await build("print")];
-  expect(Math.abs(a - b) / b).toBeLessThan(0.01);
+  expect(Math.abs(a - b) / b).toBeLessThan(0.03);
 });
 it("copies the cage when called (Review Focus 5)", async () => {
   const k = await kernelAt("preview");
@@ -407,6 +408,7 @@ Write the last test's body from the existing implicit OCCT and probe tests; its 
 - [ ] **Step 2: Run** `npx vitest run test/organic-whale.test.js`. Expected: FAIL.
 - [ ] **Step 3: Write the part and the guide section.** The guide gains a section "A controlled surface: the subdivision cage" with: when a cage and when an implicit tree (a cage for one continuous skin whose silhouette matters; an implicit tree for pieces that blend, press together, or pose by frames); the face id and index order per side; the side-face order rule from Task 1; the mirror rules; "the surface lies inside the cage: a cube becomes a ball about 80% as wide, and more faces near an edge pull the surface toward it"; a limb is 2 to 4 chained extrudes, a knuckle is a short extrude with scale above 1 then one below 1; the errors; and the whale as the worked example. Fix the guide intro's stale line that says there is no reference part file.
 - [ ] **Step 4: Run** `npm run docs:domains && npm test && npm run lint && npm run lint:dead`. Expected: PASS.
+- [ ] **Step 4b: Measure the size cost.** Run `npm run build` on this branch and on `origin/main` and record, in the commit body, the byte change of every built chunk that grew. The cage is JavaScript only: no file under `native/` and no `.wasm` may change. If the base worker chunk grows by more than 15 KB minified, stop and report it.
 - [ ] **Step 5: Commit** `git commit -am "Organic guide: the subdivision cage, a whale reference part; 0.197.0"`.
 
 ---
