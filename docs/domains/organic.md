@@ -11,7 +11,7 @@ with `k.cage` and smooth it into a solid with `k.subdiv`. See "A controlled surf
 the subdivision cage" near the end of this guide for that, and for when to use which.
 
 ```js
-import { validateImplicit, ImplicitSpecError, ImplicitSizeError, IMPLICIT_NODE_KINDS, IMPLICIT_DETAIL_KINDS } from "partforge/organic";
+import { validateImplicit, ImplicitSpecError, ImplicitSizeError, IMPLICIT_NODE_KINDS, IMPLICIT_DETAIL_KINDS, cage } from "partforge/organic";
 ```
 
 The ops themselves stay on the kernel: **`k.implicit(spec)`** builds the solid and
@@ -25,6 +25,7 @@ You need no import for them. `partforge/organic` holds the checks and the vocabu
 | `ImplicitSizeError` | A spec too large to mesh at its grid. `code: "IMPLICIT_SIZE"`, message starts `implicit: `. |
 | `IMPLICIT_NODE_KINDS` | Every node `kind` the tree accepts (a frozen array). |
 | `IMPLICIT_DETAIL_KINDS` | Every `kind` the `detail` list accepts (a frozen array). |
+| `cage(options)` | The cage builder `k.cage` calls: same options, same cage. For code that has no kernel, such as `derive`. See "Drag handles on a cage". |
 
 `partforge/organic` is worker-safe and light: it loads the grammar only, not the mesher.
 
@@ -805,6 +806,33 @@ smoothBox([2, 2, 2]).max[0];   // 10
 - **A flat for printing** is an ordinary boolean `cut` on the result.
 - **A rounder cross-section**: a box side with two or more faces across it stays flat in
   the middle. `scale` the side's faces toward its middle row before extruding.
+
+### Drag handles on a cage
+
+A handle's `point` is computed in `derive`, which has no kernel. Import `cage` from
+`partforge/organic` there: it is the builder `k.cage` calls, with the same options. Write
+the cage once as a function of the builder, call it with `k.cage` in `build` and with
+`cage` in `derive`, and read a face centre for the handle:
+
+```js
+const eel = (make, p) => {
+  const c = make({ box: { size: [40, 20, 20] } });
+  c.extrude("+x:0,0", { by: p.tail, scale: 0.5, id: "tail" });
+  return c;
+};
+eel(cage, { tail: 12 }).centroid("tail");   // [32, 0, 0]
+```
+
+In the part: `derive: (p) => ({ tail: eel(cage, p).centroid("tail") })`,
+`build: (k, p) => k.subdiv(eel(k.cage, p))`, and a handle
+`{ point: (p, d) => d.tail, params: ["tail"], drag: "axis", direction: [1, 0, 0] }`.
+The smooth surface lies inside the cage, so the handle sits just off the skin. Every
+such drag is a shape drag: the cage is rebuilt and smoothed again as the handle moves.
+
+On a mirrored cage, give a side feature a second handle at the reflected point with the
+same `params` (for `mirror: "xz"`, `point: (p, d) => [d.fin[0], -d.fin[1], d.fin[2]]`).
+Either one can then be grabbed, and both sides follow, because both write the same
+parameters.
 
 ### Cage errors
 

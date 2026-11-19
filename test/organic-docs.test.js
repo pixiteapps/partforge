@@ -86,13 +86,13 @@ beforeAll(async () => {
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(34);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(35);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
-  const line = 'import { validateImplicit, ImplicitSpecError, ImplicitSizeError, IMPLICIT_NODE_KINDS, IMPLICIT_DETAIL_KINDS } from "partforge/organic";';
+  const line = 'import { validateImplicit, ImplicitSpecError, ImplicitSizeError, IMPLICIT_NODE_KINDS, IMPLICIT_DETAIL_KINDS, cage } from "partforge/organic";';
   expect(guide).toContain(line);
-  expect(Object.keys(organic).sort()).toEqual(["IMPLICIT_DETAIL_KINDS", "IMPLICIT_NODE_KINDS", "ImplicitSizeError", "ImplicitSpecError", "validateImplicit"]);
+  expect(Object.keys(organic).sort()).toEqual(["IMPLICIT_DETAIL_KINDS", "IMPLICIT_NODE_KINDS", "ImplicitSizeError", "ImplicitSpecError", "cage", "validateImplicit"]);
 });
 
 // A markdown table's rows → { kind: [required[], optional[]] }, from its first three columns.
