@@ -132,11 +132,19 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
 
   // ---- per-geometry caches -------------------------------------------------
   // WeakMaps: identity lookup only, and old geometries (with their typed
-  // arrays) drop out on their own once no mesh references them anymore.
-  const specCache = new WeakMap(); // geometry -> Map(featureId -> spec|null)
+  // arrays) drop out on their own once no mesh references them anymore. A
+  // pose-drag skin rewrites a geometry's positions IN PLACE
+  // (viewer.setSubVertices), keeping its identity, so every entry also holds the
+  // position attribute's version and a write makes it stale.
+  const versionOf = (geometry) => geometry.getAttribute("position")?.version ?? 0;
+  const cachedFor = (cache, geometry) => {
+    const entry = cache.get(geometry);
+    return entry && entry.version === versionOf(geometry) ? entry.value : undefined;
+  };
+  const cacheFor = (cache, geometry, value) => { cache.set(geometry, { version: versionOf(geometry), value }); return value; };
+  const specCache = new WeakMap(); // geometry -> { version, value: Map(featureId -> spec|null) }
   function featureSpec(geometry, featureId) {
-    let byId = specCache.get(geometry);
-    if (!byId) { byId = new Map(); specCache.set(geometry, byId); }
+    const byId = cachedFor(specCache, geometry) ?? cacheFor(specCache, geometry, new Map());
     if (!byId.has(featureId)) {
       const { featureIds } = geometry.userData;
       const positions = geometry.getAttribute("position").array;
@@ -147,18 +155,17 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     }
     return byId.get(featureId);
   }
-  const snapCache = new WeakMap(); // geometry -> SnapIndex
+  const snapCache = new WeakMap(); // geometry -> { version, value: SnapIndex }
   function snapIndex(geometry) {
-    let index = snapCache.get(geometry);
+    let index = cachedFor(snapCache, geometry);
     if (!index) {
       const { featureIds, edgePositions } = geometry.userData;
-      index = buildSnapIndex({
+      index = cacheFor(snapCache, geometry, buildSnapIndex({
         positions: geometry.getAttribute("position").array,
         indices: geometry.getIndex()?.array,
         featureIds,
         edgePositions,
-      });
-      snapCache.set(geometry, index);
+      }));
     }
     return index;
   }
@@ -169,17 +176,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // builds — until the index lands they take three's brute-force path, which is
   // what they always did. Turning the mode off releases every index (16 MB on
   // the screw): measure mode is occasional, and re-entry rebuilds in idle time.
-  let bvhCache = new WeakMap(); // geometry -> BVH
+  let bvhCache = new WeakMap(); // geometry -> { version, value: BVH }
   const triangleCount = (geometry) => (geometry.getIndex()?.count ?? geometry.getAttribute("position").count) / 3;
   function bvhOf(geometry) {
-    let bvh = bvhCache.get(geometry);
-    if (!bvh) {
-      bvh = buildBVH({ positions: geometry.getAttribute("position").array, indices: geometry.getIndex()?.array });
-      bvhCache.set(geometry, bvh);
-    }
-    return bvh;
+    return cachedFor(bvhCache, geometry)
+      ?? cacheFor(bvhCache, geometry, buildBVH({ positions: geometry.getAttribute("position").array, indices: geometry.getIndex()?.array }));
   }
-  const builtBVH = (mesh) => bvhCache.get(mesh.geometry) ?? null;
+  const builtBVH = (mesh) => cachedFor(bvhCache, mesh.geometry) ?? null;
 
   // ---- idle pre-build ------------------------------------------------------
   // Without it, the first hover over a geometry paid for its snap index and the
@@ -413,6 +416,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     parent?.updateWorldMatrix(true, false);
     const meshData = meshes.map(([, m]) => ({
       positions: m.geometry.getAttribute("position").array,
+      version: m.geometry.getAttribute("position").version, // a skin rewrites positions in place
       matrix: m.matrix,
     }));
     const hittable = meshes.map(([, m]) => m);
@@ -545,21 +549,25 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   // Seeded with the ACTIVE VIEW: a view switch clears, even when the visible
   // mesh set is byte-identical. The pose is hashed as its full rotation basis +
   // translation, not just the two diagonal terms — θ and −θ about X share
-  // cos θ on the diagonal.
+  // cos θ on the diagonal. The position attribute's version is in it too: a
+  // pose-drag skin rewrites the vertices of the SAME geometry
+  // (viewer.setSubVertices), which its id alone would miss.
   function meshSig() {
     let sig = getContext().view;
     for (const [name, m] of Object.entries(viewer._subMeshes)) {
       const e = m.matrix.elements;
-      sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}:${e[0]},${e[1]},${e[2]},${e[4]},${e[5]},${e[6]},${e[12]},${e[13]},${e[14]}`;
+      sig += `|${name}:${m.visible ? 1 : 0}:${m.geometry.id}.${m.geometry.getAttribute("position")?.version ?? 0}:${e[0]},${e[1]},${e[2]},${e[4]},${e[5]},${e[6]},${e[12]},${e[13]},${e[14]}`;
     }
     return sig;
   }
   // A click no longer refers to live geometry: its mesh is gone, hidden or
-  // regenerated, or the view changed. A pose change alone keeps it.
+  // regenerated, its vertices were rewritten in place (a pose-drag skin,
+  // viewer.setSubVertices), or the view changed. A pose change alone keeps it.
   function isStale(click, view) {
     if (!click) return false;
     const m = viewer._subMeshes[click.subPart];
-    return !m || m !== click.mesh || !m.visible || m.geometry !== click.geometry || click.view !== view;
+    return !m || m !== click.mesh || !m.visible || m.geometry !== click.geometry
+      || versionOf(m.geometry) !== click.version || click.view !== view;
   }
   const offFrame = viewer.onFrame(() => {
     if (!enabled || !scene) return;
@@ -811,6 +819,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
       subPart,
       mesh,
       geometry: mesh.geometry,
+      version: versionOf(mesh.geometry),
       view: getContext().view,
       pointGeom: target.point,
       target,

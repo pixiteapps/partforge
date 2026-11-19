@@ -67,11 +67,20 @@ function crash(cmd, e, jsonMode) {
   if (e?.code === "NEEDS_OCCT" && !process.env.PARTFORGE_BACKEND) {
     console.error(`${cmd}: ${e.message} — retrying on the OCCT backend`);
     const r = spawnSync(process.execPath, process.argv.slice(1), {
-      stdio: "inherit", env: { ...process.env, PARTFORGE_BACKEND: "occt" },
+      stdio: "inherit", env: { ...process.env, PARTFORGE_BACKEND: "occt", PARTFORGE_REROUTE_REASON: e.message },
     });
     process.exit(r.status ?? 1);
   }
-  const message = e?.message || String(e);
+  // The retry itself failed on k.implicit, which only Manifold builds: the part needs
+  // both backends and the CLI has one per process. Say which op sent it to OCCT, since
+  // the backend's own message can only list the possible causes.
+  const reroute = String(e?.message).includes("implicit: OCCT cannot build k.implicit") && process.env.PARTFORGE_REROUTE_REASON;
+  const message = reroute
+    ? `implicit: OCCT cannot build k.implicit (it is mesh-native), and the Manifold build stopped at "${reroute}" — `
+      + "the CLI builds the whole part on one backend, so a part with k.implicit must keep every fillet and chamfer "
+      + "mesh-buildable: use an object selector ({ dir }, { inPlane, at }, { near }) instead of a function, or change "
+      + "the radius or edges so the mesh backend can blend them. `meta.backend` cannot fix this."
+    : e?.message || String(e);
   const m = matchPattern(message);
   if (jsonMode) {
     console.log(JSON.stringify({ ok: false, error: { message, ...(m && { pattern: m.id, hint: m.fix }) } }, null, 2));
@@ -621,6 +630,12 @@ function printMeasure(r) {
   console.log(`  near-misses: ${r.nearMisses.length
     ? r.nearMisses.map((g) => `${g.a}×${g.b} (${g.distance.toFixed(2)}mm at [${g.at.map((n) => n.toFixed(1)).join(", ")}])`).join(", ")
     : "none"}`);
+  // The kernel's build warnings (a thin implicit feature, a skipped fillet) — the same
+  // text the app shows.
+  if (r.warnings?.length) {
+    console.log(`  warnings:`);
+    for (const w of r.warnings) console.log(`    ${w.part}: ${w.message}`);
+  }
   if (r.sweeps) console.log(`  sweeps: ${r.sweeps.length ? r.sweeps.map(sweepText).join("; ") : "none move anything in this view"}`);
   if (r.handles) {
     console.log(`  handles:`);

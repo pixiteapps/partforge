@@ -338,6 +338,9 @@ export const KERNEL_OP_SPECS = {
   },
   // loftSmooth: range checks live in loft-smooth.js, next to the defaults they guard.
   loftSmooth: { toArgs: passThrough("loftSmooth", ["sections", "stations", "samples", "shading", "closed"], ["sections"]) },
+  // implicit({frames?, root, detail?, resolution?, preview?}); the tree itself is
+  // validated by implicit/grammar.js with path-precise messages.
+  implicit: { toArgs: passThrough("implicit", ["frames", "root", "detail", "resolution", "preview"], ["root"]) },
   // heightfield: (nameOrGrid, opts) is a two-positional call, not the options-object
   // convention — toArgs only normalizes a bare single-arg call (kernel-front.js's
   // wrapper invokes it as `toArgs(a[0], k._recordWarning)`, so the second

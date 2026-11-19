@@ -24,6 +24,8 @@ export async function buildModelSection(ctx, plan, { quantity }) {
   const mctx = {
     kernel: ctx.kernel, part, posed: ctx.posed, label, exportName: ctx.exportName,
     onProgress: (phase) => ctx.onProgress(clipPhase(phase)), quality: ctx.msg?.quality ?? "print",
+    // Organic sub-parts already meshed on Manifold (export-controller.js's exportKit), for STEP.
+    meshes: ctx.msg?.meshes,
   };
   const entries = [];
   const files = new Map(); // part name → { file, size }

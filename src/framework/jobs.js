@@ -3,7 +3,7 @@
 // the oracle and the collision check can share it without importing this async,
 // kernel-bound module back.
 import { selectExportable } from "./export-select.js";
-import { buildStlFiles, buildStepFile, build3mfFile } from "./export-models.js";
+import { buildStlFiles, buildStepFile, build3mfFile, exportPieceError } from "./export-models.js";
 import { fontControlAllows, fontSourceAllowed, isNoFontSource } from "./font-source.js";
 import { fontsFor, resolveFonts, forgetFontSource } from "./fonts.js";
 import { normalizeOpentype, parseFont } from "./geometry/opentype-interop.js";
@@ -21,6 +21,8 @@ import { createProvenance, provenanceKernel } from "./geometry/provenance.js";
 import { controlNodes } from "./panel/model.js";
 import { desugar } from "./panel/legacy.js";
 import { probeSubPartPose } from "./pose-probe-core.js";
+import { concatMeshPayloads } from "./geometry/mesh-concat.js";
+import { NEEDS_FULL_CORE, setFullCoreRequired } from "./core/core-status.js";
 
 export const FONT_SOURCE_CACHE_MAX = 4;
 
@@ -86,6 +88,7 @@ const loadKit = () => import("./export/kit/build.js");
 // progress callback into build() so a part's own per-feature progress surfaces;
 // preview generates stay quiet (no callback) to avoid flicker during slider drags.
 const bufferOf = (data) => (ArrayBuffer.isView(data) ? data.buffer : data);
+
 
 // One caller-supplied match target as a reference mask, or null when it is not one we
 // can score. Every field here is untrusted wire data, so shape is checked rather than
@@ -172,7 +175,8 @@ async function scoreMatchTargets(built, targets, onProgress) {
 // A progressive generate hands over its built sub-parts at most this often (ms).
 const PROGRESSIVE_BATCH_MS = 300;
 const transferOf = (meshes) => meshes.flatMap((m) =>
-  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer, m.originIds?.buffer].filter(Boolean));
+  [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer, m.originIds?.buffer,
+    m.bindings?.frameA.buffer, m.bindings?.frameB.buffer, m.bindings?.weight.buffer].filter(Boolean));
 
 // The nudged derive attribution for one generate job (ranks piece keys; never
 // gates). Run once per job, lazily, and shared by its sub-parts; null when the
@@ -187,7 +191,29 @@ function nudgedFor(part, p) {
   } catch { return null; }
 }
 
+// A job runs with the native core's full build REQUIRED (core/core-status.js): the
+// first k.implicit call in a worker that has only the base build throws
+// NEEDS_FULL_CORE, and the job is run again once the build is loaded — so an organic
+// part meshes natively from its first preview, and a part with no k.implicit never
+// downloads the engine. The retry starts the job over (sub-parts already built are
+// cache hits; a staged or partial delivery is posted again, which a host applies by
+// sub-part name). One retry: after it the build is loaded, or its load failed and
+// the JS engine answers.
 export async function handle(kernel, part, msg, post, opts = {}) {
+  const was = setFullCoreRequired(true);
+  let retry = false;
+  try {
+    retry = (await runJob(kernel, part, msg, post, opts)) === NEEDS_FULL_CORE;
+    if (retry) {
+      await (await import("./core/core.js")).loadFullCore();
+      await runJob(kernel, part, msg, post, opts);
+    }
+  } finally {
+    setFullCoreRequired(was);
+  }
+}
+
+async function runJob(kernel, part, msg, post, opts) {
   const isStale = opts.isStale ?? (() => false);
   const onProgress = (phase) => post({ type: "progress", phase, jobId: msg.jobId });
   const label = (name) => part.parts[name].label ?? name;
@@ -487,41 +513,59 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       // means unbounded. Kept by the kernel, so the oracle's builds share it.
       if (Object.hasOwn(msg, "cacheBudget")) kernel.setCacheBudget?.(msg.cacheBudget ?? Infinity);
       let lastBatchAt = t0; // progressive delivery's clock (below)
-      for (const [i, name] of msg.subparts.entries()) {
-        if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
-        try {
-          const { solid, reads, pieceKeys, frame } = displayWithReads(name);
-          const m = solid.toMesh({ quality: "preview" });
-          meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features,
-            ...(m.originIds ? { originIds: m.originIds, origins: m.origins } : {}), reads, pieceKeys, frame });
-        } finally {
-          kernel.endProvenance?.();
-          for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
-          if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
-          kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
-          kernel.trimCache?.();                // over the host's budget: drop the least recently built sub-parts' solids
-        }
-        // Cooperative cancel: yield one macrotask so queued messages (a newer
-        // generate, a part rebind) can be seen, then stop at this boundary if
-        // this build is stale. The last sub-part skips the yield — nothing
-        // follows it. Completed sub-parts have already committed their cache
-        // brackets, so an abort here strands nothing.
-        if (i < msg.subparts.length - 1) {
-          await new Promise((r) => setTimeout(r, 0));
-          if (isStale()) return void post({ type: "superseded" });
-          // Progressive delivery (msg.progressive): hand over what is built so far,
-          // so a host shows a many-sub-part view filling in instead of waiting for
-          // the last sub-part (feedback #212: a 105-plate park showed nothing for
-          // ~45 s). Batched by time, never per sub-part, so a view of many cheap
-          // pieces is not a flood of messages. Posted only after the stale check
-          // above, so a batch is current as of the moment it is posted; the final
-          // `meshes` carries whatever is left, and the job's warnings and timing.
-          if (msg.progressive && meshes.length > 0 && Date.now() - lastBatchAt >= PROGRESSIVE_BATCH_MS) {
-            const batch = meshes.splice(0);
-            post({ type: "meshes-partial", meshes: batch }, transferOf(batch));
-            lastBatchAt = Date.now();
+      // Two-stage delivery (spec 2026-10-31-implicit-pose-drag §5): armed for this job
+      // alone — a union of k.implicit bodies is posted first as its pieces concatenated
+      // (`meshes-provisional`, never cached or stamped by mount), then as the real union
+      // in the ordinary reply. capture-generate, inspect and exports never arm it, and
+      // neither does a generate that asks for no stage (`provisional: false` — mount
+      // sends it during a pose drag or playback, where the stage would be dropped).
+      kernel._setProvisionalUnions?.(msg.provisional !== false);
+      try {
+        for (const [i, name] of msg.subparts.entries()) {
+          if (useCache) kernel.beginSubPart?.(name); // open the per-sub-part cache round
+          try {
+            const { solid, reads, pieceKeys, frame } = displayWithReads(name);
+            const pieces = kernel._takeProvisionalPieces?.(solid);
+            if (pieces && !isStale()) {
+              const stage = [{ name, ...concatMeshPayloads(pieces.map((pc) => pc.toMesh({ quality: "preview" }))), reads, frame, provisional: true }];
+              post({ type: "meshes-provisional", meshes: stage }, transferOf(stage));
+            }
+            const m = solid.toMesh({ quality: "preview" });
+            // `bindings` (a preview k.implicit's pose bindings, mesh-bindings.js) is undefined
+            // when the backend gave none.
+            meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features,
+              ...(m.originIds ? { originIds: m.originIds, origins: m.origins } : {}), reads, pieceKeys, frame, bindings: m.bindings });
+          } finally {
+            kernel.endProvenance?.();
+            for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
+            if (useCache) kernel.endSubPart?.(); // always close the bracket — a throw mid-build must not strand pinned solids
+            kernel.cleanup?.();                  // free this round's transients (cached/pinned solids survive)
+            kernel.trimCache?.();                // over the host's budget: drop the least recently built sub-parts' solids
+          }
+          // Cooperative cancel: yield one macrotask so queued messages (a newer
+          // generate, a part rebind) can be seen, then stop at this boundary if
+          // this build is stale. The last sub-part skips the yield — nothing
+          // follows it. Completed sub-parts have already committed their cache
+          // brackets, so an abort here strands nothing.
+          if (i < msg.subparts.length - 1) {
+            await new Promise((r) => setTimeout(r, 0));
+            if (isStale()) return void post({ type: "superseded" });
+            // Progressive delivery (msg.progressive): hand over what is built so far,
+            // so a host shows a many-sub-part view filling in instead of waiting for
+            // the last sub-part (feedback #212: a 105-plate park showed nothing for
+            // ~45 s). Batched by time, never per sub-part, so a view of many cheap
+            // pieces is not a flood of messages. Posted only after the stale check
+            // above, so a batch is current as of the moment it is posted; the final
+            // `meshes` carries whatever is left, and the job's warnings and timing.
+            if (msg.progressive && meshes.length > 0 && Date.now() - lastBatchAt >= PROGRESSIVE_BATCH_MS) {
+              const batch = meshes.splice(0);
+              post({ type: "meshes-partial", meshes: batch }, transferOf(batch));
+              lastBatchAt = Date.now();
+            }
           }
         }
+      } finally {
+        kernel._setProvisionalUnions?.(false);
       }
       post({ type: "meshes", meshes, ms: Date.now() - t0, cache: kernel.cacheStats?.(),
              ...(warnings.length ? { warnings } : {}) }, transferOf(meshes));
@@ -558,10 +602,30 @@ export async function handle(kernel, part, msg, post, opts = {}) {
       post({ type: "download-parts", ext: "stl", mime: "model/stl", parts: out, jobId: msg.jobId },
            out.map((pp) => bufferOf(pp.data)));
     } else if (msg.type === "export-step") {
+      // `msg.meshes` (name → { positions, indices }) are organic sub-parts the Manifold worker
+      // already built and meshed in their export pose (export-controller.js); buildStepFile
+      // writes each as a tessellated solid instead of building it here.
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
-      const { data } = await buildStepFile(modelCtx(), names);
+      const { data } = await buildStepFile({ ...modelCtx(), meshes: msg.meshes }, names);
       post({ type: "download", data, filename: `${fileBase}.step`, mime: "application/step", jobId: msg.jobId }, [bufferOf(data)]);
+    } else if (msg.type === "mesh-subparts") {
+      // The Manifold half of a STEP export with organic sub-parts (export-controller.js):
+      // each named sub-part built in its export pose and meshed at print quality, as
+      // JS-owned arrays the OCCT worker writes into the file as tessellated solids.
+      const meshes = {};
+      for (const [i, name] of msg.parts.entries()) {
+        onProgress(`meshing ${label(name)}`);
+        try {
+          const { positions, indices } = posed(name, "export", onProgress).toIndexedMesh({ quality: "print" });
+          meshes[name] = { positions, indices };
+        } catch (thrown) {
+          throw exportPieceError(thrown, { kernel, piece: label(name), index: i, count: msg.parts.length });
+        }
+        kernel.cleanup?.();
+      }
+      post({ type: "subpart-meshes", jobId: msg.jobId, meshes },
+           Object.values(meshes).flatMap((m) => [m.positions.buffer, m.indices.buffer]));
     } else if (msg.type === "export-3mf") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
@@ -718,6 +782,7 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
     // failed job covered, so only those latch to OCCT — not the whole part.
+    if (err?.code === NEEDS_FULL_CORE) return NEEDS_FULL_CORE; // handle() loads it and runs the job again
     if (err?.code === "NEEDS_IMPORT_MESH") post({ type: "needs-import-mesh", jobId: msg.jobId, subparts: msg.subparts });
     else if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId, subparts: msg.subparts });
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });

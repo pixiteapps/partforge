@@ -45,7 +45,7 @@ const SHAPE_KINDS = {
 };
 /** k.implicit kinds with no closed form here (they need the implicit engine). */
 const ENGINE_KINDS = new Set(["intersect", "subtract", "contact", "mirror", "round", "onion", "displace", "twist", "bend", "taper", "repeat", "expr"]);
-const ENGINE_FIX = "needs the implicit engine — pass a distance function (x, y, z) => mm instead";
+const ENGINE_FIX = "needs the implicit engine — pass a distance function (x, y, z) => mm instead; implicitDistance(node) from partforge/geometry makes one";
 
 const defaultFail = (field, msg) => { throw new SpecError(`${field}: ${msg}`, { field }); };
 

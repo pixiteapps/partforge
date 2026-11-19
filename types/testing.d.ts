@@ -315,6 +315,16 @@ export function minWall(
  * read on every use).
  */
 export function setCoreEnabled(on: boolean): void;
+/**
+ * Load the native core's FULL build — the k.implicit engine, which the core does not
+ * carry until asked (it is a separate, larger module). Resolves true once loaded, false
+ * if the host could not resolve it; never rejects, and is idempotent. Until it resolves,
+ * k.implicit meshes in JS with identical output. The worker runtime loads it at a
+ * part's first k.implicit call and runs that job again, and `bootManifoldKernel` always
+ * loads it; a host that drives a Manifold kernel itself should call it before an
+ * organic build.
+ */
+export function loadFullCore(): Promise<boolean>;
 
 /** Why the core stopped answering in this realm — a fixed vocabulary, safe to record. */
 export type CoreFallbackReason = "no_webassembly" | "boot_failed" | "out_of_memory" | "trap" | "error";
@@ -673,6 +683,8 @@ export interface MeasureReport {
    */
   measuredPrintBboxes?: boolean;
   subparts: SubPartFacts[];
+  /** The kernel's build warnings (a thin implicit feature, a skipped fillet), per sub-part. */
+  warnings: { part: string; message: string }[];
   aggregate: AggregateFacts;
   overlaps: Overlap[];
   /** Every sub-part pair's minimum surface distance. */

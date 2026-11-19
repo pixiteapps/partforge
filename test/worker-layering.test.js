@@ -164,7 +164,7 @@ test("every domain entry's closure obeys the worker's bans", () => {
 test("lint does not reach the BVH", () => {
   const { files } = walk(`${ROOT}/src/framework/lint/rules-collisions.js`, "collisions lint walk");
   for (const file of files) {
-    expect(/\/oracle\/bvh\.js$|\/core-wasm\.js$/.test(file), `rules-collisions.js reaches ${file}`).toBe(false);
+    expect(/\/oracle\/bvh\.js$|\/core(-full)?-wasm\.js$/.test(file), `rules-collisions.js reaches ${file}`).toBe(false);
   }
   expect(files.has(`${ROOT}/src/framework/lint/finding.js`)).toBe(true);
 });
@@ -174,7 +174,7 @@ test("lint does not reach the BVH", () => {
 test("preview-animation does not reach the BVH or the native core", () => {
   const { files, importer } = walk(`${ROOT}/src/framework/preview-animation.js`, "preview-animation walk");
   for (const file of files) {
-    expect(/\/oracle\/bvh\.js$|\/core-wasm\.js$|\/collide\/world\.js$/.test(file),
+    expect(/\/oracle\/bvh\.js$|\/core(-full)?-wasm\.js$|\/collide\/world\.js$/.test(file),
       `preview-animation.js reaches ${file}:\n  ${chainTo(file, importer, ROOT)}`).toBe(false);
   }
   expect(files.has(`${ROOT}/src/framework/collide/place.js`)).toBe(true);

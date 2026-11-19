@@ -33,7 +33,8 @@ export function countRefusedMesh() { refused++; }
 //   state: "idle" (not needed yet) | "on" | "off" (switched off) |
 //          "unavailable" (could not start) | "faulted" (stopped after a fault)
 //   reason: one of CORE_FALLBACK_REASONS for unavailable/faulted, else null
-//   refusedMeshes: how many meshes went to the JS because the core declined them
+//   refusedMeshes: how many meshes (and implicit-session plans/meshes) went to the JS
+//     because the core declined them
 export function coreStatus() {
   return { state: fallback?.state ?? probe(), reason: fallback?.reason ?? null, refusedMeshes: refused };
 }
@@ -47,6 +48,17 @@ export function onCoreFallback(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+// Whether a k.implicit call that finds the core's full build not loaded yet should
+// THROW (code NEEDS_FULL_CORE) instead of meshing in JS: a caller that can load the
+// build and run the work again — the worker's job loop — turns it on for the length of
+// a job, so an organic part is meshed natively from its first build. Off by default:
+// anything else gets the JS engine's identical answer at once. Here, not in core.js,
+// so the job loop can set it without importing the WebAssembly.
+export const NEEDS_FULL_CORE = "NEEDS_FULL_CORE";
+let fullRequired = false;
+export function setFullCoreRequired(on) { const was = fullRequired; fullRequired = !!on; return was; }
+export const fullCoreRequired = () => fullRequired;
 
 // Tests only (via core.js's setCoreForTesting): forget everything recorded.
 export function resetCoreStatus() {

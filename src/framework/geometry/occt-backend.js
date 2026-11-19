@@ -40,6 +40,9 @@ import { filterBrepEdges } from "./brep-edges.js";
 import { meshToStl } from "./mesh-stl.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
 import { writeStep } from "./occt-step.js";
+import { implicitFrames } from "./implicit/frame-report.js";
+// One literal on one line: test/organic-docs.test.js holds the guide's copy to it.
+const IMPLICIT_ON_OCCT = "implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached OCCT because meta.backend pins it there, because a fillet or chamfer in the part needs OCCT (a function selector, or an edge the mesh backend cannot blend — the CLI, STL and 3MF build the whole part on one backend), or because the geometry-free probe did not see the k.implicit call (one made only after reading a geometry query); set `meta.backend: \"manifold\"`, give that fillet or chamfer an object selector or a shape the mesh backend can blend, and make the k.implicit call unconditional";
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 // Heightfield sew-time warning threshold, in triangles. Measured by the plan's
@@ -756,11 +759,25 @@ export function createOcctKernel(replicad) {
     return cached(key, () => build(key));
   };
 
+  // k.implicit is mesh-native: its booleans are mesh booleans, which OCCT cannot
+  // run on a triangulated body. A STEP export meshes implicit sub-parts on Manifold
+  // and writes them as tessellated solids (export-controller.js, occt-step.js), so a
+  // sub-part reaches this throw only when it was routed here: a meta.backend pin, a
+  // fillet or chamfer that fell back to OCCT in a job that builds the whole part on one
+  // backend (the CLI, STL, 3MF), or a k.implicit call the geometry-free probe could not
+  // see. No `.code`: an export wraps an uncoded error with the piece's name
+  // (exportPieceError), and the CLI's retry knows this one by its opening words (bin/cli.js).
+  const implicit = () => {
+    throw new Error(IMPLICIT_ON_OCCT);
+  };
+  // Its frame report meshes nothing, so OCCT runs it like Manifold does.
+  const frameReport = (spec) => implicitFrames(spec, { images });
+
   const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => cached(h("box", min, max), () => wrap(makeBox(min, max), [], h("box", min, max))),
     roundedBox,
-    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield,
+    prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield, implicit, implicitFrames: frameReport,
     sphere: (r) => cached(h("sphere", r), () => wrap(makeSphere(r), [], h("sphere", r))),
     union: (solids) => {
       const key = h("union", solids.map((s) => s._hash));
@@ -805,7 +822,7 @@ export function createOcctKernel(replicad) {
     // Our own writer, not replicad's exportSTEP, so colours come out right (see
     // occt-step.js). `color` per body is optional; jobs.js passes the sub-part's
     // printColor, the same colour its .3mf object gets.
-    toSTEP: async (named) => writeStep(replicad, named.map(({ name, solid, color }) => ({ name, shape: solid._mat()._s, color }))),
+    toSTEP: async (named) => writeStep(replicad, named.map(({ name, solid, color, mesh }) => ({ name, shape: solid._mat()._s, color, mesh }))),
     // Imported geometry, registered pre-build by the framework via `_registerImport`
     // (ensureImports, Task 8). Every call clones the master shape — replicad ops
     // consume their operands, and the master must never be handed out directly, or

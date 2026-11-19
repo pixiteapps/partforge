@@ -26,12 +26,16 @@ export function buildView(kernel, part, view, params = {}, { reads, readsBySubPa
   // verify walks its cases through here, so each case evicts the previous rather
   // than accumulating every case's geometry at once.
   kernel.beginSubPart?.(`oracle:view:${view}`);
+  // The kernel's build warnings (a thin implicit feature, a skipped fillet), drained per
+  // sub-part as jobs.js does — first once to drop an earlier build's stragglers.
+  kernel.takeBuildWarnings?.();
   try {
     return viewSubParts(part, view, p).map((name) => {
       const solid = readsBySubPart
         ? buildRecorded(kernel, part, name, view, p, d, attribution, readsBySubPart)
         : buildPosed(kernel, part, name, { purpose: "display", view, p, d });
-      return { name, solid, mesh: solid.toMesh() };
+      const mesh = solid.toMesh();
+      return { name, solid, mesh, warnings: kernel.takeBuildWarnings?.() ?? [] };
     });
   } finally { kernel.endSubPart?.(); }
 }

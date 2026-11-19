@@ -1433,3 +1433,25 @@ test("frame ticks are harmless before and after the mode is enabled", () => {
   expect(() => viewer.frame()).not.toThrow();
   mode.detach();
 });
+
+// A pose-drag skin rewrites a sub-part's vertices in place (viewer.setSubVertices):
+// same geometry, same positions array, a bumped attribute version. Like any other
+// geometry change it clears the readings: they were taken on the old surface.
+test("vertices rewritten in place clear the readings, like a new geometry", () => {
+  const { mesh, viewer, mode, labelPositions } = setup();
+  mode.setEnabled(true);
+  clickAt(viewer.domElement); // the top face at z=2
+  expect(mode.pinCount()).toBe(1);
+  viewer.frame();
+  expect(labelPositions("first").length).toBeGreaterThan(0);
+
+  const attr = mesh.geometry.getAttribute("position");
+  for (let i = 2; i < attr.array.length; i += 3) attr.array[i] += 5; // lift the plate 5mm
+  attr.needsUpdate = true;
+  mesh.geometry.computeBoundingBox();
+  viewer.frame();
+
+  expect(mode.pinCount()).toBe(0);
+  expect(labelPositions("first").length).toBe(0);
+  mode.detach();
+});

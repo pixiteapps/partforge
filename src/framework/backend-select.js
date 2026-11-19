@@ -6,6 +6,8 @@ import { createProbeKernel } from "./geometry/probe.js";
 import { isZeroMagnitudeCadOp } from "./geometry/op-options.js";
 import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { resolveDerived } from "./derive.js";
+import { exportablePartNames } from "./export-select.js";
+import { exportSubParts } from "./part-model.js";
 
 /**
  * Per-sub-part routing: probe each sub-part's build independently and map it to
@@ -35,6 +37,32 @@ export function detectBackends(part, params = {}) {
       : "manifold";
   }
   return backends;
+}
+
+/**
+ * The organic sub-parts of an export: those whose build calls k.implicit, among the
+ * sub-parts the export writes (`parts`, else the view's — as jobs.js selects them). A
+ * STEP export meshes these on Manifold and writes them as tessellated solids, since OCCT
+ * cannot build k.implicit. A sub-part that also calls `shell` cannot build on either
+ * backend, so it throws, naming it. `meta.backend` does not change the answer: a STEP
+ * export splits by sub-part whatever the pin says.
+ */
+export function organicExportParts(part, { view, params = {}, parts } = {}) {
+  const p = { ...part.defaults, ...params };
+  let d = {};
+  try { d = resolveDerived(part, p); } catch { /* the export's own build reports a throwing derive */ }
+  const names = parts
+    ? exportablePartNames(part, p).filter((name) => parts.includes(name))
+    : exportSubParts(part, view, p);
+  return names.filter((name) => {
+    const { kernel, used, cadCalls } = createProbeKernel();
+    try { part.parts[name].build(kernel, p, d); } catch { /* a probe miss: the OCCT build names it */ }
+    if (!used.has("implicit")) return false;
+    if (cadCalls.some(({ op, args }) => !isZeroMagnitudeCadOp(op, args))) {
+      throw new Error(`sub-part "${name}" calls k.implicit and shell, which no backend can build together — for a hollow organic body use an onion node inside the k.implicit spec instead of shell`);
+    }
+    return true;
+  });
 }
 
 // Whole-part detection: the max over detectBackends. This is the routing for

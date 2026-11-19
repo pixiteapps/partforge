@@ -44,9 +44,14 @@ export function probePoses(part, view, params, { scope = "full", purpose = "disp
     const entry = probeSubPartPose(part.parts[name], { view, purpose, p: rec.p, d: rec.d }, { scope });
     // Assets fold in only outside place scope: a place probe hashes nothing
     // geometry-dependent, and the mesh cache's asset reads cover the font case.
+    // The pose drag's shapeHash (the build less every k.implicit spec's frames) takes
+    // them too: a font, image or vector swap is a shape change, never a frames-only one.
+    const withShape = scope !== "place" && entry.shapeHash !== undefined
+      ? { ...entry, shapeHash: h("with-assets", entry.shapeHash, assets) }
+      : entry;
     out.set(name, entry.trusted
-      ? { ...entry, baseHash: scope === "place" ? entry.baseHash : h("with-assets", entry.baseHash, assets), reads: expandReads(sink) }
-      : entry);
+      ? { ...withShape, baseHash: scope === "place" ? entry.baseHash : h("with-assets", entry.baseHash, assets), reads: expandReads(sink) }
+      : withShape);
   }
   return out;
 }

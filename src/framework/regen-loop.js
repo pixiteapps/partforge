@@ -13,7 +13,10 @@
 // - a build that a mid-flight edit outdated is reported stale by buildDone()
 //   (return false → the caller discards the meshes and kicks a rebuild);
 // - markDirty({debounce:false}) bumps without arming the timer (the animation
-//   fast-apply path kicks explicitly).
+//   fast-apply path kicks explicitly);
+// - delayKick(ms) re-arms the kick without bumping the version, and flush()
+//   kicks now (the pose drag: a skinned slider move holds the exact build off
+//   for a pause, and a release sends it at once — mount.js, skin/skin-drag.js).
 export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
   let kernelReady = false;
   let pending = 0;       // worker replies still owed for the in-flight dispatch cycle
@@ -39,10 +42,22 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
     // driver kicks explicitly after the pose fast path has repaired, so a
     // pose-only frame sends no job and a geometry frame dispatches immediately
     // whenever the worker is idle (best-effort at worker cadence, clock-free).
-    markDirty({ debounce = true } = {}) {
+    markDirty({ debounce = true, delayMs = debounceMs } = {}) {
       paramsVersion++;
       clearTimeout(timer);
-      if (debounce) timer = setTimeout(kick, debounceMs);
+      if (debounce) timer = setTimeout(kick, delayMs);
+    },
+    // Replace whatever kick is armed with one in `ms`; the version is untouched.
+    delayKick(ms) {
+      if (disposed) return;
+      clearTimeout(timer);
+      timer = setTimeout(kick, ms);
+    },
+    // Cancel the armed kick and kick now.
+    flush() {
+      clearTimeout(timer);
+      timer = null;
+      kick();
     },
     // One job of the cycle finished (meshes / needs-occt / error). Returns whether
     // its result is still current; the caller applies the meshes only on true, then

@@ -1,0 +1,119 @@
+import { describe, test, expect, beforeAll } from "vitest";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
+import { vaseSpec } from "./fixtures/implicit-trees.js";
+
+let k;
+beforeAll(async () => { k = await bootManifoldKernel(); });
+
+const ball = { root: { kind: "sphere", r: 10 }, preview: 1 };
+
+describe("k.implicit on Manifold", () => {
+  test("a watertight genus-0 solid with the right volume", () => {
+    const s = k.implicit(ball);
+    const want = (4 / 3) * Math.PI * 1000;
+    expect(Math.abs(s.volume() - want) / want).toBeLessThan(0.02);
+    if (typeof s.genus === "function") expect(s.genus()).toBe(0);
+  });
+  test("composes with ordinary booleans", () => {
+    const s = k.implicit(ball).cut(k.box([-20, -20, 0], [20, 20, 20]));
+    expect(s.boundingBox().max[2]).toBeLessThanOrEqual(1e-6);
+  });
+  test("cache key: equal specs share a hash, different specs do not", () => {
+    expect(k.implicit(ball)._hash).toBe(k.implicit({ ...ball })._hash);
+    expect(k.implicit(ball)._hash).not.toBe(k.implicit({ ...ball, root: { kind: "sphere", r: 9 } })._hash);
+  });
+  test("textures read registered images, and the image digest is in the key", async () => {
+    const data = new Uint16Array(16).fill(32768);
+    await k._registerImage({ name: "grey", digest: "g1", width: 4, height: 4, data });
+    const spec = { root: { kind: "displace", amount: 1, by: { expr: "return texture(t, p.xy * 0.05 + 0.5);", textures: { t: { image: "grey" } } }, child: { kind: "sphere", r: 8 } }, preview: 1 };
+    const a = k.implicit(spec);
+    await k._registerImage({ name: "grey", digest: "g2", width: 4, height: 4, data: new Uint16Array(16) });
+    const b = k.implicit(spec);
+    expect(a._hash).not.toBe(b._hash);
+    expect(a.volume()).toBeGreaterThan(b.volume());   // grey (0.5) lowers d by 0.5: the surface moves OUT 0.5 mm
+  });
+  test("an empty result is a clear error", () => {
+    expect(() => k.implicit({ root: { kind: "subtract", children: [{ kind: "sphere", r: 2 }, { kind: "sphere", r: 5 }] }, preview: 1 }))
+      .toThrow(/implicit: the shape is empty/);
+  });
+  test("spec errors surface with their path", () => {
+    expect(() => k.implicit({ root: { kind: "sphere", r: -1 } })).toThrow(/root\.r: must be a number > 0/);
+  });
+  test("the cache key ignores the other tier's grid", async () => {
+    expect(k.implicit({ ...ball, resolution: 0.4 })._hash).toBe(k.implicit({ ...ball, resolution: 0.6 })._hash);
+    expect(k.implicit({ ...ball, preview: 1.2 })._hash).not.toBe(k.implicit(ball)._hash);
+    const kp = await bootManifoldKernel({ quality: "print" });
+    const small = { root: { kind: "sphere", r: 3 }, resolution: 1 };
+    expect(kp.implicit({ ...small, preview: 2 })._hash).toBe(kp.implicit({ ...small, preview: 1.5 })._hash);
+    expect(kp.implicit({ ...small, resolution: 0.8 })._hash).not.toBe(kp.implicit(small)._hash);
+  });
+  test("warnings surface on a cache hit too", () => {
+    const thin = { root: { kind: "box", size: [10, 10, 1] }, preview: 0.8 };
+    k.beginSubPart("thin");
+    k.takeBuildWarnings();
+    k.implicit(thin);
+    const first = k.takeBuildWarnings();
+    const hitsBefore = k.cacheStats().hits;
+    k.implicit(thin);
+    expect(k.cacheStats().hits).toBe(hitsBefore + 1);
+    const second = k.takeBuildWarnings();
+    k.endSubPart();
+    expect(first.some((w) => /thinnest feature/.test(w))).toBe(true);
+    expect(second).toEqual(first);
+  });
+});
+
+describe("k.implicit contact pieces on Manifold", () => {
+  test("one ID per piece", async () => {
+    const { handSpec, HAND_POSES } = await import("./fixtures/implicit-trees.js");
+    const { bootManifoldKernel: boot } = await import("../src/testing/manifold.js");
+    const ke = await boot();
+    const spec = handSpec({ ...HAND_POSES.fist, contactGap: 0 });
+    const g = ke.implicit(spec)._m.getMesh();
+    const ids = [...new Set(g.runOriginalID)];
+    g.delete?.();
+    expect(ids.length).toBe(6);
+    expect(new Set(ids).size).toBe(6);
+    const first = Math.min(...ids);
+    for (const id of ids) expect(ke._shadingPolicy(id)).toMatchObject({ organic: true, group: first });
+  }, 60_000);
+  test("a contact's pieces are separate IDs in one group; a plain tree is one ID", async () => {
+    const { capsulePress } = await import("./fixtures/implicit-seam-cases.js");
+    const idsOf = (spec) => {
+      const g = k.implicit({ ...spec, preview: 1.5 })._m.getMesh();
+      const ids = [...new Set(g.runOriginalID)];
+      g.delete?.();
+      return ids;
+    };
+    const pieceIds = idsOf(capsulePress({ overlap: 1.2 }));
+    expect(pieceIds.length).toBe(2);
+    expect(k._shadingPolicy(pieceIds[0]).group).toBeDefined();
+    const ids = idsOf({ root: { kind: "union", children: capsulePress({ overlap: 1.2 }).root.children } });
+    expect(ids.length).toBe(1);
+    expect(k._shadingPolicy(ids[0]).group).toBeUndefined();
+  }, 60_000);
+});
+
+describe("k.implicitFrames on Manifold", () => {
+  test("implicitFrames sees the kernel's registered images", async () => {
+    const { spec, images } = vaseSpec();
+    for (const [name, im] of images) await k._registerImage({ name, ...im });
+    expect(k.implicitFrames(spec).report()).toEqual(implicitFrames(spec, { images }).report());
+  });
+
+  test("label boxes contain the transformed pieces", () => {
+    const a = { kind: "sphere", r: 5, at: [10, 0, 0], label: "a" };
+    const b = { kind: "box", size: [4, 4, 4], at: [-10, 0, 0], label: "b" };
+    const T = (x) => x.rotate(30, [0, 0, 0], [1, 1, 0]).translate([3, -2, 5]).scale(1.5).mirror("XZ");
+    const labels = T(k.implicitFrames({ root: { kind: "union", children: [a, b] } })).report().labels;
+    for (const piece of [a, b]) {
+      const bb = T(k.implicit({ root: piece, preview: 0.5 })).boundingBox();
+      const box = labels[piece.label];
+      for (let i = 0; i < 3; i++) {
+        expect(bb.min[i]).toBeGreaterThanOrEqual(box.min[i] - 0.05);
+        expect(bb.max[i]).toBeLessThanOrEqual(box.max[i] + 0.05);
+      }
+    }
+  });
+});

@@ -189,8 +189,11 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
       try { specs[op].toArgs(args[0]); }
       catch (e) { issues.push({ kind: "invalid-options", scope, op, message: e?.message || String(e) }); }
     }
-    if (!seen.fnArg && args.some((a) => hasFn(a))) seen.fnArg = true;
-    calls.push({ scope, op, args: args.map(describe) });
+    // `fn: true` marks a call handed a function (JSON drops one inside an options object,
+    // so `args` alone cannot tell `fillet({ r, edges: fn })` from `fillet({ r })`).
+    const fn = args.some((a) => hasFn(a));
+    if (fn) seen.fnArg = true;
+    calls.push({ scope, op, args: args.map(describe), ...(fn ? { fn: true } : {}) });
   };
 
   const onQuery = (scope, op) => {

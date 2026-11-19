@@ -217,3 +217,33 @@ test("a vertex whose incident triangles are ALL slivers falls back to their sum"
   expect(Math.hypot(...n)).toBeCloseTo(1, 5);
   expect(tiltOf(n)).toBeCloseTo(15, 0); // the two slivers' bisector, not zero or NaN
 });
+
+// Sibling seams (shading-policy.js's `group`): surfaces of one group shade smooth across a
+// seam bent under SIBLING_SEAM_ANGLE, hard above it, and never draw a line.
+import { ORGANIC, SIBLING_SEAM_ANGLE } from "../src/framework/geometry/shading-policy.js";
+
+const siblings = (group) => new Map([[7, { ...ORGANIC, group }], [8, { ...ORGANIC, group }]]);
+const dotN = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+test("sibling seams: SIBLING_SEAM_ANGLE is 5", () => expect(SIBLING_SEAM_ANGLE).toBe(5));
+
+test("sibling seam bent under the sibling angle shades smooth, with no line", () => {
+  const r = creasedNormals(hinge(3, { oids: [7, 8] }), { policies: siblings(7) });
+  expect(dotN(cornerNormal(r, 0, 0), cornerNormal(r, 1, 1))).toBeGreaterThan(1 - 1e-6);   // v0, shared
+  expect(r.edges.length).toBe(0);
+});
+
+test("sibling seam bent over the sibling angle shades hard, with no line", () => {
+  const r = creasedNormals(hinge(10, { oids: [7, 8] }), { policies: siblings(7) });
+  expect(dotN(cornerNormal(r, 0, 0), cornerNormal(r, 1, 1))).toBeLessThan(Math.cos((9 * Math.PI) / 180));
+  expect(r.edges.length).toBe(0);
+});
+
+test("a cross-ID seam without a shared group is unchanged", () => {
+  const ungrouped = new Map([[7, ORGANIC], [8, ORGANIC]]);
+  const mixed = new Map([[7, { ...ORGANIC, group: 7 }], [8, { ...ORGANIC, group: 9 }]]);
+  for (const policies of [ungrouped, mixed]) {
+    const r = creasedNormals(hinge(3, { oids: [7, 8] }), { policies });
+    expect(dotN(cornerNormal(r, 0, 0), cornerNormal(r, 1, 1))).toBeLessThan(Math.cos((2 * Math.PI) / 180));
+  }
+});

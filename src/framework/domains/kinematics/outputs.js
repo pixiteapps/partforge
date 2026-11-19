@@ -2,6 +2,7 @@
 import { resolveFrames, compose, invert } from "../../geometry/xform.js";
 import { hypot3 } from "../../geometry/js-math.js";
 import { axisAngle } from "../../geometry/rotations.js";
+import { implicitAdapters } from "./implicit.js";
 import { jointSteps, restValue } from "./tree.js";
 
 /** Round to 0.001 with −0 written as 0 (the frame report's convention). */
@@ -105,8 +106,9 @@ export function resolveMemo() {
 }
 
 /**
- * The adapters of one posed limb: world and place for solids. `frames` are the parent frames
- * passed to `pose`; `restFrames` every frame of the chain at rest (`place`'s `from: "rest"`).
+ * The adapters of one posed limb: flesh and attach for k.implicit (implicit.js), world and
+ * place for solids. `frames` are the parent frames passed to `pose`; `restFrames` every
+ * frame of the chain at rest (`place`'s `from: "rest"`).
  * `resolvePosed` (a resolveMemo) resolves the posed chain among its parent's frames; pose()
  * shares one with buildReport, so the report's tip and every place() read one resolve.
  */
@@ -231,5 +233,5 @@ export function buildAdapters(tree, posedFrames, frames, restFrames, fail, value
     return { kind: "partforge.points", points, axes, lines: chain.slice(1).map((n, i) => [chain[i], n]) };
   }
 
-  return { world, place, ikInfo, handleInfo };
+  return { ...implicitAdapters(tree, fail), world, place, ikInfo, handleInfo };
 }
