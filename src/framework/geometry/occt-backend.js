@@ -41,8 +41,12 @@ import { meshToStl } from "./mesh-stl.js";
 import { heightfieldMesh, hashGridData } from "./heightfield.js";
 import { writeStep } from "./occt-step.js";
 import { implicitFrames } from "./implicit/frame-report.js";
+import { createCage } from "./subdiv/index.js";
 // One literal on one line: test/organic-docs.test.js holds the guide's copy to it.
 const IMPLICIT_ON_OCCT = "implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached OCCT because meta.backend pins it there, because a fillet or chamfer in the part needs OCCT (a function selector, or an edge the mesh backend cannot blend — the CLI, STL and 3MF build the whole part on one backend), or because the geometry-free probe did not see the k.implicit call (one made only after reading a geometry query); set `meta.backend: \"manifold\"`, give that fillet or chamfer an object selector or a shape the mesh backend can blend, and make the k.implicit call unconditional";
+// k.subdiv is mesh-native for the same reasons, and reaches OCCT the same ways: the same
+// sentence, naming k.subdiv.
+const SUBDIV_ON_OCCT = IMPLICIT_ON_OCCT.replace(/^implicit:/, "subdiv:").replaceAll("k.implicit", "k.subdiv");
 const MESH = { preview: { tolerance: 0.1, angularTolerance: 0.25 }, print: { tolerance: 0.01, angularTolerance: 0.1 } };
 
 // Heightfield sew-time warning threshold, in triangles. Measured by the plan's
@@ -772,12 +776,18 @@ export function createOcctKernel(replicad) {
   };
   // Its frame report meshes nothing, so OCCT runs it like Manifold does.
   const frameReport = (spec) => implicitFrames(spec, { images });
+  // k.subdiv is mesh-native too (a subdivision surface is a triangle mesh); a cage is
+  // plain data, so OCCT hands one out like Manifold does.
+  const subdiv = () => {
+    throw new Error(SUBDIV_ON_OCCT);
+  };
 
   const kernel = finishKernel({
     cylinder, // boredCylinder: the kernel front's default composition is exactly right here
     box: (min, max) => cached(h("box", min, max), () => wrap(makeBox(min, max), [], h("box", min, max))),
     roundedBox,
     prism, extrude, revolve, loft: loftOp, sweep, helixSweptTube, heightfield, implicit, implicitFrames: frameReport,
+    cage: (opts) => createCage(opts), subdiv,
     sphere: (r) => cached(h("sphere", r), () => wrap(makeSphere(r), [], h("sphere", r))),
     union: (solids) => {
       const key = h("union", solids.map((s) => s._hash));

@@ -571,6 +571,29 @@ export interface ImplicitOptions {
   preview?: number;
 }
 
+/** k.cage's start: a box, optionally split into segments and mirrored across a plane through its center. */
+export interface CageOptions {
+  box: { size: [number, number, number]; center?: [number, number, number]; segs?: [number, number, number] };
+  mirror?: "yz" | "xz" | "xy";
+}
+/** A face by id, or a region of faces by their ids. */
+export type CageFaces = string | string[];
+/**
+ * k.cage — a closed quad mesh, edited in place by face id. Every
+ * method throws a `cage: ` error naming the problem, and every change leaves it closed.
+ */
+export interface Cage {
+  extrude(faces: CageFaces, opts?: { by: number; scale?: number | [number, number, number]; steps?: number; id?: string }): void;
+  move(faces: CageFaces, offset: [number, number, number]): void;
+  scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] }): void;
+  centroid(id: string): [number, number, number];
+  normal(id: string): [number, number, number];
+  size(id: string): [number, number];
+  faces(prefix?: string): string[];
+  bounds(): { min: [number, number, number]; max: [number, number, number] };
+  snapshot(): { points: number[][]; faces: number[][]; ids: string[] };
+}
+
 /** One frame in a k.implicitFrames report: its origin and unit axes in part coordinates. */
 export interface ImplicitFrameReport { origin: Point3; x: Point3; y: Point3; z: Point3; }
 /** A labelled node's box: it always contains the piece, but can be generous by up to a blend's reach. */
@@ -688,6 +711,10 @@ export interface GeometryKernel {
   implicit(o: ImplicitOptions): Solid;
   /** Where a k.implicit spec's frames and labelled nodes end up. Meshes nothing; return it from a probe. */
   implicitFrames(o: ImplicitOptions): ImplicitFrameSet;
+  /** A subdivision cage: a coarse closed quad mesh the build edits in place. Plain data, no geometry. */
+  cage(o: CageOptions): Cage;
+  /** The cage's smooth (Catmull-Clark) limit surface as a Solid, read at the call. Mesh-native: OCCT throws. */
+  subdiv(cage: Cage): Solid;
 
   // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
   // framework caller reaches these through `?.`, so a third-party backend may

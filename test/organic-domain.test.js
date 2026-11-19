@@ -13,9 +13,11 @@ const src = (text) => ({ files: { "part.js": text }, entrypoint: "part.js" });
 test("the registry carries organic, tagging k.implicit and k.implicitFrames", () => {
   const d = DOMAINS.find((m) => m.id === "organic");
   expect(d).toMatchObject({ title: "Organic", subpath: "partforge/organic", guide: "docs/domains/organic.md" });
-  expect(d.kernelOps.map((op) => op.name)).toEqual(["implicit", "implicitFrames"]);
+  expect(d.kernelOps.map((op) => op.name)).toEqual(["implicit", "implicitFrames", "subdiv", "cage"]);
   expect(domainOfOp("implicit")).toBe("organic");
   expect(domainOfOp("implicitFrames")).toBe("organic");
+  expect(domainOfOp("subdiv")).toBe("organic");
+  expect(domainOfOp("cage")).toBe("organic");
 });
 
 test("domainsOf finds a part that calls k.implicit or k.implicitFrames, or imports partforge/organic", () => {
@@ -30,6 +32,15 @@ test("a kernel without the engine gets a k.implicit that says so, and a working 
     "implicit: this kernel has no implicit engine — build the part on the Manifold backend");
   const set = k.implicitFrames({ frames: { tip: { at: [0, 0, 10] } }, root: { kind: "sphere", r: 5, frame: "tip", label: "ball" } });
   expect(set.report().frames.tip.origin).toEqual([0, 0, 10]);
+});
+
+test("a kernel without the engine gets a k.subdiv that says so, and a working k.cage", () => {
+  const k = finishKernel({});
+  const c = k.cage({ box: { size: [10, 10, 10] } });
+  expect(c.centroid("+z:0,0")).toEqual([0, 0, 5]);
+  expect(() => k.subdiv(c)).toThrow(
+    "subdiv: this kernel has no subdivision engine — build the part on the Manifold backend");
+  expect(domainsOf(src("const s = (k) => k.subdiv(k.cage({ box: { size: [1, 1, 1] } }));"))).toEqual(["organic"]);
 });
 
 test("a backend's own k.implicit wins over the domain fallback", () => {

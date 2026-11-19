@@ -18,6 +18,7 @@ import {
   SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, ROUTED_CAD_OPS,
 } from "./kernel.js";
 import { KERNEL_OP_SPECS, SOLID_OP_SPECS, isPlainOptions } from "./op-options.js";
+import { createCage, isCage } from "./subdiv/cage.js";
 
 // The probe hands out TWO chainable handles: k.shape2d()/k.text2d() yield a Shape2D
 // handle (whose extrude/revolve yield the Solid handle), everything else yields the
@@ -80,8 +81,13 @@ function makeProbe(onCall, onQuery = () => {}) {
   const kernelQueries = {
     toSTEP: () => Promise.resolve(new ArrayBuffer(0)),
     cleanup: () => {},
+    // A REAL cage (plain data, no geometry), so a build can read its faces back
+    // (c.centroid(…), c.faces(…)) and get the numbers the real build will. k.subdiv then
+    // chains to the solid handle like any factory op.
+    cage: (opts) => createCage(opts),
   };
-  const NOT_DATA = new Set(["cleanup"]); // answers nothing a build could act on
+  // Not fabricated: cleanup answers nothing a build could act on, and cage answers for real.
+  const NOT_FABRICATED = new Set(["cleanup", "cage"]);
 
   // `ignore` keeps the proxy from masquerading as a thenable/internal/serializable
   // handle: symbols, `then` (so it's never await-unwrapped), `_`-prefixed internals,
@@ -107,7 +113,7 @@ function makeProbe(onCall, onQuery = () => {}) {
       if (key in queries) {
         return (...args) => {
           onCall(scope, key, args);
-          if (!NOT_DATA.has(key)) onQuery(scope, key);
+          if (!NOT_FABRICATED.has(key)) onQuery(scope, key);
           return queries[key](...args);
         };
       }
@@ -156,6 +162,7 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
   const seen = { fnArg: false };
   const hasFn = (a, depth = 0) => {
     if (typeof a === "function") return true;
+    if (isCage(a)) return false; // a frozen object of methods, but data: its state is recorded
     if (depth > 4 || a === null || typeof a !== "object" || a === solidProxy || a === shape2dProxy) return false;
     if (Array.isArray(a)) return a.some((x) => hasFn(x, depth + 1));
     if (Object.getPrototypeOf(a) !== Object.prototype) return false;
@@ -169,6 +176,7 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
     if (a === solidProxy) return "<solid>";
     if (a === shape2dProxy) return "<shape2d>";
     if (typeof a === "function") return "<fn>";
+    if (isCage(a)) return `<cage ${JSON.stringify(a.snapshot())}>`; // its state, so an edit shows
     try { return JSON.stringify(a) ?? String(a); } catch { return "<unserializable>"; }
   };
 

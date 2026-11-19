@@ -22,6 +22,7 @@ import { stripFrames } from "./geometry/implicit/call-id.js";
 import { addSugar } from "./geometry/solid-sugar.js";
 import { SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS } from "./geometry/kernel.js";
 import { MAX_PROBE_OPS, ProbeRunawayError } from "./geometry/probe.js";
+import { createCage, isCage } from "./geometry/subdiv/cage.js";
 
 // The fixed hash a place-scope probe starts from; a rigid place() leaves it unchanged.
 export const CANONICAL = h("canonical");
@@ -129,6 +130,9 @@ function makeProbeSession() {
     toSTEP: () => Promise.resolve(new ArrayBuffer(0)),
     cleanup: () => {}, beginSubPart: () => {}, endSubPart: () => {},
     cacheStats: () => ({ hits: 0, misses: 0 }), resetCacheStats: () => {},
+    // A REAL cage: plain data a build edits and reads back (c.centroid(…)) with the numbers
+    // the real build gets, so reading it poisons no trust. k.subdiv hashes its state below.
+    cage: (opts) => { tick(); return createCage(opts); },
   };
   const ignore = (key) => typeof key !== "string" || key === "then" || key === "toJSON" || key[0] === "_";
   const kernel = new Proxy({}, {
@@ -137,6 +141,13 @@ function makeProbeSession() {
       if (key in kernelQueries) return kernelQueries[key];
       return (...args) => {
         tick();
+        if (key === "subdiv" && isCage(args[0])) {
+          // The cage's state at the call, not the cage object (whose methods would read as
+          // unhashable functions). A non-cage argument hashes as usual below; the real build
+          // reports it. No _implicit flag: a subdivision body has nothing to skin.
+          const cageHash = h(key, args[0].snapshot());
+          return token(cageHash, [], {}, cageHash);
+        }
         const hash = h(key, ...args.map(argKey));
         if (key === "implicit") {
           state.implicitSpecs.push(args[0]);

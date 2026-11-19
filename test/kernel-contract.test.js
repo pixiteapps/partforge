@@ -35,6 +35,13 @@ test("Manifold solid exposes no op the contract doesn't document", () => {
   expect(publicKeys(k.box({ min: [0, 0, 0], max: [1, 1, 1] })).filter((key) => !documented.has(key))).toEqual([]);
 });
 
+test("Manifold k.cage hands out a cage and k.subdiv turns it into a Solid with the Solid surface", () => {
+  const c = k.cage({ box: { size: [10, 10, 10] } });
+  const keys = publicKeys(k.subdiv(c));
+  for (const op of SOLID_OPS) expect(keys, `subdiv solid is missing ${op}`).toContain(op);
+  expect(KERNEL_OPS).toEqual(expect.arrayContaining(["implicit", "implicitFrames", "subdiv", "cage"]));
+});
+
 test("Shape2D exposes exactly the documented method surface", () => {
   const documented = new Set(SHAPE2D_OPS);
   const shape = k.shape2d([[0, 0], [10, 0], [10, 10], [0, 10]]);

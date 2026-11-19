@@ -36,6 +36,11 @@ export const KERNEL_OPS = [
   "implicit",
   // The frame report: pure, no meshing, so both backends run it.
   "implicitFrames",
+  // Additive (same precedent). Cage → Catmull-Clark subdivision surface (subdiv/).
+  // `subdiv` is mesh-native like `implicit` (a B-rep class may throw); `cage` builds
+  // plain data, so both backends run it.
+  "subdiv",
+  "cage",
 ];
 
 // Backend-optional kernel ops: the sub-part cache brackets + WASM lifetime hooks.
