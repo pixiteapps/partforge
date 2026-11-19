@@ -1,5 +1,6 @@
 // partforge/organic — checks and vocabulary for k.implicit signed-distance bodies.
-// The ops themselves stay on the kernel: k.implicit and k.implicitFrames (types/kernel.d.ts).
+// The ops themselves stay on the kernel: k.implicit and k.implicitFrames, and for
+// subdivision bodies k.cage and k.subdiv (types/kernel.d.ts); this subpath has no cage exports.
 // Worker-safe: the grammar's leaf modules only — no mesher, no native core, no three.js, no DOM.
 
 import type { ImplicitOptions } from "./kernel.js";

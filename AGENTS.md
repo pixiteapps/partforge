@@ -68,7 +68,12 @@ with crease detail and fine-grid nails unioned on, each digit a `limb` posed in 
 with an angles-mode handle (a Pose-mode drag skins the last exact mesh until the rebuild lands), its frames
 reported by a `k.implicitFrames` probe; its builders are also the implicit
 engine's test fixture, re-exported by `test/fixtures/implicit-trees.js`, so
-editing them moves pinned mesh hashes; no demo page), `gearbox.js` (the rotary-handle reference part and the
+editing them moves pinned mesh hashes; no demo page), `organic-whale.js` (the
+organic domain's `k.subdiv` reference part and the worked example of the cage section
+of `docs/domains/organic.md` - one mirrored `k.cage` box-modelled into body, tail stock,
+flukes, dorsal and pectoral fins, smoothed by `k.subdiv`, with a flat cut under the belly;
+`length` and `tailLift` controls; the guide shows `whaleCage` verbatim and
+`test/organic-docs.test.js` holds the two equal; no demo page), `gearbox.js` (the rotary-handle reference part and the
 worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 `gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
@@ -746,8 +751,9 @@ the installed package, so let the publish finish before bumping the dep there.
   (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
   crank-sliders as derive-time point sources that also place sub-parts) tag no kernel
   op. Organic (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
-  `implicit` and `implicitFrames`, but the engine stays in `geometry/implicit/`, since
-  both backends and the native core call it and core may not import a domain folder;
+  `implicit`, `implicitFrames`, `subdiv` and `cage`, but the engines stay in
+  `geometry/implicit/` and `geometry/subdiv/`, since both backends (and, for implicit,
+  the native core) call them and core may not import a domain folder;
   its attaches are only the fallbacks for a kernel without the ops, and its entry
   reaches the grammar's leaf modules alone (no mesher, no native core —
   `test/organic-domain.test.js`). None declares facts, so the registry's other seams are exercised by the test-only

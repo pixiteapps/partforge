@@ -1,10 +1,14 @@
-# Organic: signed-distance bodies
+# Organic: signed-distance and subdivision bodies
 
 Use this domain for smooth organic bodies: a hand, a paw, a creature, a blobby or
 sculpted form. You describe the body as a tree of shapes (spheres, capsules,
 ellipsoids, …) on named frames, joined by smooth blends, and `k.implicit` meshes the
 tree into one watertight solid. Joints stay smooth because the blend is part of the
 shape, not a fillet applied later.
+
+The domain has a second way to build a smooth body: box-model a coarse cage of quads
+with `k.cage` and smooth it into a solid with `k.subdiv`. See "A controlled surface:
+the subdivision cage" near the end of this guide for that, and for when to use which.
 
 ```js
 import { validateImplicit, ImplicitSpecError, ImplicitSizeError, IMPLICIT_NODE_KINDS, IMPLICIT_DETAIL_KINDS } from "partforge/organic";
@@ -24,10 +28,12 @@ You need no import for them. `partforge/organic` holds the checks and the vocabu
 
 `partforge/organic` is worker-safe and light: it loads the grammar only, not the mesher.
 
-There is no reference part file for this domain. The worked example at the end of this
-guide (a two-toe paw) is complete and tested. The larger example is the posable hand in
-`test/fixtures/implicit-trees.js` (`handSpec`): five digits on frame chains, a `contact`
-root, attachments and crease detail.
+The domain has two reference parts. `src/parts/organic-hand.js` is a posable hand built
+with `k.implicit`: five digits on frame chains, a `contact` root, attachments and crease
+detail (its builders are also the fixture in `test/fixtures/implicit-trees.js`).
+`src/parts/organic-whale.js` is a whale built from one subdivision cage. The worked
+example in "Worked example: a two-toe paw" is complete and tested, and so is the whale
+in "Worked example: a whale".
 
 ## When to use it, and when not
 
@@ -39,6 +45,10 @@ threaded boss is better built with the ordinary ops (`k.box`, `k.cylinder`, bool
 `fillet`). Those are exact, export to STEP, and build faster. A tree of only boxes,
 cylinders and half-spaces with no blending is ordinary CSG in disguise.
 
+For one continuous skin whose outline you want to control exactly (a whale, a fish, a
+hull), a subdivision cage is often the better tool; see "When a cage, and when an
+implicit tree".
+
 When an organic body needs a flat, a hole or a mating face, build the body with
 `k.implicit` and then apply ordinary booleans to the solid it returns. `k.implicit`
 returns an ordinary `Solid`: transforms, booleans, `measure`, `verify`, STL and 3MF
@@ -46,8 +56,8 @@ export all work on it.
 
 ## Backend: Manifold only
 
-`k.implicit` is mesh-native. It builds on the Manifold backend only. The OCCT backend
-throws:
+`k.implicit` and `k.subdiv` are mesh-native. They build on the Manifold backend only.
+For `k.implicit`, the OCCT backend throws:
 
 ```text
 implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached OCCT because meta.backend pins it there, because a fillet or chamfer in the part needs OCCT (a function selector, or an edge the mesh backend cannot blend — the CLI, STL and 3MF build the whole part on one backend), or because the geometry-free probe did not see the k.implicit call (one made only after reading a geometry query); set `meta.backend: "manifold"`, give that fillet or chamfer an object selector or a shape the mesh backend can blend, and make the k.implicit call unconditional
@@ -77,6 +87,14 @@ implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached
 - A kernel with no implicit engine at all (a host's own kernel) throws
   `implicit: this kernel has no implicit engine — build the part on the Manifold backend`.
 - `k.implicitFrames` meshes nothing, so it works on both backends.
+- **`k.subdiv` follows every rule above.** OCCT throws the same message with `k.subdiv`
+  in place of `k.implicit`; it starts
+  `subdiv: OCCT cannot build k.subdiv (it is mesh-native)`. Pin the part to Manifold and
+  keep its fillets and chamfers mesh-buildable. A STEP export writes a `k.subdiv`
+  sub-part as a tessellated solid, as it does an implicit one. A kernel with no
+  subdivision engine throws
+  `subdiv: this kernel has no subdivision engine — build the part on the Manifold backend`.
+  `k.cage` is plain data, so it works on both backends.
 
 ## The spec
 
@@ -421,7 +439,9 @@ Relevant entries in `docs/ERROR-PATTERNS.md`: `implicit-limbs-miss-target`, `imp
 
 The domain adds lint rules and no verify metrics. Lint runs every `k.implicit` and
 `k.implicitFrames` spec that the build makes at the lint params, so it judges the
-**default pose**. A pose a slider reaches but the defaults do not is not checked.
+**default pose**. A pose a slider reaches but the defaults do not is not checked. Of
+these rules, only `implicit-needs-manifold` applies to `k.subdiv`. Lint does not mesh a
+cage, so the build finds a cage that passes through itself (see "Validity").
 
 | Rule | Severity | Reports |
 |---|---|---|
@@ -442,7 +462,8 @@ The reference part, `src/parts/organic-hand.js`, lints with no errors or warning
 hand with crease detail, its nails each their own fine-grid `k.implicit` (the fix
 `implicit-thin-feature` suggests), and a probe that reports its frames. Each digit is a
 `limb` posed in `derive`, its frames put into the spec, with one angles-mode handle per
-digit, so you pose the hand by dragging a fingertip or a knuckle in Pose mode.
+digit, so you pose the hand by dragging a fingertip or a knuckle in Pose mode. The
+other reference part, `src/parts/organic-whale.js`, also lints clean and passes `verify`.
 
 ## Gotchas
 
@@ -458,7 +479,8 @@ digit, so you pose the hand by dragging a fingertip or a knuckle in Pose mode.
 - **A probe returns the frame set, not its `report()`.** Calling `report()` in a probe
   fails lint.
 - **Contact is root-only.** Put the other shapes inside it, or build them separately.
-- **No STEP.** Pin `meta.backend: "manifold"` and export STL or 3MF.
+- **No exact STEP.** Pin `meta.backend: "manifold"`. A STEP export writes an organic
+  sub-part as a tessellated (mesh) solid; export STL or 3MF for printing.
 - **Build flats and holes after meshing**, with ordinary booleans on the returned solid.
 
 ## Worked example: a two-toe paw
@@ -577,3 +599,283 @@ implicitDistance(pad)(5, 0, 0);    // -1.5
 ```
 
 The kinematics guide has the defaults, the errors, and a worked hand.
+
+## A controlled surface: the subdivision cage
+
+A second way to build a smooth body. Start from a box, and box-model a coarse closed
+mesh of quads, the **cage**, by extruding, moving and scaling its faces. Then
+`k.subdiv` smooths the cage into one watertight solid (Catmull-Clark subdivision).
+The cage is a builder object you change in place inside `build`:
+
+```js
+const bar = k.cage({ box: { size: [40, 20, 20], segs: [2, 1, 1] } });
+bar.faces("+z");   // ["+z:0,0", "+z:1,0"]
+bar.extrude("+x:0,0", { by: 10, scale: 0.5 });   // "+x:0,0>"
+```
+
+You need no import: `k.cage` and `k.subdiv` are kernel ops. `k.subdiv(cage)` returns an
+ordinary `Solid`, so booleans, transforms, `measure`, `verify`, STL and 3MF work on
+it. It builds on Manifold only (see "Backend: Manifold only").
+
+### When a cage, and when an implicit tree
+
+- **Use a cage for one continuous skin whose outline matters**: a whale, a fish, a
+  bottle with a sculpted shoulder, a hull. You place the control points, so you control
+  the silhouette directly, and the surface has no blend widths to tune.
+- **Use an implicit tree for pieces that blend, press together, or pose by frames**:
+  a hand whose fingers press against each other, toes that fan with a slider, a body
+  with crease detail. The cage has none of these: it has no frames, no `contact`, no
+  detail, and no pose-drag bindings.
+- The two join each other only by ordinary booleans (`union`, `cut`), which leave a
+  sharp seam where they meet. Do not plan on a smooth join between a cage and a tree.
+
+### Starting the cage: `k.cage`
+
+`k.cage({ box: { size, center?, segs? }, mirror? })` starts the cage from a box.
+
+- `size` is `[x, y, z]` in mm, all positive. `center` defaults to `[0, 0, 0]` (the box
+  is centred on it in all three axes).
+- `segs` is how many faces each side is split into along x, y and z, default
+  `[1, 1, 1]`. A side across x and y has `segs[0] × segs[1]` faces.
+- `mirror` is `"yz"` (reflect X), `"xz"` (reflect Y) or `"xy"` (reflect Z), through
+  the box's centre. See "Mirror".
+
+### Face ids
+
+Every face has an id string. Box faces are `${side}:${i},${j}`, where `side` is one of
+`+x`, `-x`, `+y`, `-y`, `+z`, `-z`, and the two indices count faces along two axes,
+rising with the coordinate:
+
+| side | `i` counts along | `j` counts along |
+|---|---|---|
+| `+x`, `-x` | Y | Z |
+| `+y`, `-y` | X | Z |
+| `+z`, `-z` | X | Y |
+
+An extrude replaces the faces it extrudes and names the new ones after them:
+
+- **One face:** the cap is the face's id plus `>` (`+x:0,0>`), or the `id` you give.
+  Its four sides are `<cap>.s0` to `<cap>.s3`.
+- **A region** (a list of faces): the caps are `<id>:0`, `<id>:1`, … in the order you
+  listed the faces, where `<id>` defaults to the first face's id plus `>`. There is one
+  side per boundary edge, `<id>.s0`, `<id>.s1`, … A region given as a list returns a
+  list, even with one face.
+- **`steps: n`:** the extrude is cut into `n` rings. Ring `m` (1 is next to the base)
+  names its sides `<id>.<m>.sK`; the last ring drops the `.<m>`. Only the last ring is a
+  cap.
+
+**Side order.** Side `k` sits on boundary edge `k`. Take the two world axes least
+aligned with the face's normal (the region's summed normal), in x, y, z order; call them
+the first and second in-plane axes. Edge 0 is the edge whose midpoint is smallest on the
+first in-plane axis. The other edges follow counter-clockwise, seen from outside. On a
+tilted face two edges can tie on the first axis (within 1e-9 mm): then the smaller
+midpoint on the second axis wins, and then the edge met first in the stored walk.
+
+```js
+bar.faces("+x:0,0>.s").map((id) => bar.normal(id).map(Math.round));   // [[0, -1, 0], [0, 0, -1], [0, 1, 0], [0, 0, 1]]
+bar.extrude(["+z:0,0", "+z:1,0"], { by: 5 });   // ["+z:0,0>:0", "+z:0,0>:1"]
+bar.faces("+z:0,0>.").length;   // 6
+bar.extrude("-x:0,0", { by: 12, steps: 3, id: "arm" });   // "arm"
+bar.faces("arm.1.");   // ["arm.1.s0", "arm.1.s1", "arm.1.s2", "arm.1.s3"]
+bar.faces("arm.s");   // ["arm.s0", "arm.s1", "arm.s2", "arm.s3"]
+```
+
+Do not guess ids for faces deep in a model. Read them back with `faces(prefix)`, and
+pick by `normal` or `centroid` when you need "the side that faces +Y".
+
+### Changing the cage
+
+- **`extrude(face | faces, { by, scale?, steps?, id? })`** pushes the faces out and
+  returns the new cap's id (a list of cap ids for a list of faces). `by` is a distance
+  along the faces' normal (their summed normal for a region), or an `[x, y, z]` offset.
+  `scale` (a number, or `[sx, sy, sz]` along the world axes, default 1) sizes the cap
+  about its own centre. `steps` (an integer, default 1) cuts the extrude into rings.
+  The extruded faces are gone afterwards; their id names the cap and sides' family.
+  A region must be edge-connected and have one boundary loop: a region with a hole
+  throws. An `id` must be a non-empty string without `~`, and may not be an id in use
+  or head a family in use (an id that an existing `<id>:` or `<id>.` id starts with).
+- **`move(face | faces, [x, y, z])`** moves the faces' points. A point shared with a
+  neighbour moves once, so the neighbours stretch to follow.
+- **`scale(face | faces, s, { about? })`** scales the faces' points by `s` (a number or
+  `[sx, sy, sz]`) about the point `about`. Omitted (or `null`), it is the points' mean;
+  under a mirror, for faces with an edge on the plane, the mean of the faces and their
+  reflections, on the plane.
+
+The read methods change nothing:
+
+- **`centroid(id)`** is the mean of the face's four corners. **`normal(id)`** is its unit
+  normal, pointing out.
+- **`size(id)`** is `[u, v]`: the face's extent along its first in-plane axis (the mean
+  length of edges 1 and 3), then along its second (edges 0 and 2).
+- **`faces(prefix?)`** lists the ids that start with `prefix` (every id when omitted).
+- **`bounds()`** is `{ min, max }` of the cage's points (the surface lies inside it).
+
+```js
+bar.size("arm.s0");   // [4, 20]
+bar.move("arm", [0, 0, 5]);
+bar.centroid("arm");   // [-32, 0, 5]
+bar.scale("arm", 0.5);
+bar.size("arm");   // [10, 10]
+bar.bounds();   // { min: [-32, -10, -10], max: [30, 10, 15] }
+```
+
+### Mirror
+
+With `mirror`, the cage stays whole and symmetric through the plane:
+
+- **You change the positive half only.** A changing method (`extrude`, `move`,
+  `scale`) takes positive-side ids, and the same change is made to the reflected faces
+  at once. Every face on the far side is named after its positive twin plus `~`
+  (`+y:0,0>~`). You can read a `~` id, but you cannot change one.
+- **`segs` across the plane must be even**, so the plane falls on a row of points.
+- **A point on the plane stays on it.** It keeps only the in-plane part of a move or
+  scale.
+- **A face or region with an edge on the plane grows across it as one region** with its
+  reflection, so no wall is left on the plane: a dorsal fin on the middle of a back is one
+  fin, not two. Its caps are the positive caps and their `~` twins. Its sides are
+  numbered from the positive edge that leaves the plane, counter-clockwise seen from
+  outside; each far side takes its twin's number plus `~`.
+
+```js
+const fish = k.cage({ box: { size: [60, 30, 20], segs: [4, 2, 1] }, mirror: "xz" });
+fish.faces("+x:");   // ["+x:1,0~", "+x:1,0"]
+const pec = fish.extrude("+y:0,0", { by: 12, scale: 0.7 });
+fish.centroid(`${pec}~`)[1] === -fish.centroid(pec)[1];   // true
+fish.move("+z:1,1", [0, 0, 4]);
+fish.centroid("+z:1,1~");   // [-7.5, -7.5, 14]
+fish.extrude(["+z:2,1", "+z:3,1"], { by: 6 });   // ["+z:2,1>:0", "+z:2,1>:1"]
+fish.faces("+z:2,1>.");
+// ["+z:2,1>.s0", "+z:2,1>.s1", "+z:2,1>.s2", "+z:2,1>.s3",
+//  "+z:2,1>.s3~", "+z:2,1>.s2~", "+z:2,1>.s1~", "+z:2,1>.s0~"]
+```
+
+### The surface: `k.subdiv`
+
+`k.subdiv(cage)` reads the cage when it is called. A later change to the cage changes
+no solid already built, so you can build, change and build again.
+
+- **The surface lies inside the cage.** It passes near the cage's points but not through
+  them, and rounds every corner. A cube with one face per side becomes a ball about 84%
+  as wide. More faces near an edge pull the surface toward it: with two faces per side,
+  the middle of each side stays flat and keeps the cube's full width.
+- **Preview and print lie on the same surface.** They differ only in facet size. The
+  build picks the lowest subdivision level whose facets lie within the quality's
+  tolerance of the surface: 0.2 mm for preview, 0.05 mm for print. The levels run from
+  1 to 5, and no level past 1,500,000 triangles is chosen. When no level meets the
+  tolerance, the body still builds with the finest level allowed and a build warning
+  (below). Use fewer, larger cage faces.
+- **A cage has at most 2,000 faces.**
+- **It shades smooth** and takes every ordinary `Solid` op afterwards. A flat to print
+  on is an ordinary `cut` with a box.
+- **No pose drag.** A param that changes the cage rebuilds the body, and the rebuild is
+  fast: the whale below rebuilds in about 15 ms at preview and 0.2 s at print.
+
+```js
+const smoothBox = (segs) => k.subdiv(k.cage({ box: { size: [20, 20, 20], segs } })).boundingBox();
+Math.round(10 * (smoothBox([1, 1, 1]).max[0] - smoothBox([1, 1, 1]).min[0])) / 10;   // 16.8
+smoothBox([2, 2, 2]).max[0];   // 10
+```
+
+### Validity
+
+- **A body that passes through itself** (an extrude pushed back through the body, two
+  limbs crossing) is an error at print quality and a build warning at preview. Both
+  name the cage faces that cross, so you can find them.
+- **A body with no volume throws** at both qualities, and so does one turned inside out.
+  When it also passes through itself, the error names the crossing instead.
+- **Two faces lying exactly flat on each other are not detected.** Keep separate parts
+  of the cage apart.
+
+### Recipes
+
+- **A limb** is 2 to 4 chained extrudes from one face, each with its own `by` and
+  `scale`. Bend it by giving each `by` a new direction.
+- **A knuckle or bulge** is a short extrude with `scale` above 1, followed by one with
+  `scale` below 1.
+- **A tip** is a last short extrude with `scale` about 0.6.
+- **A flat for printing** is an ordinary boolean `cut` on the result.
+- **A rounder cross-section**: a box side with two or more faces across it stays flat in
+  the middle. `scale` the side's faces toward its middle row before extruding.
+
+### Cage errors
+
+Every cage method throws a `cage: ` error that names the problem, and leaves the cage as
+it was. These are the common ones:
+
+```text
+cage: face "+x:0,0" was extruded; it is now +x:0,0>
+cage: no face "+y:9,0"; nearest: +y:1,0, +y:2,0, +y:3,0, +y:1,0~, +y:2,0~, +y:3,0~, +y:0,0>, +y:0,0>.s0
+cage: face "+z:1,1~" is a reflected face; change "+z:1,1" and the mirror follows
+cage: mirror "xz" needs an even box.segs count across the plane, not 1
+cage: region [+y:1,0, +y:3,0] is not edge-connected
+cage: region [+z:0,0, +z:1,0, +z:2,0, +z:0,1, +z:2,1, +z:0,2, +z:1,2, +z:2,2] has a hole; extrude it in pieces
+cage: id "+y:0,0>" is already in use (by "+y:0,0>")
+cage: box.segs make 5400 faces, more than MAX_CAGE_FACES (2000)
+```
+
+`k.subdiv` throws or warns with `subdiv: ` messages:
+
+```text
+subdiv: the body passes through itself between -x:0,0 and +x:0,0>.s3; -x:0,0 and +x:0,0>.s0; -x:0,0 and +x:0,0>.s2; -x:0,0 and +x:0,0>.s1
+subdiv: the body has no volume
+subdiv: expected a cage from k.cage(...)
+```
+
+and, when the tolerance cannot be met, it warns
+`subdiv: the surface is within <n> mm of smooth, not the <tolerance> mm this quality asks for — use fewer, larger cage faces`.
+
+### Worked example: a whale
+
+`src/parts/organic-whale.js` builds a whale from one cage, mirrored through Y = 0. The
+nose points to -X and the back to +Z. Every cage position is a function of the params:
+`length` scales every size, and `tailLift` (in mm, not scaled) raises only the last two
+tail rings, so the body ahead of the tail keeps its shape.
+
+```js
+const CAGE_LENGTH = 124;
+
+function whaleCage(k, p) {
+  const s = p.length / CAGE_LENGTH;
+  const v = (x, y, z) => [x * s, y * s, z * s];
+  const c = k.cage({ box: { size: v(60, 30, 26), center: [0, 0, 0], segs: [4, 2, 2] }, mirror: "xz" });
+  const positive = (prefix) => c.faces(prefix).filter((id) => !id.endsWith("~"));
+  // Round the cross-section: pull each side's outer rows in toward its middle row.
+  c.scale(positive("+y:"), [1, 1, 0.75]);
+  c.scale(positive("+z:"), [1, 0.75, 1]);
+  c.scale(positive("-z:"), [1, 0.75, 1]);
+  // Head: two short extrudes forward, each narrower.
+  const head = c.extrude(["-x:1,0", "-x:1,1"], { by: 8 * s, scale: [1, 0.8, 0.85], id: "head" });
+  c.extrude(head, { by: 5 * s, scale: [1, 0.7, 0.7], id: "nose" });
+  // Tail stock: three extrudes back, each narrower. tailLift raises only the last two, so
+  // the body ahead of the tail keeps its shape.
+  const t1 = c.extrude(["+x:1,0", "+x:1,1"], { by: v(18, 0, 1), scale: [1, 0.6, 0.6], id: "tail1" });
+  const t2 = c.extrude(t1, { by: [16 * s, 0, p.tailLift / 2], scale: [1, 0.6, 0.6], id: "tail2" });
+  c.extrude(t2, { by: [8 * s, 0, p.tailLift / 2], scale: [1, 0.8, 0.8], id: "tail3" });
+  // Flukes: the last tail step's two +Y sides, pushed out and back and flattened.
+  const fluke = c.extrude(["tail3.s1", "tail3.s2"], { by: v(4, 12, 0), scale: [1.2, 1, 0.3], id: "fluke" });
+  c.extrude(fluke, { by: v(8, 12, 0), scale: [0.6, 1, 0.7], id: "flukeTip" });
+  // Dorsal fin: the back face over the tail root, which touches the mirror plane, so it
+  // grows across it as one fin; swept back and thinned.
+  const fin = c.extrude("+z:3,1", { by: v(2, 0, 5), scale: [0.6, 0.7, 1], id: "fin" });
+  c.extrude(fin, { by: v(5, 0, 4), scale: [0.5, 0.35, 0.6], id: "finTip" });
+  // Pectoral fins: a low side face near the front, swept out, back and a little down.
+  const pec = c.extrude("+y:1,0", { by: v(3, 6, -2), scale: [0.7, 1, 0.35], id: "pec" });
+  c.extrude(pec, { by: v(8, 12, -2), scale: [0.6, 1, 0.6], id: "pecTip" });
+  return c;
+}
+```
+
+The part builds `k.subdiv(whaleCage(k, p))` and cuts a 1.5 mm flat under the belly with
+an ordinary boolean. Its cage has 132 faces. It previews at level 2 (4,224 triangles)
+and prints at level 4 (67,584 triangles).
+
+The points to copy:
+
+- **Shape the box before extruding.** The three `scale` calls round the body's
+  cross-section; extrudes made afterwards start from the rounded rings.
+- **Read ids back.** `positive("+y:")` is `faces` with the `~` ids left out; the flukes
+  extrude `tail3.s1` and `tail3.s2`, the two sides of the last tail ring that face +Y.
+- **Let the mirror do the other half.** One pectoral fin and one fluke are written; the
+  dorsal fin sits on a face that touches the plane, so it grows as one fin.
+- **Calibrate the length.** The surface lies inside its cage, so the whale's length is
+  measured once (`CAGE_LENGTH`) and the params scale from it.

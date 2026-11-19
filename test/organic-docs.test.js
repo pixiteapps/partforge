@@ -26,6 +26,9 @@ import { BULGE_DEFAULT, MAX_OWNER_K, DETAIL_SEAM_FADE } from "../src/framework/g
 import { finishKernel } from "../src/framework/geometry/kernel-front.js";
 import { implicitDistance } from "../src/framework/geometry/implicit/distance.js";
 import { handSpec } from "./fixtures/implicit-trees.js";
+import whale, { whaleCage } from "../src/parts/organic-whale.js";
+import { MAX_CAGE_FACES } from "../src/framework/geometry/subdiv/cage.js";
+import { levelFor, subdivide, SUBDIV_TOLERANCE, MAX_SUBDIV_LEVEL, MIN_SUBDIV_LEVEL, MAX_SUBDIV_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const guide = read("../docs/domains/organic.md");
@@ -76,14 +79,14 @@ beforeAll(async () => {
     expect(plain(run()), src).toEqual(evalValue(text));
     checked.push(src);
   };
-  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec };`;
+  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage };`;
   scope = new Function("k", "limb", "implicitDistance", "check", ...Object.keys(organic), body)(k, limb, implicitDistance, check, ...Object.values(organic));
   scope.checked = checked;
 });
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(14);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(33);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -242,4 +245,96 @@ test("the guide is indexed by the core guide and points at its neighbours", () =
   expect(read("../docs/AUTHORING-PARTS.md")).toContain("[`docs/domains/organic.md`](domains/organic.md)");
   expect(guide).toContain("test/fixtures/implicit-trees.js");
   expect(guide).toContain("docs/domains/kinematics.md");
+});
+
+// The subdivision cage section.
+const cageSection = () => section("A controlled surface: the subdivision cage");
+
+test("the guide's whaleCage is the reference part's, line for line", () => {
+  const file = read("../src/parts/organic-whale.js");
+  const fn = /^export (function whaleCage[\s\S]*?\n\})\n/m.exec(file)[1];
+  const block = fences("js", section("Worked example: a whale", "###"))[0];
+  expect(block).toContain(fn);
+  expect(block).toContain(/^const CAGE_LENGTH = .*;$/m.exec(file)[0]);
+  const p = whale.defaults;
+  expect(scope.whaleCage(k, p).snapshot()).toEqual(whaleCage(k, p).snapshot());
+  expect(organicManifest.referenceParts).toContain("src/parts/organic-whale.js");
+  expect(guide).toContain("`src/parts/organic-whale.js`");
+  expect(guide).not.toContain("There is no reference part file");
+});
+
+test("the whale's numbers in the guide are the code's", () => {
+  const text = section("Worked example: a whale", "###");
+  const snap = whaleCage(k, whale.defaults).snapshot();
+  const tris = (level) => (subdivide(snap, level).indices.length / 3).toLocaleString("en-US");
+  const preview = levelFor(snap, SUBDIV_TOLERANCE.preview), print = levelFor(snap, SUBDIV_TOLERANCE.print);
+  expect(preview.met && print.met).toBe(true);
+  expect(text).toContain(`Its cage has ${snap.faces.length} faces.`);
+  expect(text).toContain(`previews at level ${preview.level} (${tris(preview.level)} triangles)`);
+  expect(text).toContain(`prints at level ${print.level} (${tris(print.level)} triangles)`);
+});
+
+test("the cage section's limits and tolerances are the code's", () => {
+  const surface = section("The surface: `k.subdiv`", "###");
+  expect(surface).toContain(`${SUBDIV_TOLERANCE.preview} mm for preview, ${SUBDIV_TOLERANCE.print} mm for print`);
+  expect(surface).toContain(`The levels run from\n  ${MIN_SUBDIV_LEVEL} to ${MAX_SUBDIV_LEVEL}`);
+  expect(surface).toContain(`past ${MAX_SUBDIV_TRIANGLES.toLocaleString("en-US")} triangles`);
+  expect(surface).toContain(`at most ${MAX_CAGE_FACES.toLocaleString("en-US")} faces`);
+  // "a ball about 84% as wide": the one-face-per-side cube's width over the cube's.
+  const b = k.subdiv(k.cage({ box: { size: [20, 20, 20] } })).boundingBox();
+  expect(surface).toContain(`a ball about ${Math.round(100 * (b.max[0] - b.min[0]) / 20)}%`);
+  expect(cageSection()).toContain("`k.cage` and `k.subdiv` are kernel ops");
+});
+
+test("every quoted cage and subdiv error is the code's own", async () => {
+  const errors = section("Cage errors", "###");
+  const [cageBlock, subdivBlock] = fences("text", errors).map((b) => b.trim().split("\n"));
+  const fish = () => k.cage({ box: { size: [60, 30, 20], segs: [4, 2, 1] }, mirror: "xz" });
+  const grown = () => { const c = fish(); c.extrude("+y:0,0", { by: 12 }); return c; };
+  const bar = () => { const c = k.cage({ box: { size: [40, 20, 20], segs: [2, 1, 1] } }); c.extrude("+x:0,0", { by: 10 }); return c; };
+  const ring = k.cage({ box: { size: [30, 30, 30], segs: [3, 3, 3] } });
+  const cageTriggers = [
+    () => bar().move("+x:0,0", [1, 0, 0]),
+    () => grown().extrude("+y:9,0", { by: 1 }),
+    () => fish().extrude("+z:1,1~", { by: 1 }),
+    () => k.cage({ box: { size: [10, 10, 10] }, mirror: "xz" }),
+    () => fish().extrude(["+y:1,0", "+y:3,0"], { by: 1 }),
+    () => ring.extrude(["+z:0,0", "+z:1,0", "+z:2,0", "+z:0,1", "+z:2,1", "+z:0,2", "+z:1,2", "+z:2,2"], { by: 1 }),
+    () => grown().extrude("-z:1,1", { by: 1, id: "+y:0,0>" }),
+    () => k.cage({ box: { size: [10, 10, 10], segs: [30, 30, 30] } }),
+  ];
+  const message = (f) => { try { f(); } catch (e) { return e.message; } throw new Error(`no throw: ${f}`); };
+  expect(cageTriggers.map(message)).toEqual(cageBlock);
+  // The rules the prose states, beside the quoted errors.
+  expect(message(() => grown().extrude("-z:1,1", { by: 1, id: "fin~" }))).toMatch(/^cage: extrude id may not contain "~"/);
+  // A body through itself: the print error; the warning at preview is the same text.
+  const { createManifoldKernel } = await import("../src/framework/geometry/manifold-backend.js");
+  const Module = (await import("manifold-3d")).default;
+  const wasm = await Module(); wasm.setup();
+  const print = createManifoldKernel(wasm, { quality: "print" });
+  const through = (kk) => { const c = kk.cage({ box: { size: [20, 20, 20] } }); c.extrude("+x:0,0", { by: -25, scale: 0.3 }); return c; };
+  const flat = (kk) => { const c = kk.cage({ box: { size: [20, 20, 20] } }); c.move("+x:0,0", [-20, 0, 0]); return c; };
+  expect([
+    message(() => print.subdiv(through(print))),
+    message(() => k.subdiv(flat(k))),
+    message(() => k.subdiv(whaleCage(k, whale.defaults).snapshot())),
+  ]).toEqual(subdivBlock);
+  k.takeBuildWarnings();
+  k.subdiv(through(k));
+  expect(k.takeBuildWarnings()).toEqual([subdivBlock[0]]);
+  // The tolerance warning's wording, with its two numbers left open.
+  const warning = /warns\s+`([^`]+)`/.exec(errors)[1].replace(/\s+/g, " ");
+  const re = new RegExp(`^${warning.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("<n>", "[0-9.e+]+").replace("<tolerance>", "0\\.05")}$`);
+  const { meshSubdiv } = await import("../src/framework/geometry/subdiv/index.js");
+  const out = meshSubdiv(k.cage({ box: { size: [40, 20, 20], segs: [2, 1, 1] } }).snapshot(), "print", { maxTriangles: 200 });
+  expect(out.warnings[0]).toMatch(re);
+});
+
+test("the backend section's subdiv messages are the code's own", () => {
+  const backend = section("Backend: Manifold only");
+  expect(backend).toContain("`subdiv: OCCT cannot build k.subdiv (it is mesh-native)`");
+  expect(read("../src/framework/geometry/occt-backend.js")).toContain('IMPLICIT_ON_OCCT.replace(/^implicit:/, "subdiv:").replaceAll("k.implicit", "k.subdiv")');
+  const fallback = /no\s+subdivision engine throws\s+`([^`]+)`/.exec(backend)[1];
+  expect(() => finishKernel({}).subdiv(k.cage({ box: { size: [1, 1, 1] } }))).toThrow(fallback);
+  expect(finishKernel({}).cage({ box: { size: [2, 2, 2] } }).centroid("+z:0,0")).toEqual([0, 0, 1]);
 });

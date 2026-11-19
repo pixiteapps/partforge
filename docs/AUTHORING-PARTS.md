@@ -48,7 +48,7 @@ description, read that guide first.
 |---|---|---|---|
 | Kinematics | jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip | `import { … } from "partforge/kinematics"` | [`docs/domains/kinematics.md`](domains/kinematics.md) |
 | Mechanisms | gears, gear trains, pulleys and belts, racks, cranks and sliders; parts that move together | `import { … } from "partforge/mechanisms"` | [`docs/domains/mechanisms.md`](domains/mechanisms.md) |
-| Organic | smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail | `import { … } from "partforge/organic"` | [`docs/domains/organic.md`](domains/organic.md) |
+| Organic | smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail; one smooth skin box-modelled from a subdivision cage (k.cage, k.subdiv) | `import { … } from "partforge/organic"` | [`docs/domains/organic.md`](domains/organic.md) |
 <!-- end generated -->
 
 ---
@@ -136,7 +136,7 @@ export default {
   stay out of `print` — they are cut, not printed, and export assembled.
 - Exports write the checked pieces as built. STL is one file per piece; a 3MF or STEP of
   several printed (non-sheet) pieces lays them out on the bed automatically, 10 mm apart.
-  In a STEP, a piece whose build calls `k.implicit` is a tessellated (mesh) solid beside
+  In a STEP, a piece whose build calls `k.implicit` or `k.subdiv` is a tessellated (mesh) solid beside
   the others' exact B-rep ([`docs/domains/organic.md`](domains/organic.md), "Backend").
 
 The Lattice Box's `lid` shows all of it (helpers elided — see `src/parts/lattice-box.js` for the whole part, whose `swing` is `(s, p, d) => s.rotate(-p.lidAngle, d.hinge, [1, 0, 0])`):
@@ -5525,7 +5525,8 @@ and these pairs have no distance", which a declared `clearance` gate fails on.
 `warnings` (0.179, always present, often empty) lists the build's own warnings as
 `{ part, message }`, the same text the app shows: a fillet or chamfer the geometry
 defeated and skipped, a `k.implicit` feature too thin for its grid, a shape clipped at
-the edge of its sampling box. `partforge measure` prints them. They never gate `ok`.
+the edge of its sampling box, a `k.subdiv` cage that cannot meet its quality's tolerance
+or (at preview) passes through itself. `partforge measure` prints them. They never gate `ok`.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

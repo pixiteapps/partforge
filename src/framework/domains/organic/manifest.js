@@ -11,7 +11,7 @@ import { ORGANIC_LINT_RULES } from "./lint.js";
 export default {
   id: "organic",
   title: "Organic",
-  when: "smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail",
+  when: "smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail; one smooth skin box-modelled from a subdivision cage (k.cage, k.subdiv)",
   subpath: "partforge/organic",
   guide: "docs/domains/organic.md",
   referenceParts: ["src/parts/organic-hand.js", "src/parts/organic-whale.js"],
