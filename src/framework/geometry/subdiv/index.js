@@ -9,3 +9,4 @@ export {
   MAX_SUBDIV_LEVEL,
   MAX_SUBDIV_TRIANGLES,
 } from "./surface.js";
+export { selfIntersections, SELF_INTERSECT_EPS_REL } from "./self-intersect.js";
