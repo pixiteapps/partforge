@@ -56,6 +56,12 @@ it("scales a face touching the plane about the joined region, symmetrically", ()
   expect(reflectY(pts)).toEqual(pts.map((p) => p.join()).sort());
   expect(c.centroid("+z:1,1")[1]).toBeCloseTo(3.75, 9);
 });
+it("reads about: null as the default about point", () => {
+  const a = fish(), b = fish();
+  a.scale("+z:1,1", 0.5);
+  b.scale("+z:1,1", 0.5, { about: null });
+  expect(b.snapshot()).toEqual(a.snapshot());
+});
 it("leaves the cage untouched when a mirrored change is refused", () => {
   const c = fish();
   const before = c.snapshot();

@@ -90,6 +90,11 @@ describe("cage: extrude", () => {
     c.move("+x:0,0", [-40, 0, 0]);                     // folds +z flat: its normal sums to zero
     expect(() => c.extrude("+z:0,0", { by: 5 })).toThrow(/^cage: .*by/);
   });
+  it("refuses a numeric by when the normal is only rounding noise beside the region's size", () => {
+    const c = box();
+    c.move("+x:0,0", [-40 + 1e-9, 0, 0]);              // +z is a 1e-9 mm sliver: its normal is noise
+    expect(() => c.extrude("+z:0,0", { by: 5 })).toThrow(/^cage: .*normal sums to zero length/);
+  });
   it("refuses a mirror it does not know", () => {
     expect(() => createCage({ box: { size: [1, 1, 1] }, mirror: "y" })).toThrow(/^cage: mirror/);
   });

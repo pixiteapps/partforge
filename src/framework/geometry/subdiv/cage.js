@@ -38,6 +38,9 @@ export const MAX_CAGE_FACES = 2000;
 
 const MIN_EDGE = 1e-6;
 const TIE_EPS = 1e-9;
+// A normal sum shorter than this times the region's squared size (its bounding-box
+// diagonal, squared) is rounding noise, not a direction.
+const ZERO_NORMAL_REL = 1e-9;
 const MIRRORS = ["yz", "xz", "xy"];   // index = the axis reflected
 const CAGES = new WeakSet();
 
@@ -219,6 +222,11 @@ function makeCage(state) {
     return ids;
   };
   const uniquePoints = (ids) => [...new Set(ids.flatMap((id) => faces.get(id)))];
+  // The bounding-box diagonal of the faces' points.
+  const regionSpan = (ids) => {
+    const pts = uniquePoints(ids).map((p) => points[p]);
+    return len([0, 1, 2].map((a) => Math.max(...pts.map((p) => p[a])) - Math.min(...pts.map((p) => p[a]))));
+  };
   const shortEdge = (vertsList, pos) => vertsList.some((v) =>
     v.some((a, k) => len(sub(pos(a), pos(v[(k + 1) % 4]))) < MIN_EDGE));
   const assertFreeId = (id) => {
@@ -272,7 +280,8 @@ function makeCage(state) {
     const all = joined ? [...ids, ...ids.map(twinId)] : ids;
     const loop = boundaryLoop(all);
     const nsum = all.reduce((n, f) => add(n, newell(ptsOf(faces.get(f)))), [0, 0, 0]);
-    if (isNum(by) && len(nsum) === 0)
+    const span = regionSpan(all);
+    if (isNum(by) && len(nsum) <= ZERO_NORMAL_REL * span * span)
       fail("extrude by is a number, but the faces' normal sums to zero length; give by as [x, y, z]");
     const normal = unit(nsum);
     const offset = isNum(by) ? normal.map((x) => x * by) : by.slice();
@@ -418,7 +427,7 @@ function makeCage(state) {
     // A region touching the plane scales about its joined region's mean, on the plane.
     const joined = mirrored && touchesPlane(ids);
     let about = opts.about;
-    if (about === undefined && joined) {
+    if (about == null && joined) {
       about = mean(uniquePoints([...ids, ...ids.map(twinId)]).map((p) => points[p]));
       about[ax] = plane;
     }

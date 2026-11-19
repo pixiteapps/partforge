@@ -40,13 +40,19 @@ export function detectBackends(part, params = {}) {
   return backends;
 }
 
-// How to hollow each mix of mesh-native ops without `shell`: an implicit spec has an onion
-// node; a cage has none, so a subdivision body's hollow is an ordinary boolean.
+// How to hollow each mesh-native op's body without `shell`: an implicit spec has an onion
+// node; a cage has none, so a subdivision body's hollow is an ordinary boolean. One entry
+// per op, checked at load, so a combination never reads "undefined".
 const HOLLOW_ADVICE = {
   implicit: "for a hollow organic body use an onion node inside the k.implicit spec",
   subdiv: "for a hollow subdivision body cut the hollow with an ordinary boolean (subtract a smaller body)",
-  "implicit,subdiv": "for a hollow organic body use an onion node inside the k.implicit spec, and cut the k.subdiv body's hollow with an ordinary boolean (subtract a smaller body),",
 };
+for (const op of MESH_NATIVE_OPS) {
+  if (!HOLLOW_ADVICE[op]) throw new Error(`backend-select: no hollow advice for mesh-native op "${op}"`);
+}
+const hollowAdvice = (ops) => (ops.length === 1
+  ? `${HOLLOW_ADVICE[ops[0]]} instead of shell`
+  : `instead of shell, ${ops.map((op) => HOLLOW_ADVICE[op]).join(", and ")}`);
 
 /**
  * The organic sub-parts of an export: those whose build calls a mesh-native op
@@ -70,7 +76,7 @@ export function organicExportParts(part, { view, params = {}, parts } = {}) {
     const ops = [...MESH_NATIVE_OPS].filter((op) => used.has(op));
     if (ops.length === 0) return false;
     if (cadCalls.some(({ op, args }) => !isZeroMagnitudeCadOp(op, args))) {
-      throw new Error(`sub-part "${name}" calls ${meshNativeOpsText(ops, "shell")}, which no backend can build together — ${HOLLOW_ADVICE[ops.join(",")]} instead of shell`);
+      throw new Error(`sub-part "${name}" calls ${meshNativeOpsText(ops, "shell")}, which no backend can build together — ${hollowAdvice(ops)}`);
     }
     return true;
   });

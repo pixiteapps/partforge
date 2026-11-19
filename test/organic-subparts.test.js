@@ -57,7 +57,14 @@ test("a sub-part that is subdivided and shelled fails, naming k.subdiv and a boo
 
 test("a sub-part that calls both mesh-native ops and shell names both", () => {
   const p = part({ cup: { views: ["all"], build: (k) => cageBody(k).union(k.implicit(SPHERE)).union(k.box({ size: [4, 4, 4] }).shell({ thickness: 1 })) } });
-  expect(() => organicExportParts(p, { view: "all", params: {} })).toThrow(/"cup" calls k\.implicit, k\.subdiv and shell.*onion.*subtract a smaller body/s);
+  expect(() => organicExportParts(p, { view: "all", params: {} })).toThrow(
+    'sub-part "cup" calls k.implicit, k.subdiv and shell, which no backend can build together — instead of shell, for a hollow organic body use an onion node inside the k.implicit spec, and for a hollow subdivision body cut the hollow with an ordinary boolean (subtract a smaller body)');
+});
+
+test("the k.subdiv-only shell message reads whole", () => {
+  const p = part({ cup: { views: ["all"], build: (k) => cageBody(k).union(k.box({ size: [4, 4, 4] }).shell({ thickness: 1 })) } });
+  expect(() => organicExportParts(p, { view: "all", params: {} })).toThrow(
+    'sub-part "cup" calls k.subdiv and shell, which no backend can build together — for a hollow subdivision body cut the hollow with an ordinary boolean (subtract a smaller body) instead of shell');
 });
 
 test("the k.implicit-only shell message is unchanged", () => {
