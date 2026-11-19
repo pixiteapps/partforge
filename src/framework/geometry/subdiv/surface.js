@@ -16,8 +16,12 @@ export const MIN_SUBDIV_LEVEL = 1;
 export const MAX_SUBDIV_LEVEL = 5;
 // The most triangles levelFor will choose a level for.
 export const MAX_SUBDIV_TRIANGLES = 1_500_000;
-// Chord error targets in mm. Starting values; see the PR for measured facet sizes.
-export const SUBDIV_TOLERANCE = Object.freeze({ preview: 0.1, print: 0.02 });
+// Chord error targets in mm: how far a facet may sit from the limit surface. With the
+// estimate counting each triangle's diagonal, 0.02 mm put a 20 mm cube at the top level
+// and left an ordinary extruded cage unmet; 0.05 mm is at or under a fine FDM layer's
+// positional accuracy and typical STL export tolerances, and 0.2 mm keeps previews light.
+// Measured starting values, to be revisited against the whale reference part.
+export const SUBDIV_TOLERANCE = Object.freeze({ preview: 0.2, print: 0.05 });
 
 const fail = (msg) => { throw new Error(`subdiv: ${msg}`); };
 

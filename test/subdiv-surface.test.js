@@ -31,8 +31,23 @@ it("chooses the level from the tolerance", () => {
   const print = levelFor(s, SUBDIV_TOLERANCE.print);
   expect(print.met).toBe(true);
   expect(print.error).toBeLessThanOrEqual(SUBDIV_TOLERANCE.print);
-  expect(print.level).toBe(5);   // level 4 reads 0.021 mm, just over the print tolerance
-  expect(levelFor(s, SUBDIV_TOLERANCE.preview).level).toBeLessThanOrEqual(print.level);
+  expect(print.level).toBe(4);   // 0.021 mm at level 4
+  expect(levelFor(s, SUBDIV_TOLERANCE.preview).level).toBe(3);   // 0.081 mm at level 3
+});
+it("picks the 60 x 30 x 20 box's levels", () => {
+  const s = createCage({ box: { size: [60, 30, 20] } }).snapshot();
+  expect(levelFor(s, SUBDIV_TOLERANCE.preview)).toMatchObject({ level: 4, met: true });   // level 3 reads 0.208 mm
+  expect(levelFor(s, SUBDIV_TOLERANCE.print)).toMatchObject({ level: 5, met: true });     // level 4 reads 0.054 mm
+});
+it("meets the print tolerance on an extruded cage", () => {
+  const c = createCage({ box: { size: [60, 30, 20], segs: [3, 2, 1] } });
+  c.extrude("+z:0,0", { by: 10, scale: 0.7 });
+  c.extrude("+z:2,1", { by: 8 });
+  c.extrude("+x:0,0", { by: 12, scale: 0.6 });
+  c.extrude("-x:1,0", { by: 6 });
+  const r = levelFor(c.snapshot(), SUBDIV_TOLERANCE.print);
+  expect(r.met).toBe(true);
+  expect(r.level).toBeLessThanOrEqual(MAX_SUBDIV_LEVEL);
 });
 it("stops at the triangle limit", () => {
   const big = createCage({ box: { size: [20, 20, 20], segs: [4, 4, 4] } }).snapshot();
