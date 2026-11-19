@@ -26,11 +26,25 @@ it("puts every level on the same limit surface", () => {
 });
 it("chooses the level from the tolerance", () => {
   const s = cube();
-  expect(levelFor(s, 1000)).toBe(1);
-  expect(levelFor(s, 1e-9)).toBe(MAX_SUBDIV_LEVEL);
-  const l = levelFor(s, SUBDIV_TOLERANCE.print);
-  expect(chordError(s, l)).toBeLessThanOrEqual(SUBDIV_TOLERANCE.print);
-  expect(levelFor(s, SUBDIV_TOLERANCE.preview)).toBeLessThanOrEqual(l);
+  expect(levelFor(s, 1000)).toMatchObject({ level: 1, met: true });
+  expect(levelFor(s, 1e-9)).toMatchObject({ level: MAX_SUBDIV_LEVEL, met: false });
+  const print = levelFor(s, SUBDIV_TOLERANCE.print);
+  expect(print.met).toBe(true);
+  expect(print.error).toBeLessThanOrEqual(SUBDIV_TOLERANCE.print);
+  expect(print.level).toBeLessThanOrEqual(4);
+  expect(levelFor(s, SUBDIV_TOLERANCE.preview).level).toBeLessThanOrEqual(print.level);
+});
+it("stops at the triangle limit", () => {
+  const big = createCage({ box: { size: [20, 20, 20], segs: [4, 4, 4] } }).snapshot();
+  const r = levelFor(big, 1e-9, { maxTriangles: 10_000 });
+  expect(big.faces.length * 2 * 4 ** r.level).toBeLessThanOrEqual(10_000);
+  expect(r.met).toBe(false);
+});
+it("measures normal error, which falls about 4x per level", () => {
+  const s = cube();
+  const fall = chordError(s, 2) / chordError(s, 3);
+  expect(fall).toBeGreaterThan(3);
+  expect(fall).toBeLessThan(5);
 });
 it("handles an extraordinary point (valence 3 and 5) without a seam", () => {
   const c = createCage({ box: { size: [30, 30, 30], segs: [2, 2, 2] } });

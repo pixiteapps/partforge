@@ -14,6 +14,8 @@
 
 export const MIN_SUBDIV_LEVEL = 1;
 export const MAX_SUBDIV_LEVEL = 5;
+// The most triangles levelFor will choose a level for.
+export const MAX_SUBDIV_TRIANGLES = 1_500_000;
 // Chord error targets in mm. Starting values; see the PR for measured facet sizes.
 export const SUBDIV_TOLERANCE = Object.freeze({ preview: 0.1, print: 0.02 });
 
@@ -211,38 +213,79 @@ export function subdivide(snapshot, levels) {
   return { positions, indices, triFace };
 }
 
-// The largest distance from a level-`level` limit edge's midpoint to the limit position of
-// that edge's point one level finer. `next` is the level-`level` mesh stepped once.
+// The chord error estimate: for each edge of the level-L limit mesh, the distance from
+// its midpoint to the limit position of that edge's point at level L + 1, projected onto
+// the surface normal there. Only the normal part is surface error; the tangential part is
+// the edge point drifting along the surface, which near extraordinary points shrinks only
+// with the subdominant eigenvalue and would make the estimate converge about 2.5x per
+// level instead of about 4x. The normal at the fine edge point is the sum of its four
+// adjacent limit quads' normals (each the cross product of the quad's diagonals,
+// so area-weighted), normalized. `next` is the level-L mesh stepped once.
 function errorBetween(m, next) {
   const lim = limit(m), fine = limit(next);
   const { V, F, E, edgeVerts } = m;
+  const first = V + F;   // the edge points' indices in `next` are first .. first + E - 1
+  const normal = new Float64Array(3 * E);
+  const fv = next.faceVerts;
+  for (let q = 0; q < next.F; q++) {
+    const a = 3 * fv[4 * q], b = 3 * fv[4 * q + 1], c = 3 * fv[4 * q + 2], d = 3 * fv[4 * q + 3];
+    const ux = fine[c] - fine[a], uy = fine[c + 1] - fine[a + 1], uz = fine[c + 2] - fine[a + 2];
+    const vx = fine[d] - fine[b], vy = fine[d + 1] - fine[b + 1], vz = fine[d + 2] - fine[b + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    for (let k = 0; k < 4; k++) {
+      const e = fv[4 * q + k] - first;
+      if (e < 0 || e >= E) continue;
+      normal[3 * e] += nx; normal[3 * e + 1] += ny; normal[3 * e + 2] += nz;
+    }
+  }
   let worst = 0;
   for (let e = 0; e < E; e++) {
-    const a = 3 * edgeVerts[2 * e], b = 3 * edgeVerts[2 * e + 1], p = 3 * (V + F + e);
-    let d = 0;
-    for (let c = 0; c < 3; c++) {
-      const x = (lim[a + c] + lim[b + c]) * 0.5 - fine[p + c];
-      d += x * x;
-    }
+    const a = 3 * edgeVerts[2 * e], b = 3 * edgeVerts[2 * e + 1], p = 3 * (first + e);
+    const nx = normal[3 * e], ny = normal[3 * e + 1], nz = normal[3 * e + 2];
+    const nl = Math.hypot(nx, ny, nz);
+    if (nl === 0) continue;
+    const dx = (lim[a] + lim[b]) * 0.5 - fine[p];
+    const dy = (lim[a + 1] + lim[b + 1]) * 0.5 - fine[p + 1];
+    const dz = (lim[a + 2] + lim[b + 2]) * 0.5 - fine[p + 2];
+    const d = Math.abs(dx * nx + dy * ny + dz * nz) / nl;
     if (d > worst) worst = d;
   }
-  return Math.sqrt(worst);
+  return worst;
 }
+
+// A clean normal error falls about 4x per level, so the estimate at MAX_SUBDIV_LEVEL is
+// the previous level's divided by 4: measuring it would mean subdividing to level 6.
+const EXTRAPOLATED_FALL = 4;
 
 export function chordError(snapshot, level) {
   checkLevel(level);
+  const measured = Math.min(level, MAX_SUBDIV_LEVEL - 1);
   let m = fromSnapshot(snapshot);
-  for (let l = 0; l < level; l++) m = step(m);
-  return errorBetween(m, step(m));
+  for (let l = 0; l < measured; l++) m = step(m);
+  const error = errorBetween(m, step(m));
+  return level === measured ? error : error / EXTRAPOLATED_FALL;
 }
 
-export function levelFor(snapshot, tolerance) {
+const triangleCount = (snapshot, level) => snapshot.faces.length * 2 * 4 ** level;
+
+export function levelFor(snapshot, tolerance, { maxTriangles = MAX_SUBDIV_TRIANGLES } = {}) {
   if (typeof tolerance !== "number" || !(tolerance > 0)) fail(`tolerance must be a positive number of mm, got ${tolerance}`);
+  if (typeof maxTriangles !== "number" || !(maxTriangles > 0)) fail(`maxTriangles must be a positive number, got ${maxTriangles}`);
+  // The highest level the triangle limit allows, at least MIN_SUBDIV_LEVEL.
+  let cap = MIN_SUBDIV_LEVEL;
+  while (cap < MAX_SUBDIV_LEVEL && triangleCount(snapshot, cap + 1) <= maxTriangles) cap++;
+  const withinLimit = (level) => triangleCount(snapshot, level) <= maxTriangles;
   let m = step(fromSnapshot(snapshot));
-  for (let level = MIN_SUBDIV_LEVEL; level < MAX_SUBDIV_LEVEL; level++) {
-    const next = step(m);
-    if (errorBetween(m, next) <= tolerance) return level;
-    m = next;
+  let error = 0;
+  for (let level = MIN_SUBDIV_LEVEL; level <= cap; level++) {
+    if (level === MAX_SUBDIV_LEVEL) {
+      error /= EXTRAPOLATED_FALL;   // extrapolated; see EXTRAPOLATED_FALL
+    } else {
+      const next = step(m);   // at most level cap + 1, never 6
+      error = errorBetween(m, next);
+      m = next;
+    }
+    if (error <= tolerance && withinLimit(level)) return { level, error, met: true };
   }
-  return MAX_SUBDIV_LEVEL;
+  return { level: cap, error, met: false };
 }

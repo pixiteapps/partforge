@@ -7,4 +7,5 @@ export {
   SUBDIV_TOLERANCE,
   MIN_SUBDIV_LEVEL,
   MAX_SUBDIV_LEVEL,
+  MAX_SUBDIV_TRIANGLES,
 } from "./surface.js";
