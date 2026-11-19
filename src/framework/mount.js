@@ -831,12 +831,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     //              from lastBuildMs < LIVE_REBUILD_MS): its stale sub-parts keep
     //              building through the drag, one cycle at a time, always at the
     //              latest params. Those builds are TRANSIENT (cycleTransient): they
-    //              draw and lift ghosts, and nothing else sees them — no onBuild, no
+    //              draw (a live drag never ghosts, see `ghost` below), and nothing else sees them — no onBuild, no
     //              status, busy or debug line, no export/preview/ready/floor change.
     //              What they drew is `owed` a real build, which the release sends
     //              (from the worker's cache) so the host still sees exactly one;
     //   ghost    — a sub-part the drag made stale (its build reads a pose param, so
-    //              no matrix can move it) fades to GHOST_OPACITY and stays put; the
+    //              no matrix can move it) fades to GHOST_OPACITY and stays put, unless
+    //              the drag rebuilds live (then it stays opaque until its new mesh); the
     //              delivery that replaces it lifts the ghost in the same tick it
     //              calls setSubGeometry (applyFreshMeshes), so mesh and opacity land
     //              in one frame and nothing flashes;
@@ -884,6 +885,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // A skinned sub-part already shows the drag's pose: it is no ghost.
         staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n) && !skin.isDeformed(n)),
         ghost: live((names) => {
+          // A live drag (liveRebuild) replaces each stale mesh within a frame or two, so
+          // fading it only makes the part flicker between ghost and solid: it stays
+          // opaque and simply trails the handle by one build. The session still tracks
+          // it as ghosted; unghost finds nothing to restore.
+          if (liveRebuild) return;
           for (const n of names) {
             if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
             viewer.setSubPartOpacity(n, GHOST_OPACITY);

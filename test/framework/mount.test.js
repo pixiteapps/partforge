@@ -1932,6 +1932,28 @@ test("LIVE_REBUILD_MS is 120", () => {
   expect(LIVE_REBUILD_MS).toBe(120);
 });
 
+test("a live drag keeps its rebuilding sub-part opaque", () => {
+  const live = shapeDrag(80);
+  live.pose.opts.hold(true);
+  live.viewer.setSubPartOpacity.mockClear();
+  live.pose.opts.ghost(["body"]);
+  expect(live.viewer.setSubPartOpacity).not.toHaveBeenCalled();
+  live.pose.opts.unghost(["body"]); // nothing was faded, so nothing is restored to a wrong value
+  expect(live.viewer.setSubPartOpacity.mock.calls.every(([, o]) => o === 1)).toBe(true);
+  live.pose.opts.hold(false);
+  live.done();
+});
+
+test("a slow part's drag ghosts its rebuilding sub-part", () => {
+  const slow = shapeDrag(400);
+  slow.pose.opts.hold(true);
+  slow.viewer.setSubPartOpacity.mockClear();
+  slow.pose.opts.ghost(["body"]);
+  expect(slow.viewer.setSubPartOpacity).toHaveBeenCalledWith("body", 0.35);
+  slow.pose.opts.hold(false);
+  slow.done();
+});
+
 test("a cheap part rebuilds mid-drag, transiently: drawn and un-ghosted, no onBuild until the release builds once", () => {
   const t = shapeDrag(80);
   t.pose.opts.hold(true);

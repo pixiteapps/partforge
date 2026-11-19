@@ -3462,12 +3462,12 @@ You do not say which a handle is. The viewer knows from the sub-parts its params
   nothing rebuilds: a gear turned by `d.train.place`, a drawer slid by its view's
   `translate`. Prefer this. Build a moving member once in its own frame and place it.
 - **Shape.** Some sub-part's `build` reads a param the drag writes, so it must rebuild.
-  The handle, its guide and the readout move live. The rebuilding sub-parts fade to a
-  ghost (0.35 opacity). If the last build took under 120 ms (`LIVE_REBUILD_MS`), the part
-  is cheap: it rebuilds during the drag, one build at a time at the latest params, and
-  each new mesh lifts its ghost. A slower part builds nothing until release. The choice is
-  made when the drag starts and kept for the whole drag. On release the snapped values
-  build once.
+  The handle, its guide and the readout move live. If the last build took under 120 ms
+  (`LIVE_REBUILD_MS`), the part is cheap: it rebuilds during the drag, one build at a time
+  at the latest params, and stays opaque, trailing the handle by one build. A slower part
+  builds nothing until release: its rebuilding sub-parts fade to a ghost (0.35 opacity)
+  and stay put. The choice is made when the drag starts and kept for the whole drag. On
+  release the snapped values build once.
 
 Mid-drag builds are transient: no `onBuild`, no change to export, preview or inspect
 state, and no commit. The host sees one `onParamsCommit` and one build per drag, at
