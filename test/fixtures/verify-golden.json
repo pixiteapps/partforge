@@ -31350,6 +31350,64 @@
     "declared": 5,
     "evaluated": 5
   },
+  "organic-whale.js#whale": {
+    "ok": true,
+    "view": "whale",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "length": 120,
+          "tailLift": 6
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "whale",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "whale",
+            "metric": "holes",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          },
+          {
+            "scope": "subpart",
+            "subpart": "whale",
+            "metric": "bbox",
+            "kind": "gate",
+            "expr": "[117.6..122.4, *, *]",
+            "actual": [
+              119.909679,
+              58.9173088,
+              29.7594099
+            ],
+            "status": "pass",
+            "pass": true,
+            "message": "[119.9096794128418,58.91730880737305,29.75940990447998] in [117.6..122.4,*,*]"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 3,
+    "evaluated": 3
+  },
   "planter.js#planter": {
     "ok": true,
     "view": "planter",
