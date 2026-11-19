@@ -578,14 +578,25 @@ export interface CageOptions {
 }
 /** A face by id, or a region of faces by their ids. */
 export type CageFaces = string | string[];
+/** Cage.extrude's options. `by` is required: a distance along the faces' normal, or an [x, y, z] offset. */
+export interface CageExtrudeOptions {
+  by: number | [number, number, number];
+  scale?: number | [number, number, number];
+  steps?: number;
+  id?: string;
+}
 /**
  * k.cage — a closed quad mesh, edited in place by face id. Every
  * method throws a `cage: ` error naming the problem, and every change leaves it closed.
  */
 export interface Cage {
-  extrude(faces: CageFaces, opts?: { by: number; scale?: number | [number, number, number]; steps?: number; id?: string }): void;
+  /** Pushes one face out and returns the cap's id. */
+  extrude(face: string, opts: CageExtrudeOptions): string;
+  /** Pushes a region out and returns its caps' ids, one per listed face, in order (a list even with one face). */
+  extrude(faces: string[], opts: CageExtrudeOptions): string[];
   move(faces: CageFaces, offset: [number, number, number]): void;
-  scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] }): void;
+  /** `about` omitted or null: the points' mean (on the plane, under a mirror, for faces with an edge on it). */
+  scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] | null }): void;
   centroid(id: string): [number, number, number];
   normal(id: string): [number, number, number];
   size(id: string): [number, number];
