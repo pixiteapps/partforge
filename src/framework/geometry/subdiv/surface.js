@@ -213,19 +213,25 @@ export function subdivide(snapshot, levels) {
   return { positions, indices, triFace };
 }
 
-// The chord error estimate: for each edge of the level-L limit mesh, the distance from
-// its midpoint to the limit position of that edge's point at level L + 1, projected onto
-// the surface normal there. Only the normal part is surface error; the tangential part is
-// the edge point drifting along the surface, which near extraordinary points shrinks only
-// with the subdominant eigenvalue and would make the estimate converge about 2.5x per
-// level instead of about 4x. The normal at the fine edge point is the sum of its four
-// adjacent limit quads' normals (each the cross product of the quad's diagonals,
-// so area-weighted), normalized. `next` is the level-L mesh stepped once.
+// The chord error estimate at level L: how far the level-L triangles sit from the limit
+// surface, measured along the surface normal at two kinds of sample:
+//   - each edge: its limit midpoint against the limit of the edge's point at level L + 1;
+//   - each quad: the midpoint of the diagonal `subdivide` splits it along (the shorter
+//     one, on the limit positions) against the limit of the face's point at level L + 1.
+//     The diagonal is the longest chord of the shipped triangles, so leaving it out
+//     understates the error by about 1.4-1.7x.
+// Only the normal part is surface error; the tangential part is the sample drifting
+// along the surface, which near extraordinary points shrinks only with the subdominant
+// eigenvalue. The normal at a fine face or edge point (both valence 4) is the sum of its
+// four adjacent limit quads' normals (each the cross product of the quad's diagonals, so
+// area-weighted), normalized. `next` is the level-L mesh stepped once.
 function errorBetween(m, next) {
   const lim = limit(m), fine = limit(next);
-  const { V, F, E, edgeVerts } = m;
-  const first = V + F;   // the edge points' indices in `next` are first .. first + E - 1
-  const normal = new Float64Array(3 * E);
+  const { V, F, E, faceVerts, edgeVerts } = m;
+  // In `next`, face points are V .. V + F - 1 and edge points V + F .. V + F + E - 1;
+  // `normal` is indexed by (point - V).
+  const count = F + E;
+  const normal = new Float64Array(3 * count);
   const fv = next.faceVerts;
   for (let q = 0; q < next.F; q++) {
     const a = 3 * fv[4 * q], b = 3 * fv[4 * q + 1], c = 3 * fv[4 * q + 2], d = 3 * fv[4 * q + 3];
@@ -233,59 +239,98 @@ function errorBetween(m, next) {
     const vx = fine[d] - fine[b], vy = fine[d + 1] - fine[b + 1], vz = fine[d + 2] - fine[b + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     for (let k = 0; k < 4; k++) {
-      const e = fv[4 * q + k] - first;
-      if (e < 0 || e >= E) continue;
-      normal[3 * e] += nx; normal[3 * e + 1] += ny; normal[3 * e + 2] += nz;
+      const i = fv[4 * q + k] - V;
+      if (i < 0 || i >= count) continue;
+      normal[3 * i] += nx; normal[3 * i + 1] += ny; normal[3 * i + 2] += nz;
     }
   }
-  let worst = 0;
-  for (let e = 0; e < E; e++) {
-    const a = 3 * edgeVerts[2 * e], b = 3 * edgeVerts[2 * e + 1], p = 3 * (first + e);
-    const nx = normal[3 * e], ny = normal[3 * e + 1], nz = normal[3 * e + 2];
+  // Normal distance from the midpoint of lim[a], lim[b] to fine point V + i.
+  const deviation = (a, b, i) => {
+    const nx = normal[3 * i], ny = normal[3 * i + 1], nz = normal[3 * i + 2];
     const nl = Math.hypot(nx, ny, nz);
-    if (nl === 0) continue;
+    if (nl === 0) return 0;
+    const p = 3 * (V + i);
     const dx = (lim[a] + lim[b]) * 0.5 - fine[p];
     const dy = (lim[a + 1] + lim[b + 1]) * 0.5 - fine[p + 1];
     const dz = (lim[a + 2] + lim[b + 2]) * 0.5 - fine[p + 2];
-    const d = Math.abs(dx * nx + dy * ny + dz * nz) / nl;
+    return Math.abs(dx * nx + dy * ny + dz * nz) / nl;
+  };
+  let worst = 0;
+  for (let e = 0; e < E; e++) {
+    const d = deviation(3 * edgeVerts[2 * e], 3 * edgeVerts[2 * e + 1], F + e);
     if (d > worst) worst = d;
+  }
+  for (let f = 0; f < F; f++) {
+    const a = faceVerts[4 * f], b = faceVerts[4 * f + 1], c = faceVerts[4 * f + 2], d = faceVerts[4 * f + 3];
+    // The same diagonal choice as subdivide, ties to a-c.
+    const diag = dist2(lim, a, c) <= dist2(lim, b, d) ? [a, c] : [b, d];
+    const dev = deviation(3 * diag[0], 3 * diag[1], f);
+    if (dev > worst) worst = dev;
   }
   return worst;
 }
 
-// A clean normal error falls about 4x per level, so the estimate at MAX_SUBDIV_LEVEL is
-// the previous level's divided by 4: measuring it would mean subdividing to level 6.
-const EXTRAPOLATED_FALL = 4;
+// An estimate that is not measured is extrapolated from the two before it with their own
+// measured fall, clamped to 2..4 (a clean normal error falls about 4x per level, slower
+// before the mesh settles): e[L] = e[L-1] / clamp(e[L-2] / e[L-1], 2, 4). With only one
+// earlier value the fall is taken as 2, the cautious end.
+const MIN_FALL = 2, MAX_FALL = 4;
+function extrapolate(errors) {
+  const last = errors[errors.length - 1];
+  if (errors.length < 2 || !(last > 0)) return last / MIN_FALL;
+  const fall = Math.min(MAX_FALL, Math.max(MIN_FALL, errors[errors.length - 2] / last));
+  return last / fall;
+}
 
-export function chordError(snapshot, level) {
-  checkLevel(level);
-  const measured = Math.min(level, MAX_SUBDIV_LEVEL - 1);
-  let m = fromSnapshot(snapshot);
-  for (let l = 0; l < measured; l++) m = step(m);
-  const error = errorBetween(m, step(m));
-  return level === measured ? error : error / EXTRAPOLATED_FALL;
+// The estimates at levels 1, 2, ..., MAX_SUBDIV_LEVEL, one at a time so a caller can stop
+// early. Measuring level L builds level L + 1. Level L is measured only when level L + 1
+// may be built: L + 1 <= MAX_SUBDIV_LEVEL (never level 6) and its triangle count (2 x its
+// quads) <= 4 x maxTriangles, i.e. at most one level past the highest level the triangle
+// limit allows. From the first level that cannot be measured on, every level is
+// extrapolated. Level 1 is always measured (level 2 of a cage of at most MAX_CAGE_FACES
+// is 32,000 quads). For a 2,000-face cage at the default limit the largest mesh built is
+// level 5, 2,048,000 quads.
+function* estimates(snapshot, maxTriangles) {
+  let m = step(fromSnapshot(snapshot));
+  const errors = [];
+  for (let level = MIN_SUBDIV_LEVEL; level <= MAX_SUBDIV_LEVEL; level++) {
+    const canBuild = m !== null && (level === MIN_SUBDIV_LEVEL ||
+      (level + 1 <= MAX_SUBDIV_LEVEL && triangleCount(snapshot, level + 1) <= 4 * maxTriangles));
+    if (canBuild) {
+      const next = step(m);
+      errors.push(errorBetween(m, next));
+      m = next;
+    } else {
+      m = null;
+      errors.push(extrapolate(errors));
+    }
+    yield errors[level - 1];
+  }
 }
 
 const triangleCount = (snapshot, level) => snapshot.faces.length * 2 * 4 ** level;
 
+// The level's estimate; the value at MAX_SUBDIV_LEVEL is extrapolated, not measured.
+export function chordError(snapshot, level) {
+  checkLevel(level);
+  fromSnapshot(snapshot);   // validates before snapshot.faces is read
+  let l = 0;
+  for (const error of estimates(snapshot, Infinity)) if (++l === level) return error;
+  return fail("unreachable");
+}
+
 export function levelFor(snapshot, tolerance, { maxTriangles = MAX_SUBDIV_TRIANGLES } = {}) {
   if (typeof tolerance !== "number" || !(tolerance > 0)) fail(`tolerance must be a positive number of mm, got ${tolerance}`);
   if (typeof maxTriangles !== "number" || !(maxTriangles > 0)) fail(`maxTriangles must be a positive number, got ${maxTriangles}`);
+  fromSnapshot(snapshot);   // validates before snapshot.faces is read
   // The highest level the triangle limit allows, at least MIN_SUBDIV_LEVEL.
   let cap = MIN_SUBDIV_LEVEL;
   while (cap < MAX_SUBDIV_LEVEL && triangleCount(snapshot, cap + 1) <= maxTriangles) cap++;
-  const withinLimit = (level) => triangleCount(snapshot, level) <= maxTriangles;
-  let m = step(fromSnapshot(snapshot));
-  let error = 0;
-  for (let level = MIN_SUBDIV_LEVEL; level <= cap; level++) {
-    if (level === MAX_SUBDIV_LEVEL) {
-      error /= EXTRAPOLATED_FALL;   // extrapolated; see EXTRAPOLATED_FALL
-    } else {
-      const next = step(m);   // at most level cap + 1, never 6
-      error = errorBetween(m, next);
-      m = next;
-    }
-    if (error <= tolerance && withinLimit(level)) return { level, error, met: true };
+  let level = 0, error = 0;
+  for (error of estimates(snapshot, maxTriangles)) {
+    level++;
+    if (error <= tolerance && triangleCount(snapshot, level) <= maxTriangles) return { level, error, met: true };
+    if (level === cap) break;
   }
   return { level: cap, error, met: false };
 }

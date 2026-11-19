@@ -31,7 +31,7 @@ it("chooses the level from the tolerance", () => {
   const print = levelFor(s, SUBDIV_TOLERANCE.print);
   expect(print.met).toBe(true);
   expect(print.error).toBeLessThanOrEqual(SUBDIV_TOLERANCE.print);
-  expect(print.level).toBeLessThanOrEqual(4);
+  expect(print.level).toBe(5);   // level 4 reads 0.021 mm, just over the print tolerance
   expect(levelFor(s, SUBDIV_TOLERANCE.preview).level).toBeLessThanOrEqual(print.level);
 });
 it("stops at the triangle limit", () => {
@@ -39,6 +39,16 @@ it("stops at the triangle limit", () => {
   const r = levelFor(big, 1e-9, { maxTriangles: 10_000 });
   expect(big.faces.length * 2 * 4 ** r.level).toBeLessThanOrEqual(10_000);
   expect(r.met).toBe(false);
+});
+it("includes the split diagonal in the estimate", () => {
+  const e = chordError(cube(), 3);
+  expect(e).toBeGreaterThan(0.07);
+  expect(e).toBeLessThan(0.09);
+});
+it("refuses a missing or malformed snapshot", () => {
+  expect(() => levelFor(null, 0.1)).toThrow(/^subdiv: /);
+  expect(() => levelFor({ points: [], faces: "x" }, 0.1)).toThrow(/^subdiv: /);
+  expect(() => chordError(undefined, 2)).toThrow(/^subdiv: /);
 });
 it("measures normal error, which falls about 4x per level", () => {
   const s = cube();
