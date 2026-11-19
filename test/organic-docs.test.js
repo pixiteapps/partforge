@@ -28,7 +28,7 @@ import { implicitDistance } from "../src/framework/geometry/implicit/distance.js
 import { handSpec } from "./fixtures/implicit-trees.js";
 import whale, { whaleCage } from "../src/parts/organic-whale.js";
 import { MAX_CAGE_FACES } from "../src/framework/geometry/subdiv/cage.js";
-import { levelFor, subdivide, SUBDIV_TOLERANCE, MAX_SUBDIV_LEVEL, MIN_SUBDIV_LEVEL, MAX_SUBDIV_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
+import { levelFor, subdivide, SUBDIV_TOLERANCE, MAX_SUBDIV_LEVEL, MIN_SUBDIV_LEVEL, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const guide = read("../docs/domains/organic.md");
@@ -86,7 +86,7 @@ beforeAll(async () => {
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(33);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(34);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -267,7 +267,8 @@ test("the whale's numbers in the guide are the code's", () => {
   const text = section("Worked example: a whale", "###");
   const snap = whaleCage(k, whale.defaults).snapshot();
   const tris = (level) => (subdivide(snap, level).indices.length / 3).toLocaleString("en-US");
-  const preview = levelFor(snap, SUBDIV_TOLERANCE.preview), print = levelFor(snap, SUBDIV_TOLERANCE.print);
+  const at = (tier) => levelFor(snap, SUBDIV_TOLERANCE[tier], { maxTriangles: SUBDIV_MAX_TRIANGLES[tier] });
+  const preview = at("preview"), print = at("print");
   expect(preview.met && print.met).toBe(true);
   expect(text).toContain(`Its cage has ${snap.faces.length} faces.`);
   expect(text).toContain(`previews at level ${preview.level} (${tris(preview.level)} triangles)`);
@@ -278,7 +279,9 @@ test("the cage section's limits and tolerances are the code's", () => {
   const surface = section("The surface: `k.subdiv`", "###");
   expect(surface).toContain(`${SUBDIV_TOLERANCE.preview} mm for preview, ${SUBDIV_TOLERANCE.print} mm for print`);
   expect(surface).toContain(`The levels run from\n  ${MIN_SUBDIV_LEVEL} to ${MAX_SUBDIV_LEVEL}`);
-  expect(surface).toContain(`past ${MAX_SUBDIV_TRIANGLES.toLocaleString("en-US")} triangles`);
+  const n = (x) => x.toLocaleString("en-US");
+  expect(surface.replace(/\s+/g, " ")).toContain(
+    `no level past ${n(SUBDIV_MAX_TRIANGLES.preview)} triangles for preview or ${n(SUBDIV_MAX_TRIANGLES.print)} triangles for print`);
   expect(surface).toContain(`at most ${MAX_CAGE_FACES.toLocaleString("en-US")} faces`);
   // "a ball about 84% as wide": the one-face-per-side cube's width over the cube's.
   const b = k.subdiv(k.cage({ box: { size: [20, 20, 20] } })).boundingBox();
@@ -322,12 +325,23 @@ test("every quoted cage and subdiv error is the code's own", async () => {
   k.takeBuildWarnings();
   k.subdiv(through(k));
   expect(k.takeBuildWarnings()).toEqual([subdivBlock[0]]);
-  // The tolerance warning's wording, with its two numbers left open.
-  const warning = /warns\s+`([^`]+)`/.exec(errors)[1].replace(/\s+/g, " ");
-  const re = new RegExp(`^${warning.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("<n>", "[0-9.e+]+").replace("<tolerance>", "0\\.05")}$`);
+  // The two tolerance warnings' wording, with their two numbers left open: the first when
+  // level 5 is not fine enough (a 200 mm cube with one face per side, at print), the
+  // second when the triangle limit stops the level.
+  const warnings = [...errors.matchAll(/`(subdiv: the surface is within [^`]+)`/g)].map((m) => m[1].replace(/\s+/g, " "));
+  expect(warnings).toHaveLength(2);
+  const re = (w) => new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("<n>", "[0-9.e+]+").replace("<tolerance>", "0\\.05")}$`);
   const { meshSubdiv } = await import("../src/framework/geometry/subdiv/index.js");
+  expect(meshSubdiv(k.cage({ box: { size: [200, 200, 200] } }).snapshot(), "print").warnings).toEqual([expect.stringMatching(re(warnings[0]))]);
   const out = meshSubdiv(k.cage({ box: { size: [40, 20, 20], segs: [2, 1, 1] } }).snapshot(), "print", { maxTriangles: 200 });
-  expect(out.warnings[0]).toMatch(re);
+  expect(out.warnings).toEqual([expect.stringMatching(re(warnings[1]))]);
+  // A face crossing itself, as the Validity section quotes it.
+  const fold = /named once, as\s+`([^`]+)`/.exec(section("Validity", "###"))[1];
+  const folded = k.cage({ box: { size: [20, 20, 20], segs: [2, 2, 2] } });
+  folded.extrude("+x:0,0", { by: -30, scale: 1.5 });
+  k.takeBuildWarnings();
+  k.subdiv(folded);
+  expect(k.takeBuildWarnings().map(String).join("\n")).toMatch(new RegExp(`[:;] ${fold.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(;|$)`));
 });
 
 test("the backend section's subdiv messages are the code's own", () => {

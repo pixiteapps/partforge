@@ -14,8 +14,9 @@
 
 export const MIN_SUBDIV_LEVEL = 1;
 export const MAX_SUBDIV_LEVEL = 5;
-// The most triangles levelFor will choose a level for.
-export const MAX_SUBDIV_TRIANGLES = 1_500_000;
+// The most triangles a quality tier's level may have (levelFor's limit per tier). Preview
+// stays light; print allows the fine levels a large smooth body needs.
+export const SUBDIV_MAX_TRIANGLES = Object.freeze({ preview: 200_000, print: 1_500_000 });
 // Chord error targets in mm: how far a facet may sit from the limit surface. With the
 // estimate counting each triangle's diagonal, 0.02 mm put a 20 mm cube at the top level
 // and left an ordinary extruded cage unmet; 0.05 mm is at or under a fine FDM layer's
@@ -289,17 +290,16 @@ function extrapolate(errors) {
 // The estimates at levels 1, 2, ..., MAX_SUBDIV_LEVEL, one at a time so a caller can stop
 // early. Measuring level L builds level L + 1. Level L is measured only when level L + 1
 // may be built: L + 1 <= MAX_SUBDIV_LEVEL (never level 6) and its triangle count (2 x its
-// quads) <= 4 x maxTriangles, i.e. at most one level past the highest level the triangle
-// limit allows. From the first level that cannot be measured on, every level is
-// extrapolated. Level 1 is always measured (level 2 of a cage of at most MAX_CAGE_FACES
-// is 32,000 quads). For a 2,000-face cage at the default limit the largest mesh built is
-// level 5, 2,048,000 quads.
+// quads) <= maxTriangles, so no mesh past the triangle limit is ever built. From the first
+// level that cannot be measured on, every level is extrapolated. Level 1 is always
+// measured (level 2 of a cage of at most MAX_CAGE_FACES is 32,000 quads), so the largest
+// mesh built is the larger of that and the limit: 750,000 quads at the print limit.
 function* estimates(snapshot, maxTriangles) {
   let m = step(fromSnapshot(snapshot));
   const errors = [];
   for (let level = MIN_SUBDIV_LEVEL; level <= MAX_SUBDIV_LEVEL; level++) {
     const canBuild = m !== null && (level === MIN_SUBDIV_LEVEL ||
-      (level + 1 <= MAX_SUBDIV_LEVEL && triangleCount(snapshot, level + 1) <= 4 * maxTriangles));
+      (level + 1 <= MAX_SUBDIV_LEVEL && triangleCount(snapshot, level + 1) <= maxTriangles));
     if (canBuild) {
       const next = step(m);
       errors.push(errorBetween(m, next));
@@ -323,7 +323,7 @@ export function chordError(snapshot, level) {
   return fail("unreachable");
 }
 
-export function levelFor(snapshot, tolerance, { maxTriangles = MAX_SUBDIV_TRIANGLES } = {}) {
+export function levelFor(snapshot, tolerance, { maxTriangles = SUBDIV_MAX_TRIANGLES.print } = {}) {
   if (typeof tolerance !== "number" || !(tolerance > 0)) fail(`tolerance must be a positive number of mm, got ${tolerance}`);
   if (typeof maxTriangles !== "number" || !(maxTriangles > 0)) fail(`maxTriangles must be a positive number, got ${maxTriangles}`);
   fromSnapshot(snapshot);   // validates before snapshot.faces is read

@@ -726,7 +726,10 @@ With `mirror`, the cage stays whole and symmetric through the plane:
 - **You change the positive half only.** A changing method (`extrude`, `move`,
   `scale`) takes positive-side ids, and the same change is made to the reflected faces
   at once. Every face on the far side is named after its positive twin plus `~`
-  (`+y:0,0>~`). You can read a `~` id, but you cannot change one.
+  (`+y:0,0>~`). The far box side has no ids of its own: under `mirror: "xz"` there are
+  no `-y:` ids (its faces are `+y:0,0~`, `+y:1,0~`, …), and on a side the plane cuts,
+  the far half is named the same way (there is no `+x:0,0`; that face is `+x:1,0~`).
+  You can read a `~` id, but you cannot change one.
 - **`segs` across the plane must be even**, so the plane falls on a row of points.
 - **A point on the plane stays on it.** It keeps only the in-plane part of a move or
   scale.
@@ -739,6 +742,7 @@ With `mirror`, the cage stays whole and symmetric through the plane:
 ```js
 const fish = k.cage({ box: { size: [60, 30, 20], segs: [4, 2, 1] }, mirror: "xz" });
 fish.faces("+x:");   // ["+x:1,0~", "+x:1,0"]
+fish.faces("-y:");   // []
 const pec = fish.extrude("+y:0,0", { by: 12, scale: 0.7 });
 fish.centroid(`${pec}~`)[1] === -fish.centroid(pec)[1];   // true
 fish.move("+z:1,1", [0, 0, 4]);
@@ -761,14 +765,16 @@ no solid already built, so you can build, change and build again.
 - **Preview and print lie on the same surface.** They differ only in facet size. The
   build picks the lowest subdivision level whose facets lie within the quality's
   tolerance of the surface: 0.2 mm for preview, 0.05 mm for print. The levels run from
-  1 to 5, and no level past 1,500,000 triangles is chosen. When no level meets the
-  tolerance, the body still builds with the finest level allowed and a build warning
-  (below). Use fewer, larger cage faces.
+  1 to 5, and no level past 200,000 triangles for preview or 1,500,000 triangles for
+  print is chosen. When no level meets the tolerance, the body still builds with the
+  finest level allowed and a build warning (below). The warning names the remedy: when
+  level 5 is not fine enough (a large body with few faces), split the cage into more
+  faces; when the triangle limit stops the level, use fewer, larger faces.
 - **A cage has at most 2,000 faces.**
 - **It shades smooth** and takes every ordinary `Solid` op afterwards. A flat to print
   on is an ordinary `cut` with a box.
 - **No pose drag.** A param that changes the cage rebuilds the body, and the rebuild is
-  fast: the whale below rebuilds in about 15 ms at preview and 0.2 s at print.
+  fast: the whale below rebuilds in well under a second at print quality.
 
 ```js
 const smoothBox = (segs) => k.subdiv(k.cage({ box: { size: [20, 20, 20], segs } })).boundingBox();
@@ -780,7 +786,8 @@ smoothBox([2, 2, 2]).max[0];   // 10
 
 - **A body that passes through itself** (an extrude pushed back through the body, two
   limbs crossing) is an error at print quality and a build warning at preview. Both
-  name the cage faces that cross, so you can find them.
+  name the cage faces that cross, so you can find them. A face whose own surface
+  crosses is named once, as `-y:1,0 folds through itself`.
 - **A body with no volume throws** at both qualities, and so does one turned inside out.
   When it also passes through itself, the error names the crossing instead.
 - **Two faces lying exactly flat on each other are not detected.** Keep separate parts
@@ -789,7 +796,9 @@ smoothBox([2, 2, 2]).max[0];   // 10
 ### Recipes
 
 - **A limb** is 2 to 4 chained extrudes from one face, each with its own `by` and
-  `scale`. Bend it by giving each `by` a new direction.
+  `scale`. Bend it by giving each `by` a new direction, but keep each `by` leaning along
+  its face's normal: a `by` in the face's own plane builds a thin blade. To turn a
+  corner, extrude a side face (`<cap>.s<k>`) instead.
 - **A knuckle or bulge** is a short extrude with `scale` above 1, followed by one with
   `scale` below 1.
 - **A tip** is a last short extrude with `scale` about 0.6.
@@ -822,7 +831,10 @@ subdiv: expected a cage from k.cage(...)
 ```
 
 and, when the tolerance cannot be met, it warns
-`subdiv: the surface is within <n> mm of smooth, not the <tolerance> mm this quality asks for — use fewer, larger cage faces`.
+`subdiv: the surface is within <n> mm of smooth, not the <tolerance> mm this quality asks for — split the cage into more faces (more segs, or more steps on an extrude)`
+when level 5 is not fine enough, or
+`subdiv: the surface is within <n> mm of smooth, not the <tolerance> mm this quality asks for — use fewer, larger cage faces`
+when the triangle limit stops the level.
 
 ### Worked example: a whale
 
@@ -854,8 +866,8 @@ function whaleCage(k, p) {
   // Flukes: the last tail step's two +Y sides, pushed out and back and flattened.
   const fluke = c.extrude(["tail3.s1", "tail3.s2"], { by: v(4, 12, 0), scale: [1.2, 1, 0.3], id: "fluke" });
   c.extrude(fluke, { by: v(8, 12, 0), scale: [0.6, 1, 0.7], id: "flukeTip" });
-  // Dorsal fin: the back face over the tail root, which touches the mirror plane, so it
-  // grows across it as one fin; swept back and thinned.
+  // Dorsal fin: the back face over the tail root, which has an edge on the mirror plane,
+  // so it grows across it as one fin; swept back and thinned.
   const fin = c.extrude("+z:3,1", { by: v(2, 0, 5), scale: [0.6, 0.7, 1], id: "fin" });
   c.extrude(fin, { by: v(5, 0, 4), scale: [0.5, 0.35, 0.6], id: "finTip" });
   // Pectoral fins: a low side face near the front, swept out, back and a little down.
@@ -865,8 +877,9 @@ function whaleCage(k, p) {
 }
 ```
 
-The part builds `k.subdiv(whaleCage(k, p))` and cuts a 1.5 mm flat under the belly with
-an ordinary boolean. Its cage has 132 faces. It previews at level 2 (4,224 triangles)
+The part builds `k.subdiv(whaleCage(k, p))` and cuts a flat under the belly with an
+ordinary boolean (1.5 mm deep at the cage's own length, scaled with `length`).
+Its cage has 132 faces. It previews at level 2 (4,224 triangles)
 and prints at level 4 (67,584 triangles).
 
 The points to copy:
@@ -876,6 +889,6 @@ The points to copy:
 - **Read ids back.** `positive("+y:")` is `faces` with the `~` ids left out; the flukes
   extrude `tail3.s1` and `tail3.s2`, the two sides of the last tail ring that face +Y.
 - **Let the mirror do the other half.** One pectoral fin and one fluke are written; the
-  dorsal fin sits on a face that touches the plane, so it grows as one fin.
+  dorsal fin sits on a face that has an edge on the plane, so it grows as one fin.
 - **Calibrate the length.** The surface lies inside its cage, so the whale's length is
   measured once (`CAGE_LENGTH`) and the params scale from it.

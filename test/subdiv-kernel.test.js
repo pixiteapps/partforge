@@ -5,7 +5,7 @@ import Module from "manifold-3d";
 import { createManifoldKernel } from "../src/framework/geometry/manifold-backend.js";
 import { createProbeKernel, createValidatingProbe } from "../src/framework/geometry/probe.js";
 import { probeSubPartPose } from "../src/framework/pose-probe-core.js";
-import { createCage, isCage, meshSubdiv, SUBDIV_TOLERANCE } from "../src/framework/geometry/subdiv/index.js";
+import { createCage, isCage, meshSubdiv, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/index.js";
 import { ORGANIC } from "../src/framework/geometry/shading-policy.js";
 
 // One wasm module, one kernel per tier (so a second call on a tier can hit its cache).
@@ -106,6 +106,38 @@ describe("meshSubdiv", () => {
     expect(out.warnings).toHaveLength(1);
     expect(out.warnings[0]).toMatch(
       /^subdiv: the surface is within [0-9.e+]+ mm of smooth, not the 0\.05 mm this quality asks for — use fewer, larger cage faces$/);
+  });
+
+  it("asks for more faces when level 5 is not fine enough (a large body with few faces)", () => {
+    const cube = (segs) => createCage({ box: { size: [200, 200, 200], segs } }).snapshot();
+    const out = meshSubdiv(cube([1, 1, 1]), "print");
+    expect(out.indices.length / 3).toBe(12_288);   // level 5
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toMatch(
+      /^subdiv: the surface is within [0-9.e+]+ mm of smooth, not the 0\.05 mm this quality asks for — split the cage into more faces \(more segs, or more steps on an extrude\)$/);
+    // The remedy works: two faces per side meet it.
+    expect(meshSubdiv(cube([2, 2, 2]), "print").warnings).toEqual([]);
+  });
+
+  it("limits preview to 200,000 triangles and print to 1,500,000", () => {
+    expect(SUBDIV_MAX_TRIANGLES).toEqual({ preview: 200_000, print: 1_500_000 });
+    // 1,944 faces at 5 m: level 3 (248,832 triangles) is past the preview limit, so
+    // preview stops at level 2 and says to use fewer, larger faces.
+    const big = createCage({ box: { size: [5000, 5000, 5000], segs: [18, 18, 18] } }).snapshot();
+    expect(big.faces).toHaveLength(1944);
+    const out = meshSubdiv(big, "preview");
+    expect(out.indices.length / 3).toBe(62_208);   // level 2
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toMatch(/ — use fewer, larger cage faces$/);
+  });
+
+  it("names a face that folds through itself once", () => {
+    const c = createCage({ box: { size: [20, 20, 20], segs: [2, 2, 2] } });
+    c.extrude("+x:0,0", { by: -30, scale: 1.5 });
+    const out = meshSubdiv(c.snapshot(), "preview");
+    const through = out.warnings.find((w) => w.startsWith("subdiv: the body passes through itself"));
+    expect(through).toMatch(/[:;] -y:1,0 folds through itself(;|$)/);
+    expect(through).not.toMatch(/(\S+) and \1(;|$)/);
   });
 
   it("meets the tolerance with no warning on an ordinary cage", () => {

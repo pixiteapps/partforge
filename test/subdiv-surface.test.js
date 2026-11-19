@@ -1,6 +1,9 @@
 import { it, expect } from "vitest";
 import { createCage } from "../src/framework/geometry/subdiv/index.js";
-import { subdivide, levelFor, chordError, SUBDIV_TOLERANCE, MAX_SUBDIV_LEVEL } from "../src/framework/geometry/subdiv/surface.js";
+import { subdivide, levelFor, chordError, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES, MAX_SUBDIV_LEVEL } from "../src/framework/geometry/subdiv/surface.js";
+
+// The level k.subdiv picks at a tier: the tier's tolerance within the tier's triangle limit.
+const atTier = (s, tier) => levelFor(s, SUBDIV_TOLERANCE[tier], { maxTriangles: SUBDIV_MAX_TRIANGLES[tier] });
 
 const cube = () => createCage({ box: { size: [20, 20, 20] } }).snapshot();
 const volume = ({ positions: p, indices: t }) => {
@@ -28,16 +31,22 @@ it("chooses the level from the tolerance", () => {
   const s = cube();
   expect(levelFor(s, 1000)).toMatchObject({ level: 1, met: true });
   expect(levelFor(s, 1e-9)).toMatchObject({ level: MAX_SUBDIV_LEVEL, met: false });
-  const print = levelFor(s, SUBDIV_TOLERANCE.print);
+  const print = atTier(s, "print");
   expect(print.met).toBe(true);
   expect(print.error).toBeLessThanOrEqual(SUBDIV_TOLERANCE.print);
-  expect(print.level).toBe(4);   // 0.021 mm at level 4
-  expect(levelFor(s, SUBDIV_TOLERANCE.preview).level).toBe(3);   // 0.081 mm at level 3
+  expect(print.level).toBe(4);   // 0.021 mm at level 4, 3,072 triangles
+  expect(atTier(s, "preview")).toMatchObject({ level: 3, met: true });   // 0.081 mm at level 3, 768 triangles
 });
 it("picks the 60 x 30 x 20 box's levels", () => {
   const s = createCage({ box: { size: [60, 30, 20] } }).snapshot();
-  expect(levelFor(s, SUBDIV_TOLERANCE.preview)).toMatchObject({ level: 4, met: true });   // level 3 reads 0.208 mm
-  expect(levelFor(s, SUBDIV_TOLERANCE.print)).toMatchObject({ level: 5, met: true });     // level 4 reads 0.054 mm
+  expect(atTier(s, "preview")).toMatchObject({ level: 4, met: true });   // level 3 reads 0.208 mm; 3,072 triangles
+  expect(atTier(s, "print")).toMatchObject({ level: 5, met: true });     // level 4 reads 0.054 mm; 12,288 triangles
+});
+it("stops a 1,944-face cage at level 2 at preview", () => {
+  // Level 3 is 248,832 triangles, past the preview limit, so only level 1 is measured
+  // (which builds level 2, 62,208 triangles) and preview stops at level 2.
+  const big = createCage({ box: { size: [5000, 5000, 5000], segs: [18, 18, 18] } }).snapshot();
+  expect(atTier(big, "preview")).toMatchObject({ level: 2, met: false });
 });
 it("meets the print tolerance on an extruded cage", () => {
   const c = createCage({ box: { size: [60, 30, 20], segs: [3, 2, 1] } });

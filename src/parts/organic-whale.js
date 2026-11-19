@@ -34,8 +34,8 @@ export function whaleCage(k, p) {
   // Flukes: the last tail step's two +Y sides, pushed out and back and flattened.
   const fluke = c.extrude(["tail3.s1", "tail3.s2"], { by: v(4, 12, 0), scale: [1.2, 1, 0.3], id: "fluke" });
   c.extrude(fluke, { by: v(8, 12, 0), scale: [0.6, 1, 0.7], id: "flukeTip" });
-  // Dorsal fin: the back face over the tail root, which touches the mirror plane, so it
-  // grows across it as one fin; swept back and thinned.
+  // Dorsal fin: the back face over the tail root, which has an edge on the mirror plane,
+  // so it grows across it as one fin; swept back and thinned.
   const fin = c.extrude("+z:3,1", { by: v(2, 0, 5), scale: [0.6, 0.7, 1], id: "fin" });
   c.extrude(fin, { by: v(5, 0, 4), scale: [0.5, 0.35, 0.6], id: "finTip" });
   // Pectoral fins: a low side face near the front, swept out, back and a little down.
