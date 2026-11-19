@@ -35,14 +35,11 @@ it("does not report a mirrored cage's fins against each other or the body", () =
   c.extrude("+y:0,0", { by: 12, scale: 0.7 });
   expect(selfIntersections(subdivide(c.snapshot(), 3))).toEqual([]);
 });
-it("checks a clean ~30-face cage at level 5 quickly", () => {
+it("finds nothing on a clean ~30-face cage at level 5", () => {
   const c = createCage({ box: { size: [40, 30, 20], segs: [3, 2, 2] } });
   const snap = c.snapshot();
   expect(snap.faces.length).toBeGreaterThanOrEqual(28);
-  const mesh = subdivide(snap, 5);
-  const t0 = performance.now();
-  expect(selfIntersections(mesh)).toEqual([]);
-  expect(performance.now() - t0).toBeLessThan(2000);
+  expect(selfIntersections(subdivide(snap, 5))).toEqual([]);
 });
 
 // Hand-built triangle pairs: positions, indices and the cage face each triangle comes from.

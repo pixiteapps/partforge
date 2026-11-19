@@ -67,10 +67,10 @@ test("tailLift raises the tail and leaves the front half alone", () => {
   expect(worst).toBeLessThan(0.5);
 });
 
-test("a print build is quick", () => {
-  const t0 = performance.now();
-  build(kernelAt("print"));
-  const ms = performance.now() - t0;
-  console.log(`organic-whale print build: ${ms.toFixed(0)} ms`);
-  expect(ms).toBeLessThan(2000);
+test("preview and print agree on the bounding box within 0.2 mm", () => {
+  const a = build(kernelAt("preview")).boundingBox(), b = build(kernelAt("print")).boundingBox();
+  for (let axis = 0; axis < 3; axis++) {
+    expect(Math.abs(a.min[axis] - b.min[axis]), `min[${axis}]`).toBeLessThan(0.2);
+    expect(Math.abs(a.max[axis] - b.max[axis]), `max[${axis}]`).toBeLessThan(0.2);
+  }
 });

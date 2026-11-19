@@ -230,6 +230,14 @@ test("implicit-needs-manifold: k.subdiv in a part pinned to OCCT is an error nam
   expect(f.hint).toMatch(/k\.subdiv/);
 });
 
+test("implicit-needs-manifold: k.subdiv beside a shell (which routes the part to OCCT) is an error naming k.subdiv", () => {
+  const part = partWith((k) => k.union([k.subdiv(k.cage({ box: { size: [10, 10, 10] } })), k.box({ size: [4, 4, 4] }).shell({ thickness: 1 })]));
+  const [f, ...rest] = of(lintPart(part), "implicit-needs-manifold");
+  expect(rest).toEqual([]);
+  expect(f.severity).toBe("error");
+  expect(f.message).toMatch(/k\.subdiv/);
+});
+
 test("implicit-needs-manifold: k.subdiv beside a function-selector fillet is an error naming k.subdiv", () => {
   const parts = {
     whale: { views: ["main"], build: (k) => k.subdiv(k.cage({ box: { size: [10, 10, 10] } })) },
