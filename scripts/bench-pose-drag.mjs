@@ -6,7 +6,9 @@
 //   (c) exact rebuild: one finger (indexCurl +0.02) and every finger (each curl +0.02),
 //       cold (fresh kernel) and warm (after the base pose built), with the sample cache's hits
 //   (d) provisional stage: pieces' meshes versus the full union's mesh, after the build
-import { core, setCoreEnabled } from "../src/framework/core/core.js";
+import { core, loadFullCore, setCoreEnabled } from "../src/framework/core/core.js";
+
+await loadFullCore(); // the implicit engine is the core's full build, loaded on demand
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/index.js";
 import { bindVertices } from "../src/framework/geometry/implicit/bindings.js";

@@ -47,8 +47,8 @@ What keeping it exact takes, wherever you edit:
 - **No fused multiply-add**: the build passes `-ffp-contract=off` (clang on
   arm64 fuses `a*b + c` by default and the output drifts; measured, it buys no
   speed here — this code is bound by memory and branches).
-- **SIMD only through per-lane exact ops**: the module is built twice from
-  the same sources and flags, scalar and with `-msimd128`, and `core.js`
+- **SIMD only through per-lane exact ops**: the full module (below) is built
+  twice from the same sources and flags, scalar and with `-msimd128`, and `core.js`
   boots the SIMD build when the engine validates a tiny v128 probe module
   (else the scalar one; `globalThis.PARTFORGE_CORE_SIMD = false` forces it).
   With `-msimd128` the compiler may vectorize ANY loop in any translation
@@ -230,12 +230,25 @@ cut and untangle timed as `seam`), with CI's gates in `test/implicit-speed.test.
 
 ```bash
 node scripts/build-core-wasm.mjs          # needs Emscripten's em++ (brew install emscripten)
-node scripts/build-core-wasm.mjs --check  # no compiler: is core-wasm.js current?
+node scripts/build-core-wasm.mjs --check  # no compiler: are both outputs current?
 ```
 
-The output, `src/framework/core/core-wasm.js`, is committed: both builds of
-the WebAssembly (scalar and SIMD) base64-encoded in a plain ES module, plus a
-hash of these sources and the build flags. `test/core-wasm.test.js` recomputes that hash, so a C++ edit
+It writes two modules, both committed, each WebAssembly base64-encoded in a plain
+ES module with a hash of these sources and the build flags:
+
+- `src/framework/core/core-wasm.js`, the **base** build: `BASE_SOURCES`
+  (`blend_surfaces.cpp`, `bvh.cpp`, `creased_normals.cpp`), scalar only, about
+  100 KB. Every worker imports it statically, so every part's first load pays for
+  it. Keep it small: `test/core-wasm.test.js` caps its size.
+- `src/framework/core/core-full-wasm.js`, the **full** build: every `.cpp` here,
+  the implicit engine included, scalar and SIMD, about 300 KB each. `core.js`
+  imports it on demand (`loadFullCore`), so only a part that calls `k.implicit`
+  downloads it, and it then replaces the base build for every pass.
+
+A new `.cpp` joins the full build automatically. Add it to `BASE_SOURCES` only if
+every part needs it. The implicit sources must not include the base ones' headers
+(they share only `flat_map.h` and `js_math.h`), or the base build stops linking
+alone. `test/core-wasm.test.js` recomputes that hash, so a C++ edit
 without a rebuild fails CI even though CI has no compiler. A JS module rather
 than a `.wasm` file because partforge ships as source into a browser worker,
 Node (the CLI, tests, a host's server), and `blob:` hosts — an import works in
