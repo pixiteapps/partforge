@@ -86,4 +86,27 @@ describe("export-step with meshes", () => {
     const es = readStep(await exportStep(laid, { view: "bed", meshes: { grip: tet() } }));
     expect(coordsOf(es)).toEqual([30, 0, 0, 40, 0, 0, 30, 10, 0, 30, 0, 10]);
   });
+
+  // k.subdiv is mesh-native the same way: handed its mesh, it is a tessellated solid.
+  const subdivided = {
+    meta: { title: "Whale" }, defaults: {},
+    parts: {
+      plate: { views: ["all"], build: (kk) => kk.box({ size: [10, 10, 2] }) },
+      whale: { views: ["all"], build: (kk) => kk.subdiv(kk.cage({ box: { size: [10, 10, 10] } })) },
+    },
+    views: { all: { label: "All" } },
+  };
+
+  it("writes a k.subdiv sub-part as a tessellated solid", async () => {
+    const es = readStep(await exportStep(subdivided, { view: "all", meshes: { whale: tet() } }));
+    expect(productTypes(es)).toEqual({ plate: "ADVANCED_BREP_SHAPE_REPRESENTATION", whale: "TESSELLATED_SHAPE_REPRESENTATION" });
+  });
+
+  it("a k.subdiv sub-part that reaches OCCT fails the export naming it and k.subdiv", async () => {
+    const posts = [];
+    await handle(k, subdivided, { type: "export-step", view: "all", params: {}, jobId: 1 }, (m) => posts.push(m));
+    const err = posts.find((m) => m.type === "error");
+    expect(err?.message).toMatch(/whale/);
+    expect(err?.message).toMatch(/OCCT cannot build k\.subdiv/);
+  });
 });

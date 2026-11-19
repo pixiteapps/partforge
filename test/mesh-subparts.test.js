@@ -54,3 +54,18 @@ test("a sub-part that throws fails the job naming it", async () => {
   expect(err?.m.message).toMatch(/broken/);
   expect(posts.find((p) => p.m.type === "subpart-meshes")).toBeUndefined();
 });
+
+test("meshes a k.subdiv sub-part, the other mesh-native op", async () => {
+  const subdiv = {
+    meta: { title: "T", backend: "manifold" }, defaults: {},
+    parts: { whale: { views: ["all"], build: (kk) => kk.subdiv(kk.cage({ box: { size: [10, 10, 10] } })) } },
+    views: { all: { label: "All" } },
+  };
+  const posts = [];
+  await handle(k, subdiv, { type: "mesh-subparts", view: "all", params: {}, jobId: "mesh-1-2", quality: "print", parts: ["whale"] }, (m) => posts.push(m));
+  const reply = posts.find((m) => m.type === "subpart-meshes");
+  expect(reply, JSON.stringify(posts)).toBeTruthy();
+  expect(reply.meshes.whale.indices.length).toBeGreaterThan(0);
+  expect(reply.meshes.whale.indices.length % 3).toBe(0);
+});
+

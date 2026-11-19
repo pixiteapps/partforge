@@ -101,6 +101,35 @@ export const OCCT_ONLY_OPS = ["fillet", "chamfer", "shell"];
 // per-sub-part OCCT fallback (backend-select.js).
 export const ROUTED_CAD_OPS = ["shell"];
 
+// The kernel ops only the mesh class can build (KERNEL-CONTRACT.md "Mesh-native ops"):
+// the in-repo OCCT backend throws on them. One set, read by every decision that treats
+// them alike: a STEP export meshes their sub-parts on Manifold (backend-select.js
+// organicExportParts), lint's implicit-needs-manifold reports a part that would build
+// them on OCCT, and the CLI recognises OCCT's refusal of one (meshNativeRefusal).
+export const MESH_NATIVE_OPS = new Set(["implicit", "subdiv"]);
+
+/**
+ * The mesh-native op an error message says OCCT refused (`"implicit"`, `"subdiv"`), else
+ * null. OCCT's refusal opens `<op>: OCCT cannot build k.<op> (it is mesh-native)`
+ * (occt-backend.js; test/subdiv-occt.test.js holds both thrown messages to this).
+ */
+export function meshNativeRefusal(message) {
+  const text = String(message ?? "");
+  for (const op of MESH_NATIVE_OPS) {
+    if (text.includes(`${op}: OCCT cannot build k.${op} (it is mesh-native)`)) return op;
+  }
+  return null;
+}
+
+/**
+ * Mesh-native ops named in prose, in MESH_NATIVE_OPS order, then any `more` words:
+ * "k.subdiv", "k.implicit and k.subdiv", "k.implicit, k.subdiv and shell".
+ */
+export function meshNativeOpsText(ops, ...more) {
+  const names = [...MESH_NATIVE_OPS].filter((op) => [...ops].includes(op)).map((op) => `k.${op}`).concat(more);
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
 /**
  * @typedef {Object} Solid  An opaque handle to a backend solid. `_`-prefixed keys are backend internals.
  * @property {(tool: Solid) => Solid} cut

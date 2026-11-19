@@ -215,3 +215,53 @@ test("implicit-needs-manifold: quiet on Manifold and without k.implicit", () => 
   expect(of(lintPart(implicitPart({ root: { kind: "sphere", r: 5 } }, { meta: { title: "T", backend: "manifold" } })), "implicit-needs-manifold")).toEqual([]);
   expect(of(lintPart(partWith((k) => k.box({ size: [1, 1, 1] }), { meta: { title: "T", backend: "occt" } })), "implicit-needs-manifold")).toEqual([]);
 });
+
+// --- implicit-needs-manifold covers k.subdiv -------------------------------
+
+const subdivPart = (extra) => partWith((k) => k.subdiv(k.cage({ box: { size: [10, 10, 10] } })), extra);
+
+test("implicit-needs-manifold: k.subdiv in a part pinned to OCCT is an error naming k.subdiv", () => {
+  const [f, ...rest] = of(lintPart(subdivPart({ meta: { title: "T", backend: "occt" } })), "implicit-needs-manifold");
+  expect(rest).toEqual([]);
+  expect(f.severity).toBe("error");
+  expect(f.path).toBe("meta.backend");
+  expect(f.message).toMatch(/k\.subdiv/);
+  expect(`${f.message} ${f.hint}`).not.toMatch(/k\.implicit/);
+  expect(f.hint).toMatch(/k\.subdiv/);
+});
+
+test("implicit-needs-manifold: k.subdiv beside a function-selector fillet is an error naming k.subdiv", () => {
+  const parts = {
+    whale: { views: ["main"], build: (k) => k.subdiv(k.cage({ box: { size: [10, 10, 10] } })) },
+    plate: { views: ["main"], build: (k) => k.box({ size: [9, 9, 3] }).fillet({ r: 1, edges: (e) => e.inDirection("Z") }) },
+  };
+  const [f, ...rest] = of(lintPart(partWith(null, { parts })), "implicit-needs-manifold");
+  expect(rest).toEqual([]);
+  expect(f.severity).toBe("error");
+  expect(f.message).toMatch(/the build calls k\.subdiv, which only the Manifold backend can build, but `fillet` with a function selector needs OCCT/);
+  expect(`${f.message} ${f.hint}`).not.toMatch(/k\.implicit/);
+});
+
+test("implicit-needs-manifold: a part with both ops names both", () => {
+  const build = (k) => k.subdiv(k.cage({ box: { size: [10, 10, 10] } })).union(k.implicit({ root: { kind: "sphere", r: 5 } }));
+  const [f] = of(lintPart(partWith(build, { meta: { title: "T", backend: "occt" } })), "implicit-needs-manifold");
+  expect(f.message).toMatch(/the build calls k\.implicit and k\.subdiv, which only the Manifold backend can build/);
+});
+
+test("implicit-needs-manifold: the k.implicit-only messages are unchanged", () => {
+  const [f] = of(lintPart(implicitPart({ root: { kind: "sphere", r: 5 } }, { meta: { title: "T", backend: "occt" } })), "implicit-needs-manifold");
+  expect(f.message).toBe("the build calls k.implicit, which only the Manifold backend can build, but meta.backend pins OCCT");
+  expect(f.hint).toBe("Remove `meta.backend: \"occt\"` (or set it to \"manifold\"): the OCCT build throws on k.implicit.");
+});
+
+test("implicit-needs-manifold: quiet for k.subdiv on Manifold", () => {
+  expect(of(lintPart(subdivPart({ meta: { title: "T", backend: "manifold" } })), "implicit-needs-manifold")).toEqual([]);
+  expect(of(lintPart(subdivPart()), "implicit-needs-manifold")).toEqual([]);
+});
+
+test("a cage edit that throws is lint's ordinary build-throws error", () => {
+  const r = lintPart(partWith((k) => { const c = k.cage({ box: { size: [10, 10, 10] } }); c.extrude("nope", { by: 1 }); return k.subdiv(c); }));
+  const thrown = r.errors.filter((f) => /cage: no face "nope"/.test(f.message));
+  expect(thrown).toHaveLength(1);
+  expect(thrown[0].rule).toBe("build-throws");
+});

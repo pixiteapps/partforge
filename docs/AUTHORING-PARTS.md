@@ -5367,9 +5367,10 @@ empty-string and raw-bytes exemptions from `image-source.js`) (warning).
 every `k.implicit` / `k.implicitFrames` spec the probe records, at the lint params:
 `implicit-spec-invalid` (the engine's compiler rejects the spec — the same error the
 build throws; image names are checked only against a static `images` object)
-(error); `implicit-needs-manifold` (a `k.implicit` call in a part that builds on
-OCCT — `meta.backend: "occt"`, a `shell` that routes it there, or a `fillet`/`chamfer`
-with a function selector in any sub-part) (error);
+(error); `implicit-needs-manifold` (a `k.implicit` or `k.subdiv` call in a part that
+builds on OCCT — `meta.backend: "occt"`, a `shell` that routes it there, or a
+`fillet`/`chamfer` with a function selector in any sub-part; the message names the op)
+(error);
 `implicit-thin-feature` (the thinnest feature is under 2 cells of the preview grid —
 the spec's `preview` or the automatic choice — or of the print grid) (warning);
 `implicit-blend-eats-child` (a blend's `k`, or a contact `attach` entry's `k`, is

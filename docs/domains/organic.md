@@ -426,7 +426,7 @@ The domain adds lint rules and no verify metrics. Lint runs every `k.implicit` a
 | Rule | Severity | Reports |
 |---|---|---|
 | `implicit-spec-invalid` | error | The engine's compiler rejects the spec: a bad node or field, a frame cycle, a formula error, a contact below the root, an attach naming a missing label, an undeclared image. The message is the build's own error. Image names are checked only against a static `images` object. |
-| `implicit-needs-manifold` | error | `k.implicit` in a part that builds on OCCT: `meta.backend: "occt"`, a `shell` that routes the part there, or a `fillet`/`chamfer` with a function selector in any sub-part (whatever the pin). |
+| `implicit-needs-manifold` | error | `k.implicit` or `k.subdiv` (the message names which) in a part that builds on OCCT: `meta.backend: "occt"`, a `shell` that routes the part there, or a `fillet`/`chamfer` with a function selector in any sub-part (whatever the pin). |
 | `implicit-thin-feature` | warning | The thinnest feature is under 2 cells of the preview grid (the spec's `preview`, or the automatic choice) or the print grid. |
 | `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. |
 | `implicit-lipschitz-low` | warning | An `expr` formula, sampled on 512 points of its `box`, changes faster per mm than its `lipschitz`. A spot check, not a proof. Formulas that read a texture are skipped. |
