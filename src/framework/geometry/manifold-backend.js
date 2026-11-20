@@ -230,6 +230,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // k.subdiv's warnings (tolerance not met, a body through itself at preview), keyed by
   // the cached solid they belong to (re-recorded on a hit, as k.implicit's are).
   const subdivWarnings = new WeakMap();
+  // A preview k.subdiv's limit mesh with each triangle's cage face, beside the cached
+  // solid: what provenance.js matches a clicked triangle back to its cage face with.
+  const subdivSources = new WeakMap();
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
@@ -1195,6 +1198,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         oidPolicies.set(id, ORGANIC);
         const value = wrap(m, key);
         subdivWarnings.set(value, out.warnings);
+        if (tier !== "print") subdivSources.set(value, { positions: out.positions, indices: out.indices, triFace: out.triFace, ids: snapshot.ids });
         return { value, pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
       });
       for (const w of subdivWarnings.get(solid) ?? []) recordWarning(w);
@@ -1319,6 +1323,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    _subdivSource: (solid) => subdivSources.get(solid),   // provenance.js: a k.subdiv solid's limit mesh and cage faces
     _shadingPolicy: (oid) => oidPolicies.get(oid),   // tests: the policy an original ID shades with
     // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
     // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's

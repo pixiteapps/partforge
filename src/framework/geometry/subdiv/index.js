@@ -35,7 +35,7 @@ export function meshSubdiv(snapshot, tier, { maxTriangles } = {}) {
     if (tier === "print") throw new Error(through);
     warnings.push(through);
   }
-  return { positions: mesh.positions, indices: mesh.indices, warnings };
+  return { positions: mesh.positions, indices: mesh.indices, triFace: mesh.triFace, warnings };
 }
 
 // "subdiv: the body passes through itself between A and B; C and D", or null for no

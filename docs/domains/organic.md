@@ -834,6 +834,13 @@ same `params` (for `mirror: "xz"`, `point: (p, d) => [d.fin[0], -d.fin[1], d.fin
 Either one can then be grabbed, and both sides follow, because both write the same
 parameters.
 
+A click on a cage body opens the controls for that area, not for the whole body. Each
+`extrude`, `move` and `scale` records the parameters read since the cage call before it
+against the faces it made or reshaped, and a face made by an `extrude` also keeps those of
+the face it grew from. So read a feature's parameters in the call that shapes it
+(`c.extrude(face, { by: p.finHeight })`) and a click on the fin offers the fin's settings.
+A parameter that a handle already drags is left out of that list.
+
 ### Cage errors
 
 Every cage method throws a `cage: ` error that names the problem, and leaves the cage as
