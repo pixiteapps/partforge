@@ -595,8 +595,8 @@ export interface Cage {
   /** Pushes a region out and returns its caps' ids, one per listed face, in order (a list even with one face). */
   extrude(faces: string[], opts: CageExtrudeOptions): string[];
   move(faces: CageFaces, offset: [number, number, number]): void;
-  /** Keep the border of the face or region as a hard edge of the smooth surface. */
-  crease(faces: CageFaces): void;
+  /** Keep the border of the face or region as a hard edge of the smooth surface; with `other`, only the edges the two share (`other` may name reflected `~` faces). */
+  crease(faces: CageFaces, other?: CageFaces): void;
   /** `about` omitted or null: the points' mean (on the plane, under a mirror, for faces with an edge on it). */
   scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] | null }): void;
   centroid(id: string): [number, number, number];

@@ -701,8 +701,9 @@ pick by `normal` or `centroid` when you need "the side that faces +Y".
   `[sx, sy, sz]`) about the point `about`. Omitted (or `null`), it is the points' mean;
   under a mirror, for faces with an edge on the plane, the mean of the faces and their
   reflections, on the plane.
-- **`crease(face | faces)`** keeps the border of the face (or of the region the faces make)
-  as a hard edge of the smooth surface. Everything else stays smooth. The mark stays on
+- **`crease(face | faces, other?)`** keeps the border of the face (or of the region the
+  faces make) as a hard edge of the smooth surface. With `other` (a face or faces), only
+  the edges the two share are creased. Everything else stays smooth. The mark stays on
   those edges: extrude the face afterwards and the crease is at the base of the extrusion.
   Under a mirror, a region with an edge on the plane is creased together with its
   reflection, so no crease is left on the plane.
@@ -744,11 +745,22 @@ puck.crease("-z:0,0");
 puck.snapshot().creases.length;   // 8
 ```
 
-That is a pebble with a flat, hard-rimmed top and bottom and a smooth wall. A crease
-follows the border of faces, so to crease along a line, give the cage an edge there first
-(`segs`, or an `extrude`). There is no partly sharp crease and no crease along a single
-edge between two named faces: for a tight but rounded edge, add a short `extrude` step
-beside it instead.
+That is a pebble with a flat, hard-rimmed top and bottom and a smooth wall.
+
+A crease does not have to close a loop. `crease(a, b)` marks only the edges that `a` and
+`b` share, and where that run of edges stops, the crease fades into the smooth surface.
+`b` may name reflected (`~`) faces, which is how a ridge is laid along the mirror plane:
+
+```js
+const trout = cage({ box: { size: [40, 16, 12], segs: [2, 2, 1] }, mirror: "xz" });
+trout.crease(["+z:0,1", "+z:1,1"], ["+z:0,1~", "+z:1,1~"]);
+trout.snapshot().creases.length;   // 2
+```
+
+A crease follows the borders of cage faces, so to crease along a line, give the cage an
+edge there first (`segs`, or an `extrude`). A crease along a line where the surface does
+not bend (down the middle of a flat face) changes nothing and draws no line. There is no
+partly sharp crease: for a tight but rounded edge, add a short `extrude` step beside it.
 
 ### Mirror
 

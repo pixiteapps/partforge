@@ -36,6 +36,14 @@ const INLINE = {
   // Not a prism (a box is, and takes roundAll's fast path, which registers no planes).
   "round-all step [planes]": one((k) => k.box({ min: [0, 0, 0], max: [30, 20, 12] })
     .union(k.box({ min: [6, 4, 12], max: [20, 16, 20] })).roundAll(2)),
+  // A creased subdivision body (shading-policy.js `skin`): a closed crease, an open run
+  // (faces split out as parts of their own), and a cut across both.
+  "creased cage [skin parts]": one((k) => {
+    const c = k.cage({ box: { size: [30, 20, 16], segs: [3, 2, 1] } });
+    c.crease("-z:0,0");
+    c.crease(["+z:0,0", "+z:1,0"], ["+z:0,1", "+z:1,1"]);
+    return k.subdiv(c).cut(k.cylinder({ d: 6, h: 40, center: true }));
+  }),
 };
 // k.implicit runs its whole engine on the core (core/implicit-core.js); each image
 // a spec reads is registered on the kernel before the build. The kernel is a preview

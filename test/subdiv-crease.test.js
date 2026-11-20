@@ -110,7 +110,93 @@ describe("creased subdivision", () => {
   });
 });
 
+describe("an open run of creases", () => {
+  // A roof: the side walls are squashed, so the top slopes up to a ridge on y = 0.
+  const roof = (make = createCage) => {
+    const c = make({ box: { size: [40, 20, 20], segs: [4, 2, 1] } });
+    c.scale(c.faces("+y:"), [1, 1, 0.3]);
+    c.scale(c.faces("-y:"), [1, 1, 0.3]);
+    return c;
+  };
+  const ridged = () => {
+    const c = roof();
+    c.crease(["+z:1,0", "+z:2,0"], ["+z:1,1", "+z:2,1"]);   // the middle two of the four top edges on y = 0
+    return c;
+  };
+  test("crease(face, other) marks only the edges the two share", () => {
+    const s = ridged().snapshot();
+    expect(s.creases).toHaveLength(2);
+    for (const [a, b] of s.creases) { expect(s.points[a][1]).toBe(0); expect(s.points[b][1]).toBe(0); expect(s.points[a][2]).toBe(10); }
+    expect(() => box({ box: { segs: [2, 1, 1] } }).crease("+z:0,0", "-z:0,0")).toThrow(/share no edge/);
+    expect(() => box().crease("+z:0,0", "+q:0,0")).toThrow(/no face/);
+  });
+  test("a mirrored cage creases along its plane through a reflected face", () => {
+    const c = box({ box: { segs: [2, 2, 1] }, mirror: "xz" });
+    c.crease(["+z:0,1", "+z:1,1"], ["+z:0,1~", "+z:1,1~"]);
+    const s = c.snapshot();
+    expect(s.creases).toHaveLength(2);
+    for (const [a, b] of s.creases) { expect(s.points[a][1]).toBe(0); expect(s.points[b][1]).toBe(0); }
+  });
+  test("the faces beside the run become parts of their own, creased against each other only", () => {
+    const mesh = subdivide(ridged().snapshot(), 2);
+    // Four faces split out, and the rest of the skin: five parts, two creased pairs.
+    expect(mesh.regions).toBe(5);
+    expect(mesh.creasePairs).toHaveLength(2);
+  });
+  test("the ridge is sharp in the middle and fades out at its ends", () => {
+    const smooth = subdivide(roof().snapshot(), 3);
+    const creased = subdivide(ridged().snapshot(), 3);
+    // Highest point on the plane y = 0 near x = 0 (mid-run) and near x = -20 (past the run's end).
+    const topAt = (m, x) => {
+      let z = -Infinity;
+      for (let i = 0; i < m.positions.length; i += 3)
+        if (Math.abs(m.positions[i + 1]) < 1e-9 && Math.abs(m.positions[i] - x) < 1.3) z = Math.max(z, m.positions[i + 2]);
+      return z;
+    };
+    const mid = topAt(creased, 0) - topAt(smooth, 0), end = topAt(creased, -20) - topAt(smooth, -20);
+    expect(mid).toBeGreaterThan(0.5);
+    expect(Math.abs(end)).toBeLessThan(0.2 * mid);
+  });
+});
+
 describe("k.subdiv with creases", () => {
+  test("an open run shades hard along the run only", () => {
+    const c = k.cage({ box: { size: [40, 20, 20], segs: [4, 2, 1] } });
+    c.scale(c.faces("+y:"), [1, 1, 0.3]);
+    c.scale(c.faces("-y:"), [1, 1, 0.3]);
+    c.crease(["+z:1,0", "+z:2,0"], ["+z:1,1", "+z:2,1"]);
+    const solid = k.subdiv(c);
+    expect(new Set(solid._runs().map((r) => r.id)).size).toBe(5);
+    const mesh = solid.toMesh();
+    // Every feature line lies on the run: y = 0, on top, between the run's two ends.
+    expect(mesh.edges.length).toBeGreaterThan(0);
+    for (let i = 0; i < mesh.edges.length; i += 3) {
+      expect(Math.abs(mesh.edges[i + 1])).toBeLessThan(1e-4);
+      expect(mesh.edges[i + 2]).toBeGreaterThan(5);
+      expect(Math.abs(mesh.edges[i])).toBeLessThan(10.5);
+    }
+    // Across the run the two sides have different normals at a shared point; across a
+    // seam between two parts with no crease they agree.
+    const P = mesh.positions, N = mesh.normals;
+    const normalsAt = (x, y) => {
+      const out = [];
+      for (let i = 0; i < P.length; i += 3)
+        if (Math.abs(P[i] - x) < 1e-3 && Math.abs(P[i + 1] - y) < 1e-3 && P[i + 2] > 0) out.push([N[i], N[i + 1], N[i + 2]]);
+      return out;
+    };
+    const spread = (list) => Math.max(...list.map((n) => Math.hypot(n[0] - list[0][0], n[1] - list[0][1], n[2] - list[0][2])));
+    const onRun = normalsAt(0, 0);
+    expect(onRun.length).toBeGreaterThan(2);
+    expect(spread(onRun)).toBeGreaterThan(0.2);
+    // x = -10 is the seam between a split-out face and the rest, with no crease: pick a
+    // vertex on it away from the run.
+    let seam = null;
+    for (let i = 0; i < P.length && !seam; i += 3)
+      if (Math.abs(P[i] + 10) < 0.6 && Math.abs(P[i + 1] - 5) < 0.6 && P[i + 2] > 0) seam = [P[i], P[i + 1]];
+    expect(seam).not.toBeNull();
+    expect(spread(normalsAt(seam[0], seam[1]))).toBeLessThan(1e-6);
+  });
+
   let k;
   beforeAll(async () => { k = await bootManifoldKernel(); });
   test("each region is its own surface and shades as creased skin", () => {

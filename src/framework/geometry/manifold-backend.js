@@ -1193,13 +1193,19 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const key = h("subdiv", snapshot, tier);
       const solid = cache.lookup(key, () => {
         const out = meshSubdiv(snapshot, tier);
-        // One surface, or one per region when creases split the skin (each crease is then
-        // a seam: it shades hard and draws its line).
+        // One surface, or one per part when creases split the skin (shading-policy.js
+        // CREASED_SKIN: a crease is a hard seam with a line, any other seam between two
+        // parts is a same-surface edge).
         const regions = out.triRegion ? out.regions : 1;
         const id = wasm.Manifold.reserveIDs(regions), ids = Array.from({ length: regions }, (_, i) => id + i);
         const m = T(out.triRegion ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triRegion, ids)
           : manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
-        for (const i of ids) oidPolicies.set(i, out.triRegion ? CREASED_SKIN : ORGANIC);
+        ids.forEach((oid, part) => {
+          if (!out.triRegion) { oidPolicies.set(oid, ORGANIC); return; }
+          const hard = new Set();
+          for (const [a, b] of out.creasePairs) { if (a === part) hard.add(b); if (b === part) hard.add(a); }
+          oidPolicies.set(oid, Object.freeze({ ...CREASED_SKIN, skin: id, part, hard }));
+        });
         const value = wrap(m, key);
         subdivWarnings.set(value, out.warnings);
         if (tier !== "print") subdivSources.set(value, { positions: out.positions, indices: out.indices, triFace: out.triFace, ids: snapshot.ids });

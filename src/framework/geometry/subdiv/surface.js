@@ -236,9 +236,13 @@ const dist2 = (p, a, b) => {
   return x * x + y * y + z * z;
 };
 
-// The cage's faces grouped into regions no sharp edge is crossed inside: `of` is each
-// face's region (numbered in face order), `count` how many there are.
-function regionsOf({ F, E, edgeFaces, sharp }) {
+// The cage's faces grouped into parts so that every sharp edge lies between two of them:
+// first the regions no sharp edge is crossed inside, then, for a sharp edge whose two
+// faces are still in one region (an open run of creases, which encloses nothing), each
+// of those faces becomes a part of its own. `of` is each face's part (numbered in face
+// order), `count` how many there are, and `pairs` the [low, high] parts with a crease
+// between them, each once, sorted.
+function partsOf({ F, E, edgeFaces, sharp }) {
   const parent = Uint32Array.from({ length: F }, (_, f) => f);
   const find = (f) => { while (parent[f] !== f) f = parent[f] = parent[parent[f]]; return f; };
   for (let e = 0; e < E; e++) {
@@ -246,19 +250,35 @@ function regionsOf({ F, E, edgeFaces, sharp }) {
     const a = find(edgeFaces[2 * e]), b = find(edgeFaces[2 * e + 1]);
     if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
   }
+  const alone = new Uint8Array(F);
+  for (let e = 0; e < E; e++) {
+    if (!sharp[e]) continue;
+    const a = edgeFaces[2 * e], b = edgeFaces[2 * e + 1];
+    if (find(a) === find(b)) alone[a] = alone[b] = 1;
+  }
   const index = new Map(), of = new Uint32Array(F);
   for (let f = 0; f < F; f++) {
-    const r = find(f);
-    if (!index.has(r)) index.set(r, index.size);
-    of[f] = index.get(r);
+    const key = alone[f] ? -1 - f : find(f);
+    if (!index.has(key)) index.set(key, index.size);
+    of[f] = index.get(key);
   }
-  return { of, count: index.size };
+  const seen = new Set(), pairs = [];
+  for (let e = 0; e < E; e++) {
+    if (!sharp[e]) continue;
+    const a = of[edgeFaces[2 * e]], b = of[edgeFaces[2 * e + 1]];
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    if (lo === hi || seen.has(lo * F + hi)) continue;
+    seen.add(lo * F + hi);
+    pairs.push([lo, hi]);
+  }
+  pairs.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  return { of, count: index.size, pairs };
 }
 
 export function subdivide(snapshot, levels) {
   checkLevel(levels);
   const cage = fromSnapshot(snapshot);
-  const region = cage.sharp ? regionsOf(cage) : null;
+  const parts = cage.sharp ? partsOf(cage) : null;
   let m = cage;
   for (let l = 0; l < levels; l++) m = step(m);
   const positions = limit(m);
@@ -278,9 +298,9 @@ export function subdivide(snapshot, levels) {
     }
     triFace[2 * f] = triFace[2 * f + 1] = f >>> shift;
   }
-  if (!region || region.count < 2) return { positions, indices, triFace };
-  // Creases split the skin into regions: each triangle's region, for shading.
-  return { positions, indices, triFace, triRegion: triFace.map((f) => region.of[f]), regions: region.count };
+  if (!parts || parts.count < 2) return { positions, indices, triFace };
+  // Creases split the skin into parts: each triangle's part and the creased pairs, for shading.
+  return { positions, indices, triFace, triRegion: triFace.map((f) => parts.of[f]), regions: parts.count, creasePairs: parts.pairs };
 }
 
 // The chord error estimate at level L: how far the level-L triangles sit from the limit

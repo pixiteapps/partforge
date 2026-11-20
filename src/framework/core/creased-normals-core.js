@@ -71,6 +71,7 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
   // Policy table: every surface id in this mesh, then the SMOOTH default row.
   const oidList = [...new Set(roid)];
   const n = oidList.length + 1;
+  let skins = null, parts = null, hardStart = null, hardList = null;
   const oids = new Uint32Array(n), creaseCos = new Float64Array(n), flags = new Uint8Array(n), labelIds = new Int32Array(n), groups = new Int32Array(n);
   const labelOf = new Map(), labels = [];
   const row = (i, pol, label) => {
@@ -87,6 +88,18 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
     row(i, (policies && policies.get(oid)) || SMOOTH, featureLabels?.size ? featureLabels.get(oid) : undefined);
   });
   row(n - 1, SMOOTH, undefined);
+  // Creased subdivision bodies (shading-policy.js `skin`): each row's skin, part and hard list.
+  if (policies && oidList.some((oid) => policies.get(oid)?.skin != null)) {
+    skins = new Int32Array(n).fill(-1); parts = new Int32Array(n).fill(-1); hardStart = new Uint32Array(n + 1);
+    const list = [];
+    oidList.forEach((oid, i) => {
+      const pol = policies.get(oid);
+      if (pol?.skin != null) { skins[i] = pol.skin; parts[i] = pol.part; list.push(...pol.hard); }
+      hardStart[i + 1] = list.length;
+    });
+    hardStart[n] = list.length;
+    hardList = Int32Array.from(list.length ? list : [-1]);   // never empty: copyIn returns 0 for an empty array
+  }
 
   // Fillet surfaces: one flattened copy per distinct descriptor, run → descriptor
   // index, and each run's transform (IDENTITY when the mesh carries none for it).
@@ -121,10 +134,12 @@ export function creasedNormalsCore(c, g, { policies = null, featureLabels = null
     return null;
   }
   const args = [c.copyIn(oids), c.copyIn(creaseCos), c.copyIn(flags), c.copyIn(labelIds),
-    c.copyIn(runDesc), c.copyIn(runXf), c.copyIn(descData), c.copyIn(descOffsets), c.copyIn(groups)];
+    c.copyIn(runDesc), c.copyIn(runXf), c.copyIn(descData), c.copyIn(descOffsets), c.copyIn(groups),
+    c.copyIn(skins), c.copyIn(parts), c.copyIn(hardStart), c.copyIn(hardList)];
   try {
     x.cn_finish(state, args[0], args[1], args[2], args[3], n, COPLANAR_COS, ANALYTIC_COS,
-      args[4], args[5], args[6], args[7], descOffsets ? descOffsets.length - 1 : 0, args[8], SIBLING_COS);
+      args[4], args[5], args[6], args[7], descOffsets ? descOffsets.length - 1 : 0, args[8], SIBLING_COS,
+      args[9], args[10], args[11], args[12]);
     const nf = x.cn_feature_count(state);
     const out = {
       positions: c.copyOut(Float32Array, x.cn_positions(state), nTri * 9),

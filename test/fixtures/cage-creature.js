@@ -37,6 +37,8 @@ function creature(make, p) {
   const pecTip = c.extrude(pec, { by: [p.pecSweep * 0.7, p.pecSpan * 0.65, -2], scale: [0.6, 1, 0.6], id: "pecTip" });
   // Hard edges on request: the rims of the fluke tips and the dorsal fin tip.
   if (p.crispTips) { c.crease(flukeTip); c.crease(finTip); }
+  // A ridge down the back, from the head to the dorsal fin: an open crease on the mirror plane.
+  if (p.backRidge) c.crease(["+z:0,1", "+z:1,1", "+z:2,1"], ["+z:0,1~", "+z:1,1~", "+z:2,1~"]);
   const own = (ids) => (Array.isArray(ids) ? ids : [ids]).filter((id) => !id.endsWith("~"));
   const onPlane = ([x, , z]) => [x, 0, z];   // these caps straddle the mirror plane
   return { c, at: { nose: onPlane(mean(c, nose)), tail: onPlane(mean(c, t3)), fluke: mean(c, own(flukeTip)), fin: onPlane(mean(c, finTip)), pec: mean(c, own(pecTip)) } };
@@ -64,10 +66,11 @@ export default {
       { key: "pecSweep", label: "Pectoral sweep", unit: "mm", min: -8, max: 26, step: 0.5 },
       { key: "finRake", label: "Dorsal rake", unit: "mm", min: -4, max: 14, step: 0.5, description: "How far the dorsal fin leans back. No handle: click the fin." },
       { key: "crispTips", type: "checkbox", label: "Hard-edged fin tips", description: "Creases the rims of the fluke tips and the dorsal fin tip." },
+      { key: "backRidge", type: "checkbox", label: "Ridge down the back", description: "An open crease along the back that fades out at the head." },
       { key: "pecChord", label: "Pectoral width", min: 0.6, max: 1.6, step: 0.05, description: "No handle: click a pectoral fin." },
     ] },
   ],
-  defaults: { girth: 1, noseLength: 5, tailLength: 42, tailLift: 6, flukeSpan: 24, flukeSweep: 12, finHeight: 9, pecSpan: 18, pecSweep: 11, headTaper: 0.8, tailTaper: 0.6, flukeChord: 1, finRake: 5, pecChord: 1, crispTips: false },
+  defaults: { girth: 1, noseLength: 5, tailLength: 42, tailLift: 6, flukeSpan: 24, flukeSweep: 12, finHeight: 9, pecSpan: 18, pecSweep: 11, headTaper: 0.8, tailTaper: 0.6, flukeChord: 1, finRake: 5, pecChord: 1, crispTips: false, backRidge: false },
   derive: (p) => creature(createCage, p).at,
   parts: {
     creature: {

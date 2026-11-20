@@ -13,8 +13,13 @@ sharp edge's point is its midpoint; a point on two sharp edges follows the curve
 them; a point on three or more is a corner). A creased body is built as one original ID
 per region between creases with the `CREASED_SKIN` policy, so every crease is a hard seam
 with an edge line. Left out on purpose: partly sharp creases (their shape would depend on
-the tier's level) and a crease along an open chain of edges (it would not separate two
-regions, so nothing would shade it hard).
+the tier's level).
+
+Open runs were added the same day: `crease(a, b)` marks the edges two faces or regions
+share. An open run encloses nothing, so the faces beside it become parts of their own and
+the shading pass (JS and the native core, kept bit-identical) learned one rule: two parts
+of one `skin` with no crease between them are one surface. The policy carries `skin`,
+`part` and `hard` (the parts it is creased against).
 
 ## Why
 

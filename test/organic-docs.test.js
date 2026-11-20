@@ -86,7 +86,7 @@ beforeAll(async () => {
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(36);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(37);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {

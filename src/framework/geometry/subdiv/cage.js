@@ -8,7 +8,8 @@
 // seen from outside; `removed` maps an extruded face's id → the ids that replaced it.
 //
 // Creases: `creases` holds edges (point pairs) the surface keeps sharp. crease(face)
-// marks the border of the face or region; the marks stay on those edges through later
+// marks the border of the face or region, crease(face, other) the edges two faces or
+// regions share; the marks stay on those edges through later
 // changes (an extruded face leaves its crease at the base of the extrusion), and an edge
 // no face uses any more drops out of the snapshot.
 //
@@ -449,16 +450,31 @@ function makeCage(state) {
   // Mark the border of the face or region as a hard edge. A region touching the mirror
   // plane is taken joined with its reflection, so no crease is left on the plane.
   const edgeKey = (a, b) => (a < b ? `${a}>${b}` : `${b}>${a}`);
-  function crease(face) {
+  // crease(face, other) marks only the edges the two share; `other` may name reflected
+  // faces, which is how a crease is laid along the mirror plane.
+  function crease(face, other) {
     const ids = faceList(face);
-    const all = mirrored && touchesPlane(ids) ? [...ids, ...ids.map(twinId)] : ids;
-    const directed = new Set(all.flatMap((f) => faces.get(f).map((a, k, v) => `${a}>${v[(k + 1) % 4]}`)));
+    const directedOf = (list) => new Set(list.flatMap((f) => faces.get(f).map((a, k, v) => `${a}>${v[(k + 1) % 4]}`)));
     const border = [];
-    for (const f of all) faces.get(f).forEach((a, k, v) => {
-      const b = v[(k + 1) % 4];
-      if (!directed.has(`${b}>${a}`)) border.push([a, b]);
-    });
-    if (border.length === 0) fail(`[${ids.join(", ")}] has no border to crease`);
+    if (other !== undefined) {
+      const others = Array.isArray(other) ? other : [other];
+      if (others.length === 0) fail("no faces named");
+      for (const id of others) resolve(id);
+      const far = directedOf(others);
+      for (const f of ids) faces.get(f).forEach((a, k, v) => {
+        const b = v[(k + 1) % 4];
+        if (far.has(`${b}>${a}`)) border.push([a, b]);
+      });
+      if (border.length === 0) fail(`[${ids.join(", ")}] and [${others.join(", ")}] share no edge`);
+    } else {
+      const all = mirrored && touchesPlane(ids) ? [...ids, ...ids.map(twinId)] : ids;
+      const directed = directedOf(all);
+      for (const f of all) faces.get(f).forEach((a, k, v) => {
+        const b = v[(k + 1) % 4];
+        if (!directed.has(`${b}>${a}`)) border.push([a, b]);
+      });
+      if (border.length === 0) fail(`[${ids.join(", ")}] has no border to crease`);
+    }
     for (const [a, b] of border) {
       creases.add(edgeKey(a, b));
       if (mirrored) creases.add(edgeKey(twin[a], twin[b]));
