@@ -3587,13 +3587,13 @@ describe("spot controls", () => {
   const unhandled = () => { const p = part(); delete p.handles; return p; };
 
   // The face's three newest keys are chosen; the region draws them in panel order.
-  it("shows the face's keys newest first, minus the handle's, and syncs both ways", async () => {
+  it("shows the face's keys newest first, a handle's included, and syncs both ways", async () => {
     const onParamsCommit = vi.fn();
     const { worker, elements, handle } = await mountWith(part(), { onPick: vi.fn(), selectionPopover: { slot: true }, onParamsCommit });
     deliver(worker);
     pickBody({ triIndex: 0 });
     const s = sliders(elements.viewer);
-    expect(s.map(labelOf)).toEqual(["w", "h"]);
+    expect(s.map(labelOf)).toEqual(["w", "h", "open"]);
     s[0].value = "15"; s[0].dispatchEvent(new Event("input", { bubbles: true }));
     expect([...elements.controls.querySelectorAll(".slider")].find((el) => el.querySelector("label").textContent === "w").querySelector("input[type=range]").value).toBe("15");
     s[0].dispatchEvent(new Event("change", { bubbles: true }));
@@ -3606,12 +3606,12 @@ describe("spot controls", () => {
     expect(s[1].value).toBe("44");
     handle.dispose();
   });
-  it("falls back to the piece's keys with no origins, and hides when a handle drags them all", async () => {
+  it("falls back to the piece's keys with no origins, a handle's included, and hides with none", async () => {
     const { worker, elements, handle } = await mountWith(part(), { onPick: vi.fn(), selectionPopover: { slot: true } });
     deliver(worker, { originIds: undefined, origins: undefined, pieceKeys: ["open", "w"] });
     pickBody({ triIndex: 0 });
-    expect(sliders(elements.viewer).map(labelOf)).toEqual(["w"]);
-    deliver(worker, { originIds: undefined, origins: undefined, pieceKeys: ["open"] });
+    expect(sliders(elements.viewer).map(labelOf)).toEqual(["w", "open"]);
+    deliver(worker, { originIds: undefined, origins: undefined, pieceKeys: [] });
     pickBody({ triIndex: 0 });
     expect(elements.viewer.querySelector(".pf-selection-controls").hidden).toBe(true);
     expect(elements.viewer.querySelector(".pf-selection-slot")).not.toBeNull();

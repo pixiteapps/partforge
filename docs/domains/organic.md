@@ -839,7 +839,7 @@ A click on a cage body opens the controls for that area, not for the whole body.
 against the faces it made or reshaped, and a face made by an `extrude` also keeps those of
 the face it grew from. So read a feature's parameters in the call that shapes it
 (`c.extrude(face, { by: p.finHeight })`) and a click on the fin offers the fin's settings.
-A parameter that a handle already drags is left out of that list.
+A parameter that a handle drags is in that list too.
 
 ### Cage errors
 

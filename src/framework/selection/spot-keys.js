@@ -2,11 +2,11 @@
 
 export const SPOT_CAP = 3;
 
-// Face keys when the face is known, else the piece's; excluded and undrawable
-// keys drop before the cap; `more` says the cap cut something.
-export function resolveSpotKeys({ faceKeys = null, pieceKeys = [], excluded = new Set(), drawable = new Set(), cap = SPOT_CAP } = {}) {
+// Face keys when the face is known, else the piece's; undrawable keys drop before the
+// cap; `more` says the cap cut something. A key a handle drags is offered like any other.
+export function resolveSpotKeys({ faceKeys = null, pieceKeys = [], drawable = new Set(), cap = SPOT_CAP } = {}) {
   const useFace = Array.isArray(faceKeys) && faceKeys.length > 0;
-  const keep = (k) => !excluded.has(k) && drawable.has(k);
+  const keep = (k) => drawable.has(k);
   const first = (useFace ? faceKeys : pieceKeys).filter(keep);
   const full = [...first];
   const seen = new Set(first);
@@ -24,16 +24,4 @@ export function faceKeysOf(origins, hit) {
   const id = origins.originIds?.[hit.triIndex];
   if (!id) return null;
   return origins.origins?.[id - 1] ?? null;
-}
-
-// Whether a handle belongs to the clicked piece.
-export function handleOnPiece(handle, name, { point = null, bounds = null, slack = 2 } = {}) {
-  const on = handle?.showOn;
-  if (on != null) return Array.isArray(on) ? on.includes(name) : on === name;
-  if (!point || !bounds) return false;
-  for (let i = 0; i < 3; i++) {
-    if (!Number.isFinite(point[i])) return false; // NaN passes both comparisons below
-    if (point[i] < bounds.min[i] - slack || point[i] > bounds.max[i] + slack) return false;
-  }
-  return true;
 }

@@ -3545,7 +3545,9 @@ At rest no handle shows. A handle shows:
 When posing first goes live on a part (the first frame with the part on screen and no
 cached preview), every shown handle's dot (an axis handle's arrow) appears dimmed for 2 s, then fades out: the
 **resting cue** that tells a person the part has handles. It shows once per mount, never
-again on a param change or a view switch. On a touch-only device (`(hover: none)`) there is
+again on a param change or a view switch. After each rotate that moved the camera it
+flashes again, on every device: the same 2 s hold and fade, ended early by the next
+rotate, a handle drag or a playing animation. On a touch-only device (`(hover: none)`) there is
 no hover to find a handle by, so the dimmed dots stay until the first drag of any handle;
 after that the rules above apply. The cue never shows in a capture. It shows every handle
 the view shows, `showOn` ones included. When the opening view has an `autoplay` animation,
@@ -4490,8 +4492,8 @@ instead of (or in addition to) the built-in `#part` bar:
 
   Between the head row and the slot the popover also shows up to three controls for the
   clicked face: the parameters of the operation that created it, newest first. It is
-  rebuilt on each click, not on each rebuild. Parameters a pose handle on that piece
-  drags are left out. A `k.subdiv` body is one face, so it answers by cage face: the
+  rebuilt on each click, not on each rebuild. A parameter a handle drags is offered
+  here too. A `k.subdiv` body is one face, so it answers by cage face: the
   parameters read before the `extrude`, `move` or `scale` that made or reshaped the cage
   face under the click, then those of the face it was extruded from. A face with no record, a part on OCCT, and a click on a section
   cap fall back to the piece's own build reads, first three in the panel's order. Those

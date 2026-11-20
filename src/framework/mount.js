@@ -19,7 +19,7 @@ import { pruneOverrides } from "./materials/overrides.js";
 import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
 import { recordedRelevantKeys, subPartParamKeys, RELEVANT_ALL } from "./param-deps.js";
-import { resolveSpotKeys, faceKeysOf, handleOnPiece } from "./selection/spot-keys.js";
+import { resolveSpotKeys, faceKeysOf } from "./selection/spot-keys.js";
 import { buildTree, controlNodes } from "./panel/model.js";
 import { desugar } from "./panel/legacy.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -55,7 +55,7 @@ import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { parsePinId } from "./pose/pose-session.js";
 import { NOOP_POSE } from "./pose/noop-pose.js";
-import { handleParamKeys, locateHandle } from "./pose/handle-source.js";
+import { handleParamKeys } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
@@ -1138,7 +1138,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     }
     if (selectionOpt) {
       // The clicked spot's controls: up to SPOT_CAP of the keys its face (else its piece)
-      // was built from, minus what a handle on the piece drags, as bare rail rows.
+      // was built from, as bare rail rows (a key a handle drags is offered here too).
       // The rail is made visible first where partforge can (the narrow layout's
       // pane, a collapsed rail, an overlay drawer); a host that owns the pane or
       // docks the rail is told instead, since only it can show the rows.
@@ -1158,18 +1158,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // The piece's keys are a set (sorted); the fallback takes them in the panel's order.
           const pieceSet = new Set(spotPieceKeys.get(subPart) ?? subPartParamKeys(part, view(), params, displayReadsOf, subPart));
           const pieceKeys = [...schemaKeys.filter((k) => pieceSet.has(k)), ...[...pieceSet].filter((k) => !schemaKeys.includes(k))];
-          const bounds = viewer.getSubBounds?.(subPart) ?? null;
-          const excluded = new Set();
-          for (const id of poseVisible ?? handleIds) {
-            const handle = part.handles[id];
-            let point = null;
-            try { point = locateHandle(part, params, derived, handle); } catch { /* not located */ }
-            if (handleOnPiece(handle, subPart, { point, bounds })) for (const k of handleParamKeys(handle)) excluded.add(k);
-          }
           // The rail's relevance pass has run for these params (and on every delivery).
           const relevant = lastRelevant ?? recordedRelevantKeys(part, view(), params, displayReadsOf);
           const drawable = new Set(schemaKeys.filter((k) => relevant === RELEVANT_ALL || relevant.has(k)));
-          const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, excluded, drawable });
+          const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, drawable });
           if (!keys.length) return null;
           const sub = buildControls(container, part.parameters, params, () => {
             animCtl?.notifyUserEdit();
