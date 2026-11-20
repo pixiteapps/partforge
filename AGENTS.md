@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-eight: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-nine: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -262,7 +262,7 @@ the installed package, so let the publish finish before bumping the dep there.
   `rail.js` now also refuses below the breakpoint (previously reachable only
   with custom host CSS, since the seam is `display: none` there).
 - **`src/framework/materials/overrides.js`** (the per-sub-part display override model), **`sub-part-list.js`**, **`parts-list.js`**, **`appearance-card.js`** - the Parts section and appearance card inside the View style popover (spec 2026-10-13); viewing keys never reach exports or agent captures.
-  The selection popover (`selection-popover.js`) also has a controls region: up to three sliders for the clicked face's params, resolved by the pure `selection/spot-keys.js` (face keys, else the piece's reads; minus keys a pose handle on that piece drags; capped, "More in the panel" when cut) from per-face provenance the worker records (`geometry/provenance.js` wraps the kernel at each author op boundary, `geometry/run-lineage.js` keys face runs; Manifold only, OCCT falls back to piece reads) and `derive-nudge.js` (nudge-sampled derive attribution, ranking only - never gates a rebuild). `selectionPopover: { controls: false }` opts out; `runtime.selection.onReveal` reports the "More" press when the host holds the pane lease.
+  The selection popover (`selection-popover.js`) also has a controls region: up to three sliders for the clicked face's params, resolved by the pure `selection/spot-keys.js` (face keys, else the piece's reads; a key a pose handle drags is offered like any other; capped, "More in the panel" when cut) from per-face provenance the worker records (`geometry/provenance.js` wraps the kernel at each author op boundary, `geometry/run-lineage.js` keys face runs; Manifold only, OCCT falls back to piece reads) and `derive-nudge.js` (nudge-sampled derive attribution, ranking only - never gates a rebuild). `selectionPopover: { controls: false }` opts out; `runtime.selection.onReveal` reports the "More" press when the host holds the pane lease.
 - **`src/framework/materials/`** - the material library and realistic-mode
   rendering. `presets.js` (the preset table), `environments.js` (the
   environment records), `resolve.js` (display-block -> library lookup, never
@@ -824,7 +824,8 @@ the installed package, so let the publish finish before bumping the dep there.
   release sends exactly one real build. `oracle/handles.js` (`handlesReport`) lists the
   handles Pose mode would show for `measure().handles` / `report.measure.handles`, which
   the CLI prints; it never fails on a bad handle. Mount also ghosts the
-  sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
+  sub-parts that must rebuild at 0.35 opacity (not on a live-rebuild drag, which keeps them
+  solid unless one of its builds runs past `LIVE_REBUILD_MS`), lifts each ghost in the delivery that
   shows its new mesh (playback-stale deliveries included), commits once on release
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
   every effect a no-op once dispose starts (pose mode detaches late, LIFO). Once per mount, the

@@ -48,7 +48,10 @@ const TIE_EPS = 1e-9;
 // diagonal, squared) is rounding noise, not a direction.
 const ZERO_NORMAL_REL = 1e-9;
 const MIRRORS = ["yz", "xz", "xy"];   // index = the axis reflected
-const CAGES = new WeakSet();
+// A cage is known by this plain-data mark alone, never by identity (a WeakSet, instanceof):
+// a host may hold two copies of this module, and a cage one copy made (`cage` from
+// partforge/organic) must still be a cage to the other (the kernel's k.subdiv).
+const CAGE_KIND = "partforge-cage";
 
 const fail = (msg) => { throw new Error(`cage: ${msg}`); };
 const noNegZero = (v) => v.map((x) => x + 0);
@@ -173,9 +176,7 @@ export function createCage(spec) {
     }
   }
 
-  const cage = makeCage(state);
-  CAGES.add(cage);
-  return cage;
+  return makeCage(state);
 }
 
 // A box face's id; with a mirror, a far-side face takes its positive twin's id plus `~`.
@@ -195,7 +196,7 @@ function reflectPoint(p, ax, plane) {
 }
 
 export function isCage(value) {
-  return CAGES.has(value);
+  return value != null && typeof value === "object" && value.kind === CAGE_KIND && typeof value.snapshot === "function";
 }
 
 function makeCage(state) {
@@ -520,6 +521,7 @@ function makeCage(state) {
   }
 
   return Object.freeze({
+    kind: CAGE_KIND,
     extrude,
     move,
     scale,

@@ -170,7 +170,7 @@ test("a cage body keeps its faces' keys through a move and a cut", async () => {
   const part = cagePart((k, p) => k.subdiv(finned(k, p)).translate([0, 0, p.lift])
     .cut(k.box({ min: [-30, -30, p.lift - 30], max: [30, 30, p.lift - 4] })));
   const body = (await gen(part, ["body"], { girth: 1, fin: 12, lift: 20 })).meshes[0];
-  expect(keysAtZ(body, "top")).toEqual(["lift", "fin", "girth"]);
+  expect(keysAtZ(body, "top")).toEqual(["fin", "girth", "lift"]);
   // A triangle of the cage skin just above the cut, not the cut's own flat face.
   const P = body.positions, I = body.indices;
   const zOf = (t) => (I ? [0, 1, 2].map((j) => P[3 * I[3 * t + j] + 2]) : [2, 5, 8].map((j) => P[9 * t + j]));
@@ -180,7 +180,7 @@ test("a cage body keeps its faces' keys through a move and a cut", async () => {
     if (Math.max(...z) < 22 && Math.max(...z) - Math.min(...z) > 0.5) skin = t;
   }
   expect(skin).toBeGreaterThanOrEqual(0);
-  expect(body.origins[body.originIds[skin] - 1]).toEqual(["lift", "girth"]);
+  expect(body.origins[body.originIds[skin] - 1]).toEqual(["girth", "lift"]);
 });
 
 test("a mirrored cage answers the same on both sides", async () => {

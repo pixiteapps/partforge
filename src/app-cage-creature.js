@@ -6,12 +6,10 @@ import "@fontsource-variable/geist-mono";
 import part from "../test/fixtures/cage-creature.js";
 import { mount } from "./framework/index.js";
 
-// Dev/CI-only app for the drawer box (parts/cage-creature.js), the reference part for shape
-// and motion handles on one part. `npm run dev`, then open /drawer-box.html. Not in
-// vite.config.js's rollupOptions.input. The handle is stashed on window so
-// scripts/check-pose.mjs can drive it; the part is exposed for its defaults, every
-// onParamsCommit is counted (one commit per drag) and so is every onBuild (a corner drag
-// rebuilds live, and the host must still see exactly one build, at release).
+// Dev-only app for the cage creature (test/fixtures/cage-creature.js), the demo of shape
+// handles on a subdivision cage. `npm run dev`, then open /cage-creature.html. Not in
+// vite.config.js's rollupOptions.input. The runtime, the part, every onParamsCommit, every
+// onBuild and every build time are stashed on window for poking at from the console.
 window.__pfPart = part;
 window.__pfCommits = [];
 window.__pfBuilds = [];
@@ -25,7 +23,6 @@ window.__pfRuntime = mount(part, {
       const ms = e.data?.ms;
       if (typeof ms !== "number" || e.data?.cache?.misses === 0) return;
       window.__pfBuildMs.push(ms);
-      (window.__pfMsgs ??= []).push({ type: e.data.type, ms, keys: Object.keys(e.data), timings: e.data.timings ?? e.data.phases ?? null });
       const el = document.getElementById("build-ms");
       if (el) el.textContent = `last build ${ms.toFixed(0)} ms · ${window.__pfBuildMs.length} builds`;
     });

@@ -21,7 +21,8 @@
 // after; a face an extrude made also keeps the keys of the faces it grew from), and k.subdiv hands over the limit mesh with each triangle's cage face
 // (`_subdivSource`). At mesh time a triangle of that run takes the keys of the cage face
 // whose limit triangle sits nearest its centroid, so a click on the fin answers with the
-// fin's params even after a boolean has re-cut the skin.
+// fin's params even after a boolean has re-cut the skin. The face's own keys come first,
+// then the run's (what every face shares: reads before k.subdiv, later moves and cuts).
 //
 // Pure leaf: imports only run-lineage.js.
 
@@ -60,16 +61,13 @@ const maxDiff = (a, b) => {
   return d;
 };
 
-// One number per cage face from its four corner positions: equal before and after a
-// call means the call left the face alone.
+// One string per cage face, its four corner positions in order: equal before and after
+// a call means the call left the face alone. (The positions themselves, not a weighted
+// sum of them: a sum cancels for a stretch that moves two corners one way and two the other.)
 function faceShapes(cage) {
   const { points, faces, ids } = cage.snapshot();
   const out = new Map();
-  for (let f = 0; f < ids.length; f++) {
-    let h = 0;
-    for (let k = 0; k < 4; k++) { const q = points[faces[f][k]]; h += (k + 1) * (q[0] + 2.3 * q[1] + 5.7 * q[2]); }
-    out.set(ids[f], h);
-  }
+  for (let f = 0; f < ids.length; f++) out.set(ids[f], faces[f].map((p) => points[p].join(",")).join(";"));
   return out;
 }
 
@@ -264,7 +262,7 @@ export function createProvenance({ log, expand }) {
       const field = fields.get(ids[r]);
       const inv = field ? invertAffine(mat) : null;
       if (field && inv && g.vertProperties && g.numProp >= 3) {
-        // A cage body: each triangle takes its own cage face's keys, after the run's.
+        // A cage body: each triangle takes its own cage face's keys, then the run's.
         field.source.nearest ??= nearestFace(field.source);
         const vp = g.vertProperties, np = g.numProp, tv = g.triVerts, ofFace = new Map();
         for (let t = t0; t < t1; t++) {
@@ -273,7 +271,7 @@ export function createProvenance({ log, expand }) {
           const face = field.source.nearest(inv[0] * x + inv[3] * y + inv[6] * z + inv[9],
             inv[1] * x + inv[4] * y + inv[7] * z + inv[10], inv[2] * x + inv[5] * y + inv[8] * z + inv[11]);
           let idx = ofFace.get(face);
-          if (idx === undefined) ofFace.set(face, (idx = intern(dedupe([...(rec ?? []), ...(field.faceKeys[face] ?? [])]))));
+          if (idx === undefined) ofFace.set(face, (idx = intern(dedupe([...(field.faceKeys[face] ?? []), ...(rec ?? [])]))));
           originIds[t] = idx;
           if (idx) any = true;
         }

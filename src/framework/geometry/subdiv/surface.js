@@ -275,12 +275,14 @@ function partsOf({ F, E, edgeFaces, sharp }) {
   return { of, count: index.size, pairs };
 }
 
-export function subdivide(snapshot, levels) {
+// `built` is the level's mesh when a caller already has it (levelFor's `mesh`): the same
+// steps from the same snapshot, so the result is the same either way.
+export function subdivide(snapshot, levels, built = null) {
   checkLevel(levels);
   const cage = fromSnapshot(snapshot);
   const parts = cage.sharp ? partsOf(cage) : null;
-  let m = cage;
-  for (let l = 0; l < levels; l++) m = step(m);
+  let m = built ?? cage;
+  if (!built) for (let l = 0; l < levels; l++) m = step(m);
   const positions = limit(m);
   const { F, faceVerts } = m;
   const indices = new Uint32Array(6 * F);
@@ -385,12 +387,15 @@ function extrapolate(errors) {
 // level that cannot be measured on, every level is extrapolated. Level 1 is always
 // measured (level 2 of a cage of at most MAX_CAGE_FACES is 32,000 quads), so the largest
 // mesh built is the larger of that and the limit: 750,000 quads at the print limit.
+// Each value is { error, mesh }: `mesh` is the level's own mesh while one is in hand (every
+// measured level, and the first extrapolated one), else null.
 function* estimates(snapshot, maxTriangles) {
   let m = step(fromSnapshot(snapshot));
   const errors = [];
   for (let level = MIN_SUBDIV_LEVEL; level <= MAX_SUBDIV_LEVEL; level++) {
     const canBuild = m !== null && (level === MIN_SUBDIV_LEVEL ||
       (level + 1 <= MAX_SUBDIV_LEVEL && triangleCount(snapshot, level + 1) <= maxTriangles));
+    const mesh = m;
     if (canBuild) {
       const next = step(m);
       errors.push(errorBetween(m, next));
@@ -399,7 +404,7 @@ function* estimates(snapshot, maxTriangles) {
       m = null;
       errors.push(extrapolate(errors));
     }
-    yield errors[level - 1];
+    yield { error: errors[level - 1], mesh };
   }
 }
 
@@ -410,7 +415,7 @@ export function chordError(snapshot, level) {
   checkLevel(level);
   fromSnapshot(snapshot);   // validates before snapshot.faces is read
   let l = 0;
-  for (const error of estimates(snapshot, Infinity)) if (++l === level) return error;
+  for (const { error } of estimates(snapshot, Infinity)) if (++l === level) return error;
   return fail("unreachable");
 }
 
@@ -421,11 +426,12 @@ export function levelFor(snapshot, tolerance, { maxTriangles = SUBDIV_MAX_TRIANG
   // The highest level the triangle limit allows, at least MIN_SUBDIV_LEVEL.
   let cap = MIN_SUBDIV_LEVEL;
   while (cap < MAX_SUBDIV_LEVEL && triangleCount(snapshot, cap + 1) <= maxTriangles) cap++;
-  let level = 0, error = 0;
-  for (error of estimates(snapshot, maxTriangles)) {
+  // `mesh`: the chosen level's mesh when the search built it, for subdivide to reuse.
+  let level = 0, error = 0, mesh = null;
+  for ({ error, mesh } of estimates(snapshot, maxTriangles)) {
     level++;
-    if (error <= tolerance && triangleCount(snapshot, level) <= maxTriangles) return { level, error, met: true };
+    if (error <= tolerance && triangleCount(snapshot, level) <= maxTriangles) return { level, error, met: true, mesh };
     if (level === cap) break;
   }
-  return { level: cap, error, met: false };
+  return { level: cap, error, met: false, mesh };
 }

@@ -19,14 +19,14 @@ export function meshSubdiv(snapshot, tier, { maxTriangles } = {}) {
   const tolerance = SUBDIV_TOLERANCE[tier];
   if (tolerance === undefined) throw new Error(`subdiv: quality must be "preview" or "print", not ${JSON.stringify(tier)}`);
   const warnings = [];
-  const { level, error, met } = levelFor(snapshot, tolerance, { maxTriangles: maxTriangles ?? SUBDIV_MAX_TRIANGLES[tier] });
+  const { level, error, met, mesh: built } = levelFor(snapshot, tolerance, { maxTriangles: maxTriangles ?? SUBDIV_MAX_TRIANGLES[tier] });
   if (!met) {
     const remedy = level === MAX_SUBDIV_LEVEL
       ? "split the cage into more faces (more segs, or more steps on an extrude)"
       : "use fewer, larger cage faces";
     warnings.push(`subdiv: the surface is within ${Number(error.toPrecision(2))} mm of smooth, not the ${tolerance} mm this quality asks for — ${remedy}`);
   }
-  const mesh = subdivide(snapshot, level);
+  const mesh = subdivide(snapshot, level, built);   // the mesh the level search already built
   const through = throughMessage(selfIntersections(mesh), snapshot.ids ?? []);
   // A body with no volume cannot build at any tier; when it also passes through itself
   // (a face pushed out through the far side), that is the cause, so say that instead.

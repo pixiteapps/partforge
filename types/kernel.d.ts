@@ -590,6 +590,8 @@ export interface CageExtrudeOptions {
  * method throws a `cage: ` error naming the problem, and every change leaves it closed.
  */
 export interface Cage {
+  /** Marks the object as a cage (how k.subdiv recognises one). */
+  readonly kind: "partforge-cage";
   /** Pushes one face out and returns the cap's id. */
   extrude(face: string, opts: CageExtrudeOptions): string;
   /** Pushes a region out and returns its caps' ids, one per listed face, in order (a list even with one face). */

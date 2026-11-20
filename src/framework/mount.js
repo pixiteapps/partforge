@@ -837,7 +837,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     //              (from the worker's cache) so the host still sees exactly one;
     //   ghost    — a sub-part the drag made stale (its build reads a pose param, so
     //              no matrix can move it) fades to GHOST_OPACITY and stays put, unless
-    //              the drag rebuilds live (then it stays opaque until its new mesh); the
+    //              the drag rebuilds live (then it stays opaque until its new mesh, until
+    //              one of its builds runs past LIVE_REBUILD_MS); the
     //              delivery that replaces it lifts the ghost in the same tick it
     //              calls setSubGeometry (applyFreshMeshes), so mesh and opacity land
     //              in one frame and nothing flashes;
@@ -852,6 +853,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const ghostReplaced = new Map();
     let poseHold = false;
     let liveRebuild = false; // this drag rebuilds as it goes (set at hold(true), kept to release)
+    let liveSlow = false; // a live drag whose builds stopped being cheap: its stale sub-parts ghost after all
+    const fadeToGhost = (names) => {
+      for (const n of names) {
+        if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
+        viewer.setSubPartOpacity(n, GHOST_OPACITY);
+      }
+    };
     let holdStart = null; // the params at hold(true): a drag that ends there owes nothing
     let lastBuildMs = null; // data.ms of the last successful generate that built anything
     let cycleTransient = false; // the in-flight dispatch cycle is a mid-drag build (one cycle at a time)
@@ -888,12 +896,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // A live drag (liveRebuild) replaces each stale mesh within a frame or two, so
           // fading it only makes the part flicker between ghost and solid: it stays
           // opaque and simply trails the handle by one build. The session still tracks
-          // it as ghosted; unghost finds nothing to restore.
-          if (liveRebuild) return;
-          for (const n of names) {
-            if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
-            viewer.setSubPartOpacity(n, GHOST_OPACITY);
-          }
+          // it as ghosted; unghost finds nothing to restore. Once a build of this drag
+          // runs past LIVE_REBUILD_MS (liveSlow) the mesh trails by far more, so it fades.
+          if (liveRebuild && !liveSlow) return;
+          fadeToGhost(names);
         }),
         unghost: live((names) => {
           for (const n of names) {
@@ -914,11 +920,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // Decided once, so the look does not change mid-drag (a slow build
             // during this drag is read by the next one).
             liveRebuild = lastBuildMs != null && lastBuildMs < LIVE_REBUILD_MS;
+            liveSlow = false;
             holdStart = { ...params };
             animCtl?.notifyUserEdit();
             return;
           }
           liveRebuild = false;
+          liveSlow = false;
           // Back where it began (a cancel's restore, a drag returned to its start):
           // what the transient builds drew is what the host last saw built.
           if (owed.size && holdStart && Object.keys({ ...params, ...holdStart }).every((k) => Object.is(params[k], holdStart[k]))) owed.clear();
@@ -1934,6 +1942,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // A build that built something times the part for the next drag's live-rebuild
           // call; one answered wholly from the worker's cache (no misses) built nothing.
           if (fresh && Number.isFinite(data.ms) && data.cache?.misses !== 0) lastBuildMs = data.ms;
+          // A live drag whose build was not cheap after all: what is stale now, and from
+          // here to release, fades like a held drag's (the next delivery lifts it).
+          if (poseHold && liveRebuild && !liveSlow && lastBuildMs >= LIVE_REBUILD_MS) {
+            liveSlow = true;
+            fadeToGhost(viewSubParts(part, view(), params).filter((n) => !isCurrent(n) && !skin.isDeformed(n)));
+          }
           if (fresh && cycleTransient) {
             // A mid-drag build at the live params: drawn, its ghost lifted (applyFreshMeshes
             // calls the session's delivered), and nothing else — no busy/status/debug line,
