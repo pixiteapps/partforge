@@ -65,6 +65,13 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
 
   // per-OID policy lookup with a cached cosine per OID
   const polFor = (oid) => (policies && policies.get(oid)) || SMOOTH;
+  // Two original IDs that are one skin (shading-policy.js `skin`): parts of a creased
+  // subdivision body with no crease between them. Their seam is treated as a
+  // same-surface edge, in the normals and in the lines.
+  const joined = (a, b) => {
+    const pa = polFor(a), pb = polFor(b);
+    return pa.skin != null && pa.skin === pb.skin && !pa.hard.has(pb.part);
+  };
   const cosCache = new Map();
   const cosFor = (oid) => {
     let c = cosCache.get(oid);
@@ -301,7 +308,7 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
         if (triOID[t2] !== oid &&
           !(polFor(triOID[t2]).boundaryLines || polFor(oid).boundaryLines)) {
           const g = polFor(oid).group;
-          if (!(g != null && g === polFor(triOID[t2]).group && d2 >= SIBLING_COS)) continue;
+          if (!joined(oid, triOID[t2]) && !(g != null && g === polFor(triOID[t2]).group && d2 >= SIBLING_COS)) continue;
         }
         if (d2 < sharpCos) continue; // sharp same-surface edge → hard
         if (thin[t2] < SHADE_SLIVER) { sx += fn[t2 * 3]; sy += fn[t2 * 3 + 1]; sz += fn[t2 * 3 + 2]; }
@@ -346,7 +353,7 @@ export function creasedNormalsJS(g, { policies = null, featureLabels = null, sur
       // actual relief (see shading-policy.js) — so its edges are noise by
       // definition. The gate is deliberately wider than the segment filter's
       // MIN_EDGE below, which stays tight so short REAL segments survive.
-      const sameOID = triOID[prev] === triOID[t];
+      const sameOID = triOID[prev] === triOID[t] || joined(triOID[prev], triOID[t]);
       // Blend boundary: a cross-surface seam with a BLEND policy on EXACTLY one side
       // is the start/end of a fillet band — draw it even when tangent (the band's
       // extent must be readable). It also bypasses the thin-triangle gate below:

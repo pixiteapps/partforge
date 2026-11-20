@@ -29,7 +29,7 @@ let controllers = 0;
 // recognised even though this controller never sent it.
 const CONTROLLER_JOB_ID = /^(?:export|warm|mesh)-\d+-\d+$/;
 
-// `organicFor({ view, params, parts })` names the export's organic sub-parts (k.implicit;
+// `organicFor({ view, params, parts })` names the export's organic sub-parts (k.implicit, k.subdiv;
 // backend-select.js organicExportParts) — mount supplies it, since only it has the part.
 // A STEP export with any runs in two legs: the Manifold worker meshes them
 // (mesh-subparts), then the OCCT worker builds the rest and writes the file with those

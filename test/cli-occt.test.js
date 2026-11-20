@@ -49,3 +49,14 @@ test("measure names the fillet when a part needs k.implicit and an OCCT-only fil
   expect(err.stderr).toMatch(/the Manifold build stopped at "fillet: function selectors need the OCCT backend"/);
   expect(err.stderr).toMatch(/pattern: ERROR-PATTERNS\.md#implicit-with-occt-fallback/);
 });
+
+test("measure names the fillet and k.subdiv when a part needs k.subdiv and an OCCT-only fillet", () => {
+  // The same reroute as k.implicit's: the OCCT retry stops at k.subdiv, and the message names it.
+  let err;
+  try { execFileSync("node", ["bin/cli.js", "measure", "test/fixtures/subdiv-occt-fillet-part.js", "--no-lint"], { encoding: "utf8", stdio: "pipe" }); }
+  catch (e) { err = e; }
+  expect(err?.status).toBe(1);
+  expect(err.stderr).toMatch(/subdiv: OCCT cannot build k\.subdiv \(it is mesh-native\), and the Manifold build stopped at "fillet: function selectors need the OCCT backend"/);
+  expect(err.stderr).toMatch(/a part with k\.subdiv must keep every fillet and chamfer mesh-buildable/);
+  expect(err.stderr).not.toMatch(/k\.implicit/);
+});

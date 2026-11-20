@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-eight: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has twenty-nine: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -68,7 +68,12 @@ with crease detail and fine-grid nails unioned on, each digit a `limb` posed in 
 with an angles-mode handle (a Pose-mode drag skins the last exact mesh until the rebuild lands), its frames
 reported by a `k.implicitFrames` probe; its builders are also the implicit
 engine's test fixture, re-exported by `test/fixtures/implicit-trees.js`, so
-editing them moves pinned mesh hashes; no demo page), `gearbox.js` (the rotary-handle reference part and the
+editing them moves pinned mesh hashes; no demo page), `organic-whale.js` (the
+organic domain's `k.subdiv` reference part and the worked example of the cage section
+of `docs/domains/organic.md` - one mirrored `k.cage` box-modelled into body, tail stock,
+flukes, dorsal and pectoral fins, smoothed by `k.subdiv`, with a flat cut under the belly;
+`length` and `tailLift` controls; the guide shows `whaleCage` verbatim and
+`test/organic-docs.test.js` holds the two equal; no demo page), `gearbox.js` (the rotary-handle reference part and the
 worked example of `docs/domains/mechanisms.md` - three spur gears placed by one
 `gearTrain` from `partforge/mechanisms` in `derive`, a rotary handle on every gear and a
 crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that never
@@ -257,7 +262,7 @@ the installed package, so let the publish finish before bumping the dep there.
   `rail.js` now also refuses below the breakpoint (previously reachable only
   with custom host CSS, since the seam is `display: none` there).
 - **`src/framework/materials/overrides.js`** (the per-sub-part display override model), **`sub-part-list.js`**, **`parts-list.js`**, **`appearance-card.js`** - the Parts section and appearance card inside the View style popover (spec 2026-10-13); viewing keys never reach exports or agent captures.
-  The selection popover (`selection-popover.js`) also has a controls region: up to three sliders for the clicked face's params, resolved by the pure `selection/spot-keys.js` (face keys, else the piece's reads; minus keys a pose handle on that piece drags; capped, "More in the panel" when cut) from per-face provenance the worker records (`geometry/provenance.js` wraps the kernel at each author op boundary, `geometry/run-lineage.js` keys face runs; Manifold only, OCCT falls back to piece reads) and `derive-nudge.js` (nudge-sampled derive attribution, ranking only - never gates a rebuild). `selectionPopover: { controls: false }` opts out; `runtime.selection.onReveal` reports the "More" press when the host holds the pane lease.
+  The selection popover (`selection-popover.js`) also has a controls region: up to three sliders for the clicked face's params, resolved by the pure `selection/spot-keys.js` (face keys, else the piece's reads; a key a pose handle drags is offered like any other; capped, "More in the panel" when cut) from per-face provenance the worker records (`geometry/provenance.js` wraps the kernel at each author op boundary, `geometry/run-lineage.js` keys face runs; Manifold only, OCCT falls back to piece reads) and `derive-nudge.js` (nudge-sampled derive attribution, ranking only - never gates a rebuild). `selectionPopover: { controls: false }` opts out; `runtime.selection.onReveal` reports the "More" press when the host holds the pane lease.
 - **`src/framework/materials/`** - the material library and realistic-mode
   rendering. `presets.js` (the preset table), `environments.js` (the
   environment records), `resolve.js` (display-block -> library lookup, never
@@ -746,8 +751,9 @@ the installed package, so let the publish finish before bumping the dep there.
   (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
   crank-sliders as derive-time point sources that also place sub-parts) tag no kernel
   op. Organic (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
-  `implicit` and `implicitFrames`, but the engine stays in `geometry/implicit/`, since
-  both backends and the native core call it and core may not import a domain folder;
+  `implicit`, `implicitFrames`, `subdiv` and `cage`, but the engines stay in
+  `geometry/implicit/` and `geometry/subdiv/`, since both backends (and, for implicit,
+  the native core) call them and core may not import a domain folder;
   its attaches are only the fallbacks for a kernel without the ops, and its entry
   reaches the grammar's leaf modules alone (no mesher, no native core —
   `test/organic-domain.test.js`). None declares facts, so the registry's other seams are exercised by the test-only
@@ -818,7 +824,8 @@ the installed package, so let the publish finish before bumping the dep there.
   release sends exactly one real build. `oracle/handles.js` (`handlesReport`) lists the
   handles Pose mode would show for `measure().handles` / `report.measure.handles`, which
   the CLI prints; it never fails on a bad handle. Mount also ghosts the
-  sub-parts that must rebuild at 0.35 opacity, lifts each ghost in the delivery that
+  sub-parts that must rebuild at 0.35 opacity (not on a live-rebuild drag, which keeps them
+  solid unless one of its builds runs past `LIVE_REBUILD_MS`), lifts each ghost in the delivery that
   shows its new mesh (playback-stale deliveries included), commits once on release
   (`onParamsCommit`), cancels the drag on a host write or a view switch, and makes
   every effect a no-op once dispose starts (pose mode detaches late, LIFO). Once per mount, the

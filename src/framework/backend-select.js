@@ -4,6 +4,7 @@
 // everything in geometry/, which is part-agnostic.
 import { createProbeKernel } from "./geometry/probe.js";
 import { isZeroMagnitudeCadOp } from "./geometry/op-options.js";
+import { MESH_NATIVE_OPS, meshNativeOpsText } from "./geometry/kernel.js";
 import { byteAwareReplacer } from "./geometry/solid-hash.js";
 import { resolveDerived } from "./derive.js";
 import { exportablePartNames } from "./export-select.js";
@@ -39,13 +40,28 @@ export function detectBackends(part, params = {}) {
   return backends;
 }
 
+// How to hollow each mesh-native op's body without `shell`: an implicit spec has an onion
+// node; a cage has none, so a subdivision body's hollow is an ordinary boolean. One entry
+// per op, checked at load, so a combination never reads "undefined".
+const HOLLOW_ADVICE = {
+  implicit: "for a hollow organic body use an onion node inside the k.implicit spec",
+  subdiv: "for a hollow subdivision body cut the hollow with an ordinary boolean (subtract a smaller body)",
+};
+for (const op of MESH_NATIVE_OPS) {
+  if (!HOLLOW_ADVICE[op]) throw new Error(`backend-select: no hollow advice for mesh-native op "${op}"`);
+}
+const hollowAdvice = (ops) => (ops.length === 1
+  ? `${HOLLOW_ADVICE[ops[0]]} instead of shell`
+  : `instead of shell, ${ops.map((op) => HOLLOW_ADVICE[op]).join(", and ")}`);
+
 /**
- * The organic sub-parts of an export: those whose build calls k.implicit, among the
- * sub-parts the export writes (`parts`, else the view's — as jobs.js selects them). A
- * STEP export meshes these on Manifold and writes them as tessellated solids, since OCCT
- * cannot build k.implicit. A sub-part that also calls `shell` cannot build on either
- * backend, so it throws, naming it. `meta.backend` does not change the answer: a STEP
- * export splits by sub-part whatever the pin says.
+ * The organic sub-parts of an export: those whose build calls a mesh-native op
+ * (MESH_NATIVE_OPS: k.implicit, k.subdiv), among the sub-parts the export writes
+ * (`parts`, else the view's — as jobs.js selects them). A STEP export meshes these on
+ * Manifold and writes them as tessellated solids, since OCCT cannot build them. A
+ * sub-part that also calls `shell` cannot build on either backend, so it throws, naming
+ * it and the ops it calls. `meta.backend` does not change the answer: a STEP export
+ * splits by sub-part whatever the pin says.
  */
 export function organicExportParts(part, { view, params = {}, parts } = {}) {
   const p = { ...part.defaults, ...params };
@@ -57,9 +73,10 @@ export function organicExportParts(part, { view, params = {}, parts } = {}) {
   return names.filter((name) => {
     const { kernel, used, cadCalls } = createProbeKernel();
     try { part.parts[name].build(kernel, p, d); } catch { /* a probe miss: the OCCT build names it */ }
-    if (!used.has("implicit")) return false;
+    const ops = [...MESH_NATIVE_OPS].filter((op) => used.has(op));
+    if (ops.length === 0) return false;
     if (cadCalls.some(({ op, args }) => !isZeroMagnitudeCadOp(op, args))) {
-      throw new Error(`sub-part "${name}" calls k.implicit and shell, which no backend can build together — for a hollow organic body use an onion node inside the k.implicit spec instead of shell`);
+      throw new Error(`sub-part "${name}" calls ${meshNativeOpsText(ops, "shell")}, which no backend can build together — ${hollowAdvice(ops)}`);
     }
     return true;
   });

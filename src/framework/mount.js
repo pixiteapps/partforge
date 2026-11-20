@@ -19,7 +19,7 @@ import { pruneOverrides } from "./materials/overrides.js";
 import { subPartRows } from "./sub-part-list.js";
 import { buildControls } from "./controls.js";
 import { recordedRelevantKeys, subPartParamKeys, RELEVANT_ALL } from "./param-deps.js";
-import { resolveSpotKeys, faceKeysOf, handleOnPiece } from "./selection/spot-keys.js";
+import { resolveSpotKeys, faceKeysOf } from "./selection/spot-keys.js";
 import { buildTree, controlNodes } from "./panel/model.js";
 import { desugar } from "./panel/legacy.js";
 import { createMeshCache } from "./mesh-cache.js";
@@ -55,7 +55,7 @@ import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { parsePinId } from "./pose/pose-session.js";
 import { NOOP_POSE } from "./pose/noop-pose.js";
-import { handleParamKeys, locateHandle } from "./pose/handle-source.js";
+import { handleParamKeys } from "./pose/handle-source.js";
 import { handlesShownInView, viewSourceReads } from "./pose/handle-views.js";
 import { attachViewcubeControls } from "./viewcube/viewcube-controls.js";
 import { createPreviewGate } from "./preview-gate.js";
@@ -831,12 +831,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     //              from lastBuildMs < LIVE_REBUILD_MS): its stale sub-parts keep
     //              building through the drag, one cycle at a time, always at the
     //              latest params. Those builds are TRANSIENT (cycleTransient): they
-    //              draw and lift ghosts, and nothing else sees them — no onBuild, no
+    //              draw (a live drag never ghosts, see `ghost` below), and nothing else sees them — no onBuild, no
     //              status, busy or debug line, no export/preview/ready/floor change.
     //              What they drew is `owed` a real build, which the release sends
     //              (from the worker's cache) so the host still sees exactly one;
     //   ghost    — a sub-part the drag made stale (its build reads a pose param, so
-    //              no matrix can move it) fades to GHOST_OPACITY and stays put; the
+    //              no matrix can move it) fades to GHOST_OPACITY and stays put, unless
+    //              the drag rebuilds live (then it stays opaque until its new mesh, until
+    //              one of its builds runs past LIVE_REBUILD_MS); the
     //              delivery that replaces it lifts the ghost in the same tick it
     //              calls setSubGeometry (applyFreshMeshes), so mesh and opacity land
     //              in one frame and nothing flashes;
@@ -851,6 +853,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     const ghostReplaced = new Map();
     let poseHold = false;
     let liveRebuild = false; // this drag rebuilds as it goes (set at hold(true), kept to release)
+    let liveSlow = false; // a live drag whose builds stopped being cheap: its stale sub-parts ghost after all
+    const fadeToGhost = (names) => {
+      for (const n of names) {
+        if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
+        viewer.setSubPartOpacity(n, GHOST_OPACITY);
+      }
+    };
     let holdStart = null; // the params at hold(true): a drag that ends there owes nothing
     let lastBuildMs = null; // data.ms of the last successful generate that built anything
     let cycleTransient = false; // the in-flight dispatch cycle is a mid-drag build (one cycle at a time)
@@ -884,10 +893,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // A skinned sub-part already shows the drag's pose: it is no ghost.
         staleSubParts: () => viewSubParts(part, view(), params).filter((n) => !isCurrent(n) && !skin.isDeformed(n)),
         ghost: live((names) => {
-          for (const n of names) {
-            if (!ghostReplaced.has(n)) ghostReplaced.set(n, viewer.getSubPartOpacity?.(n) ?? 1);
-            viewer.setSubPartOpacity(n, GHOST_OPACITY);
-          }
+          // A live drag (liveRebuild) replaces each stale mesh within a frame or two, so
+          // fading it only makes the part flicker between ghost and solid: it stays
+          // opaque and simply trails the handle by one build. The session still tracks
+          // it as ghosted; unghost finds nothing to restore. Once a build of this drag
+          // runs past LIVE_REBUILD_MS (liveSlow) the mesh trails by far more, so it fades.
+          if (liveRebuild && !liveSlow) return;
+          fadeToGhost(names);
         }),
         unghost: live((names) => {
           for (const n of names) {
@@ -908,11 +920,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // Decided once, so the look does not change mid-drag (a slow build
             // during this drag is read by the next one).
             liveRebuild = lastBuildMs != null && lastBuildMs < LIVE_REBUILD_MS;
+            liveSlow = false;
             holdStart = { ...params };
             animCtl?.notifyUserEdit();
             return;
           }
           liveRebuild = false;
+          liveSlow = false;
           // Back where it began (a cancel's restore, a drag returned to its start):
           // what the transient builds drew is what the host last saw built.
           if (owed.size && holdStart && Object.keys({ ...params, ...holdStart }).every((k) => Object.is(params[k], holdStart[k]))) owed.clear();
@@ -1132,7 +1146,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     }
     if (selectionOpt) {
       // The clicked spot's controls: up to SPOT_CAP of the keys its face (else its piece)
-      // was built from, minus what a handle on the piece drags, as bare rail rows.
+      // was built from, as bare rail rows (a key a handle drags is offered here too).
       // The rail is made visible first where partforge can (the narrow layout's
       // pane, a collapsed rail, an overlay drawer); a host that owns the pane or
       // docks the rail is told instead, since only it can show the rows.
@@ -1152,18 +1166,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // The piece's keys are a set (sorted); the fallback takes them in the panel's order.
           const pieceSet = new Set(spotPieceKeys.get(subPart) ?? subPartParamKeys(part, view(), params, displayReadsOf, subPart));
           const pieceKeys = [...schemaKeys.filter((k) => pieceSet.has(k)), ...[...pieceSet].filter((k) => !schemaKeys.includes(k))];
-          const bounds = viewer.getSubBounds?.(subPart) ?? null;
-          const excluded = new Set();
-          for (const id of poseVisible ?? handleIds) {
-            const handle = part.handles[id];
-            let point = null;
-            try { point = locateHandle(part, params, derived, handle); } catch { /* not located */ }
-            if (handleOnPiece(handle, subPart, { point, bounds })) for (const k of handleParamKeys(handle)) excluded.add(k);
-          }
           // The rail's relevance pass has run for these params (and on every delivery).
           const relevant = lastRelevant ?? recordedRelevantKeys(part, view(), params, displayReadsOf);
           const drawable = new Set(schemaKeys.filter((k) => relevant === RELEVANT_ALL || relevant.has(k)));
-          const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, excluded, drawable });
+          const { keys, more } = resolveSpotKeys({ faceKeys, pieceKeys, drawable });
           if (!keys.length) return null;
           const sub = buildControls(container, part.parameters, params, () => {
             animCtl?.notifyUserEdit();
@@ -1936,6 +1942,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // A build that built something times the part for the next drag's live-rebuild
           // call; one answered wholly from the worker's cache (no misses) built nothing.
           if (fresh && Number.isFinite(data.ms) && data.cache?.misses !== 0) lastBuildMs = data.ms;
+          // A live drag whose build was not cheap after all: what is stale now, and from
+          // here to release, fades like a held drag's (the next delivery lifts it).
+          if (poseHold && liveRebuild && !liveSlow && lastBuildMs >= LIVE_REBUILD_MS) {
+            liveSlow = true;
+            fadeToGhost(viewSubParts(part, view(), params).filter((n) => !isCurrent(n) && !skin.isDeformed(n)));
+          }
           if (fresh && cycleTransient) {
             // A mid-drag build at the live params: drawn, its ghost lifted (applyFreshMeshes
             // calls the session's delivered), and nothing else — no busy/status/debug line,

@@ -571,6 +571,44 @@ export interface ImplicitOptions {
   preview?: number;
 }
 
+/** k.cage's start: a box, optionally split into segments and mirrored across a plane through its center. */
+export interface CageOptions {
+  box: { size: [number, number, number]; center?: [number, number, number]; segs?: [number, number, number] };
+  mirror?: "yz" | "xz" | "xy";
+}
+/** A face by id, or a region of faces by their ids. */
+export type CageFaces = string | string[];
+/** Cage.extrude's options. `by` is required: a distance along the faces' normal, or an [x, y, z] offset. */
+export interface CageExtrudeOptions {
+  by: number | [number, number, number];
+  scale?: number | [number, number, number];
+  steps?: number;
+  id?: string;
+}
+/**
+ * k.cage — a closed quad mesh, edited in place by face id. Every
+ * method throws a `cage: ` error naming the problem, and every change leaves it closed.
+ */
+export interface Cage {
+  /** Marks the object as a cage (how k.subdiv recognises one). */
+  readonly kind: "partforge-cage";
+  /** Pushes one face out and returns the cap's id. */
+  extrude(face: string, opts: CageExtrudeOptions): string;
+  /** Pushes a region out and returns its caps' ids, one per listed face, in order (a list even with one face). */
+  extrude(faces: string[], opts: CageExtrudeOptions): string[];
+  move(faces: CageFaces, offset: [number, number, number]): void;
+  /** Keep the border of the face or region as a hard edge of the smooth surface; with `other`, only the edges the two share (`other` may name reflected `~` faces). */
+  crease(faces: CageFaces, other?: CageFaces): void;
+  /** `about` omitted or null: the points' mean (on the plane, under a mirror, for faces with an edge on it). */
+  scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] | null }): void;
+  centroid(id: string): [number, number, number];
+  normal(id: string): [number, number, number];
+  size(id: string): [number, number];
+  faces(prefix?: string): string[];
+  bounds(): { min: [number, number, number]; max: [number, number, number] };
+  snapshot(): { points: number[][]; faces: number[][]; ids: string[]; creases?: [number, number][] };
+}
+
 /** One frame in a k.implicitFrames report: its origin and unit axes in part coordinates. */
 export interface ImplicitFrameReport { origin: Point3; x: Point3; y: Point3; z: Point3; }
 /** A labelled node's box: it always contains the piece, but can be generous by up to a blend's reach. */
@@ -688,6 +726,10 @@ export interface GeometryKernel {
   implicit(o: ImplicitOptions): Solid;
   /** Where a k.implicit spec's frames and labelled nodes end up. Meshes nothing; return it from a probe. */
   implicitFrames(o: ImplicitOptions): ImplicitFrameSet;
+  /** A subdivision cage: a coarse closed quad mesh the build edits in place. Plain data, no geometry. */
+  cage(o: CageOptions): Cage;
+  /** The cage's smooth (Catmull-Clark) limit surface as a Solid, read at the call. Mesh-native: OCCT throws. */
+  subdiv(cage: Cage): Solid;
 
   // Backend-optional: the sub-part cache brackets and WASM lifetime hooks. Every
   // framework caller reaches these through `?.`, so a third-party backend may

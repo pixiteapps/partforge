@@ -223,6 +223,13 @@ describe("the kernel declarations cover the contract's op lists", () => {
     expect([...optional]).toEqual([]);
   });
 
+  test("Cage declares exactly the methods k.cage's builder has", async () => {
+    const { createCage } = await import("../src/framework/geometry/subdiv/index.js");
+    const { all, optional } = interfaceMembers("types/kernel.d.ts", "Cage");
+    expect(sorted(all)).toEqual(sorted(Object.keys(createCage({ box: { size: [1, 1, 1] } }))));
+    expect([...optional]).toEqual([]);
+  });
+
   test("the OCCT-only ops are declared on Solid (they are real, just unimplemented on Manifold)", () => {
     const { all } = interfaceMembers("types/kernel.d.ts", "Solid");
     for (const op of OCCT_ONLY_OPS) expect(all.has(op), `Solid.${op}`).toBe(true);

@@ -48,7 +48,7 @@ description, read that guide first.
 |---|---|---|---|
 | Kinematics | jointed limbs, fingers, arms, robot hands; posing links about joints; reach and grip | `import { … } from "partforge/kinematics"` | [`docs/domains/kinematics.md`](domains/kinematics.md) |
 | Mechanisms | gears, gear trains, pulleys and belts, racks, cranks and sliders; parts that move together | `import { … } from "partforge/mechanisms"` | [`docs/domains/mechanisms.md`](domains/mechanisms.md) |
-| Organic | smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail | `import { … } from "partforge/organic"` | [`docs/domains/organic.md`](domains/organic.md) |
+| Organic | smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail; one smooth skin box-modelled from a subdivision cage (k.cage, k.subdiv) | `import { … } from "partforge/organic"` | [`docs/domains/organic.md`](domains/organic.md) |
 <!-- end generated -->
 
 ---
@@ -136,7 +136,7 @@ export default {
   stay out of `print` — they are cut, not printed, and export assembled.
 - Exports write the checked pieces as built. STL is one file per piece; a 3MF or STEP of
   several printed (non-sheet) pieces lays them out on the bed automatically, 10 mm apart.
-  In a STEP, a piece whose build calls `k.implicit` is a tessellated (mesh) solid beside
+  In a STEP, a piece whose build calls `k.implicit` or `k.subdiv` is a tessellated (mesh) solid beside
   the others' exact B-rep ([`docs/domains/organic.md`](domains/organic.md), "Backend").
 
 The Lattice Box's `lid` shows all of it (helpers elided — see `src/parts/lattice-box.js` for the whole part, whose `swing` is `(s, p, d) => s.rotate(-p.lidAngle, d.hinge, [1, 0, 0])`):
@@ -3462,12 +3462,12 @@ You do not say which a handle is. The viewer knows from the sub-parts its params
   nothing rebuilds: a gear turned by `d.train.place`, a drawer slid by its view's
   `translate`. Prefer this. Build a moving member once in its own frame and place it.
 - **Shape.** Some sub-part's `build` reads a param the drag writes, so it must rebuild.
-  The handle, its guide and the readout move live. The rebuilding sub-parts fade to a
-  ghost (0.35 opacity). If the last build took under 120 ms (`LIVE_REBUILD_MS`), the part
-  is cheap: it rebuilds during the drag, one build at a time at the latest params, and
-  each new mesh lifts its ghost. A slower part builds nothing until release. The choice is
-  made when the drag starts and kept for the whole drag. On release the snapped values
-  build once.
+  The handle, its guide and the readout move live. If the last build took under 120 ms
+  (`LIVE_REBUILD_MS`), the part is cheap: it rebuilds during the drag, one build at a time
+  at the latest params, and stays opaque, trailing the handle by one build. A slower part
+  builds nothing until release: its rebuilding sub-parts fade to a ghost (0.35 opacity)
+  and stay put. The choice is made when the drag starts and kept for the whole drag. On
+  release the snapped values build once.
 
 Mid-drag builds are transient: no `onBuild`, no change to export, preview or inspect
 state, and no commit. The host sees one `onParamsCommit` and one build per drag, at
@@ -3545,7 +3545,9 @@ At rest no handle shows. A handle shows:
 When posing first goes live on a part (the first frame with the part on screen and no
 cached preview), every shown handle's dot (an axis handle's arrow) appears dimmed for 2 s, then fades out: the
 **resting cue** that tells a person the part has handles. It shows once per mount, never
-again on a param change or a view switch. On a touch-only device (`(hover: none)`) there is
+again on a param change or a view switch. After each rotate that moved the camera it
+flashes again, on every device: the same 2 s hold and fade, ended early by the next
+rotate, a handle drag or a playing animation. On a touch-only device (`(hover: none)`) there is
 no hover to find a handle by, so the dimmed dots stay until the first drag of any handle;
 after that the rules above apply. The cue never shows in a capture. It shows every handle
 the view shows, `showOn` ones included. When the opening view has an `autoplay` animation,
@@ -4490,8 +4492,10 @@ instead of (or in addition to) the built-in `#part` bar:
 
   Between the head row and the slot the popover also shows up to three controls for the
   clicked face: the parameters of the operation that created it, newest first. It is
-  rebuilt on each click, not on each rebuild. Parameters a pose handle on that piece
-  drags are left out. A face with no record, a part on OCCT, and a click on a section
+  rebuilt on each click, not on each rebuild. A parameter a handle drags is offered
+  here too. A `k.subdiv` body is one face, so it answers by cage face: the
+  parameters read before the `extrude`, `move` or `scale` that made or reshaped the cage
+  face under the click, then those of the face it was extruded from. A face with no record, a part on OCCT, and a click on a section
   cap fall back to the piece's own build reads, first three in the panel's order. Those
   leave out the piece's `enabled()` and `place()` reads, so they can be fewer than
   `runtime.controlsFor` lists. `selectionPopover: { slot, controls: false }` turns the
@@ -5367,9 +5371,10 @@ empty-string and raw-bytes exemptions from `image-source.js`) (warning).
 every `k.implicit` / `k.implicitFrames` spec the probe records, at the lint params:
 `implicit-spec-invalid` (the engine's compiler rejects the spec — the same error the
 build throws; image names are checked only against a static `images` object)
-(error); `implicit-needs-manifold` (a `k.implicit` call in a part that builds on
-OCCT — `meta.backend: "occt"`, a `shell` that routes it there, or a `fillet`/`chamfer`
-with a function selector in any sub-part) (error);
+(error); `implicit-needs-manifold` (a `k.implicit` or `k.subdiv` call in a part that
+builds on OCCT — `meta.backend: "occt"`, a `shell` that routes it there, or a
+`fillet`/`chamfer` with a function selector in any sub-part; the message names the op)
+(error);
 `implicit-thin-feature` (the thinnest feature is under 2 cells of the preview grid —
 the spec's `preview` or the automatic choice — or of the print grid) (warning);
 `implicit-blend-eats-child` (a blend's `k`, or a contact `attach` entry's `k`, is
@@ -5524,7 +5529,8 @@ and these pairs have no distance", which a declared `clearance` gate fails on.
 `warnings` (0.179, always present, often empty) lists the build's own warnings as
 `{ part, message }`, the same text the app shows: a fillet or chamfer the geometry
 defeated and skipped, a `k.implicit` feature too thin for its grid, a shape clipped at
-the edge of its sampling box. `partforge measure` prints them. They never gate `ok`.
+the edge of its sampling box, a `k.subdiv` cage that cannot meet its quality's tolerance
+or (at preview) passes through itself. `partforge measure` prints them. They never gate `ok`.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

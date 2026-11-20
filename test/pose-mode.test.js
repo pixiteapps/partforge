@@ -1466,7 +1466,7 @@ describe("the resting cue", () => {
     expect(lastCue(t)).toBeNull();
   });
 
-  it("a mouse device never flashes after a rotate", () => {
+  it("a mouse device flashes after a rotate too, and the flash fades", () => {
     const orbit = orbitWithEvents();
     const t = clockSetup(false, { orbitControls: orbit });
     t.viewer.tick();
@@ -1474,6 +1474,12 @@ describe("the resting cue", () => {
     t.viewer.tick();
     expect(lastCue(t)).toBeNull();
     rotate(orbit);
+    expect(lastCue(t).opacity).toBeCloseTo(CUE_OPACITY, 6);
+    rotate(orbit, false); // a click that never moved the camera hides it and flashes nothing
+    expect(lastCue(t)).toBeNull();
+    rotate(orbit);
+    t.clock.t += CUE_HOLD_MS + CUE_FADE_MS + 1;
+    t.viewer.tick();
     expect(lastCue(t)).toBeNull();
   });
 

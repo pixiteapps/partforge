@@ -40,12 +40,19 @@ CNState* cn_create(const float* vertProperties, uint32_t numProp, uint32_t numVe
 // groups: per policy row, the sibling group (shading-policy.js), -1 for none. Two rows
 // with the same group >= 0 are siblings: across their seam a neighbour counts when its
 // facet normal's dot with the corner's is >= siblingCos (cos SIBLING_SEAM_ANGLE).
+// skins / parts / hardStart / hardList: a creased subdivision body's parts (shading-policy.js
+// `skin`). Per policy row: its skin (-1 for none) and its part number within it; row i's
+// hard list is hardList[hardStart[i] .. hardStart[i + 1]), the parts it has a crease
+// against. Two rows of one skin with neither in the other's list are one surface. All four
+// are null when no row has a skin.
 void cn_finish(CNState*, const uint32_t* oids, const double* creaseCos, const uint8_t* flags,
                const int32_t* labelIds, uint32_t numOids,
                double coplanarCos, double analyticCos,
                const int32_t* runDesc, const double* runXf,
                const double* descData, const uint32_t* descOffsets, uint32_t numDesc,
-               const int32_t* groups, double siblingCos);
+               const int32_t* groups, double siblingCos,
+               const int32_t* skins, const int32_t* parts,
+               const uint32_t* hardStart, const int32_t* hardList);
 
 const float* cn_positions(const CNState*);        // numTri * 9
 const float* cn_normals(const CNState*);          // numTri * 9

@@ -124,3 +124,76 @@ test("a derived array read through .map, for-of or as a whole ranks by its own i
     expect(originSets(m), m.name).toEqual(["a,b,h"]);
   }
 });
+
+// A cage body is one face run; its faces are told apart by the cage face each triangle
+// descends from (provenance.js).
+const cagePart = (build) => ({
+  parameters: [{ id: "s", title: "S", controls: [
+    { key: "girth", type: "slider", min: 0.5, max: 2, step: 0.1 }, { key: "fin", type: "slider", min: 2, max: 30, step: 1 },
+    { key: "lift", type: "slider", min: 0, max: 50, step: 1 }] }],
+  defaults: { girth: 1, fin: 12, lift: 0 },
+  views: { v: { label: "V" } },
+  parts: { body: { views: ["v"], build } },
+});
+const finned = (k, p) => {
+  const c = k.cage({ box: { size: [40, 20 * p.girth, 20 * p.girth], segs: [2, 2, 2] } });
+  c.extrude("+z:1,1", { by: p.fin, scale: 0.6, id: "fin" });
+  return c;
+};
+// The keys of the triangle whose centroid is highest / lowest in Z.
+const keysAtZ = (mesh, pick) => {
+  const P = mesh.positions, I = mesh.indices ?? null;
+  const nTri = mesh.originIds.length;
+  let best = -1, bestZ = pick === "top" ? -Infinity : Infinity;
+  for (let t = 0; t < nTri; t++) {
+    const z = I ? (P[3 * I[3 * t] + 2] + P[3 * I[3 * t + 1] + 2] + P[3 * I[3 * t + 2] + 2]) / 3
+      : (P[9 * t + 2] + P[9 * t + 5] + P[9 * t + 8]) / 3;
+    if (pick === "top" ? z > bestZ : z < bestZ) { bestZ = z; best = t; }
+  }
+  return mesh.origins[mesh.originIds[best] - 1];
+};
+
+test("a cage body's triangles carry the keys of their own cage face", async () => {
+  const part = cagePart((k, p) => k.subdiv(finned(k, p)));
+  const { meshes } = await gen(part, ["body"], part.defaults);
+  const body = meshes[0];
+  expect(body.pieceKeys).toEqual(["fin", "girth"]);
+  // The fin's own key first, then what the face it grew from was made of.
+  expect(keysAtZ(body, "top")).toEqual(["fin", "girth"]);
+  expect(keysAtZ(body, "bottom")).toEqual(["girth"]);
+  // A cache hit answers the same way.
+  const again = (await gen(part, ["body"], part.defaults)).meshes[0];
+  expect(keysAtZ(again, "top")).toEqual(["fin", "girth"]);
+});
+
+test("a cage body keeps its faces' keys through a move and a cut", async () => {
+  const part = cagePart((k, p) => k.subdiv(finned(k, p)).translate([0, 0, p.lift])
+    .cut(k.box({ min: [-30, -30, p.lift - 30], max: [30, 30, p.lift - 4] })));
+  const body = (await gen(part, ["body"], { girth: 1, fin: 12, lift: 20 })).meshes[0];
+  expect(keysAtZ(body, "top")).toEqual(["fin", "girth", "lift"]);
+  // A triangle of the cage skin just above the cut, not the cut's own flat face.
+  const P = body.positions, I = body.indices;
+  const zOf = (t) => (I ? [0, 1, 2].map((j) => P[3 * I[3 * t + j] + 2]) : [2, 5, 8].map((j) => P[9 * t + j]));
+  let skin = -1;
+  for (let t = 0; t < body.originIds.length && skin < 0; t++) {
+    const z = zOf(t);
+    if (Math.max(...z) < 22 && Math.max(...z) - Math.min(...z) > 0.5) skin = t;
+  }
+  expect(skin).toBeGreaterThanOrEqual(0);
+  expect(body.origins[body.originIds[skin] - 1]).toEqual(["girth", "lift"]);
+});
+
+test("a mirrored cage answers the same on both sides", async () => {
+  const part = cagePart((k, p) => {
+    const c = k.cage({ box: { size: [40, 20 * p.girth, 20], segs: [2, 2, 2] }, mirror: "xz" });
+    c.extrude("+y:0,0", { by: p.fin, scale: 0.6, id: "wing" });
+    return k.subdiv(c);
+  });
+  const body = (await gen(part, ["body"], part.defaults)).meshes[0];
+  const P = body.positions, I = body.indices;
+  const yOf = (t) => (I ? (P[3 * I[3 * t] + 1] + P[3 * I[3 * t + 1] + 1] + P[3 * I[3 * t + 2] + 1]) / 3 : (P[9 * t + 1] + P[9 * t + 4] + P[9 * t + 7]) / 3);
+  let hi = 0, lo = 0;
+  for (let t = 0; t < body.originIds.length; t++) { if (yOf(t) > yOf(hi)) hi = t; if (yOf(t) < yOf(lo)) lo = t; }
+  expect(body.origins[body.originIds[hi] - 1]).toEqual(["fin", "girth"]);
+  expect(body.origins[body.originIds[lo] - 1]).toEqual(["fin", "girth"]);
+});

@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { detectBackend } from "../src/framework/backend-select.js";
+import { meshNativeRefusal } from "../src/framework/geometry/kernel.js";
 import { SHEET_DOC_ID, fmtMm } from "../src/framework/sheet/constants.js";
 import { fontsFor } from "../src/framework/fonts.js";
 import { imagesFor } from "../src/framework/images.js";
@@ -71,13 +72,15 @@ function crash(cmd, e, jsonMode) {
     });
     process.exit(r.status ?? 1);
   }
-  // The retry itself failed on k.implicit, which only Manifold builds: the part needs
-  // both backends and the CLI has one per process. Say which op sent it to OCCT, since
-  // the backend's own message can only list the possible causes.
-  const reroute = String(e?.message).includes("implicit: OCCT cannot build k.implicit") && process.env.PARTFORGE_REROUTE_REASON;
+  // The retry itself failed on a mesh-native op (k.implicit, k.subdiv), which only
+  // Manifold builds: the part needs both backends and the CLI has one per process. Say
+  // which op sent it to OCCT, since the backend's own message can only list the possible
+  // causes. meshNativeRefusal knows OCCT's refusal by the words it opens with.
+  const op = meshNativeRefusal(e?.message);
+  const reroute = op && process.env.PARTFORGE_REROUTE_REASON;
   const message = reroute
-    ? `implicit: OCCT cannot build k.implicit (it is mesh-native), and the Manifold build stopped at "${reroute}" — `
-      + "the CLI builds the whole part on one backend, so a part with k.implicit must keep every fillet and chamfer "
+    ? `${op}: OCCT cannot build k.${op} (it is mesh-native), and the Manifold build stopped at "${reroute}" — `
+      + `the CLI builds the whole part on one backend, so a part with k.${op} must keep every fillet and chamfer `
       + "mesh-buildable: use an object selector ({ dir }, { inPlane, at }, { near }) instead of a function, or change "
       + "the radius or edges so the mesh backend can blend them. `meta.backend` cannot fix this."
     : e?.message || String(e);

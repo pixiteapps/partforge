@@ -29,3 +29,13 @@ test("a backend-native op wins over a domain attach", () => {
   const k = finishKernel({ tappedBore: native });
   expect(k.fixtureAttached).toBeUndefined();
 });
+
+test("the organic manifest's subdiv and cage attaches give an engine-less kernel a refusal and a real cage", async () => {
+  // The registry is mocked above, so run the real manifest's attaches by hand, as finishKernel does.
+  const organic = (await import("../src/framework/domains/organic/manifest.js")).default;
+  const { isCage } = await import("../src/framework/geometry/subdiv/index.js");
+  const k = {};
+  for (const op of organic.kernelOps) if (k[op.name] === undefined) op.attach(k);
+  expect(isCage(k.cage({ box: { size: [2, 2, 2] } }))).toBe(true);
+  expect(() => k.subdiv(k.cage({ box: { size: [2, 2, 2] } }))).toThrow(/^subdiv: this kernel has no subdivision engine/);
+});

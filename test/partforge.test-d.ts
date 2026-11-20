@@ -519,6 +519,19 @@ expectType<void>(runWorker(spacer).setPart(grouped));
 
 const kernel = await bootManifoldKernel({ quality: "print" });
 
+// The subdivision cage: extrude returns the cap id (a list for a region), `by` is a
+// number or an offset and is required, and scale's `about` may be null.
+const cage = kernel.cage({ box: { size: [40, 20, 20], segs: [2, 1, 1] }, mirror: "xz" });
+expectType<string>(cage.extrude("+x:0,0", { by: 10, scale: 0.5 }));
+expectType<string[]>(cage.extrude(["+z:0,0", "+z:1,0"], { by: [0, 0, 5], steps: 2, id: "top" }));
+expectType<number[]>(cage.centroid(`${cage.extrude("-x:0,0", { by: 4 })}~`));
+cage.scale("+x:0,0>", 0.5, { about: null });
+// @ts-expect-error -- `by` is required
+cage.extrude("+y:0,0", {});
+// @ts-expect-error -- so are the options
+cage.extrude("+y:0,0");
+expectType<number[]>(kernel.subdiv(cage).boundingBox().min);
+
 const facts = measure(kernel, spacer, "spacer", {}, { minWall: true });
 expectType<boolean>(facts.ok);
 expectType<boolean>(facts.measuredMinWall);

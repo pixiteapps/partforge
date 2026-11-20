@@ -1,8 +1,17 @@
 // partforge/organic — checks and vocabulary for k.implicit signed-distance bodies.
-// The ops themselves stay on the kernel: k.implicit and k.implicitFrames (types/kernel.d.ts).
+// The ops themselves stay on the kernel: k.implicit and k.implicitFrames, and for
+// subdivision bodies k.cage and k.subdiv (types/kernel.d.ts). `cage` here is k.cage's own
+// builder, for code with no kernel (derive).
 // Worker-safe: the grammar's leaf modules only — no mesher, no native core, no three.js, no DOM.
 
-import type { ImplicitOptions } from "./kernel.js";
+import type { ImplicitOptions, Cage, CageOptions } from "./kernel.js";
+
+/**
+ * The cage builder `k.cage` calls: same options, same Cage. Use it where there is no
+ * kernel, such as `derive` reading `centroid(face)` to place a drag handle. Build the
+ * solid with `k.cage` and `k.subdiv` as usual.
+ */
+export declare function cage(options: CageOptions): Cage;
 
 /** A spec the grammar refused: `issues` lists every problem with its path; the message starts "implicit: ". */
 export declare class ImplicitSpecError extends Error {

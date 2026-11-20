@@ -308,3 +308,29 @@ test("probePoses in place scope records only place()'s reads", () => {
   expect(m.get("insert").reads).toEqual(["h", "lift", "openAngle"]);
   expect(m.get("body").reads).toEqual([]);
 });
+
+// k.subdiv folds its cage's state into the hash, read at the call: a cage edit before the
+// call moves baseHash, and reading the cage back (a real Cage, not a dummy) keeps trust.
+test("a k.subdiv sub-part hashes its cage, and reading the cage keeps it trusted", () => {
+  const part = {
+    defaults: { lift: 0, angle: 0 },
+    views: { v: { label: "V" } },
+    parts: {
+      body: {
+        views: ["v"],
+        build: (k, p) => {
+          const c = k.cage({ box: { size: [10, 10, 10] } });
+          c.move("+z:0,0", [0, 0, p.lift]);
+          return k.subdiv(c).translate(c.centroid("+z:0,0")).rotateAbout({ axis: "X", deg: p.angle, through: [0, 0, 0] });
+        },
+      },
+    },
+  };
+  const a = probePoses(part, "v", { lift: 0 }).get("body");
+  const b = probePoses(part, "v", { lift: 2 }).get("body");
+  const c = probePoses(part, "v", { lift: 0, angle: 30 }).get("body");
+  expect([a.trusted, b.trusted, c.trusted]).toEqual([true, true, true]);
+  expect(b.baseHash).not.toBe(a.baseHash);
+  expect(c.baseHash).toBe(a.baseHash);
+  expect(a.pose[0]).toEqual({ t: "translate", v: [0, 0, 5] });
+});

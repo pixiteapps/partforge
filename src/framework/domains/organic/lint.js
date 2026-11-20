@@ -6,7 +6,7 @@
 // Imports: lint/finding.js and nothing else from lint (the registry rule), and only the
 // engine's pure modules — never implicit/index.js, which loads the mesher and native core.
 import { err, note, warn } from "../../lint/finding.js";
-import { ROUTED_CAD_OPS } from "../../geometry/kernel.js";
+import { MESH_NATIVE_OPS, ROUTED_CAD_OPS, meshNativeOpsText } from "../../geometry/kernel.js";
 import { validateSpec } from "../../geometry/implicit/grammar.js";
 import { lowerSpec } from "../../geometry/implicit/ir.js";
 import { IMPLICIT_DEFAULTS } from "../../geometry/implicit/compile.js";
@@ -110,20 +110,32 @@ const plainCsg = (spec) => !(spec.detail?.length) && [...specNodes(spec.root)].e
 // The fillet/chamfer ops whose function selector only OCCT can run.
 const FN_SELECTOR_OPS = new Set(["fillet", "chamfer"]);
 
+/**
+ * The mesh-native ops the build calls (MESH_NATIVE_OPS order). k.implicit counts by a
+ * recorded spec, as it always has (a call whose argument is no spec object is the build's
+ * own error); k.subdiv by any kernel call.
+ */
+function meshNativeOps(ctx) {
+  const kernelOps = new Set(ctx.probe().calls.filter((c) => c.scope === "kernel").map((c) => c.op));
+  return [...MESH_NATIVE_OPS].filter((op) => (op === "implicit"
+    ? implicitCalls(ctx).some((c) => c.op === "implicit")
+    : kernelOps.has(op)));
+}
+
 /** implicit-needs-manifold's routing half: an OCCT pin, or an unpinned shell. */
-function routing(ctx) {
+function routing(ctx, ops) {
   // A Manifold pin wins over a shell's routing (manifold-backend-uses-occt-op reports
-  // the shell), so only an OCCT pin or an unpinned shell lands k.implicit on OCCT.
+  // the shell), so only an OCCT pin or an unpinned shell lands the op on OCCT.
   if (ctx.part?.meta?.backend === "manifold") return [];
   const pinned = ctx.part?.meta?.backend === "occt";
   const routed = [...ctx.probe().solidUsed].filter((op) => ROUTED.has(op));
   if (!pinned && routed.length === 0) return [];
   const cause = pinned ? "meta.backend pins OCCT" : `\`${routed.join("`, `")}\` routes the part to OCCT`;
   return [err("implicit-needs-manifold",
-    `the build calls k.implicit, which only the Manifold backend can build, but ${cause}`,
+    `the build calls ${ops}, which only the Manifold backend can build, but ${cause}`,
     pinned
-      ? "Remove `meta.backend: \"occt\"` (or set it to \"manifold\"): the OCCT build throws on k.implicit."
-      : "Build the OCCT-only feature in a separate part, or replace it with a mesh-friendly construction: the OCCT build throws on k.implicit.",
+      ? `Remove \`meta.backend: "occt"\` (or set it to "manifold"): the OCCT build throws on ${ops}.`
+      : `Build the OCCT-only feature in a separate part, or replace it with a mesh-friendly construction: the OCCT build throws on ${ops}.`,
     "meta.backend")];
 }
 
@@ -138,18 +150,21 @@ export const ORGANIC_LINT_RULES = [
   {
     id: "implicit-needs-manifold",
     run: (ctx) => {
-      if (!implicitCalls(ctx).some((c) => c.op === "implicit")) return [];
+      // k.implicit and k.subdiv alike (MESH_NATIVE_OPS); the messages name the ones used.
+      const used = meshNativeOps(ctx);
+      if (used.length === 0) return [];
+      const ops = meshNativeOpsText(used);
       // A fillet or chamfer with a function selector needs OCCT whatever the pin says:
       // the mesh backend throws NEEDS_OCCT on it, and the CLI, STL and 3MF then build the
-      // whole part on OCCT, where k.implicit throws. (A fallback over an edge class the
-      // mesh fillet cannot blend is geometry, which lint cannot see.)
+      // whole part on OCCT, where the mesh-native op throws. (A fallback over an edge class
+      // the mesh fillet cannot blend is geometry, which lint cannot see.)
       const fnOps = [...new Set(ctx.probe().calls
         .filter((c) => c.fn && c.scope !== "shape2d" && FN_SELECTOR_OPS.has(c.op)).map((c) => c.op))];
       const selectors = fnOps.length === 0 ? [] : [err("implicit-needs-manifold",
-        `the build calls k.implicit, which only the Manifold backend can build, but \`${fnOps.join("`, `")}\` with a function selector needs OCCT`,
+        `the build calls ${ops}, which only the Manifold backend can build, but \`${fnOps.join("`, `")}\` with a function selector needs OCCT`,
         "Use an object selector ({ dir }, { inPlane, at }, { near }) so it runs on Manifold: measure, STL and 3MF build the whole part on one backend. See ERROR-PATTERNS.md#implicit-with-occt-fallback.",
         "parts")];
-      return [...selectors, ...routing(ctx)];
+      return [...selectors, ...routing(ctx, ops)];
     },
   },
   {

@@ -12,6 +12,7 @@ import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
 import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
 import { implicitShapeHash } from "./implicit/call-id.js";
+import { createCage, isCage, meshSubdiv } from "./subdiv/index.js";
 import { encodeBindingProps, decodeBindings, BIND_PROPS } from "./mesh-bindings.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
@@ -22,7 +23,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, BLEND, ORGANIC } from "./shading-policy.js";
+import { loftShadingPolicy, BLEND, ORGANIC, CREASED_SKIN } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshOffset, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -226,6 +227,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // k.implicit solid -> the originalIDs its runs carry (meshOut's binding repair finds a
   // call's triangles by them).
   const implicitIds = new WeakMap();
+  // k.subdiv's warnings (tolerance not met, a body through itself at preview), keyed by
+  // the cached solid they belong to (re-recorded on a hit, as k.implicit's are).
+  const subdivWarnings = new WeakMap();
+  // A preview k.subdiv's limit mesh with each triangle's cage face, beside the cached
+  // solid: what provenance.js matches a clicked triangle back to its cage face with.
+  const subdivSources = new WeakMap();
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
@@ -1171,6 +1178,42 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // Where a k.implicit spec's frames and labelled nodes end up (implicit/frame-report.js).
     // Pure and mesh-free, so it is not cached.
     implicitFrames: (spec) => implicitFrames(spec, { images }),
+    // A subdivision cage (subdiv/cage.js): plain data the build edits in place. Pure, not cached.
+    cage: (opts) => createCage(opts),
+    // Cage → smooth solid (subdiv/): Catmull-Clark at the level the tier's tolerance needs
+    // (SUBDIV_TOLERANCE), one welded mesh shading ORGANIC. The cage is read once, at the
+    // call (a later edit to it changes no solid already built). Cached per tier on the
+    // snapshot; meshSubdiv's warnings live beside the cached value and are recorded again
+    // on every hit. No pose bindings and no two-stage union delivery: it stays out of
+    // implicitMs and implicitCalls.
+    subdiv: (cage) => {
+      if (!isCage(cage)) throw new Error("subdiv: expected a cage from k.cage(...)");
+      const snapshot = cage.snapshot();
+      const tier = quality === "print" ? "print" : "preview";
+      const key = h("subdiv", snapshot, tier);
+      const solid = cache.lookup(key, () => {
+        const out = meshSubdiv(snapshot, tier);
+        // One surface, or one per part when creases split the skin (shading-policy.js
+        // CREASED_SKIN: a crease is a hard seam with a line, any other seam between two
+        // parts is a same-surface edge).
+        const regions = out.triRegion ? out.regions : 1;
+        const id = wasm.Manifold.reserveIDs(regions), ids = Array.from({ length: regions }, (_, i) => id + i);
+        const m = T(out.triRegion ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triRegion, ids)
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
+        ids.forEach((oid, part) => {
+          if (!out.triRegion) { oidPolicies.set(oid, ORGANIC); return; }
+          const hard = new Set();
+          for (const [a, b] of out.creasePairs) { if (a === part) hard.add(b); if (b === part) hard.add(a); }
+          oidPolicies.set(oid, Object.freeze({ ...CREASED_SKIN, skin: id, part, hard }));
+        });
+        const value = wrap(m, key);
+        subdivWarnings.set(value, out.warnings);
+        if (tier !== "print") subdivSources.set(value, { positions: out.positions, indices: out.indices, triFace: out.triFace, ids: snapshot.ids });
+        return { value, pin: m, dispose: () => { for (const i of ids) oidPolicies.delete(i); m.delete?.(); } };
+      });
+      for (const w of subdivWarnings.get(solid) ?? []) recordWarning(w);
+      return solid;
+    },
     // Sweep a fixed 2-D profile along a 3-D polyline: hand-meshed from the shared station
     // list (sweep.js), so it agrees with OCCT's ruled loft of the same stations by
     // construction. Cached atomically; the hash folds profile pts, path pts, and opts
@@ -1290,6 +1333,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       images.set(name, { digest, width, height, data });
     },
     _imageDigest: (name) => images.get(name)?.digest,
+    _subdivSource: (solid) => subdivSources.get(solid),   // provenance.js: a k.subdiv solid's limit mesh and cage faces
     _shadingPolicy: (oid) => oidPolicies.get(oid),   // tests: the policy an original ID shades with
     // Drop every registered name NOT in `keep` (a Set) — the images-map twin of
     // fonts' kernel._fonts prune in jobs.js. `images` is keyed on the part's

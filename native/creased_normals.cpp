@@ -55,7 +55,18 @@ inline int32_t toInt32(double d) {
   return (int32_t)(uint32_t)m;
 }
 
-struct Policy { double creaseCos; bool boundaryLines; bool sameSurfaceLines; bool organic; int32_t labelId; int32_t group; };
+struct Policy {
+  double creaseCos; bool boundaryLines; bool sameSurfaceLines; bool organic; int32_t labelId; int32_t group;
+  int32_t skin; int32_t part; uint32_t hardBegin; uint32_t hardEnd;
+};
+
+// Two rows that are one skin (creased-normals.js `joined`): the same skin >= 0 and b's
+// part not in a's hard list.
+inline bool joined(const Policy& a, const Policy& b, const int32_t* hardList) {
+  if (a.skin < 0 || a.skin != b.skin) return false;
+  for (uint32_t i = a.hardBegin; i < a.hardEnd; i++) if (hardList[i] == b.part) return false;
+  return true;
+}
 
 }  // namespace
 
@@ -174,7 +185,9 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
                           double coplanarCos, double analyticCos,
                           const int32_t* runDesc, const double* runXf,
                           const double* descData, const uint32_t* descOffsets, uint32_t numDesc,
-                          const int32_t* groups, double siblingCos) {
+                          const int32_t* groups, double siblingCos,
+                          const int32_t* skins, const int32_t* parts,
+                          const uint32_t* hardStart, const int32_t* hardList) {
   const float* vp = s->vp; const uint32_t np = s->np, nTri = s->nTri, nVert = s->nVert;
   const uint32_t* tris = s->tris;
   const std::vector<uint32_t>& weld = s->weld;
@@ -186,7 +199,8 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
   for (uint32_t i = 0; i + 1 < numOids; i++) rowOf.insert(oids[i], i);
   std::vector<Policy> pol(numOids);
   for (uint32_t i = 0; i < numOids; i++)
-    pol[i] = {creaseCos[i], (flags[i] & 1) != 0, (flags[i] & 2) != 0, (flags[i] & 4) != 0, labelIds[i], groups[i]};
+    pol[i] = {creaseCos[i], (flags[i] & 1) != 0, (flags[i] & 2) != 0, (flags[i] & 4) != 0, labelIds[i], groups[i],
+              skins ? skins[i] : -1, skins ? parts[i] : -1, skins ? hardStart[i] : 0, skins ? hardStart[i + 1] : 0};
 
   // What a pass reads about a triangle, together (the facet normal and
   // thinness exactly as the float32 arrays held them).
@@ -312,7 +326,7 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
         // Sibling surfaces (one group) count across their seam while it bends no more than
         // SIBLING_SEAM_ANGLE (creased-normals.js).
         if (T2.oid != T.oid && !(pol[T2.pol].boundaryLines || P.boundaryLines)) {
-          if (!(P.group >= 0 && P.group == pol[T2.pol].group && d2 >= siblingCos)) continue;
+          if (!joined(P, pol[T2.pol], hardList) && !(P.group >= 0 && P.group == pol[T2.pol].group && d2 >= siblingCos)) continue;
         }
         if (d2 < sharpCos) continue;
         if (T2.thin < SHADE_SLIVER) { sx += f0; sy += f1; sz += f2; }
@@ -387,7 +401,7 @@ extern "C" void cn_finish(CNState* s, const uint32_t* oids, const double* crease
       const Tri& Tt = tri[t];
       const Policy& Pp = pol[Tp.pol];
       const Policy& Pt = pol[Tt.pol];
-      const bool sameOID = Tp.oid == Tt.oid;
+      const bool sameOID = Tp.oid == Tt.oid || joined(Pp, Pt, hardList);
       const bool boundary = !sameOID && Pp.boundaryLines != Pt.boundaryLines;
       if (!boundary && ((Tp.thin < MIN_FACE && !trueThin[prev]) || (Tt.thin < MIN_FACE && !trueThin[t]))) continue;
       const double dot = (double)Tp.fn[0] * Tt.fn[0] + (double)Tp.fn[1] * Tt.fn[1] + (double)Tp.fn[2] * Tt.fn[2];
