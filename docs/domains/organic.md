@@ -701,6 +701,11 @@ pick by `normal` or `centroid` when you need "the side that faces +Y".
   `[sx, sy, sz]`) about the point `about`. Omitted (or `null`), it is the points' mean;
   under a mirror, for faces with an edge on the plane, the mean of the faces and their
   reflections, on the plane.
+- **`crease(face | faces)`** keeps the border of the face (or of the region the faces make)
+  as a hard edge of the smooth surface. Everything else stays smooth. The mark stays on
+  those edges: extrude the face afterwards and the crease is at the base of the extrusion.
+  Under a mirror, a region with an edge on the plane is creased together with its
+  reflection, so no crease is left on the plane.
 
 The read methods change nothing:
 
@@ -719,6 +724,31 @@ bar.scale("arm", 0.5);
 bar.size("arm");   // [10, 10]
 bar.bounds();   // { min: [-32, -10, -10], max: [30, 10, 15] }
 ```
+
+### Creases
+
+A cage is smooth everywhere unless you say otherwise. `crease` marks where it is not:
+
+- A creased border is a sharp edge that still curves along its length. Crease one face of
+  a box and that face becomes flat with a rounded outline and a hard rim.
+- A point where three or more creased edges meet is a sharp corner. Crease two faces that
+  share an edge and the ends of that edge are corners; crease every face of a box and the
+  result is the box itself.
+- Each crease shades hard and draws an edge line, like an edge of a mechanical part. The
+  skin between creases shades smooth, as before.
+
+```js
+const puck = cage({ box: { size: [30, 30, 10] } });
+puck.crease("+z:0,0");
+puck.crease("-z:0,0");
+puck.snapshot().creases.length;   // 8
+```
+
+That is a pebble with a flat, hard-rimmed top and bottom and a smooth wall. A crease
+follows the border of faces, so to crease along a line, give the cage an edge there first
+(`segs`, or an `extrude`). There is no partly sharp crease and no crease along a single
+edge between two named faces: for a tight but rounded edge, add a short `extrude` step
+beside it instead.
 
 ### Mirror
 

@@ -5,6 +5,17 @@ Date: 2026-11-19. Approved by the owner 2026-11-19. Written against partforge
 partforge-cloud branch `claude/organic-surfaces-spike` (`spikes/organic-surfaces/`), and from
 the organic eval cases in partforge-cloud PR 599.
 
+## Addendum, 2026-11-19: creases
+
+Added after the cage was built, at Scott's request. `cage.crease(face | faces)` marks the
+border of a face or region as sharp. The smoothing uses the standard sharp-edge rules (a
+sharp edge's point is its midpoint; a point on two sharp edges follows the curve through
+them; a point on three or more is a corner). A creased body is built as one original ID
+per region between creases with the `CREASED_SKIN` policy, so every crease is a hard seam
+with an edge line. Left out on purpose: partly sharp creases (their shape would depend on
+the tier's level) and a crease along an open chain of edges (it would not separate two
+regions, so nothing would shade it hard).
+
 ## Why
 
 Organic parts made with `k.implicit` look lumpy. The owner's words: "Implicit parts aren't as

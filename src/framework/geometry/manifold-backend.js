@@ -23,7 +23,7 @@ import { finishKernel } from "./kernel-front.js";
 import { makeProfileWarner } from "./profile-warnings.js";
 import { meshToStl } from "./mesh-stl.js";
 import { creasedNormals } from "./creased-normals.js";
-import { loftShadingPolicy, BLEND, ORGANIC } from "./shading-policy.js";
+import { loftShadingPolicy, BLEND, ORGANIC, CREASED_SKIN } from "./shading-policy.js";
 import { meshFillet, meshChamfer, UnsupportedEdgeError } from "./mesh-fillet.js";
 import { affineAt, IDENTITY, invertAffine, mapSurface } from "./blend-surfaces.js";
 import { flatFacePlanes, meshOffset, meshRoundAll, prismSection, roundAllSegs } from "./mesh-roundall.js";
@@ -1193,13 +1193,17 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       const key = h("subdiv", snapshot, tier);
       const solid = cache.lookup(key, () => {
         const out = meshSubdiv(snapshot, tier);
-        const id = wasm.Manifold.reserveIDs(1);
-        const m = T(manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
-        oidPolicies.set(id, ORGANIC);
+        // One surface, or one per region when creases split the skin (each crease is then
+        // a seam: it shades hard and draws its line).
+        const regions = out.triRegion ? out.regions : 1;
+        const id = wasm.Manifold.reserveIDs(regions), ids = Array.from({ length: regions }, (_, i) => id + i);
+        const m = T(out.triRegion ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triRegion, ids)
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
+        for (const i of ids) oidPolicies.set(i, out.triRegion ? CREASED_SKIN : ORGANIC);
         const value = wrap(m, key);
         subdivWarnings.set(value, out.warnings);
         if (tier !== "print") subdivSources.set(value, { positions: out.positions, indices: out.indices, triFace: out.triFace, ids: snapshot.ids });
-        return { value, pin: m, dispose: () => { oidPolicies.delete(id); m.delete?.(); } };
+        return { value, pin: m, dispose: () => { for (const i of ids) oidPolicies.delete(i); m.delete?.(); } };
       });
       for (const w of subdivWarnings.get(solid) ?? []) recordWarning(w);
       return solid;

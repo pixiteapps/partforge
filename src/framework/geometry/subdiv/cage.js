@@ -7,6 +7,11 @@
 // changes a shared point once); `faces` maps id → four point indices, counter-clockwise
 // seen from outside; `removed` maps an extruded face's id → the ids that replaced it.
 //
+// Creases: `creases` holds edges (point pairs) the surface keeps sharp. crease(face)
+// marks the border of the face or region; the marks stay on those edges through later
+// changes (an extruded face leaves its crease at the base of the extrusion), and an edge
+// no face uses any more drops out of the snapshot.
+//
 // Face ids:
 //   box faces   `${side}:${i},${j}`; ±x: i indexes Y, j indexes Z; ±y: i X, j Z;
 //               ±z: i X, j Y. Indices rise with the coordinate.
@@ -122,7 +127,7 @@ export function createCage(spec) {
     fail(`mirror "${mirror}" needs an even box.segs count across the plane, not ${segs[ax]}`);
 
   const state = { points: [], faces: new Map(), removed: new Map(), ax, plane: ax >= 0 ? center[ax] : 0,
-    twin: [], half: [] };
+    twin: [], half: [], creases: new Set() };
 
   // Box lattice points on the surface, shared by key.
   const lattice = new Map();
@@ -193,7 +198,7 @@ export function isCage(value) {
 }
 
 function makeCage(state) {
-  const { points, faces, removed, ax, plane, twin, half } = state;
+  const { points, faces, removed, ax, plane, twin, half, creases } = state;
   const mirrored = ax >= 0;
   const reflect = (p) => reflectPoint(p, ax, plane);
   const twinId = (id) => (id.endsWith("~") ? id.slice(0, -1) : `${id}~`);
@@ -441,6 +446,25 @@ function makeCage(state) {
     for (const [p, q] of next) points[p] = q;
   }
 
+  // Mark the border of the face or region as a hard edge. A region touching the mirror
+  // plane is taken joined with its reflection, so no crease is left on the plane.
+  const edgeKey = (a, b) => (a < b ? `${a}>${b}` : `${b}>${a}`);
+  function crease(face) {
+    const ids = faceList(face);
+    const all = mirrored && touchesPlane(ids) ? [...ids, ...ids.map(twinId)] : ids;
+    const directed = new Set(all.flatMap((f) => faces.get(f).map((a, k, v) => `${a}>${v[(k + 1) % 4]}`)));
+    const border = [];
+    for (const f of all) faces.get(f).forEach((a, k, v) => {
+      const b = v[(k + 1) % 4];
+      if (!directed.has(`${b}>${a}`)) border.push([a, b]);
+    });
+    if (border.length === 0) fail(`[${ids.join(", ")}] has no border to crease`);
+    for (const [a, b] of border) {
+      creases.add(edgeKey(a, b));
+      if (mirrored) creases.add(edgeKey(twin[a], twin[b]));
+    }
+  }
+
   // The four edges in side order; u spans the first in-plane axis (edges 1 and 3),
   // v the second (edges 0 and 2).
   function size(id) {
@@ -456,11 +480,20 @@ function makeCage(state) {
   function snapshot() {
     const live = livePoints();
     const remap = new Map(live.map((p, i) => [p, i]));
-    return {
+    const snap = {
       points: live.map((p) => noNegZero(points[p])),
       faces: [...faces.values()].map((v) => v.map((p) => remap.get(p))),
       ids: [...faces.keys()],
     };
+    if (creases.size) {
+      // Only edges a face still uses, as sorted [low, high] point pairs.
+      const used = new Set([...faces.values()].flatMap((v) => v.map((a, k) => edgeKey(a, v[(k + 1) % 4]))));
+      const kept = [...creases].filter((key) => used.has(key))
+        .map((key) => key.split(">").map((p) => remap.get(Number(p))).sort((a, b) => a - b))
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      if (kept.length) snap.creases = kept;
+    }
+    return snap;
   }
 
   function bounds() {
@@ -474,6 +507,7 @@ function makeCage(state) {
     extrude,
     move,
     scale,
+    crease,
     centroid: (id) => noNegZero(mean(ptsOf(resolve(id)))),
     normal: (id) => noNegZero(unit(newell(ptsOf(resolve(id))))),
     size,

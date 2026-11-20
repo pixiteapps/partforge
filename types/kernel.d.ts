@@ -595,6 +595,8 @@ export interface Cage {
   /** Pushes a region out and returns its caps' ids, one per listed face, in order (a list even with one face). */
   extrude(faces: string[], opts: CageExtrudeOptions): string[];
   move(faces: CageFaces, offset: [number, number, number]): void;
+  /** Keep the border of the face or region as a hard edge of the smooth surface. */
+  crease(faces: CageFaces): void;
   /** `about` omitted or null: the points' mean (on the plane, under a mirror, for faces with an edge on it). */
   scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] | null }): void;
   centroid(id: string): [number, number, number];
@@ -602,7 +604,7 @@ export interface Cage {
   size(id: string): [number, number];
   faces(prefix?: string): string[];
   bounds(): { min: [number, number, number]; max: [number, number, number] };
-  snapshot(): { points: number[][]; faces: number[][]; ids: string[] };
+  snapshot(): { points: number[][]; faces: number[][]; ids: string[]; creases?: [number, number][] };
 }
 
 /** One frame in a k.implicitFrames report: its origin and unit axes in part coordinates. */

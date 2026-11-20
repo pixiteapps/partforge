@@ -32,11 +32,17 @@ function checkLevel(levels) {
   }
 }
 
+// Creases (snapshot.creases, [a, b] point pairs): a sharp edge's point is its midpoint, a
+// point on exactly two sharp edges follows the curve through them ((6 v + a + b) / 8 per
+// step, (4 v + a + b) / 6 at the limit), a point on three or more stays put (a corner),
+// and a point on one is smoothed as usual (the crease fades out there). Both halves of a
+// sharp edge stay sharp. `sharp` (one byte per edge) is absent when the cage has none.
+//
 // A level's mesh. pos: 3V coordinates. faceVerts / faceEdges: 4F; edge k of a face joins
 // its corners k and k+1. edgeVerts / edgeFaces: 2E (the cage is closed, so every edge has
 // exactly two faces).
 function fromSnapshot(snapshot) {
-  const { points, faces } = snapshot ?? {};
+  const { points, faces, creases } = snapshot ?? {};
   if (!Array.isArray(points) || !Array.isArray(faces) || faces.length === 0) {
     fail("expected a cage snapshot { points, faces }");
   }
@@ -72,6 +78,16 @@ function fromSnapshot(snapshot) {
   });
   const mesh = { V, F, E: edgeVerts.length / 2, pos, faceVerts, faceEdges, edgeVerts: Uint32Array.from(edgeVerts) };
   mesh.edgeFaces = edgeFacesOf(mesh, true);
+  if (creases !== undefined) {
+    if (!Array.isArray(creases)) fail("creases must be a list of [a, b] point pairs");
+    const sharp = new Uint8Array(mesh.E);
+    for (const c of creases) {
+      const e = Array.isArray(c) && c.length === 2 ? edgeIndex.get(Math.min(c[0], c[1]) * V + Math.max(c[0], c[1])) : undefined;
+      if (e === undefined) fail(`crease ${JSON.stringify(c)} is not an edge of the cage`);
+      sharp[e] = 1;
+    }
+    if (creases.length) mesh.sharp = sharp;
+  }
   return mesh;
 }
 
@@ -90,7 +106,7 @@ function edgeFacesOf({ F, E, faceEdges }, check) {
 
 // One Catmull-Clark step.
 function step(m) {
-  const { V, F, E, pos, faceVerts, faceEdges, edgeVerts, edgeFaces } = m;
+  const { V, F, E, pos, faceVerts, faceEdges, edgeVerts, edgeFaces, sharp } = m;
   const nV = V + F + E, nF = 4 * F, nE = 2 * E + 4 * F;
   const out = new Float64Array(3 * nV);
 
@@ -108,7 +124,8 @@ function step(m) {
     const o = 3 * (V + F + e);
     const a = 3 * edgeVerts[2 * e], b = 3 * edgeVerts[2 * e + 1];
     const f0 = 3 * (V + edgeFaces[2 * e]), f1 = 3 * (V + edgeFaces[2 * e + 1]);
-    for (let c = 0; c < 3; c++) out[o + c] = (pos[a + c] + pos[b + c] + out[f0 + c] + out[f1 + c]) * 0.25;
+    if (sharp?.[e]) for (let c = 0; c < 3; c++) out[o + c] = (pos[a + c] + pos[b + c]) * 0.5;
+    else for (let c = 0; c < 3; c++) out[o + c] = (pos[a + c] + pos[b + c] + out[f0 + c] + out[f1 + c]) * 0.25;
   }
   // Vertex points: ((n - 2) v) / n + (Σ edge neighbours + Σ face points) / n².
   const valence = new Uint32Array(V);
@@ -131,6 +148,7 @@ function step(m) {
     const w = (n - 2) / n, s = 1 / (n * n);
     for (let c = 0; c < 3; c++) out[3 * v + c] = w * pos[3 * v + c] + s * acc[3 * v + c];
   }
+  if (sharp) creasePoints(m, out, 0.75, 0.125);
 
   // Topology. Old edge e splits into 2e (from its first end) and 2e + 1 (to its second);
   // face f adds the inner edges 2E + 4f + k, from its point to the point of its edge k.
@@ -160,13 +178,36 @@ function step(m) {
     }
   }
   const next = { V: nV, F: nF, E: nE, pos: out, faceVerts: nFaceVerts, faceEdges: nFaceEdges, edgeVerts: nEdgeVerts };
+  if (sharp) {
+    next.sharp = new Uint8Array(nE);
+    for (let e = 0; e < E; e++) next.sharp[2 * e] = next.sharp[2 * e + 1] = sharp[e];
+  }
   next.edgeFaces = edgeFacesOf(next, false);
   return next;
 }
 
+// Overwrite, in `out`, the points on sharp edges: on exactly two, wv · v + wn · (a + b)
+// with a, b the far ends of those edges; on three or more, v itself.
+function creasePoints({ V, E, pos, edgeVerts, sharp }, out, wv, wn) {
+  const count = new Uint8Array(V);
+  const sum = new Float64Array(3 * V);
+  for (let e = 0; e < E; e++) {
+    if (!sharp[e]) continue;
+    const a = edgeVerts[2 * e], b = edgeVerts[2 * e + 1];
+    if (count[a] < 3) count[a]++;
+    if (count[b] < 3) count[b]++;
+    for (let c = 0; c < 3; c++) { sum[3 * a + c] += pos[3 * b + c]; sum[3 * b + c] += pos[3 * a + c]; }
+  }
+  for (let v = 0; v < V; v++) {
+    if (count[v] < 2) continue;
+    for (let c = 0; c < 3; c++) out[3 * v + c] = count[v] === 2 ? wv * pos[3 * v + c] + wn * sum[3 * v + c] : pos[3 * v + c];
+  }
+}
+
 // Limit positions: (n² v + 4 Σ edge neighbours + Σ face-diagonal neighbours) / (n (n + 5)).
 // For valence 4 this is the bicubic B-spline mask 16, 4, 1 over 36.
-function limit({ V, F, E, pos, faceVerts, edgeVerts }) {
+function limit(m) {
+  const { V, F, E, pos, faceVerts, edgeVerts } = m;
   const valence = new Uint32Array(V);
   const edgeSum = new Float64Array(3 * V);
   const diagSum = new Float64Array(3 * V);
@@ -186,6 +227,7 @@ function limit({ V, F, E, pos, faceVerts, edgeVerts }) {
     const n = valence[v], s = 1 / (n * (n + 5));
     for (let c = 0; c < 3; c++) out[3 * v + c] = (n * n * pos[3 * v + c] + 4 * edgeSum[3 * v + c] + diagSum[3 * v + c]) * s;
   }
+  if (m.sharp) creasePoints(m, out, 2 / 3, 1 / 6);
   return out;
 }
 
@@ -194,9 +236,30 @@ const dist2 = (p, a, b) => {
   return x * x + y * y + z * z;
 };
 
+// The cage's faces grouped into regions no sharp edge is crossed inside: `of` is each
+// face's region (numbered in face order), `count` how many there are.
+function regionsOf({ F, E, edgeFaces, sharp }) {
+  const parent = Uint32Array.from({ length: F }, (_, f) => f);
+  const find = (f) => { while (parent[f] !== f) f = parent[f] = parent[parent[f]]; return f; };
+  for (let e = 0; e < E; e++) {
+    if (sharp[e]) continue;
+    const a = find(edgeFaces[2 * e]), b = find(edgeFaces[2 * e + 1]);
+    if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+  }
+  const index = new Map(), of = new Uint32Array(F);
+  for (let f = 0; f < F; f++) {
+    const r = find(f);
+    if (!index.has(r)) index.set(r, index.size);
+    of[f] = index.get(r);
+  }
+  return { of, count: index.size };
+}
+
 export function subdivide(snapshot, levels) {
   checkLevel(levels);
-  let m = fromSnapshot(snapshot);
+  const cage = fromSnapshot(snapshot);
+  const region = cage.sharp ? regionsOf(cage) : null;
+  let m = cage;
   for (let l = 0; l < levels; l++) m = step(m);
   const positions = limit(m);
   const { F, faceVerts } = m;
@@ -215,7 +278,9 @@ export function subdivide(snapshot, levels) {
     }
     triFace[2 * f] = triFace[2 * f + 1] = f >>> shift;
   }
-  return { positions, indices, triFace };
+  if (!region || region.count < 2) return { positions, indices, triFace };
+  // Creases split the skin into regions: each triangle's region, for shading.
+  return { positions, indices, triFace, triRegion: triFace.map((f) => region.of[f]), regions: region.count };
 }
 
 // The chord error estimate at level L: how far the level-L triangles sit from the limit
@@ -225,6 +290,8 @@ export function subdivide(snapshot, levels) {
 //     one, on the limit positions) against the limit of the face's point at level L + 1.
 //     The diagonal is the longest chord of the shipped triangles, so leaving it out
 //     understates the error by about 1.4-1.7x.
+// A sharp edge's sample is measured in full, not along a normal: the surface has two
+// normals there, and the edge's own chord error lies between them.
 // Only the normal part is surface error; the tangential part is the sample drifting
 // along the surface, which near extraordinary points shrinks only with the subdominant
 // eigenvalue. The normal at a fine face or edge point (both valence 4) is the sum of its
@@ -232,7 +299,7 @@ export function subdivide(snapshot, levels) {
 // area-weighted), normalized. `next` is the level-L mesh stepped once.
 function errorBetween(m, next) {
   const lim = limit(m), fine = limit(next);
-  const { V, F, E, faceVerts, edgeVerts } = m;
+  const { V, F, E, faceVerts, edgeVerts, sharp } = m;
   // In `next`, face points are V .. V + F - 1 and edge points V + F .. V + F + E - 1;
   // `normal` is indexed by (point - V).
   const count = F + E;
@@ -260,9 +327,13 @@ function errorBetween(m, next) {
     const dz = (lim[a + 2] + lim[b + 2]) * 0.5 - fine[p + 2];
     return Math.abs(dx * nx + dy * ny + dz * nz) / nl;
   };
+  const full = (a, b, i) => {
+    const p = 3 * (V + i);
+    return Math.hypot((lim[a] + lim[b]) * 0.5 - fine[p], (lim[a + 1] + lim[b + 1]) * 0.5 - fine[p + 1], (lim[a + 2] + lim[b + 2]) * 0.5 - fine[p + 2]);
+  };
   let worst = 0;
   for (let e = 0; e < E; e++) {
-    const d = deviation(3 * edgeVerts[2 * e], 3 * edgeVerts[2 * e + 1], F + e);
+    const d = (sharp?.[e] ? full : deviation)(3 * edgeVerts[2 * e], 3 * edgeVerts[2 * e + 1], F + e);
     if (d > worst) worst = d;
   }
   for (let f = 0; f < F; f++) {

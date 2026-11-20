@@ -16,6 +16,10 @@ export const FACETED = Object.freeze({ creaseAngle: 10, sameSurfaceLines: false 
 // seam against a non-organic surface (a mechanical base) keeps the ordinary
 // seam rule. Seams still shade hard either way.
 export const ORGANIC = Object.freeze({ creaseAngle: 80, sameSurfaceLines: false, organic: true });
+// A creased subdivision body (cage.crease): the skin between creases shades like ORGANIC,
+// but each crease is a seam between two regions and takes the ordinary seam rule (hard,
+// and a line when it bends), so it is not marked `organic`.
+export const CREASED_SKIN = Object.freeze({ creaseAngle: 80, sameSurfaceLines: false });
 // Sibling surfaces: policies carrying the same non-null `group` are pieces of one skin
 // (k.implicit gives each contact piece its own original ID, all in one group). A seam
 // between two siblings shades smooth when it bends no more than SIBLING_SEAM_ANGLE (the
