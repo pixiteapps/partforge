@@ -15,6 +15,7 @@
 //     param change (a lid's open angle) therefore re-runs no OCCT op at all.
 //     Ops that need the real B-rep (booleans, fillet/chamfer/shell, exports,
 //     volume, boundingBox) materialize the pending pose through replicad first.
+import { edgeMergedBoolean, hasFreeformFace } from "./occt-boolean.js";
 import { assertNoCoincidentBoolean } from "./occt-coincidence.js";
 import { checkBooleanResult } from "./boolean-gate.js";
 import { toEdgeFinder } from "./edge-selector.js";
@@ -169,6 +170,20 @@ export function createOcctKernel(replicad) {
     if (v === undefined) { v = measureVolume(s); volumes.set(s, v); }
     return v;
   };
+  // Every boolean goes through here. Operands with a freeform face (a thread, a
+  // sweep, a loft) skip replicad's face merge, which can grind without end where
+  // such a face meets a cylinder it crosses (occt-boolean.js). Neither operand is
+  // consumed.
+  const freeform = new WeakMap();
+  const isFreeform = (s) => {
+    let v = freeform.get(s);
+    if (v === undefined) { v = hasFreeformFace(replicad.getOC(), s.wrapped); freeform.set(s, v); }
+    return v;
+  };
+  const REPLICAD_OP = { cut: "cut", fuse: "fuse", intersect: "intersect" };
+  const boolean = (kind, a, b) => (isFreeform(a) || isFreeform(b)
+    ? edgeMergedBoolean(replicad, kind, a, b)
+    : a.clone()[REPLICAD_OP[kind]](b.clone()));
   const BOX_SLACK = 1e-3; // mm — an enclosure test, not a measurement
   const encloses = (a, b) => {
     const [amin, amax] = a.boundingBox.bounds, [bmin, bmax] = b.boundingBox.bounds;
@@ -184,7 +199,7 @@ export function createOcctKernel(replicad) {
         try { guardBoolean("intersect", [shapes[i], shapes[j]]); }
         catch (e) { if (e?.code === "COINCIDENT_BOOLEAN") return 0; throw e; }
         let x;
-        try { x = shapes[i].clone().intersect(shapes[j].clone()); return measureVolume(x); }
+        try { x = boolean("intersect", shapes[i], shapes[j]); return measureVolume(x); }
         finally { x?.delete?.(); }
       },
     }, label);
@@ -308,7 +323,7 @@ export function createOcctKernel(replicad) {
         return judgedCache(key, () => {
           const a = mat(), b = t._mat();
           guardBoolean("cut", [a._s, b._s]);
-          const result = judge("cut", [a._s, b._s], () => a._s.clone().cut(b._s.clone()));
+          const result = judge("cut", [a._s, b._s], () => boolean("cut", a._s, b._s));
           return wrap(result, [...cloneLabels(a._labels), ...cloneLabels(b._labels)], key);
         });
       },
@@ -326,9 +341,9 @@ export function createOcctKernel(replicad) {
           // fails HERE (the thread dropped, the cut then honestly removes a plain
           // bore), so it is judged as one before the cut is.
           const fusedTools = judge("union", toolShapes,
-            () => bs.slice(1).reduce((acc, b) => acc.fuse(b._s.clone()), bs[0]._s.clone()),
+            () => bs.slice(1).reduce((acc, b) => boolean("fuse", acc, b._s), bs[0]._s.clone()),
             "cutAll (tools)");
-          const result = judge("cutAll", [a._s, ...toolShapes], () => a._s.clone().cut(fusedTools));
+          const result = judge("cutAll", [a._s, ...toolShapes], () => boolean("cut", a._s, fusedTools));
           return wrap(
             result,
             [...cloneLabels(a._labels), ...bs.flatMap((b) => cloneLabels(b._labels))],
@@ -341,7 +356,7 @@ export function createOcctKernel(replicad) {
         return judgedCache(key, () => {
           const a = mat(), b = t._mat();
           guardBoolean("intersect", [a._s, b._s]);
-          const result = judge("intersect", [a._s, b._s], () => a._s.clone().intersect(b._s.clone()));
+          const result = judge("intersect", [a._s, b._s], () => boolean("intersect", a._s, b._s));
           return wrap(result, [...cloneLabels(a._labels), ...cloneLabels(b._labels)], key);
         });
       },
@@ -350,7 +365,7 @@ export function createOcctKernel(replicad) {
         return judgedCache(key, () => {
           const a = mat(), b = t._mat();
           guardBoolean("union", [a._s, b._s]);
-          const result = judge("union", [a._s, b._s], () => a._s.clone().fuse(b._s.clone()));
+          const result = judge("union", [a._s, b._s], () => boolean("fuse", a._s, b._s));
           return wrap(result, [...cloneLabels(a._labels), ...cloneLabels(b._labels)], key);
         });
       },
@@ -795,7 +810,7 @@ export function createOcctKernel(replicad) {
         const ms = solids.map((s) => s._mat());
         guardBoolean("union", ms.map((m) => m._s));
         return wrap(
-          judge("union", ms.map((m) => m._s), () => ms.map((m) => m._s.clone()).reduce((a, b) => a.fuse(b))),
+          judge("union", ms.map((m) => m._s), () => ms.slice(1).reduce((acc, m) => boolean("fuse", acc, m._s), ms[0]._s.clone())),
           ms.flatMap((m) => cloneLabels(m._labels)),
           key,
         );
@@ -816,7 +831,7 @@ export function createOcctKernel(replicad) {
         // Labelled for what it is: the author never wrote this union, so a refusal
         // here means the framework's own audited composition broke on this kernel.
         return wrap(
-          judge("union", ms.map((m) => m._s), () => ms.map((m) => m._s.clone()).reduce((a, b) => a.fuse(b)),
+          judge("union", ms.map((m) => m._s), () => ms.slice(1).reduce((acc, m) => boolean("fuse", acc, m._s), ms[0]._s.clone()),
             "k.tappedBore's bore ∪ thread union (the framework's own composition — report this)"),
           ms.flatMap((m) => cloneLabels(m._labels)),
           key,

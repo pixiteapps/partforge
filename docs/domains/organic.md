@@ -621,12 +621,15 @@ it. It builds on Manifold only (see "Backend: Manifold only").
 ### When a cage, and when an implicit tree
 
 - **Use a cage for one continuous skin whose outline matters**: a whale, a fish, a
-  bottle with a sculpted shoulder, a hull. You place the control points, so you control
-  the silhouette directly, and the surface has no blend widths to tune.
-- **Use an implicit tree for pieces that blend, press together, or pose by frames**:
-  a hand whose fingers press against each other, toes that fan with a slider, a body
-  with crease detail. The cage has none of these: it has no frames, no `contact`, no
-  detail, and no pose-drag bindings.
+  bottle with a sculpted shoulder, a hull, a paw, a hand. You place the control points,
+  so you control the silhouette directly, and the surface has no blend widths to tune.
+  Limbs grow out of the body as extrudes, and a slider can bend them (`rotate`), as long
+  as the bent parts do not touch each other or the body.
+- **Use an implicit tree for pieces that press together, blend where they meet, or pose
+  by frames**: fingers that close against the palm, toes that fan and merge, a body with
+  crease detail, a limb the user drags in Pose mode. The cage has none of these: it has
+  no frames, no `contact`, no detail, and no pose-drag bindings, and a cage that passes
+  through itself is an error.
 - The two join each other only by ordinary booleans (`union`, `cut`), which leave a
   sharp seam where they meet. Do not plan on a smooth join between a cage and a tree.
 
@@ -701,6 +704,12 @@ pick by `normal` or `centroid` when you need "the side that faces +Y".
   `[sx, sy, sz]`) about the point `about`. Omitted (or `null`), it is the points' mean;
   under a mirror, for faces with an edge on the plane, the mean of the faces and their
   reflections, on the plane.
+- **`rotate(face | faces, { axis, deg, about? })`** turns the faces' points by `deg`
+  degrees about a line. `axis` is `"x"`, `"y"`, `"z"` or an `[x, y, z]` direction, and the
+  turn is right-handed (a positive angle about `"x"` turns +Y toward +Z). The line passes
+  through `about`, which defaults to the points' mean, so a bare `rotate` tilts a face
+  where it stands. A later `extrude` with a distance `by` follows the face's new normal:
+  this is how a limb turns a corner or bends with a slider (see "Recipes").
 - **`crease(face | faces, other?)`** keeps the border of the face (or of the region the
   faces make) as a hard edge of the smooth surface. With `other` (a face or faces), only
   the edges the two share are creased. Everything else stays smooth. The mark stays on
@@ -724,6 +733,8 @@ bar.centroid("arm");   // [-32, 0, 5]
 bar.scale("arm", 0.5);
 bar.size("arm");   // [10, 10]
 bar.bounds();   // { min: [-32, -10, -10], max: [30, 10, 15] }
+bar.rotate("arm", { axis: "y", deg: 90 });
+bar.normal("arm").map(Math.round);   // [0, 0, 1]
 ```
 
 ### Creases
@@ -767,15 +778,20 @@ partly sharp crease: for a tight but rounded edge, add a short `extrude` step be
 With `mirror`, the cage stays whole and symmetric through the plane:
 
 - **You change the positive half only.** A changing method (`extrude`, `move`,
-  `scale`) takes positive-side ids, and the same change is made to the reflected faces
+  `scale`, `rotate`) takes positive-side ids, and the same change is made to the reflected faces
   at once. Every face on the far side is named after its positive twin plus `~`
   (`+y:0,0>~`). The far box side has no ids of its own: under `mirror: "xz"` there are
   no `-y:` ids (its faces are `+y:0,0~`, `+y:1,0~`, …), and on a side the plane cuts,
   the far half is named the same way (there is no `+x:0,0`; that face is `+x:1,0~`).
   You can read a `~` id, but you cannot change one.
 - **`segs` across the plane must be even**, so the plane falls on a row of points.
-- **A point on the plane stays on it.** It keeps only the in-plane part of a move or
-  scale.
+- **A point on the plane stays on it.** It keeps only the in-plane part of a move,
+  scale or rotate. So a face with an edge on the plane does not turn rigidly: its plane
+  points stay put and the face stretches.
+- **A reflected face turns the opposite way.** `rotate` turns the positive faces as
+  asked and sets the far side to their reflection. Its default `about` is the positive
+  faces' own mean. Keep a turned face on its own side of the plane: one swung across
+  it passes through its reflection.
 - **A face or region with an edge on the plane grows across it as one region** with its
   reflection, so no wall is left on the plane: a dorsal fin on the middle of a back is one
   fin, not two. Its caps are the positive caps and their `~` twins. Its sides are
@@ -816,7 +832,8 @@ no solid already built, so you can build, change and build again.
 - **A cage has at most 2,000 faces.**
 - **It shades smooth** and takes every ordinary `Solid` op afterwards. A flat to print
   on is an ordinary `cut` with a box.
-- **No pose drag.** A param that changes the cage rebuilds the body, and the rebuild is
+- **No pose drag.** A param that changes the cage (a `rotate` angle, an extrude
+  length) rebuilds the body, and the rebuild is
   fast: the whale below rebuilds in well under a second at print quality.
 
 ```js
@@ -838,16 +855,38 @@ smoothBox([2, 2, 2]).max[0];   // 10
 
 ### Recipes
 
+- **A round body** starts from few faces. A box side with one face across it rounds
+  fully; a side with two or more stays flat in the middle. So give `segs` only the faces
+  the limbs need (three toes on one end are `segs: [3, 1, 1]`, four fingers
+  `segs: [4, 1, 2]`), and keep one face across the thin directions. Then taper the ends:
+  `scale` an end's faces to about 0.6 for a rounded heel or nose.
+- **A rounder cross-section** on a side that needs several faces: `scale` the side's
+  faces toward its middle row before extruding.
 - **A limb** is 2 to 4 chained extrudes from one face, each with its own `by` and
-  `scale`. Bend it by giving each `by` a new direction, but keep each `by` leaning along
-  its face's normal: a `by` in the face's own plane builds a thin blade. To turn a
-  corner, extrude a side face (`<cap>.s<k>`) instead.
+  `scale`. Start with a short neck (`scale` about 0.8) so neighbouring limbs stay
+  separate. Keep each `by` leaning along its face's normal: a `by` in the face's own
+  plane builds a thin blade.
+- **A turn** in a limb: `rotate` the cap, then `extrude` by a distance. The extrude
+  follows the turned cap. (To turn a square corner, extrude a side face, `<cap>.s<k>`.)
+- **A bend a slider drives** is a few short rings, each swung about the centre of the
+  face it grew from:
+
+  ```js
+  const ringStep = (c, face, by, deg, axis) => {
+    const hinge = c.centroid(face);
+    const cap = c.extrude(face, { by });
+    c.rotate(cap, { axis, deg, about: hinge });
+    return cap;
+  };
+  ```
+
+  Keep each ring to 30° or less and at least a quarter of the limb's thickness long, or
+  the inside of the bend folds through itself (a `subdiv:` error). An 80° knuckle is
+  three rings.
 - **A knuckle or bulge** is a short extrude with `scale` above 1, followed by one with
   `scale` below 1.
 - **A tip** is a last short extrude with `scale` about 0.6.
 - **A flat for printing** is an ordinary boolean `cut` on the result.
-- **A rounder cross-section**: a box side with two or more faces across it stays flat in
-  the middle. `scale` the side's faces toward its middle row before extruding.
 
 ### Drag handles on a cage
 
@@ -877,7 +916,7 @@ Either one can then be grabbed, and both sides follow, because both write the sa
 parameters.
 
 A click on a cage body opens the controls for that area, not for the whole body. Each
-`extrude`, `move` and `scale` records the parameters read since the cage call before it
+`extrude`, `move`, `scale` and `rotate` records the parameters read since the cage call before it
 against the faces it made or reshaped, and a face made by an `extrude` also keeps those of
 the face it grew from. So read a feature's parameters in the call that shapes it
 (`c.extrude(face, { by: p.finHeight })`) and a click on the fin offers the fin's settings.
@@ -897,6 +936,7 @@ cage: region [+y:1,0, +y:3,0] is not edge-connected
 cage: region [+z:0,0, +z:1,0, +z:2,0, +z:0,1, +z:2,1, +z:0,2, +z:1,2, +z:2,2] has a hole; extrude it in pieces
 cage: id "+y:0,0>" is already in use (by "+y:0,0>")
 cage: box.segs make 5400 faces, more than MAX_CAGE_FACES (2000)
+cage: rotate axis must be "x", "y", "z" or a non-zero [x, y, z], not "up"
 ```
 
 `k.subdiv` throws or warns with `subdiv: ` messages:
@@ -969,3 +1009,70 @@ The points to copy:
   dorsal fin sits on a face that has an edge on the plane, so it grows as one fin.
 - **Calibrate the length.** The surface lies inside its cage, so the whale's length is
   measured once (`CAGE_LENGTH`) and the params scale from it.
+
+### Worked example: a hand that curls
+
+One cage, no mirror: a palm with four faces across its top (one per finger), a wrist, a
+thumb from the lower face of one side, and a `curl` param from 0 (open) to 1 (a loose
+fist). The palm faces -Y, the fingers point to +Z, and the thumb leaves the +X side.
+
+```js
+function handCage(make, p) {
+  const c = make({ box: { size: [78, 28, 80], center: [0, 0, 60], segs: [4, 1, 2] } });
+  c.scale(c.faces("+z:"), [1.08, 1, 1]);
+  const w = c.extrude(c.faces("-z:"), { by: 14, scale: [0.62, 0.85, 1], id: "wrist" });
+  c.extrude(w, { by: 22, id: "arm" });
+  // One ring of a bend: extrude, then swing the new cap about the centre of the face it
+  // grew from. The next extrude follows the turned cap.
+  const ring = (cur, by, deg, axis, opts) => {
+    const hinge = c.centroid(cur);
+    const cap = c.extrude(cur, { by, ...opts });
+    if (deg) c.rotate(cap, { axis, deg, about: hinge });
+    return cap;
+  };
+  const digit = (face, tag, lens, splay, bend, axis = "x") => {
+    let cur = c.extrude(face, { by: 5, scale: [0.82, 0.85, 1], id: `${tag}Neck` });
+    if (splay) c.rotate(cur, { axis: "y", deg: splay });
+    lens.forEach((L, i) => {
+      // A knuckle: three short rings share the bend. Past the first knuckle (which sits
+      // in the palm) the first ring widens and the last narrows, which draws the joint.
+      cur = ring(cur, 6, bend / 3, axis, { id: `${tag}K${i}a`, scale: i ? 1.12 : 1 });
+      cur = ring(cur, 6, bend / 3, axis, { id: `${tag}K${i}b` });
+      cur = ring(cur, 6, bend / 3, axis, { id: `${tag}K${i}c`, scale: i ? 0.9 : 1 });
+      cur = c.extrude(cur, { by: L - 18, scale: 0.94, id: `${tag}P${i}` });
+    });
+    c.extrude(cur, { by: 5, scale: 0.6, id: `${tag}Tip` });
+  };
+  const bend = p.curl * 80;
+  digit("+z:0,0", "pinky", [30, 23, 21], -5, bend);
+  digit("+z:1,0", "ring", [38, 28, 23], -2, bend);
+  digit("+z:2,0", "middle", [41, 30, 24], 1, bend);
+  digit("+z:3,0", "index", [37, 27, 23], 4, bend);
+  let t = c.extrude("+x:0,0", { by: 8, scale: [1, 0.85, 0.6], id: "thumbRoot" });
+  c.rotate(t, { axis: "y", deg: -45 });
+  t = c.extrude(t, { by: 20, scale: 0.9, id: "thumb1" });
+  t = ring(t, 6, -8, "y", { id: "thumbKa", scale: 1.12 });
+  t = ring(t, 6, -8, "y", { id: "thumbKb", scale: 0.9 });
+  t = c.extrude(t, { by: 16, scale: 0.92, id: "thumb2" });
+  c.extrude(t, { by: 5, scale: 0.6, id: "thumbTip" });
+  return c;
+}
+handCage(cage, { curl: 0 }).faces().length;   // 296
+```
+
+In the part: `build: (k, p) => k.subdiv(handCage(k.cage, p))`, then an ordinary `cut`
+with a box under the wrist for a flat to stand on.
+
+- **One top face per finger.** `segs: [4, 1, 2]` gives the palm four faces across X on
+  its top and one face through its thickness, so its edge is round. Each finger starts
+  with a short narrower neck, which keeps the fingers separate.
+- **A knuckle is three short rings that share the bend.** Each ring swings about the
+  centre of the face it grew from (`ring`), a third of the joint's angle each, so the
+  inside of the bend does not fold. The rings are 6 mm long on fingers about 24 mm
+  thick, a quarter of the thickness. On the two knuckles past the palm the first ring
+  widens and the last narrows, which draws the joint.
+- **The thumb turns before it grows.** Its root is a short extrude out of the side,
+  turned 45° about Y; the extrudes after it follow that direction.
+- **It builds clean from `curl: 0` to `curl: 1`.** Past a fist the fingertips would
+  reach the palm, and a cage may not pass through itself: stop the slider before
+  contact. For fingers that must press into the palm, use an implicit tree.
