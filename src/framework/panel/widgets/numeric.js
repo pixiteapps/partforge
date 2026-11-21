@@ -216,7 +216,13 @@ export function makeNumeric(node, params, { onChange, onCommit, info, units }) {
       return;
     }
     const v = readBox();
-    if (v == null) { show(params[node.key]); return; } // revert invalid input
+    if (v == null) {
+      show(params[node.key]); // revert invalid input
+      // Inch text can parse mid-typing ("3/4") and then stop parsing ("3/"):
+      // the last good live value is already in params, so commit it once.
+      if (inches() && dirty) { dirty = false; onCommit?.(); }
+      return;
+    }
     params[node.key] = v;
     show(v);
     if (slider) slider.value = thumbFor(v);

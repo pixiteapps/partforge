@@ -135,3 +135,24 @@ describe("numeric widget in inches: typing back to the shown text", () => {
     expect(calls.commit).toBe(1);
   });
 });
+
+describe("numeric widget in inches: bad text on commit", () => {
+  it("after a good live parse, keeps the last good value and commits it once", () => {
+    const { box, params, calls } = setup();
+    fire(box, "input", "3/4");
+    fire(box, "input", "3/");
+    fire(box, "change");
+    expect(params.w).toBe(19.05);
+    expect(box.value).toBe("0.75");
+    expect(calls.commit).toBe(1);
+  });
+
+  it("with no live edit before it, reverts and commits nothing", () => {
+    const { box, params, calls } = setup();
+    box.value = "abc";
+    fire(box, "change");
+    expect(params.w).toBe(12.5);
+    expect(box.value).toBe("0.492");
+    expect(calls).toEqual({ change: 0, commit: 0 });
+  });
+});
