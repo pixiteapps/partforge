@@ -572,6 +572,18 @@ exactly the old behavior. The same array also carries *job-level* notices that
 belong to no single sub-part — currently a font source refused by its control's
 `allow` list — as entries with `part: null`.
 
+**Freeform booleans merge edges only** (B-rep backend, partforge 0.198.1,
+`occt-boolean.js`): replicad ends every cut, fuse and intersect with
+`SimplifyResult(true, true, 1e-3)`, and the face half of that merge grinds without
+end on a result where a swept surface meets a cylinder it crosses. The measured case
+is a tapped hole that breaks through a collar's dowel bore: the boolean builds in
+2.6 s and is valid, the face merge had not returned after 4.6 minutes, and the WASM
+build cannot abort it. So when either operand has a face that is not a plane,
+cylinder, cone, sphere or torus, the backend runs the boolean itself and merges
+edges only. Operands with analytic faces only still go through replicad, face merge
+included. On the cuts measured (blind and through tapped holes, a thread into a
+block) the face and edge counts are the same either way.
+
 **Boolean result gate** (both backends, partforge 0.110, `boolean-gate.js`): every
 author-facing boolean — `cut`, `cutAll`, `intersect`, `union` in both forms, and the
 B-rep backend's internal tool fuse inside `cutAll` — is judged AFTER it runs, by
