@@ -434,6 +434,8 @@ export interface ViewerState {
   renderMode?: RenderMode;
   /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
+  /** The display unit, present only when it is not `"mm"`. Any other value on the way back in is ignored and reads `"mm"`. */
+  units?: "mm" | "in";
 }
 
 /** The viewer's appearance: the drafting view, physical materials under an environment, or the cel-shaded look. */
@@ -490,6 +492,10 @@ export interface CustomControlHost {
   /** Text of one of the part's own files, by path or `pfc-tree://` token, or null. */
   file(pathOrToken: string): string | null;
   readonly disabled: boolean;
+  /** The display unit lengths are shown in (`"mm"` without a units state). Params stay millimetres. */
+  readonly units: "mm" | "in";
+  /** Hear a display unit switch. Returns an unsubscribe; released when the control is disposed. */
+  onUnitsChange(cb: (units: "mm" | "in") => void): () => void;
 }
 
 export interface CustomControlInstance {
@@ -819,6 +825,19 @@ export interface PartRuntime {
    * view-cube click, Reframe, or an animation cue).
    */
   getViewerState(): ViewerState;
+  /**
+   * The display unit: how lengths are SHOWN and typed in the panel, measure mode,
+   * pose readouts and custom controls. Parts are always authored and stored in
+   * millimetres. Seeded from `viewerState.units`, else the stored preference, else `"mm"`.
+   */
+  getUnits(): "mm" | "in";
+  /**
+   * Switch the display unit (anything but `"mm"` | `"in"` is ignored). Changes no
+   * parameter: no `onParamsCommit`, no build. The choice is stored for the next mount.
+   */
+  setUnits(units: "mm" | "in"): void;
+  /** Every display unit change, whoever made it. Returns an unsubscribe. */
+  onUnitsChange(cb: (units: "mm" | "in") => void): () => void;
   /**
    * The user's current view as an animation camera cue, for "keep the view I
    * have now": write `cue` as a `camera` value and playing it lands on this

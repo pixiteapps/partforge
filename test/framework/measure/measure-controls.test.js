@@ -254,3 +254,20 @@ test("a distance's X/Y/Z parts are listed; hover previews, click keeps", () => {
   mode.__setPins(0);
   expect(box.hidden).toBe(true);
 });
+
+test("the unit tag follows a unit change made elsewhere", () => {
+  const { viewer, button } = fixture();
+  let units = "mm";
+  const unitCbs = new Set();
+  const mode = fakeMode({
+    getUnits: () => units,
+    setUnits: (u) => { units = u; for (const cb of unitCbs) cb(u); },
+    onUnitsChange: (cb) => { unitCbs.add(cb); return () => unitCbs.delete(cb); },
+  });
+  const chrome = attachMeasureControls(viewer, mode, { measure: button });
+  const unitButton = document.querySelector("button.pf-measure-unit");
+  mode.setUnits("in"); // e.g. the panel's mm/in switch
+  expect(unitButton.textContent).toBe("in");
+  chrome.detach();
+  expect(unitCbs.size).toBe(0);
+});

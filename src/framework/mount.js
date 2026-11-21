@@ -43,6 +43,7 @@ import { createCaptureBuild } from "./capture-build.js";
 import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
 import { createMeasureMode } from "./measure/measure-mode.js";
+import { createUnitsState, isUnitId, loadUnits, saveUnits } from "./units.js";
 import { attachMeasureControls } from "./measure/measure-controls.js";
 import { createAnnotateMode } from "./annotate/annotate-mode.js";
 import { attachAnnotateControls } from "./annotate/annotate-controls.js";
@@ -96,7 +97,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture, units }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
@@ -189,7 +190,18 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // Pose mode's pins ("<handle>:<at>" ids) — viewer state, never parameters.
       // Only while one is set, like `display`.
       ...(() => { const p = poseState?.(); return p ? { pose: p } : {}; })(),
+      // The display unit, only when it is not the default "mm" (a token hosts compare).
+      ...(units && units.get() !== "mm" ? { units: units.get() } : {}),
     }),
+    // --- display units ---------------------------------------------------------
+    // "mm" | "in": how lengths are SHOWN and typed (panel, measure, pose readouts,
+    // custom controls). Parts are authored and stored in millimetres; a switch
+    // changes no parameter, fires no onParamsCommit and starts no build.
+    getUnits: () => units?.get() ?? "mm",
+    // Anything but "mm" | "in" is ignored.
+    setUnits: (u) => { units?.set(u); },
+    // cb(unit) on every change; returns an unsubscribe.
+    onUnitsChange: (cb) => (units && typeof cb === "function" ? units.onChange(cb) : () => {}),
     // The selection popover (mount's `selectionPopover` option), or null:
     // { setSlotHeight(px), onSlotChange(cb) → off, onClose(cb) → off, close(), isOpen() }.
     selection: selection ?? null,
@@ -477,6 +489,15 @@ function createCleanupStack() {
 //                                         // captureViews in a chosen appearance, without
 //                                         // switching the live view; "cad" is exactly captureViews(),
 //                                         // CAD in either live mode
+//   runtime.getUnits();    // "mm" | "in" — the display unit (lengths SHOWN and typed in the
+//                          // panel, measure, pose readouts and custom controls; params
+//                          // stay millimetres). Seeded from viewerState.units, else the
+//                          // stored preference, else "mm"
+//   runtime.setUnits("in"); // switch it (anything but "mm" | "in" is ignored): no parameter
+//                          // changes, no onParamsCommit, no build; the choice is stored
+//   const off = runtime.onUnitsChange((u) => …);  // every change, whoever made it (the
+//                          // panel's mm/in switch, the measure tag, setUnits); returns an
+//                          // unsubscribe
 //   runtime.dispose();     // full teardown
 //   runtime.previewActive  // true while the `preview` GLB is on screen (decoded, not yet
 //                          // replaced by a whole live build): picking, hover labels,
@@ -515,7 +536,9 @@ function createCleanupStack() {
 //                                         // resume the camera, projection, cutaway, render mode,
 //                                         // environment, per-style feature-line preferences and
 //                                         // per-sub-part display overrides (`display`, pruned for
-//                                         // this part) where that mount
+//                                         // this part), display unit (`units`: "mm" | "in",
+//                                         // present only when not "mm"; any other value is
+//                                         // ignored and reads "mm") where that mount
 //                                         // left them. For a host that applies edits by REMOUNTING: the
 //                                         // part changed, the user's view of it should not. Omit on a
 //                                         // first mount — the viewer then restores its own persisted
@@ -778,6 +801,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     onViewChange?.(tabsCtl.current());
     const params = { ...part.defaults };
 
+    // The display unit (mm | in): ONE state for this mount, read by the panel's
+    // numeric boxes and mm/in switch, measure mode's unit tag, pose mode's readout,
+    // the handle chip and custom controls. Display only — params stay millimetres,
+    // so a switch changes no parameter and starts no build. Precedence: a carried
+    // viewerState.units (only "mm" | "in"; anything else is ignored), then the
+    // stored preference, then "mm". Saved only on a real change (below).
+    const units = createUnitsState(isUnitId(viewerState?.units) ? viewerState.units : loadUnits() ?? "mm");
+
     // Measurement mode: in-scene dims, the two-click snapping model, and
     // reading->controls reveal (a first-click reading flashes every control
     // holding its value). The panel is built later in this function, so
@@ -791,6 +822,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       revealParams: (keys, focusKey) => panelRef?.revealParams(keys, focusKey),
       getReads: (name) => displayReadsOf(name),
       stage: els.viewer,
+      units,
     });
     cleanup.defer(() => measureMode.detach());
     // Annotation mode (spec 2026-08-18): freehand ink over the frozen view,
@@ -886,6 +918,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       poseMode = createPoseMode(viewer, {
         part,
         orbitControls: viewer.orbitControls,
+        getUnits: units.get,
         getParams: () => params,
         write: live((values) => writePoseValues(values)),
         restore: live((snapshot) => writePoseValues(snapshot)),
@@ -1138,12 +1171,19 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // values by the handle, editable for exact numbers (written as a slider writes them,
     // one commit), or the pin hint when a pin held the drag.
     const poseChip = poseMode
-      ? attachReadoutChip(viewer, poseMode, { stage: els.viewer }, { part, getParams: () => params, apply: (values) => writeChipValues(values), toStage })
+      ? attachReadoutChip(viewer, poseMode, { stage: els.viewer }, { part, getParams: () => params, apply: (values) => writeChipValues(values), toStage, getUnits: units.get })
       : null;
     if (poseChip) {
       poseChipHide = () => poseChip.hide();
       cleanup.defer(() => poseChip.detach());
     }
+    // A unit change: remember it, redraw a live drag readout in the new unit, and
+    // hide the values chip (its numbers were typed in the old one).
+    cleanup.defer(units.onChange((u) => {
+      saveUnits(u);
+      poseMode?.refreshReadout?.();
+      poseChipHide?.();
+    }));
     if (selectionOpt) {
       // The clicked spot's controls: up to SPOT_CAP of the keys its face (else its piece)
       // was built from, as bare rail rows (a key a handle drags is offered here too).
@@ -1180,7 +1220,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             : undefined,
           { fontCatalog, imageCatalog, onAssetUpload,
             declaredSource: declaredSourceLookup(part, params),
-            files, panelState: null, bare: true, only: new Set(keys) });
+            files, panelState: null, bare: true, only: new Set(keys), units });
           sub.refresh({ relevant, derived });
           spotPanel = sub;
           if (more) {
@@ -2191,7 +2231,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // build, because the declaration is a function of the current params.
       { fontCatalog, imageCatalog, onAssetUpload,
         declaredSource: declaredSourceLookup(part, params),
-        files, panelState });
+        files, panelState, units, unitsSwitch: true });
     cleanup.defer(() => panel.dispose());
     panelRef = panel;
     updateRelevance = () => {
@@ -2527,7 +2567,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     }
 
     return makeHandle({
-      ready, dispose, viewer, setParams,
+      ready, dispose, viewer, setParams, units,
       // No capture reads a pose drag's deformed mesh: the hold keeps a slider input
       // during an async capture from deforming it again. Nor a two-stage delivery's
       // provisional stage, which has no exact base to put back: the capture throws

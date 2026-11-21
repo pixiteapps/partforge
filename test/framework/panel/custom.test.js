@@ -281,3 +281,45 @@ test("panel.dispose commits a number box edited but not yet committed; an edit a
   panel.dispose();
   expect(commits).toEqual([["h"], ["od"]]);
 });
+
+test("host.units reports the display unit and host.onUnitsChange hears a switch until disposed", async () => {
+  const { createUnitsState } = await import("../../../src/framework/units.js");
+  const r = root();
+  const units = createUnitsState("mm");
+  const heard = [];
+  let host;
+  const panel = buildControls(r, sec({ key: "tiles", type: "custom", widget: (h) => {
+    host = h;
+    h.onUnitsChange((u) => heard.push(u));
+  } }), { tiles: [] }, () => {}, undefined, { units });
+  expect(host.units).toBe("mm");
+  units.set("in");
+  expect(host.units).toBe("in");
+  expect(heard).toEqual(["in"]);
+  panel.dispose();
+  units.set("mm");
+  expect(heard).toEqual(["in"]);                           // released with the control
+});
+
+test("with no units state host.units is mm and onUnitsChange is a no-op", () => {
+  const r = root();
+  let host;
+  buildControls(r, sec({ key: "tiles", type: "custom", widget: (h) => { host = h; } }), { tiles: [] }, () => {});
+  expect(host.units).toBe("mm");
+  const off = host.onUnitsChange(() => {});
+  expect(typeof off).toBe("function");
+  off();
+});
+
+test("a throwing onUnitsChange listener retires the widget, not the panel", async () => {
+  const { createUnitsState } = await import("../../../src/framework/units.js");
+  const r = root();
+  const units = createUnitsState("mm");
+  const errors = [];
+  buildControls(r, sec({ key: "tiles", type: "custom", label: "Tiles", widget: (h) => {
+    h.onUnitsChange(() => { throw new Error("boom"); });
+  } }), { tiles: [] }, () => {}, undefined, { units, onPanelError: (e) => errors.push(e) });
+  expect(() => units.set("in")).not.toThrow();
+  expect(errors.map((e) => e.message)).toEqual(["boom"]);
+  expect(r.querySelector(".pf-custom-error")).not.toBeNull();
+});

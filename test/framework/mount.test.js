@@ -213,6 +213,7 @@ vi.mock("../../src/framework/pose/pose-mode.js", () => ({
       onHoverChange: (cb) => { stub.hoverCbs.add(cb); return () => stub.hoverCbs.delete(cb); },
       takeClick: vi.fn(() => false),
       isDragging: vi.fn(() => false),
+      refreshReadout: vi.fn(),
     };
     poseStubs.push(stub);
     return stub;
@@ -3724,4 +3725,107 @@ test("describeKit reads the kit's sections at the live params; exportKit's reply
   expect(onKit).toHaveBeenCalledWith({ entries, name: "part" });
   expect(onDownload).not.toHaveBeenCalled();
   runtime.dispose();
+});
+
+// --- display units (mm / in) ---------------------------------------------------
+// One units state per mount: the panel switch, the measure tag, pose readouts and
+// custom controls all read it; it rides viewerState and is never a parameter.
+const makeUnitPart = () => {
+  const part = makePart();
+  part.parameters[0].advanced[0].unit = "mm";
+  return part;
+};
+
+test("a carried viewerState.units seeds the mount and round-trips through getViewerState", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makeUnitPart(), { createWorker, elements: makeElements(), viewerState: { units: "in" } });
+  expect(runtime.getUnits()).toBe("in");
+  expect(runtime.getViewerState().units).toBe("in");
+  expect(localStorage.getItem("partforge:units")).toBeNull(); // seeding is not a change: nothing saved
+  runtime.dispose();
+});
+
+test.each([["ft"], [5], [null]])("a junk viewerState.units (%s) reads mm and is left out of getViewerState", (junk) => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makeUnitPart(), { createWorker, elements: makeElements(), viewerState: { units: junk } });
+  expect(runtime.getUnits()).toBe("mm");
+  expect("units" in runtime.getViewerState()).toBe(false);
+  runtime.dispose();
+});
+
+test("with nothing carried the stored unit applies, and a carried one outranks it", () => {
+  localStorage.setItem("partforge:units", "in");
+  const a = mount(makeUnitPart(), { createWorker: makeWorkers().createWorker, elements: makeElements() });
+  expect(a.getUnits()).toBe("in");
+  a.dispose();
+  const b = mount(makeUnitPart(), { createWorker: makeWorkers().createWorker, elements: makeElements(), viewerState: { units: "mm" } });
+  expect(b.getUnits()).toBe("mm");
+  b.dispose();
+});
+
+test("setUnits notifies once, saves, and changes no parameter: no commit, no build", () => {
+  const onParamsCommit = vi.fn();
+  const onBuild = vi.fn();
+  const { workers, createWorker } = makeWorkers();
+  const runtime = mount(makeUnitPart(), { createWorker, elements: makeElements(), onParamsCommit, onBuild });
+  finishFirstBuild(workers);
+  onBuild.mockClear();
+  const jobs = workers.manifold.postMessage.mock.calls.length;
+  const heard = vi.fn();
+  const off = runtime.onUnitsChange(heard);
+  runtime.setUnits("in");
+  runtime.setUnits("in");   // no change: no second call
+  runtime.setUnits("ft");   // not a unit: ignored
+  expect(heard).toHaveBeenCalledTimes(1);
+  expect(heard).toHaveBeenCalledWith("in");
+  expect(runtime.getUnits()).toBe("in");
+  expect(localStorage.getItem("partforge:units")).toBe("in");
+  expect(onParamsCommit).not.toHaveBeenCalled();
+  expect(onBuild).not.toHaveBeenCalled();
+  expect(workers.manifold.postMessage.mock.calls.length).toBe(jobs);
+  off();
+  runtime.setUnits("mm");
+  expect(heard).toHaveBeenCalledTimes(1);
+  expect("units" in runtime.getViewerState()).toBe(false);
+  runtime.dispose();
+});
+
+test("the measure unit tag and the panel switch move the same state, both ways", () => {
+  const els = makeElements();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makeUnitPart(), { createWorker, elements: els });
+  const tag = document.querySelector("button.pf-measure-unit");
+  const panelIn = els.controls.querySelector('.pf-units button[data-units="in"]');
+  const panelMm = els.controls.querySelector('.pf-units button[data-units="mm"]');
+  expect(tag.textContent).toBe("mm");
+  tag.click();
+  expect(runtime.getUnits()).toBe("in");
+  expect(panelIn.getAttribute("aria-pressed")).toBe("true");
+  panelMm.click();
+  expect(runtime.getUnits()).toBe("mm");
+  expect(tag.textContent).toBe("mm");
+  panelIn.click();
+  expect(tag.textContent).toBe("in");
+  runtime.dispose();
+});
+
+test("a unit change refreshes the pose readout, which reads the mount's unit", () => {
+  const part = makeUnitPart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements() });
+  const pose = poseStubs.at(-1);
+  expect(pose.opts.getUnits()).toBe("mm");
+  runtime.setUnits("in");
+  expect(pose.opts.getUnits()).toBe("in");
+  expect(pose.refreshReadout).toHaveBeenCalledTimes(1);
+  runtime.dispose();
+});
+
+test("makeHandle without a units state answers mm", () => {
+  const h = makeHandle({ viewer: { getCameraState: () => null } });
+  expect(h.getUnits()).toBe("mm");
+  expect(() => h.setUnits("in")).not.toThrow();
+  expect(typeof h.onUnitsChange(() => {})).toBe("function");
+  expect("units" in h.getViewerState()).toBe(false);
 });

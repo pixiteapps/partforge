@@ -122,6 +122,8 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
   };
   const offPins = mode.onPinsChange(sync);
   const offMode = mode.onModeChange(sync);
+  // a unit change made elsewhere (the panel's mm/in switch) redraws the tag too
+  const offUnits = mode.onUnitsChange?.(sync) ?? noop;
 
   button.addEventListener("click", onToggle);
   clearButton.addEventListener("click", onClear);
@@ -143,6 +145,7 @@ export function attachMeasureControls(viewer, mode, { measure: button } = {}, { 
       runCleanupSteps([
         offPins,
         offMode,
+        offUnits,
         () => button.removeEventListener("click", onToggle),
         () => clearButton.removeEventListener("click", onClear),
         () => partsBox.removeEventListener("pointerover", onPartOver),

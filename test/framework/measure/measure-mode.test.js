@@ -134,7 +134,7 @@ const part = {
 };
 const pointerOpts = { bubbles: true, clientX: 50, clientY: 50, pointerId: 1 };
 
-function setup({ parts, mesh = plateMesh() } = {}) {
+function setup({ parts, mesh = plateMesh(), units } = {}) {
   const viewer = fakeViewer(mesh, parts);
   const revealParams = vi.fn();
   const ctx = { view: "main", params: { plate_w: 20, wall: 3 } };
@@ -152,6 +152,7 @@ function setup({ parts, mesh = plateMesh() } = {}) {
     stage: viewer.stage,
     schedule: (cb) => cb(), // synchronous for tests
     idle,
+    ...(units ? { units } : {}),
   });
   const dimGroup = () => viewer.__parts.children.find((c) => c.name === "pf-dims");
   const itemIds = () => (dimGroup()?.children ?? [])
@@ -252,6 +253,39 @@ test("setUnits re-renders labels in inches; values stay mm", () => {
   expect(dimGroup().children.find((c) => c.userData.pfDimValue === 20)).toBeDefined();
   mode.setUnits("furlongs");
   expect(mode.getUnits()).toBe("in");
+  mode.detach();
+});
+
+test("a shared units state drives the labels both ways; detach releases it", async () => {
+  const { createUnitsState } = await import("../../../src/framework/units.js");
+  const units = createUnitsState("mm");
+  const { mode } = setup({ units });
+  const heard = [];
+  const off = mode.onUnitsChange((u) => heard.push(u));
+  mode.setEnabled(true);
+  paintLog.length = 0;
+  units.set("in");                    // the panel switch, say
+  expect(mode.getUnits()).toBe("in");
+  expect(paintLog).toContain("0.787 in");
+  mode.setUnits("mm");                // the measure tag
+  expect(units.get()).toBe("mm");
+  mode.setUnits("ft");
+  expect(units.get()).toBe("mm");
+  expect(heard).toEqual(["in", "mm"]);
+  off();
+  mode.detach();
+  paintLog.length = 0;
+  units.set("in");
+  expect(paintLog).toEqual([]);       // a detached mode no longer listens
+});
+
+test("without a units state onUnitsChange still hears setUnits", () => {
+  const { mode } = setup();
+  const heard = [];
+  mode.onUnitsChange((u) => heard.push(u));
+  mode.setUnits("in");
+  mode.setUnits("in");
+  expect(heard).toEqual(["in"]);
   mode.detach();
 });
 
