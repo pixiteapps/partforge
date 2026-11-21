@@ -5,6 +5,7 @@
 // fails visibly if it can't), the thumb pins at the nearer end of the track,
 // and the box paints red until the value is back inside the range.
 import { attachInfo } from "../info.js";
+import { convertsUnit, formatLength, parseLength, unitLabel } from "../../units.js";
 
 // Short numeric string without float noise (4 dp max) for the value box.
 const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
@@ -48,8 +49,13 @@ function el(tag, className, text) {
   return node;
 }
 
-export function makeNumeric(node, params, { onChange, onCommit, info }) {
+export function makeNumeric(node, params, { onChange, onCommit, info, units }) {
   const numeric = node.type === "number";
+  // Display units: params stay millimetres; only a node whose unit is exactly
+  // "mm" is shown (and typed) in inches when the shared units state says so.
+  // In millimetre mode, or with no units state, the box is exactly as before.
+  const converts = !!units && convertsUnit(node.unit);
+  const inches = () => converts && units.get() === "in";
   const wrap = el("div", "slider");
   const row = el("div", "row");
   const label = el("label", "", node.label);
@@ -65,7 +71,38 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
   box.step = node.step;
   box.value = numStr(params[node.key]);
   val.append(box);
-  if (node.unit) val.append(el("span", "unit", node.unit));
+  const unitEl = node.unit ? el("span", "unit", node.unit) : null;
+  if (unitEl) val.append(unitEl);
+
+  // The text the box last showed in inch mode: a `change` that leaves it
+  // untouched writes nothing (re-parsing 0.492 would move 12.5 mm to 12.4968).
+  let shownText = null;
+  let shownValue = null;
+  const show = (v) => {
+    if (inches()) { shownText = formatLength(v, "in"); shownValue = v; box.value = shownText; }
+    else { shownText = null; shownValue = null; box.value = numStr(v); }
+  };
+  // Box type and unit label for the current unit; the text is set by show().
+  const applyUnit = () => {
+    if (!converts) return;
+    if (unitEl) unitEl.textContent = unitLabel(node.unit, units.get());
+    if (inches()) {
+      box.type = "text";
+      box.inputMode = "decimal";
+      box.removeAttribute("step");
+    } else {
+      box.type = "number";
+      box.removeAttribute("inputmode");
+      box.step = node.step;
+    }
+  };
+  // The typed text as millimetres, or null when it is not a number.
+  const readBox = () => {
+    if (inches()) return parseLength(box.value, "in");
+    const v = parseFloat(box.value);
+    return Number.isFinite(v) ? v : null;
+  };
+  if (inches()) { applyUnit(); show(params[node.key]); }
   row.append(val);
   wrap.append(row);
 
@@ -106,7 +143,7 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
       const v = wrapped ? roundToStep(sameTurn(params[node.key], +slider.value, node.min, node.max), node.step)
         : log ? toValue(+slider.value) : snapTo(+slider.value);
       params[node.key] = v;
-      box.value = numStr(v);
+      show(v);
       paintWarn();
       dirty = true;
       onChange?.();
@@ -157,8 +194,8 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
 
   // live preview while typing; reformat (never clamp) on commit
   box.addEventListener("input", () => {
-    const v = parseFloat(box.value);
-    if (!Number.isFinite(v)) return;
+    const v = readBox();
+    if (v == null) return;
     params[node.key] = v;
     if (slider) slider.value = thumbFor(v);
     paintWarn();
@@ -166,10 +203,22 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
     onChange?.();
   });
   box.addEventListener("change", () => {
-    const v = parseFloat(box.value);
-    if (!Number.isFinite(v)) { box.value = numStr(params[node.key]); return; } // revert invalid input
+    if (shownText != null && box.value === shownText) {
+      // Untouched inch text: nothing to write. If live typing moved params on
+      // the way back to the same text, put the shown value back and finish.
+      if (!dirty) return;
+      params[node.key] = shownValue;
+      if (slider) slider.value = thumbFor(shownValue);
+      paintWarn();
+      dirty = false;
+      onChange?.();
+      onCommit?.();
+      return;
+    }
+    const v = readBox();
+    if (v == null) { show(params[node.key]); return; } // revert invalid input
     params[node.key] = v;
-    box.value = numStr(v);
+    show(v);
     if (slider) slider.value = thumbFor(v);
     paintWarn();
     dirty = false;
@@ -178,7 +227,8 @@ export function makeNumeric(node, params, { onChange, onCommit, info }) {
   });
 
   const sync = () => {
-    box.value = numStr(params[node.key]);
+    applyUnit();
+    show(params[node.key]);
     if (slider) slider.value = thumbFor(params[node.key]);
     paintWarn();
   };

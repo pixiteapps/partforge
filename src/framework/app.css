@@ -191,6 +191,20 @@ select.preset, select.select-input {
 .row .num::-webkit-outer-spin-button, .row .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .row .num { -moz-appearance: textfield; }
 .row .unit { font-family: var(--pf-mono); color: var(--pf-muted); font-size: 10px; }
+/* The mm/in display-units switch: two small segmented buttons, right-aligned
+   above the rail's sections. */
+.pf-units { display: flex; justify-content: flex-end; gap: 0; margin: 0 0 6px; }
+.pf-units button {
+  font-family: var(--pf-mono); font-size: 10px; line-height: 1; cursor: pointer;
+  padding: 3px 7px; color: var(--pf-muted); background: var(--pf-input-bg);
+  border: 1px solid var(--pf-border); margin: 0;
+}
+.pf-units button + button { border-left: 0; }
+.pf-units button:first-child { border-radius: var(--pf-radius-control) 0 0 var(--pf-radius-control); }
+.pf-units button:last-child { border-radius: 0 var(--pf-radius-control) var(--pf-radius-control) 0; }
+.pf-units button[aria-pressed="true"] { color: var(--pf-text-strong); background: var(--pf-surface-2); }
+.pf-units button:focus-visible { outline: none; border-color: var(--pf-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 .text-input {
   display: block; width: 100%; font: 12px/1.4 var(--pf-mono);
   background: var(--pf-input-bg); color: var(--pf-text-strong);

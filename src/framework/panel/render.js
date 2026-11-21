@@ -8,6 +8,7 @@ import { WIDGET_FACTORIES } from "./widgets/index.js";
 import { makeReadout } from "./widgets/readout.js";
 import { createInfoPopover, attachInfo } from "./info.js";
 import { isJsonValue } from "./json-value.js";
+import { convertsUnit } from "../units.js";
 
 // The budget every custom control's transient state shares (getState below).
 export const PANEL_STATE_MAX_BYTES = 65536;
@@ -44,6 +45,39 @@ function pruneTree(nodes, only) {
   return out;
 }
 
+// True when any numeric control or readout, at any depth, shows a length the
+// units switch converts.
+function hasConvertingNode(nodes) {
+  for (const node of nodes ?? []) {
+    if (node.kind === "group") { if (hasConvertingNode(node.children)) return true; continue; }
+    const numeric = node.kind === "control" && (node.type === "slider" || node.type === "number");
+    const readout = node.kind === "display";
+    if ((numeric || readout) && convertsUnit(node.unit)) return true;
+  }
+  return false;
+}
+
+// The mm/in switch: two segmented buttons. A click only sets the units state;
+// the state's subscribers (this panel among them) re-sync what they show.
+function makeUnitsSwitch(units) {
+  const group = el("div", "pf-units");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "Units");
+  const buttons = ["mm", "in"].map((id) => {
+    const b = el("button", "", id);
+    b.type = "button";
+    b.dataset.units = id;
+    b.addEventListener("click", () => units.set(id));
+    group.append(b);
+    return b;
+  });
+  const sync = () => {
+    for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.units === units.get()));
+  };
+  sync();
+  return { el: group, sync };
+}
+
 export function buildControls(root, parameters, params, onDirty, onCommit, opts = {}) {
   const info = createInfoPopover();
   const fullTree = buildTree(desugar(parameters));
@@ -60,6 +94,8 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
   const lastVisible = new Map();  // id -> previous `visible`, to detect a reveal
   const lastDisabled = new Map(); // id -> previous `disabled`, to skip a no-op input pass
   const keyToId = new Map();      // param key -> node id, for revealParam
+  const unitSyncs = [];           // widgets that redraw when the display units change
+  const units = opts.units ?? null;
   // Containers that own a disclosure: sections, and titled inner groups (the
   // legacy "Advanced" fold). Both share the same anatomy — a header row with
   // the aria-carrying button and a text-free chevron span — so `el` (the
@@ -82,7 +118,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     onError: (e) => { panelErrors.push(e); opts.onPanelError?.(e); },
     buildSubPanel: (container, controls, scoped, onSubDirty, onSubCommit) =>
       buildControls(container, [{ controls }], scoped, onSubDirty, onSubCommit,
-        { ...opts, bare: true, panelState: null, onPanelError: customCtx.onError }),
+        { ...opts, bare: true, panelState: null, unitsSwitch: false, onPanelError: customCtx.onError }),
   };
 
   // Re-apply state after any change that could flip a condition. This is what
@@ -243,7 +279,8 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     if (node.kind === "group") { renderGroup(node, container, sectionCtx); return; }
     if (node.kind === "preset") { renderPreset(node, container, sectionCtx); return; }
     if (node.kind === "display") {
-      const widget = makeReadout(node, { info });
+      const widget = makeReadout(node, { info, units });
+      if (typeof widget.sync === "function") unitSyncs.push(widget.sync);
       nodeEls.set(node.id, widget.el);
       displayUpdates.set(node.id, widget.update);
       container.append(widget.el);
@@ -265,6 +302,7 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
       // the built-ins call onCommit() bare and get their own key, as before.
       onCommit: (keys) => commit(Array.isArray(keys) && keys.length ? keys : [node.key]),
       info,
+      units,
       fontCatalog: opts.fontCatalog,
       imageCatalog: opts.imageCatalog,
       onAssetUpload: opts.onAssetUpload,
@@ -274,6 +312,10 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     nodeEls.set(node.id, widget.el);
     if (node.key && !keyToId.has(node.key)) keyToId.set(node.key, node.id);
     widgetSyncs.set(node.id, widget.sync);
+    // A unit switch redraws only the boxes it converts, through the RAW sync:
+    // it changes no parameter, so it must not drop a preset picker to Custom.
+    const numericType = node.type === "slider" || node.type === "number";
+    if (numericType && convertsUnit(node.unit) && typeof widget.sync === "function") unitSyncs.push(widget.sync);
     if (widget.dispose) disposers.push(widget.dispose);
     // A custom control reads derive() output like a readout does, and keeps
     // transient state the host may carry across a remount.
@@ -294,6 +336,14 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     for (const key of ownedKeys) {
       syncFns.push({ key, sync: () => { widget.sync(); markCustom(); } });
     }
+  }
+
+  // Opt-in: only the host's own top-level panel asks for the switch; nested
+  // sub-panels pass the units on but never draw a second switch.
+  if (units && opts.unitsSwitch === true && hasConvertingNode(tree)) {
+    const sw = makeUnitsSwitch(units);
+    unitSyncs.push(sw.sync);
+    root.append(sw.el);
   }
 
   for (const section of tree) {
@@ -353,6 +403,8 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
   }
 
   applyState();
+
+  const stopUnits = units ? units.onChange(() => { for (const sync of unitSyncs) sync(); }) : () => {};
 
   // The single entry point for a param change: relevance dims/undims controls,
   // derived pushes fresh values into every readout. Either argument may be
@@ -459,6 +511,6 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
     },
     // replaceChildren() only reaches what is INSIDE root; a widget that parked
     // DOM (or a document-level listener) elsewhere has to be told to let go.
-    dispose: () => { info.dispose(); for (const d of disposers) d(); root.replaceChildren(); },
+    dispose: () => { stopUnits(); info.dispose(); for (const d of disposers) d(); root.replaceChildren(); },
   };
 }
