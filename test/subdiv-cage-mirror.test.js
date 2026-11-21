@@ -96,6 +96,7 @@ it("rotates a side face and its reflection the opposite way; a point on the plan
   expect(t).toEqual([n[0], -n[1], n[2]]);
   c.rotate("+z:1,1", { axis: "x", deg: 20 });             // has an edge on the plane
   const pts = c.snapshot().points;
-  expect(pts.filter((p) => p[1] === 0).length).toBeGreaterThan(0);
+  // The face's plane edge did not leave the plane, so it stretched rather than turned rigidly.
+  expect(c.snapshot().faces[c.snapshot().ids.indexOf("+z:1,1")].filter((p) => pts[p][1] === 0).length).toBe(2);
   expect(reflectY(pts)).toEqual(pts.map((p) => p.join()).sort());
 });

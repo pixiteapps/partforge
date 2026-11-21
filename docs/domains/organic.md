@@ -778,15 +778,20 @@ partly sharp crease: for a tight but rounded edge, add a short `extrude` step be
 With `mirror`, the cage stays whole and symmetric through the plane:
 
 - **You change the positive half only.** A changing method (`extrude`, `move`,
-  `scale`) takes positive-side ids, and the same change is made to the reflected faces
+  `scale`, `rotate`) takes positive-side ids, and the same change is made to the reflected faces
   at once. Every face on the far side is named after its positive twin plus `~`
   (`+y:0,0>~`). The far box side has no ids of its own: under `mirror: "xz"` there are
   no `-y:` ids (its faces are `+y:0,0~`, `+y:1,0~`, …), and on a side the plane cuts,
   the far half is named the same way (there is no `+x:0,0`; that face is `+x:1,0~`).
   You can read a `~` id, but you cannot change one.
 - **`segs` across the plane must be even**, so the plane falls on a row of points.
-- **A point on the plane stays on it.** It keeps only the in-plane part of a move or
-  scale.
+- **A point on the plane stays on it.** It keeps only the in-plane part of a move,
+  scale or rotate. So a face with an edge on the plane does not turn rigidly: its plane
+  points stay put and the face stretches.
+- **A reflected face turns the opposite way.** `rotate` turns the positive faces as
+  asked and sets the far side to their reflection. Its default `about` is the positive
+  faces' own mean. Keep a turned face on its own side of the plane: one swung across
+  it passes through its reflection.
 - **A face or region with an edge on the plane grows across it as one region** with its
   reflection, so no wall is left on the plane: a dorsal fin on the middle of a back is one
   fin, not two. Its caps are the positive caps and their `~` twins. Its sides are
@@ -1029,24 +1034,25 @@ function handCage(make, p) {
     let cur = c.extrude(face, { by: 5, scale: [0.82, 0.85, 1], id: `${tag}Neck` });
     if (splay) c.rotate(cur, { axis: "y", deg: splay });
     lens.forEach((L, i) => {
-      // A knuckle: three short rings share the bend; the middle one bulges.
-      cur = ring(cur, 5, bend / 3, axis, { id: `${tag}K${i}a`, scale: i ? 1.12 : 1 });
-      cur = ring(cur, 5, bend / 3, axis, { id: `${tag}K${i}b` });
-      cur = ring(cur, 5, bend / 3, axis, { id: `${tag}K${i}c`, scale: i ? 0.9 : 1 });
-      cur = c.extrude(cur, { by: L - 15, scale: 0.94, id: `${tag}P${i}` });
+      // A knuckle: three short rings share the bend. Past the first knuckle (which sits
+      // in the palm) the first ring widens and the last narrows, which draws the joint.
+      cur = ring(cur, 6, bend / 3, axis, { id: `${tag}K${i}a`, scale: i ? 1.12 : 1 });
+      cur = ring(cur, 6, bend / 3, axis, { id: `${tag}K${i}b` });
+      cur = ring(cur, 6, bend / 3, axis, { id: `${tag}K${i}c`, scale: i ? 0.9 : 1 });
+      cur = c.extrude(cur, { by: L - 18, scale: 0.94, id: `${tag}P${i}` });
     });
     c.extrude(cur, { by: 5, scale: 0.6, id: `${tag}Tip` });
   };
   const bend = p.curl * 80;
-  digit("+z:0,0", "pinky", [27, 20, 18], -5, bend);
-  digit("+z:1,0", "ring", [35, 25, 20], -2, bend);
-  digit("+z:2,0", "middle", [38, 27, 21], 1, bend);
-  digit("+z:3,0", "index", [34, 24, 20], 4, bend);
+  digit("+z:0,0", "pinky", [30, 23, 21], -5, bend);
+  digit("+z:1,0", "ring", [38, 28, 23], -2, bend);
+  digit("+z:2,0", "middle", [41, 30, 24], 1, bend);
+  digit("+z:3,0", "index", [37, 27, 23], 4, bend);
   let t = c.extrude("+x:0,0", { by: 8, scale: [1, 0.85, 0.6], id: "thumbRoot" });
   c.rotate(t, { axis: "y", deg: -45 });
   t = c.extrude(t, { by: 20, scale: 0.9, id: "thumb1" });
-  t = ring(t, 5, -8, "y", { id: "thumbKa", scale: 1.12 });
-  t = ring(t, 5, -8, "y", { id: "thumbKb", scale: 0.9 });
+  t = ring(t, 6, -8, "y", { id: "thumbKa", scale: 1.12 });
+  t = ring(t, 6, -8, "y", { id: "thumbKb", scale: 0.9 });
   t = c.extrude(t, { by: 16, scale: 0.92, id: "thumb2" });
   c.extrude(t, { by: 5, scale: 0.6, id: "thumbTip" });
   return c;
@@ -1062,8 +1068,9 @@ with a box under the wrist for a flat to stand on.
   with a short narrower neck, which keeps the fingers separate.
 - **A knuckle is three short rings that share the bend.** Each ring swings about the
   centre of the face it grew from (`ring`), a third of the joint's angle each, so the
-  inside of the bend does not fold. The first ring of a knuckle bulges and the last
-  narrows, which draws the knuckle.
+  inside of the bend does not fold. The rings are 6 mm long on fingers about 24 mm
+  thick, a quarter of the thickness. On the two knuckles past the palm the first ring
+  widens and the last narrows, which draws the joint.
 - **The thumb turns before it grows.** Its root is a short extrude out of the side,
   turned 45° about Y; the extrudes after it follow that direction.
 - **It builds clean from `curl: 0` to `curl: 1`.** Past a fist the fingertips would

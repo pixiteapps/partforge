@@ -462,7 +462,7 @@ function makeCage(state) {
     const about = opts.about ?? mean(pts.map((p) => points[p]));
     if (!isVec3(about)) fail("rotate about must be [x, y, z] finite numbers");
     const u = unit(dir);
-    const t = (deg * Math.PI) / 180, co = Math.cos(t), si = Math.sin(t);
+    const t = ((deg % 360) * Math.PI) / 180, co = Math.cos(t), si = Math.sin(t);
     const turn = (q) => {
       const v = sub(q, about);
       const along = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];

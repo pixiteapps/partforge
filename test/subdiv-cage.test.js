@@ -130,6 +130,14 @@ describe("cage: move, scale and reads", () => {
     expect(() => c.rotate("+z:0,0", { axis: "x", deg: 10, about: [0, 0] })).toThrow(/^cage: rotate about must be/);
     expect(() => c.rotate("nope", { axis: "x", deg: 10 })).toThrow(/^cage: no face "nope"/);
     expect(c.snapshot()).toEqual(before);
+    // A turn that lands a point on its neighbour is refused after the new positions are worked out.
+    const two = box([2, 1, 1]);
+    const was = two.snapshot();
+    expect(() => two.rotate("+z:0,0", { axis: "y", deg: 180, about: [-20, 0, 0] })).toThrow(/^cage: rotate 180 makes an edge shorter/);
+    expect(two.snapshot()).toEqual(was);
+    // An angle too large to convert is still a turn (taken modulo 360), never NaN.
+    two.rotate("+z:0,0", { axis: "x", deg: 1e308 });
+    expect(two.centroid("+z:0,0").every(Number.isFinite)).toBe(true);
   });
   it("never returns -0", () => {
     const c = box([2, 2, 2]);

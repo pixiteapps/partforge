@@ -284,7 +284,9 @@ test("the guide's hand builds clean, open and as a fist, at preview and at print
     k.takeBuildWarnings();
     expect(k.subdiv(scope.handCage(k.cage, { curl })).volume()).toBeGreaterThan(50000);
     expect(k.takeBuildWarnings()).toEqual([]);
+    print.takeBuildWarnings();
     expect(print.subdiv(scope.handCage(print.cage, { curl })).volume()).toBeGreaterThan(50000);
+    expect(print.takeBuildWarnings()).toEqual([]);
   }
   // The recipe's rule, on a 20 mm thick limb bent 90° over three rings: rings a quarter
   // of the thickness long build, shorter ones fold through themselves.
