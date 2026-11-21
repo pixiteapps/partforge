@@ -749,7 +749,8 @@ the installed package, so let the publish finish before bumping the dep there.
   registry before it exists. `DOMAINS` lists three domains. Kinematics
   (`domains/kinematics/`, `partforge/kinematics`) and mechanisms
   (`domains/mechanisms/`, `partforge/mechanisms`: gear trains, belts, racks and
-  crank-sliders as derive-time point sources that also place sub-parts) tag no kernel
+  crank-sliders as derive-time point sources that also place sub-parts; `capstan`, a rope
+  drive, also returns its rope's path as `lineInfo()` and a `report()`) tag no kernel
   op. Organic (`domains/organic/`, `partforge/organic`) is registered IN PLACE: it tags
   `implicit`, `implicitFrames`, `subdiv` and `cage`, but the engines stay in
   `geometry/implicit/` and `geometry/subdiv/`, since both backends (and, for implicit,
@@ -765,6 +766,16 @@ the installed package, so let the publish finish before bumping the dep there.
   tagged op; prose, string literals and dynamic `import()` never count). Sheet, print,
   text, vector, image and import are NOT domains yet; they migrate one design at a
   time.
+- **`src/framework/lines/`** - the lines core (spec
+  `docs/superpowers/specs/2026-11-20-lines-rope-and-cable-design.md`): flexible lines
+  routed over elements, shared by domains because a domain may not import another.
+  `taut.js` (`solveTaut`: a rope pulled tight over anchors and drums, open or `closed`,
+  closed form for parallel axes; lengths, wraps, fleet angles and the sampled centreline)
+  and `materials.js` (rope presets, every value sourced in a comment; explicit numbers
+  win and an unknown material throws). Pure and worker-safe: it imports `geometry/errors.js`
+  and nothing else, never a domain (`test/lines-taut.test.js`). Its one caller so far is
+  `domains/mechanisms/capstan.js`. A line is recognised by plain data,
+  `lineInfo().kind === "partforge.lines"`; nothing in core reads it yet (phases 2 and 3).
 - **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
   outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
   `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics
