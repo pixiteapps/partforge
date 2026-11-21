@@ -11,11 +11,14 @@
 // re-read every frame while it shows. An edit in progress outlives its handle going off
 // screen (the chip stays, held inside the stage); posing going off, the view dropping the
 // handle, or detach end the edit unwritten. Only the inputs whose text was changed are
-// written; each value is named by its control's label and unit.
+// written; each value is named by its control's label and unit. `getUnits` (default "mm")
+// is the display unit: in inch mode a millimetre value shows, and is typed, in inches
+// (decimals or fractions, parseLength); params stay millimetres.
 //
 // A sibling of pose-controls.js: DOM chrome only, no three.js; pose-mode owns behaviour.
 import { readoutItems, chipValues } from "./handle-guides.js";
 import { rangesOf } from "./param-solve.js";
+import { formatLength, parseLength } from "../units.js";
 
 /** How long the values chip shows after a drag, and the pin hint (ms). */
 export const CHIP_MS = 4000;
@@ -36,9 +39,9 @@ const numStr = (v) => String(Math.round(v * 1e4) / 1e4);
  * @param elements `{ stage }` — the element the chip lives in; without one this is a no-op.
  * @param opts `{ part, getParams, apply(values), toStage(point) }` — `apply` writes the
  *   chip's values (mount: the slider path, one commit); `toStage` turns a canvas point into
- *   stage px (default: as is).
+ *   stage px (default: as is); `getUnits` the display unit, "mm" | "in" (default "mm").
  */
-export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParams, apply, toStage = (a) => a } = {}) {
+export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParams, apply, toStage = (a) => a, getUnits = () => "mm" } = {}) {
   if (!stage) return { detach: noop, hide: noop, state: () => null };
   const handles = part?.handles ?? {};
 
@@ -98,7 +101,7 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
       chip.append(hint);
     } else {
       const handle = handles[handleId];
-      const text = readoutItems(part, { ...part?.defaults, ...getParams() }, handle)
+      const text = readoutItems(part, { ...part?.defaults, ...getParams() }, handle, getUnits())
         .map((i) => `${i.label} ${i.text}${i.unit ? ` ${i.unit}` : ""}`).join(" · ");
       const button = document.createElement("button");
       button.type = "button";
@@ -121,18 +124,26 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
     const ranges = rangesOf(part);
     const form = document.createElement("div");
     form.className = "pf-pose-chip-edit";
-    for (const item of readoutItems(part, params, handles[shown.handleId])) {
+    for (const item of readoutItems(part, params, handles[shown.handleId], getUnits())) {
       const label = document.createElement("label");
       const name = document.createElement("span");
       name.className = "pf-pose-chip-name";
       name.textContent = item.label;
       const input = document.createElement("input");
-      input.type = "number";
       input.name = item.key;
-      input.value = numStr(item.value);
+      if (item.converts && item.unit === "in") {
+        // an inch length: typed as text (3/4, 1 1/2) and read back by parseLength
+        input.type = "text";
+        input.inputMode = "decimal";
+        input.dataset.units = "in";
+        input.value = formatLength(item.value, "in");
+      } else {
+        input.type = "number";
+        input.value = numStr(item.value);
+        const step = ranges.get(item.key)?.step;
+        input.step = Number.isFinite(step) && step > 0 ? String(step) : "any";
+      }
       input.dataset.shown = input.value; // written back only once it is changed
-      const step = ranges.get(item.key)?.step;
-      input.step = Number.isFinite(step) && step > 0 ? String(step) : "any";
       label.append(name, input);
       if (item.unit) {
         const unit = document.createElement("span");
@@ -159,7 +170,7 @@ export function attachReadoutChip(viewer, mode, { stage } = {}, { part, getParam
     const typed = {};
     for (const input of chip.querySelectorAll("input")) {
       if (input.value === input.dataset.shown) continue; // never touched: not written
-      const v = parseFloat(input.value);
+      const v = input.dataset.units === "in" ? parseLength(input.value, "in") : parseFloat(input.value);
       if (Number.isFinite(v)) typed[input.name] = v;
     }
     const values = chipValues(part, { ...part?.defaults, ...getParams() }, typed);

@@ -1100,6 +1100,50 @@ describe("reachMissed", () => {
   });
 });
 
+describe("readouts in the display unit", () => {
+  const sized = {
+    parameters: [{ id: "g", title: "G", controls: [
+      { key: "slide", label: "Slide", unit: "mm", min: 0, max: 100, step: 1 },
+    ] }],
+    defaults: { slide: 0 },
+    derive: () => ({}),
+    parts: {},
+    handles: { drawer: { point: (p) => [-60, 0, 80 + p.slide], params: ["slide"], drag: "axis", direction: [0, 0, 1] } },
+  };
+
+  it("a generic drag reads in inches; refreshReadout re-emits it in the unit now", () => {
+    let units = "in";
+    const t = setup(sized, { getUnits: () => units });
+    const s = t.screenOf(sized.handles.drawer.point({ ...sized.defaults, ...t.params }));
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 6; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    const item = t.readouts.at(-1).items[0];
+    expect(item).toMatchObject({ key: "slide", unit: "in", value: t.params.slide, converts: true });
+    expect(item.text).toBe(String(Math.round((t.params.slide / 25.4) * 1000) / 1000));
+    const n = t.readouts.length;
+    units = "mm";
+    t.mode.refreshReadout();
+    expect(t.readouts.length).toBe(n + 1);
+    expect(t.readouts.at(-1).items[0]).toMatchObject({ unit: "mm", text: t.params.slide.toFixed(0) });
+    t.fire("pointerup", s.x, s.y - 36);
+    expect(t.readouts.at(-1)).toBeNull();
+    t.mode.refreshReadout(); // no drag: nothing re-emitted
+    expect(t.readouts.at(-1)).toBeNull();
+  });
+
+  it("'Out of reach' reads in inches in inch mode", () => {
+    const t = setup(hand, { getUnits: () => "in" });
+    t.mode.setEnabled(true);
+    const s = t.tipScreen("a");
+    t.fire("pointerdown", s.x, s.y);
+    for (let i = 1; i <= 3; i++) t.fire("pointermove", s.x, s.y - i * 6);
+    for (let i = 1; i <= 4; i++) t.fire("pointermove", s.x, s.y - 18 - i * 80);
+    const reach = t.readouts.at(-1).items.at(-1);
+    expect(reach).toMatchObject({ key: "reach", label: "Out of reach", unit: "in", converts: true });
+    expect(reach.text).toBe(String(Math.round((reach.value / 25.4) * 1000) / 1000));
+  });
+});
+
 describe("a drag stopped at contact", () => {
   // A guard that lets every frame through (settle lands on the solve's answer) and reports
   // `blocked` while blocked() says so: what the collision guard hands back at contact.

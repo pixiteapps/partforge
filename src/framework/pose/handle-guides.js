@@ -11,6 +11,7 @@ import { locateHandle } from "./handle-source.js";
 import { rangesOf, snapValues } from "./param-solve.js";
 import { controlNodes } from "../panel/model.js";
 import { desugar } from "../panel/legacy.js";
+import { convertsUnit, formatLength } from "../units.js";
 
 /** Points on a path preview: the param's range, ends included. */
 export const PATH_SAMPLES = 32;
@@ -138,16 +139,22 @@ export function readoutKeys(handle) {
  * "<key> <value>", rounded to its step's decimals (no step: an integer as is, else two
  * places), joined by " · ". A param with no numeric value is left out.
  */
-export function readoutText(part, params, handle) {
-  return readoutItems(part, params, handle).map((i) => `${i.key} ${i.text}`).join(" · ");
+export function readoutText(part, params, handle, units = "mm") {
+  return readoutItems(part, params, handle, units).map((i) => `${i.key} ${i.text}`).join(" · ");
 }
 
 /**
  * The readout's values one by one, `[{ key, label, unit, value, text }]`: `text` the value
  * as readoutText rounds it, `label` the control's label (else the key), `unit` its unit
  * (else null). The readout chip names its values by these.
+ *
+ * `units` is the display unit ("mm" | "in"; anything else reads as "mm"). In inch mode an
+ * item whose control unit is exactly "mm" reads `unit: "in"` and `text` formatLength's
+ * inches, and every item carries `converts` (whether it was converted); `value` always
+ * stays millimetres. In millimetre mode the items are exactly as before (no `converts`).
  */
-export function readoutItems(part, params, handle) {
+export function readoutItems(part, params, handle, units = "mm") {
+  const inch = units === "in";
   const ranges = rangesOf(part);
   const controls = new Map();
   try {
@@ -160,13 +167,19 @@ export function readoutItems(part, params, handle) {
     const step = ranges.get(key)?.step;
     const places = isNum(step) && step > 0 ? decimals(step) : Number.isInteger(v) ? 0 : 2;
     const c = controls.get(key);
-    out.push({
+    const unit = typeof c?.unit === "string" && c.unit ? c.unit : null;
+    const item = {
       key,
       label: typeof c?.label === "string" && c.label ? c.label : key,
-      unit: typeof c?.unit === "string" && c.unit ? c.unit : null,
+      unit,
       value: v,
       text: v.toFixed(Math.min(places, 20)),
-    });
+    };
+    if (inch) {
+      item.converts = convertsUnit(unit);
+      if (item.converts) { item.unit = "in"; item.text = formatLength(v, "in"); }
+    }
+    out.push(item);
   }
   return out;
 }
