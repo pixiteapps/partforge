@@ -491,8 +491,9 @@ function createCleanupStack() {
 //                                         // CAD in either live mode
 //   runtime.getUnits();    // "mm" | "in" — the display unit (lengths SHOWN and typed in the
 //                          // panel, measure, pose readouts and custom controls; params
-//                          // stay millimetres). Seeded from viewerState.units, else the
-//                          // stored preference, else "mm"
+//                          // stay millimetres). A carried viewerState decides it (its
+//                          // units, else "mm"); only with no viewerState does the
+//                          // stored preference apply, else "mm"
 //   runtime.setUnits("in"); // switch it (anything but "mm" | "in" is ignored): no parameter
 //                          // changes, no onParamsCommit, no build; the choice is stored
 //   const off = runtime.onUnitsChange((u) => …);  // every change, whoever made it (the
@@ -805,9 +806,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // numeric boxes and mm/in switch, measure mode's unit tag, pose mode's readout,
     // the handle chip and custom controls. Display only — params stay millimetres,
     // so a switch changes no parameter and starts no build. Precedence: a carried
-    // viewerState.units (only "mm" | "in"; anything else is ignored), then the
-    // stored preference, then "mm". Saved only on a real change (below).
-    const units = createUnitsState(isUnitId(viewerState?.units) ? viewerState.units : loadUnits() ?? "mm");
+    // viewerState decides alone: its units when "mm" | "in", else "mm" (getViewerState
+    // leaves "mm" out, so a missing key IS "mm"; reading storage there would let another
+    // tab's switch flip this viewer on its next remount). Only with no viewerState at
+    // all does the stored preference apply, else "mm". Saved only on a real change (below).
+    const units = createUnitsState(viewerState && typeof viewerState === "object"
+      ? (isUnitId(viewerState.units) ? viewerState.units : "mm")
+      : loadUnits() ?? "mm");
 
     // Measurement mode: in-scene dims, the two-click snapping model, and
     // reading->controls reveal (a first-click reading flashes every control

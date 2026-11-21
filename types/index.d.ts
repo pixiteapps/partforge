@@ -434,7 +434,7 @@ export interface ViewerState {
   renderMode?: RenderMode;
   /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
-  /** The display unit, present only when it is not `"mm"`. Any other value on the way back in is ignored and reads `"mm"`. */
+  /** The display unit, present only when it is not `"mm"`. On the way back in, a viewer state decides the unit alone: a missing or invalid value reads `"mm"` and the stored preference is not consulted (it applies only when mount is given no `viewerState`). */
   units?: "mm" | "in";
 }
 
@@ -828,7 +828,8 @@ export interface PartRuntime {
   /**
    * The display unit: how lengths are SHOWN and typed in the panel, measure mode,
    * pose readouts and custom controls. Parts are always authored and stored in
-   * millimetres. Seeded from `viewerState.units`, else the stored preference, else `"mm"`.
+   * millimetres. A given `viewerState` decides it (its `units`, else `"mm"`); only with no
+   * `viewerState` does the stored preference apply, else `"mm"`.
    */
   getUnits(): "mm" | "in";
   /**

@@ -60,7 +60,9 @@ export function createUnitsState(initial) {
     set(next) {
       if (!isUnitId(next) || next === current) return false;
       current = next;
-      for (const cb of [...subs]) cb(current);
+      for (const cb of [...subs]) {
+        try { cb(current); } catch (err) { console.error("units listener failed", err); }
+      }
       return true;
     },
     onChange(cb) {

@@ -214,6 +214,8 @@ vi.mock("../../src/framework/pose/pose-mode.js", () => ({
       takeClick: vi.fn(() => false),
       isDragging: vi.fn(() => false),
       refreshReadout: vi.fn(),
+      dragEndCbs: new Set(),
+      onDragEnd: (cb) => { stub.dragEndCbs.add(cb); return () => stub.dragEndCbs.delete(cb); },
     };
     poseStubs.push(stub);
     return stub;
@@ -3819,6 +3821,33 @@ test("a unit change refreshes the pose readout, which reads the mount's unit", (
   runtime.setUnits("in");
   expect(pose.opts.getUnits()).toBe("in");
   expect(pose.refreshReadout).toHaveBeenCalledTimes(1);
+  runtime.dispose();
+});
+
+test("a carried viewerState without units reads mm, never the stored unit", () => {
+  localStorage.setItem("partforge:units", "in");
+  for (const viewerState of [{}, { camera: { pos: [9, 9, 9], target: [0, 0, 0] } }]) {
+    const runtime = mount(makeUnitPart(), { createWorker: makeWorkers().createWorker, elements: makeElements(), viewerState });
+    expect(runtime.getUnits()).toBe("mm");
+    runtime.dispose();
+  }
+  const fresh = mount(makeUnitPart(), { createWorker: makeWorkers().createWorker, elements: makeElements() });
+  expect(fresh.getUnits()).toBe("in");
+  fresh.dispose();
+});
+
+test("a unit change hides the handle's values chip", () => {
+  const part = makeUnitPart();
+  part.handles = { grow: { params: ["h"] } };
+  const els = makeElements();
+  const runtime = mount(part, { createWorker: makeWorkers().createWorker, elements: els });
+  const pose = poseStubs.at(-1);
+  pose.handlePoints = () => [{ handleId: "grow", x: 10, y: 10, visible: true }];
+  for (const cb of [...pose.dragEndCbs]) cb({ handleId: "grow", generic: true, changed: ["h"] });
+  const chip = els.viewer.querySelector(".pf-pose-chip");
+  expect(chip.hidden).toBe(false);
+  runtime.setUnits("in");
+  expect(chip.hidden).toBe(true);
   runtime.dispose();
 });
 

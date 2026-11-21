@@ -52,6 +52,20 @@ describe("units", () => {
     expect(cb).toHaveBeenCalledTimes(1);
     expect(isUnitId("in")).toBe(true);
   });
+  it("a throwing subscriber does not stop the others, and set() does not throw", () => {
+    const s = createUnitsState("mm");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const second = vi.fn();
+    s.onChange(() => { throw new Error("boom"); });
+    s.onChange(second);
+    let changed;
+    expect(() => { changed = s.set("in"); }).not.toThrow();
+    expect(changed).toBe(true);
+    expect(second).toHaveBeenCalledExactlyOnceWith("in");
+    expect(s.get()).toBe("in");
+    expect(err).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
 });
 
 describe("unit persistence", () => {
