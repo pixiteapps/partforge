@@ -107,6 +107,38 @@ describe("cage: move, scale and reads", () => {
     expect(c.centroid("+z:0,0")).toEqual([0, 0, 20]);
     expect(c.bounds()).toEqual({ min: [-40, -20, -10], max: [40, 20, 20] });
   });
+  it("rotates a face about its own centre, and the next extrude follows the turn", () => {
+    const c = box();
+    c.rotate("+x:0,0", { axis: "y", deg: -90 });        // +X normal turns to +Z
+    const n = c.normal("+x:0,0"), m = c.centroid("+x:0,0");
+    expect(n.map((v) => Math.round(v * 1e9) / 1e9)).toEqual([0, 0, 1]);
+    expect(m.map((v) => Math.round(v * 1e9) / 1e9)).toEqual([20, 0, 0]);
+    const tip = c.extrude("+x:0,0", { by: 5 });
+    expect(c.centroid(tip).map((v) => Math.round(v * 1e9) / 1e9)).toEqual([20, 0, 5]);
+  });
+  it("rotates about a given point and a vector axis", () => {
+    const c = box();
+    c.rotate("+z:0,0", { axis: [0, 0, 2], deg: 90, about: [20, 10, 0] });
+    expect(c.centroid("+z:0,0").map((v) => Math.round(v * 1e9) / 1e9)).toEqual([30, -10, 10]);
+  });
+  it("refuses a bad axis, angle or centre, and leaves the cage as it was", () => {
+    const c = box();
+    const before = c.snapshot();
+    expect(() => c.rotate("+z:0,0", { axis: "w", deg: 10 })).toThrow(/^cage: rotate axis must be "x", "y", "z" or a non-zero \[x, y, z\], not "w"/);
+    expect(() => c.rotate("+z:0,0", { axis: [0, 0, 0], deg: 10 })).toThrow(/^cage: rotate axis/);
+    expect(() => c.rotate("+z:0,0", { axis: "x" })).toThrow(/^cage: rotate deg must be a finite number, not undefined/);
+    expect(() => c.rotate("+z:0,0", { axis: "x", deg: 10, about: [0, 0] })).toThrow(/^cage: rotate about must be/);
+    expect(() => c.rotate("nope", { axis: "x", deg: 10 })).toThrow(/^cage: no face "nope"/);
+    expect(c.snapshot()).toEqual(before);
+    // A turn that lands a point on its neighbour is refused after the new positions are worked out.
+    const two = box([2, 1, 1]);
+    const was = two.snapshot();
+    expect(() => two.rotate("+z:0,0", { axis: "y", deg: 180, about: [-20, 0, 0] })).toThrow(/^cage: rotate 180 makes an edge shorter/);
+    expect(two.snapshot()).toEqual(was);
+    // An angle too large to convert is still a turn (taken modulo 360), never NaN.
+    two.rotate("+z:0,0", { axis: "x", deg: 1e308 });
+    expect(two.centroid("+z:0,0").every(Number.isFinite)).toBe(true);
+  });
   it("never returns -0", () => {
     const c = box([2, 2, 2]);
     c.move("-z:0,0", [0, 0, -3]);
