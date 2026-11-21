@@ -1,13 +1,13 @@
 # Mechanisms: parts that move together
 
 Use this domain for any part with members whose motion is coupled: a gear train, pulleys
-on a belt, a rack and pinion, a crank and slider. You give the mechanism one driving
+on a belt, a capstan rope drive, a rack and pinion, a crank and slider. You give the mechanism one driving
 value (an angle). The helper calculates where every member is, places each member's
 solid, and gives handles the points to grab. The domain is plain maths. It builds no
 geometry (no tooth profile, no belt), so you call it in `derive`.
 
 ```js
-import { gearTrain, beltDrive, rack, crankSlider } from "partforge/mechanisms";
+import { gearTrain, beltDrive, capstan, rack, crankSlider } from "partforge/mechanisms";
 ```
 
 Import it from `partforge/mechanisms`, never from `partforge/geometry` or `partforge`.
@@ -135,6 +135,86 @@ belt.angleOf("spindle"); // motorAngle * 20 / 40, the same way round
   guide, not a handle. Lines: neighbouring pulleys, centre to centre.
 - Returns `{ angleOf, handleInfo, place }`.
 
+## `capstan({ rope, input, output, drive })`
+
+A rope drive: a small drum beside a larger pulley, the rope terminated on the pulley at
+both ends and wound round the drum in between. Turning the drum winds one side on and the
+other off. It has no teeth and no backlash, which is why robot joints use it.
+
+```js
+const drive = capstan({
+  rope: { d: 1.2, material: "uhmwpe" },
+  input:  { name: "drum",   radius: 6,  center: [0, 0, 0],  turns: 3 },
+  output: { name: "pulley", radius: 30, center: [40, 0, 0], wrap: 90 },
+  drive: { member: "drum", angle: p.motorAngle },
+  pretension: 20,
+});
+drive.angleOf("pulley"); // -motorAngle * 6.6 / 30.6: the other way, by the PITCH radii
+drive.report();          // length, drift, fleet, wraps, travel, bend, stiffness
+```
+
+- `rope`: `{ d, material?, mu?, EA?, minBendRatio? }`. `d` in mm. `material` is a preset
+  (`"uhmwpe"` is the only one): it gives a friction coefficient and a stiffness, both from
+  the fibre maker's data sheet, so read them as bounds until you have measured the joint.
+  The friction is yarn on yarn, lower than a rope on a printed drum. The stiffness is the
+  fibre's, higher than a braided rope's. Your own `mu` and `EA` (N) win over the preset.
+  An unknown material throws.
+- `input`: the drum, `{ name, radius, center, axis = [0, 0, 1], turns = 3, lead = rope.d }`.
+  `turns` is whole turns of rope on it beyond what the two tangents leave. `lead` is how
+  far the rope advances along the drum per turn: its own diameter when close-wound, more
+  for a grooved drum.
+- `output`: the pulley, `{ name, radius, center, axis, wrap = 90 }`. `wrap` is the degrees of
+  rope on it past each tangent point at drive angle 0, up to each termination.
+- Radii are the GROOVE radii the rope sits on. The rope's centreline runs half a rope
+  outside them, and the ratio is taken there: `(output.radius + d/2) / (input.radius + d/2)`.
+- `drive`: `{ member, angle }`, either member, degrees, unreduced.
+- `cross` (default `true`): the spans cross between the members, which then turn opposite
+  ways, like two friction wheels. `false` runs them open, like a belt, turning together.
+- `fixed` (default `true`): the rope is pinned to the drum at its middle. `false` holds it
+  by friction alone, and the report adds `holding`.
+- Points: `<member>.center`, `<member>.rim` (on the pitch circle, turned by its angle).
+  One line, centre to centre.
+- Returns `{ ratio, angleOf, handleInfo, lineInfo, report, place }`.
+
+### The report
+
+`report()` is plain JSON at this pose. Return it from a probe to read it in `measure`:
+
+```js
+probes: { rope: (k, p, d) => d.drive.report() },
+```
+
+| Field | Meaning |
+| --- | --- |
+| `ratio` | input turns per output turn |
+| `length`, `restLength`, `drift` | the rope's length now, at drive angle 0, and the difference, mm |
+| `halves[i].span`, `.fleet` | each side's free span, and its angle off square to the axis |
+| `halves[i].<member>.wrap` | degrees of rope on that member on that side |
+| `halves[i].runOff` | that side has no rope left on a member |
+| `travel.<member>`, `travel.inside` | the angles between which no side runs out, and whether this pose is inside them |
+| `bend.<member>` | drum diameter over rope diameter; `bend.ok` only against a declared `minBendRatio` |
+| `drumWidth` | the drum length the turns need at this lead |
+| `holding` | with `fixed: false`: the tension ratio the least wrap holds, `e^(mu * wrap)` |
+| `stiffness` | with the rope's `EA`: each side in N/mm, and the joint in N·mm/rad; `upperBound` when the EA came from a preset |
+| `tensionChange`, `slack` | with `EA`: the tension the drift adds; with `pretension` too, whether it has gone slack |
+
+What to read first:
+
+- **`drift`.** With `lead: 0` it is zero at every angle: the rope one side winds on is the
+  rope the other winds off. A lead walks the rope along the drum as it turns, so the spans
+  lean (`fleet`) and lengthen, and the rope tightens. Keep the fleet to a degree or two
+  over the joint's travel: lengthen the span, or reduce the lead.
+- **`travel`.** Past it a side has run off its member and the numbers mean nothing. Give
+  the joint's control a range inside `travel.<member>`.
+- **`drumWidth`** against the drum you drew.
+
+`lineInfo()` returns the rope's centreline as points (`kind: "partforge.lines"`, the line
+named `rope`). Nothing draws it yet.
+
+The helper models one rope in one plane across parallel axes, with the pulley's two
+grooves placed where the rope leaves the drum at rest. It does not model friction losses,
+creep, or a rope that crosses another joint.
+
 ## `rack({ pinion, direction, name? })`
 
 ```js
@@ -244,7 +324,7 @@ verify: {
   a turn, covers every gear. Faceted teeth at about 0.1 mm of backlash can touch at some
   angles: allow the meshing pairs, and the sweep still holds each gear against the plate,
   its axle and the gears it does not mesh with.
-- **A crank-slider** or a belt is one param too. A sweep is checked end to end, and
+- **A crank-slider**, a belt or a capstan is one param too. A sweep is checked end to end, and
   `rebuilds: false` on its row says the helper's `place` kept it matrix-only. Keep the
   crank angle's sweep off the dead centres, as for its handle.
 - **A coupled path** (two params that move together, a crank and a lid on one stroke) is a
