@@ -38,6 +38,7 @@ import { createDimScene, worldPerPx, orthoWorldPerPx } from "./dim3-scene.js";
 import { buildSnapIndex, findSnap, SNAP_PX } from "./snaps.js";
 import { firstReading, spanReading, frameAxesFor } from "./readings.js";
 import { createSnapMarker } from "./snap-marker.js";
+import { isUnitId } from "../units.js";
 
 // How many distinct placements the cache holds. An orbit sweeps a bounded set
 // of side choices; anything past that is ground the user has moved on from.
@@ -989,7 +990,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     },
     getUnits: () => units,
     setUnits(next) {
-      if (next === units || !(next in { mm: 1, in: 1 })) return;
+      if (next === units || !isUnitId(next)) return;
       // with a shared state its change listener (below) applies the unit
       if (unitsState) { unitsState.set(next); return; }
       applyUnits(next);

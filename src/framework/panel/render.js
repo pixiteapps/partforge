@@ -8,7 +8,7 @@ import { WIDGET_FACTORIES } from "./widgets/index.js";
 import { makeReadout } from "./widgets/readout.js";
 import { createInfoPopover, attachInfo } from "./info.js";
 import { isJsonValue } from "./json-value.js";
-import { convertsUnit } from "../units.js";
+import { convertsUnit, UNIT_IDS } from "../units.js";
 
 // The budget every custom control's transient state shares (getState below).
 export const PANEL_STATE_MAX_BYTES = 65536;
@@ -63,7 +63,7 @@ function makeUnitsSwitch(units) {
   const group = el("div", "pf-units");
   group.setAttribute("role", "group");
   group.setAttribute("aria-label", "Units");
-  const buttons = ["mm", "in"].map((id) => {
+  const buttons = UNIT_IDS.map((id) => {
     const b = el("button", "", id);
     b.type = "button";
     b.dataset.units = id;
