@@ -1077,6 +1077,23 @@ Text fields write `params` on every keystroke, so the rebuild loop previews the 
 string immediately; give every text key a string default (empty strings are valid,
 and the build decides whether its geometry tolerates one).
 
+### Display units
+
+Viewers can switch every length the viewer shows between millimetres and inches.
+The switch changes only what is displayed: sliders, number boxes, readouts, the
+handle drag readout and chip, and measure mode all follow it.
+
+- `unit: "mm"` (that exact string) is what opts a control or readout in. `°`, `%`
+  and any other unit never convert.
+- Part code, `defaults`, ranges (`min`, `max`, `step`), `derive` outputs and
+  `verify` are always millimetres, whatever is shown. Switching units changes no
+  parameter and starts no build.
+- In inch mode a typed length accepts decimals and fractions such as `3/4` and
+  `1 1/2`.
+- Descriptions are not converted, so keep them unit-neutral where that is easy.
+- A custom control may read `host.units` (`"mm"` or `"in"`) and subscribe with
+  `host.onUnitsChange(cb)`.
+
 **`options`** (select/radio) takes either the shorthand `["round", "faceted"]` —
 each entry is both value and label — or the long form
 `[{ value, label, description? }]`. Values may be strings or numbers, and
