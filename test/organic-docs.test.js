@@ -79,14 +79,14 @@ beforeAll(async () => {
     expect(plain(run()), src).toEqual(evalValue(text));
     checked.push(src);
   };
-  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage };`;
+  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage, handCage };`;
   scope = new Function("k", "limb", "implicitDistance", "check", ...Object.keys(organic), body)(k, limb, implicitDistance, check, ...Object.values(organic));
   scope.checked = checked;
 });
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(37);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(39);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -275,6 +275,34 @@ test("the whale's numbers in the guide are the code's", () => {
   expect(text).toContain(`prints at level ${print.level} (${tris(print.level)} triangles)`);
 });
 
+test("the guide's hand builds clean, open and as a fist, at preview and at print", async () => {
+  const { createManifoldKernel } = await import("../src/framework/geometry/manifold-backend.js");
+  const Module = (await import("manifold-3d")).default;
+  const wasm = await Module(); wasm.setup();
+  const print = createManifoldKernel(wasm, { quality: "print" });
+  for (const curl of [0, 0.5, 1]) {
+    k.takeBuildWarnings();
+    expect(k.subdiv(scope.handCage(k.cage, { curl })).volume()).toBeGreaterThan(50000);
+    expect(k.takeBuildWarnings()).toEqual([]);
+    expect(print.subdiv(scope.handCage(print.cage, { curl })).volume()).toBeGreaterThan(50000);
+  }
+  // The recipe's rule, on a 20 mm thick limb bent 90° over three rings: rings a quarter
+  // of the thickness long build, shorter ones fold through themselves.
+  const bent = (by) => {
+    const c = print.cage({ box: { size: [20, 20, 20] } });
+    let cur = c.extrude("+z:0,0", { by: 20 });
+    for (let i = 0; i < 3; i++) {
+      const hinge = c.centroid(cur);
+      cur = c.extrude(cur, { by });
+      c.rotate(cur, { axis: "x", deg: 30, about: hinge });
+    }
+    c.extrude(cur, { by: 20 });
+    return c;
+  };
+  expect(print.subdiv(bent(5)).volume()).toBeGreaterThan(0);
+  expect(() => print.subdiv(bent(2))).toThrow(/^subdiv: the body passes through itself/);
+});
+
 test("the cage section's limits and tolerances are the code's", () => {
   const surface = section("The surface: `k.subdiv`", "###");
   expect(surface).toContain(`${SUBDIV_TOLERANCE.preview} mm for preview, ${SUBDIV_TOLERANCE.print} mm for print`);
@@ -305,6 +333,7 @@ test("every quoted cage and subdiv error is the code's own", async () => {
     () => ring.extrude(["+z:0,0", "+z:1,0", "+z:2,0", "+z:0,1", "+z:2,1", "+z:0,2", "+z:1,2", "+z:2,2"], { by: 1 }),
     () => grown().extrude("-z:1,1", { by: 1, id: "+y:0,0>" }),
     () => k.cage({ box: { size: [10, 10, 10], segs: [30, 30, 30] } }),
+    () => bar().rotate("+z:0,0", { axis: "up", deg: 10 }),
   ];
   const message = (f) => { try { f(); } catch (e) { return e.message; } throw new Error(`no throw: ${f}`); };
   expect(cageTriggers.map(message)).toEqual(cageBlock);

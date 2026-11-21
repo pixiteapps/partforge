@@ -601,6 +601,8 @@ export interface Cage {
   crease(faces: CageFaces, other?: CageFaces): void;
   /** `about` omitted or null: the points' mean (on the plane, under a mirror, for faces with an edge on it). */
   scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] | null }): void;
+  /** Turn the faces' points `deg` degrees (right-handed) about the line through `about` (default: the points' mean) along `axis`. */
+  rotate(faces: CageFaces, opts: { axis: "x" | "y" | "z" | [number, number, number]; deg: number; about?: [number, number, number] }): void;
   centroid(id: string): [number, number, number];
   normal(id: string): [number, number, number];
   size(id: string): [number, number];

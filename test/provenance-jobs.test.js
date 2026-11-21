@@ -197,3 +197,14 @@ test("a mirrored cage answers the same on both sides", async () => {
   expect(body.origins[body.originIds[hi] - 1]).toEqual(["fin", "girth"]);
   expect(body.origins[body.originIds[lo] - 1]).toEqual(["fin", "girth"]);
 });
+
+test("a param read by a cage rotate is offered on the faces it turned", async () => {
+  const part = cagePart((k, p) => {
+    const c = finned(k, { girth: 1, fin: 12 });
+    c.rotate("fin", { axis: "y", deg: p.lift });
+    return k.subdiv(c);
+  });
+  const body = (await gen(part, ["body"], { girth: 1, fin: 12, lift: 20 })).meshes[0];
+  expect(keysAtZ(body, "top")).toEqual(["lift"]);
+  expect(keysAtZ(body, "bottom") ?? []).toEqual([]);
+});

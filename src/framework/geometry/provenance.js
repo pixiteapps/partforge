@@ -16,7 +16,7 @@
 // Shape2D results are proxied too, since `shape.extrude(...)` mints a Solid.
 //
 // A cage body (k.cage … k.subdiv) is one face run, so its faces are told apart another
-// way. The cage is proxied too: each extrude / move / scale is a boundary whose reads go
+// way. The cage is proxied too: each extrude / move / scale / rotate is a boundary whose reads go
 // to the cage faces that call made or reshaped (found by comparing the cage before and
 // after; a face an extrude made also keeps the keys of the faces it grew from), and k.subdiv hands over the limit mesh with each triangle's cage face
 // (`_subdivSource`). At mesh time a triangle of that run takes the keys of the cage face
@@ -37,7 +37,7 @@ const MAT_TOL = 1e-3;
 const isSolid = (v) => v != null && typeof v === "object" && typeof v._runs === "function";
 const isShape2D = (v) => v != null && typeof v === "object" && !!v._shape2d;
 const isCage = (v) => v != null && typeof v === "object" && typeof v.snapshot === "function" && typeof v.extrude === "function";
-const CAGE_CHANGES = new Set(["extrude", "move", "scale"]);
+const CAGE_CHANGES = new Set(["extrude", "move", "scale", "rotate"]);
 const isPlainObject = (v) => v != null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
 
 // Newest first, each key once (its first, i.e. newest, occurrence).
