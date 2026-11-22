@@ -229,6 +229,27 @@ test("units: a host slot in the rail takes the switch, and dispose empties and r
   expect(slot.childElementCount).toBe(0);
 });
 
+test("units: an old panel disposed after a new one filled the slot leaves the new switch alone", () => {
+  const rail = document.createElement("div");
+  rail.className = "pf-rail";
+  const rootA = document.createElement("div");
+  const rootB = document.createElement("div");
+  const slot = document.createElement("div");
+  slot.setAttribute("data-pf-units-slot", "");
+  slot.hidden = true;
+  rail.append(rootA, rootB, slot);
+  const units = createUnitsState("mm");
+  const a = buildControls(rootA, lengthSec(), { w: 12.5 }, () => {}, () => {}, { units, unitsSwitch: true });
+  const b = buildControls(rootB, lengthSec(), { w: 12.5 }, () => {}, () => {}, { units, unitsSwitch: true });
+  a.dispose();
+  expect(slot.hidden).toBe(false);
+  expect(slot.querySelectorAll(".pf-units")).toHaveLength(1);
+  slot.querySelector('[data-units="in"]').click();
+  expect(rootB.querySelector("input.num").value).toBe("0.492");
+  b.dispose();
+  expect(slot.hidden).toBe(true);
+});
+
 test("units: a slot stays hidden when the tree has nothing to convert", () => {
   const rail = document.createElement("div");
   rail.className = "pf-rail";

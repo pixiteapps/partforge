@@ -207,9 +207,9 @@ select.preset, select.select-input {
 .pf-units button[data-units] + button { border-left: 0; }
 .pf-units button[data-units]:first-child { border-radius: var(--pf-radius-control) 0 0 var(--pf-radius-control); }
 .pf-units button[data-units]:last-child { border-radius: 0 var(--pf-radius-control) var(--pf-radius-control) 0; }
-.pf-units button[data-units]:hover { color: var(--pf-text-strong); border-color: var(--pf-border); }
+.pf-units button[data-units]:hover:not(:disabled) { color: var(--pf-text-strong); border-color: var(--pf-border); }
 .pf-units button[data-units][aria-pressed="true"] { color: var(--pf-text-strong); background: var(--pf-surface-2); }
-.pf-units button[data-units]:focus-visible { outline: none; border-color: var(--pf-accent); position: relative;
+.pf-units button[data-units]:focus-visible { outline: none; border-color: var(--pf-accent); position: relative; z-index: 1;
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 [data-pf-units-slot] { display: flex; flex: none; }
 [data-pf-units-slot][hidden] { display: none; }
