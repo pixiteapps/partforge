@@ -132,6 +132,19 @@ export const TIE_TOLERANCE = 1e-3;
 // weight about 1.1e-4 outside [0, 1], past TIE_WEIGHT_SLACK, though the vertex is less than
 // 1e-5 mm from the triangle.
 export const TIE_ROUNDING_ULPS = 2;
+// The rounding allowance widens the weight slack only a little. A vertex it passes has a
+// weight excess of at most TIE_ROUNDING_MAX_EXCESS, and that excess times its triangle's
+// longest rest edge is at most TIE_ROUNDING_MAX_REACH (mm). Without both, a nearly
+// degenerate triangle (a height near 1e-8 mm) could carry a weight near 1e3 within two steps,
+// and a pose that fattens it would put the vertex millimetres away. At a new pose a vertex
+// passed this way lies at most TIE_ROUNDING_MAX_REACH × (posed longest edge / rest longest
+// edge) outside its triangle. Measured on the cage hand (each digit's curl over its whole
+// range in 1° steps, 425 poses; 81 vertices in 10 poses take this rule): the worst excess
+// is 1.259e-4, the worst excess × longest edge 1.043e-4 mm (pinky curl 90°), the worst
+// distance outside 0.457 of a float32 step. The reach cap is 2.4 times that worst case, and
+// tighter than what TIE_WEIGHT_SLACK alone already allows on a triangle over 2.5 mm.
+export const TIE_ROUNDING_MAX_EXCESS = 1e-2;
+export const TIE_ROUNDING_MAX_REACH = TIE_TOLERANCE / 4;
 
 // One float32 step at magnitude `m` (the smallest normal step at 0).
 const ulp32 = (m) => {
@@ -146,7 +159,9 @@ const ulp32 = (m) => {
  * three of its weights (w0, w1, 1 − w0 − w1) are within [−TIE_WEIGHT_SLACK,
  * 1 + TIE_WEIGHT_SLACK], or it lies outside the triangle by no more than float32 rounding
  * (TIE_ROUNDING_ULPS steps of its largest coordinate; the distance a weight puts it past an
- * edge is that weight's excess times the triangle's height over that edge). A vertex
+ * edge is that weight's excess times the triangle's height over that edge), with its excess
+ * at most TIE_ROUNDING_MAX_EXCESS and its excess times the longest rest edge at most
+ * TIE_ROUNDING_MAX_REACH. A vertex
  * genuinely outside its triangle can still reproduce the rest position (a vertex Manifold
  * left on a near-coplanar neighbour of its triangle) but would extrapolate at a new pose.
  */
@@ -167,14 +182,17 @@ function withinRounding(s, ws, positions, o, P, I) {
   const e2x = P[c[2]] - P[c[0]], e2y = P[c[2] + 1] - P[c[0] + 1], e2z = P[c[2] + 2] - P[c[0] + 2];
   const twoArea = Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
   if (!(twoArea > 0)) return false;
+  const d01 = Math.hypot(e1x, e1y, e1z), d02 = Math.hypot(e2x, e2y, e2z);
+  const d12 = Math.hypot(P[c[2]] - P[c[1]], P[c[2] + 1] - P[c[1] + 1], P[c[2] + 2] - P[c[1] + 2]);
+  const edges = [d12, d02, d01];   // the edge opposite each corner
+  const longest = Math.max(d01, d02, d12);
   const tol = TIE_ROUNDING_ULPS * ulp32(Math.max(Math.abs(positions[o]), Math.abs(positions[o + 1]), Math.abs(positions[o + 2])));
   for (let i = 0; i < 3; i++) {
     const excess = Math.max(-ws[i], ws[i] - 1);
     if (!(excess <= 0)) {
-      if (!(excess < Infinity)) return false;
-      // The edge opposite corner i, and the triangle's height over it.
-      const a = c[(i + 1) % 3], b = c[(i + 2) % 3];
-      const edge = Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]);
+      if (!(excess <= TIE_ROUNDING_MAX_EXCESS) || !(excess * longest <= TIE_ROUNDING_MAX_REACH)) return false;
+      // The triangle's height over the edge opposite corner i.
+      const edge = edges[i];
       if (!(edge > 0) || !(excess * (twoArea / edge) <= tol)) return false;
     }
   }

@@ -260,17 +260,30 @@ describe("tiesFor", () => {
     expect(tiesHold(t, out, limitPositions, limitIndices)).toBe(false);
   });
   // A sliver at the hand's scale (z = 136 mm, one float32 step there is 1.5e-5 mm): corner B
-  // sits 0.015 mm off edge AC, so corner A moved 7e-6 mm off AC, away from B, is a weight
-  // past the slack.
-  const sliver = Float64Array.of(30, 0, 136, 30.06, 0, 136, 30.8, 0.2, 136);
-  const offAC = (d) => Float32Array.of(30 - 0.2425 * d, 0.9701 * d, 136, 30.06, 0, 136, 30.8, 0.2, 136);
+  // sits 0.06 mm off edge AC (0.8 mm long), so corner A moved 6.5e-6 mm off AC, away from B,
+  // is a weight about 1.08e-4 past [0, 1], past the slack, as on the hand's fingertips.
+  const sliver = Float64Array.of(30, 0, 136, 30.06, 0.06, 136, 30.8, 0, 136);
+  const offAC = (d) => Float32Array.of(30, -d, 136, 30.06, 0.06, 136, 30.8, 0, 136);
   const sliverWeights = (p) => tiesFor({ positions: p, faceTri: Int32Array.of(0), limitPositions: sliver, limitIndices });
   test("a corner vertex float32 rounding put just outside a sliver triangle holds", () => {
-    const p = offAC(7e-6);
+    const p = offAC(6.5e-6);
     const t = sliverWeights(p);
     const ws = [t.w[0], t.w[1], 1 - t.w[0] - t.w[1]];
     expect(Math.min(...ws)).toBeLessThan(-TIE_WEIGHT_SLACK);
     expect(tiesHold(t, p, sliver, limitIndices)).toBe(true);
+  });
+  // A nearly degenerate sliver: corner B 1e-6 mm off edge AC. Corner A moved 5e-6 mm off
+  // AC, away from B, is within two float32 steps of the triangle and reproduces at rest, but
+  // its weight is about 5 past [0, 1]: a pose that fattens the triangle would carry it
+  // millimetres away. (At 1e-8 mm the weight is about 500 and the rest error grows past
+  // 1e-3, so the rest check alone would refuse it.)
+  test("a nearly degenerate sliver: a vertex within rounding of it but with a large weight does not hold", () => {
+    const flat = Float64Array.of(30, 0, 136, 30.06, 1e-6, 136, 30.8, 0, 136);
+    const p = Float32Array.of(30, -5e-6, 136, 30.06, 1e-6, 136, 30.8, 0, 136);
+    const t = tiesFor({ positions: p, faceTri: Int32Array.of(0), limitPositions: flat, limitIndices });
+    expect(Math.max(...[t.w[0], t.w[1], 1 - t.w[0] - t.w[1]].map((x) => Math.max(-x, x - 1)))).toBeGreaterThan(1);
+    expect(tieError(t, p, flat, limitIndices)).toBeLessThan(1e-3);   // it reproduces at rest
+    expect(tiesHold(t, p, flat, limitIndices)).toBe(false);
   });
   test("the same sliver, its vertex more than rounding outside: does not hold", () => {
     const p = offAC(1e-4);
