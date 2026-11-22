@@ -5,6 +5,33 @@ out ("Frames and skinned pose drag for subdivision bodies" is a non-goal there, 
 "a cage rebuild is tens of milliseconds"). That holds for a small cage. It does not hold
 for a hand.
 
+## Revision, 2026-11-22: the viewer-side route only
+
+The bench and the spike (both below) changed the route. The owner chose it on 2026-11-22.
+
+- **Part 2's worker drag build is dropped.** A worker drag build still runs the Manifold
+  import, the cut and the meshing: about 290 ms a move on the hand. Skipping the level
+  search and the self-intersection check cannot bring that under 120 ms. Part 2's text
+  below is kept as a record; only its "Measure first", "The topology key" and "Stopping
+  at the last valid pose" sections still apply.
+- **Part 3 is the one path**, for the editor and for public pages. The spike measured
+  8 to 9 ms a move plus 1.7 ms of cage code, with no visible error through the hand's
+  cut.
+- **It plugs into the existing skin drag controller** (`src/framework/skin/skin-drag.js`),
+  as a second kind of base. That controller already serves sliders and handle drags,
+  schedules the exact build after a 150 ms pause or on release, hides edge lines, and
+  restores the exact mesh before a capture. So sliders, handles and captures need no new
+  rule of their own.
+- **The topology key ignores face ids.** It hashes the quads and the creases only. Face
+  ids can swap inside a pose range (the hand's thumb) while the quads stay the same.
+- **Version 1 limits.** A sub-part takes the fast path only when its build smooths
+  exactly one cage with no creases, and every vertex of its delivered mesh is tied to
+  the smooth surface. A cut is fine. A piece unioned onto the body (eyes, nails) has
+  vertices that cannot be tied, so that sub-part rebuilds on each move as today. Moving
+  such pieces with the skin under them is a follow-up, not built here.
+- **Stopping at the last valid pose** runs in the viewer: the coarse check runs before a
+  pose is drawn.
+
 ## Why
 
 The cage is now the first choice for sculpted bodies. A user who drags a fingertip on a
