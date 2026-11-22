@@ -864,7 +864,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let lastBuildMs = null; // data.ms of the last successful generate that built anything
     let cycleTransient = false; // the in-flight dispatch cycle is a mid-drag build (one cycle at a time)
     // The refused full build (skin-drag.js's header). A cage drag is recorded when it first
-    // deforms (`cageDrag`: the cage base's params, and whether the build it began from
+    // deforms (`cageDrag`: the live params just before that deform, never the base's
+    // dispatch record, and whether the build it began from
     // already passed through itself), and stays recorded until an exact build at the live
     // params is shown, a revert, a build error, or a change that is not a drag; reading the
     // skin's deformed set at send time would lose it when a live drag's transient build
@@ -1530,6 +1531,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       params, getView: view, getParamsVersion: () => loop.version(),
     });
     let lastSkinInputAt = 0; // Date.now() of the last slider input that skinned
+    // The params as the last change left them: where a cage drag that begins with the next
+    // interactive change began (skin.deform's `before`).
+    let paramsBefore = { ...params };
 
     // ?debug: how the in-view meshes were delivered, e.g. "3 canonical / 1 posed".
     const frameSummary = () => {
@@ -2328,7 +2332,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       refreshView();    // keep showing the now-stale mesh (no flicker); disable export
       updateRelevance();
       if (interactive) {
-        const skinned = skin.deform();
+        const skinned = skin.deform({ before: paramsBefore });
         if (skinned.length) { lastSkinInputAt = Date.now(); loop.delayKick(SKIN_PAUSE_MS); }
         // The first deform of a cage drag records where it began (see cageDrag).
         if (!cageDrag && skin.cageDragActive()) {
@@ -2339,6 +2343,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         skin.endDrag();
         cageDrag = null;
       }
+      paramsBefore = { ...params };
     }
 
     // Write `values` into the params as a panel edit does (no commit), the panel showing them.

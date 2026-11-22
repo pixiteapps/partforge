@@ -201,7 +201,8 @@ const stepsFinite = (steps) => steps.every((st) =>
 // Probe ONE sub-part at explicit params/purpose. The shared primitive under
 // probePoses (pose-probe.js) and the lint place/animation rules — kept free of
 // jobs.js imports so the lint import closure stays pure (test/lint-purity.test.js).
-// Never throws; a failing/queried/weird sub-part yields { trusted: false }.
+// Never throws; a failing/queried/weird sub-part yields { trusted: false }, and one whose
+// build or place() threw (the catch below) also carries `threw: true`.
 // scope: "full" (build then place), "build" (build only), "place" (place() on a
 // canonical token; no build runs, so a querying build is irrelevant). In place
 // scope a readable but reshaping place() (scale/mirror/union) returns
@@ -237,6 +238,9 @@ export function probeSubPartPose(sp, { view, purpose = "display", p, d }, { scop
     const found = { implicitSpecs, skinnable, cages, cagePosable, shapeHash };
     return ok ? { trusted: true, baseHash: s._hash, pose: s._pose, ...found } : { trusted: false, ...found };
   } catch {
-    return { trusted: false, implicitSpecs: [], skinnable: false, cages: [], cagePosable: false, shapeHash: undefined };
+    // `threw`: this is the one untrusted answer that means the build failed at these params
+    // (the cage drag holds such a pose as invalid; any other untrusted answer only means the
+    // probe cannot follow the change).
+    return { trusted: false, threw: true, implicitSpecs: [], skinnable: false, cages: [], cagePosable: false, shapeHash: undefined };
   }
 }

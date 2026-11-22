@@ -76,6 +76,15 @@ test("the untrusted and throwing paths report no cage pose", () => {
   expect(thrown).toMatchObject({ trusted: false, cages: [], cagePosable: false });
 });
 
+test("only the throwing path says it threw", () => {
+  expect(probe((k) => { k.subdiv(bentCage(k.cage, 0)); throw new Error("x"); }).threw).toBe(true);
+  // A build that queries geometry is untrusted, but nothing threw.
+  const queried = probe((k) => { const s = k.subdiv(bentCage(k.cage, 0)); s.boundingBox(); return s; });
+  expect(queried.trusted).toBe(false);
+  expect(queried.threw).toBeUndefined();
+  expect(probe((k) => k.subdiv(bentCage(k.cage, 0))).threw).toBeUndefined();
+});
+
 test("a later edit to the cage does not change the snapshot already taken", () => {
   const r = probe((k) => {
     const c = bentCage(k.cage, 0);

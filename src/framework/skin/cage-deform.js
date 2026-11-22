@@ -20,7 +20,7 @@
 //
 // Pure: no DOM, no kernel, worker-safe.
 import { subdivPlan, applySubdivPlan, topologyKey, sameTopology } from "../geometry/subdiv/surface.js";
-import { TIE_WEIGHTS } from "../geometry/subdiv/ties.js";
+import { TIE_WEIGHTS, tiesHold } from "../geometry/subdiv/ties.js";
 import { dragValidity } from "../geometry/subdiv/index.js";
 
 const sameFaces = (a, b) => {
@@ -45,6 +45,17 @@ function sameCage(base, live) {
 }
 
 /**
+ * Whether `ties` were made against `snapshot`'s topology: well-formed, and the same
+ * topology key. Cheap (no plan): the skin controller asks it when a delivery arrives and
+ * builds the plan only when a drag needs it.
+ */
+export function tiesFitCage(snapshot, ties) {
+  if (!snapshot || !ties || !(ties.tri instanceof Uint32Array) || !(ties.w instanceof Float32Array)) return false;
+  if (ties.w.length !== TIE_WEIGHTS * ties.tri.length) return false;
+  return topologyKey(snapshot) === ties.key;
+}
+
+/**
  * A cage base for a delivery's ties, or null when the ties were not made against this
  * snapshot's topology (or do not fit its plan).
  * @param {{ points: number[][], faces: number[][], creases?: number[][] }} snapshot  the
@@ -52,9 +63,7 @@ function sameCage(base, live) {
  * @param {{ key: string, level: number, tri: Uint32Array, w: Float32Array }} ties
  */
 export function makeCageBase(snapshot, ties) {
-  if (!snapshot || !ties || !(ties.tri instanceof Uint32Array) || !(ties.w instanceof Float32Array)) return null;
-  if (ties.w.length !== TIE_WEIGHTS * ties.tri.length) return null;
-  if (topologyKey(snapshot) !== ties.key) return null;
+  if (!tiesFitCage(snapshot, ties)) return null;
   let plan;
   try { plan = subdivPlan(snapshot, ties.level); } catch { return null; }
   const nTri = plan.indices.length / 3;
@@ -66,6 +75,22 @@ export function makeCageBase(snapshot, ties) {
     // Scratch for the limit mesh's vertex normals, reused by every deform.
     limitNormals: new Float64Array(3 * nLimit),
   };
+}
+
+/**
+ * Whether the base's plan and its ties agree: every delivered vertex placed from its tie on
+ * the plan's REST surface (the base snapshot's own points) lands within TIE_TOLERANCE of
+ * where it was delivered (subdiv/ties.js's tiesHold, the rule the worker sent them by). The
+ * topology key ignores face order and is a hash, so a plan whose triangles come in another
+ * order than the worker's (a cage listing its faces differently at the same params, a
+ * collision) passes the key and fails here. Run once per base, before its first deform.
+ * @param {Float32Array} positions  the delivered positions, before anything wrote into them
+ */
+export function tiesAgree(base, positions) {
+  if (!base || positions.length !== 3 * base.ties.tri.length) return false;
+  let L;
+  try { L = applySubdivPlan(base.plan, base.snapshot.points); } catch { return false; }
+  return tiesHold(base.ties, positions, L.positions, base.plan.indices);
 }
 
 // Vertex normals of a triangle mesh, into `out`: each triangle adds its unit normal to

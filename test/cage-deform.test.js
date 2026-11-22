@@ -8,7 +8,8 @@ import { probePoses } from "../src/framework/pose-probe.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { createCage } from "../src/framework/geometry/subdiv/cage.js";
 import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
-import { makeCageBase, deformCage } from "../src/framework/skin/cage-deform.js";
+import { makeCageBase, deformCage, tiesAgree } from "../src/framework/skin/cage-deform.js";
+import { topologyKey } from "../src/framework/geometry/subdiv/surface.js";
 import hand, { cageHand } from "../src/parts/cage-hand.js";
 import { TWO_BONE } from "./fixtures/skin-fixtures.js";
 
@@ -285,6 +286,71 @@ describe("the skin controller with a cage base", () => {
     expect(skin.hasBase("hand")).toBe(false);
     skin.recordDelivered("hand", meshA, null);
     expect(skin.hasBase("hand")).toBe(false);
+  });
+
+  // The same cage with its first two faces listed the other way round: the same topology
+  // (topologyKey ignores face order), but the plan's triangles come in another order.
+  const swapped = (c) => {
+    const faces = [...c.faces], ids = [...c.ids];
+    [faces[0], faces[1]] = [faces[1], faces[0]];
+    [ids[0], ids[1]] = [ids[1], ids[0]];
+    return { ...c, faces, ids };
+  };
+
+  test("I2: tiesAgree places every vertex on the plan's rest surface; a face order the ties were not made against fails", () => {
+    const snap = entryAt(A).cages[0];
+    expect(tiesAgree(makeCageBase(snap, meshA.ties), meshA.positions)).toBe(true);
+    const other = swapped(snap);
+    expect(topologyKey(other)).toBe(meshA.ties.key);
+    const base = makeCageBase(other, meshA.ties);
+    expect(base).toBeTruthy();
+    expect(tiesAgree(base, meshA.positions)).toBe(false);
+  });
+
+  test("I2: a base whose snapshot lists its faces in another order than the ties is refused at the first deform, and nothing is drawn", () => {
+    const viewer = fakeViewer();
+    const params = { ...A };
+    let version = 0;
+    // The record's probe (at the dispatch record's params) swaps two faces; the live one does not.
+    const probe = (part, view, p, opts) => {
+      const map = probePoses(part, view, p, opts);
+      if (p !== params) { const e = map.get("hand"); map.set("hand", { ...e, cages: [swapped(e.cages[0])] }); }
+      return map;
+    };
+    const skin = createSkinDrag(hand, viewer, { params, getView: () => "assembly", getParamsVersion: () => version, probe });
+    skin.recordDelivered("hand", meshA, { view: "assembly", params: { ...A } });
+    expect(skin.hasBase("hand")).toBe(true);   // the key matches: only the check can tell
+    Object.assign(params, { indexCurl: 40 }); version = 1;
+    expect(skin.deform()).toEqual([]);
+    expect(viewer.setSubVertices).not.toHaveBeenCalled();
+    expect(skin.hasBase("hand")).toBe(false);
+    expect(skin.isDragging() || skin.cageDragActive()).toBe(false);
+  });
+
+  test("M1: a recorded base holds no copy of the mesh; the first deform makes them, later moves reuse them, a drag's end drops them", () => {
+    // A viewer that keeps no copy of what it is handed, so every array counted is the skin's.
+    const params = { ...A };
+    let version = 0;
+    const viewer = { hasSubMesh: () => true, setSubVertices: vi.fn(() => true) };
+    const skin = createSkinDrag(hand, viewer, { params, getView: () => "assembly", getParamsVersion: () => version });
+    const edit = (patch) => { Object.assign(params, patch); version++; };
+    const n = meshA.positions.length;
+    const sizes = [];
+    const Real = { F32: Float32Array, F64: Float64Array };
+    const spy = (C) => new Proxy(C, { construct(T, args) { sizes.push(typeof args[0] === "number" ? args[0] : args[0]?.length); return Reflect.construct(T, args); } });
+    const big = (f) => {
+      sizes.length = 0;
+      globalThis.Float32Array = spy(Real.F32); globalThis.Float64Array = spy(Real.F64);
+      try { f(); } finally { Object.assign(globalThis, { Float32Array: Real.F32, Float64Array: Real.F64 }); }
+      return sizes.filter((x) => x >= n).length;
+    };
+    expect(big(() => skin.recordDelivered("hand", meshA, { view: "assembly", params: { ...A } }))).toBe(0);
+    // The scratch pair (the copies are slices of the delivered arrays, made by their own constructor).
+    expect(big(() => { edit({ indexCurl: 40 }); expect(skin.deform()).toEqual(["hand"]); })).toBe(2);
+    expect(big(() => { edit({ indexCurl: 45 }); expect(skin.deform()).toEqual(["hand"]); })).toBe(0);
+    skin.restoreAll();
+    skin.endDrag();
+    expect(big(() => { edit({ indexCurl: 50 }); expect(skin.deform()).toEqual(["hand"]); })).toBe(2);
   });
 
   test("while held, a cage base is restored and not deformed", () => {

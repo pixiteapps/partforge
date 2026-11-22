@@ -15,9 +15,18 @@
 // Then, for the cage hand only, the viewer's side of a drag (skin/cage-deform.js), the
 // median of 20 moves of one curl from one delivered base:
 //   deformCage    one re-pose of the delivered mesh from the moved cage's points
-//   skin deform() one full skin controller deform(): the live build probe at the new
-//                 params, the drag validity check, then deformCage, then the viewer write
-//                 (a no-op stub here)
+//   skin deform() one full skin controller deform() after the first: the live build probe
+//                 at the new params, the drag validity check, then deformCage, then the
+//                 viewer write (a no-op stub here)
+//   first deform  the first deform() of a drag on a freshly recorded base, which also makes
+//                 the drag state (median of 8 fresh controllers); its parts, alone:
+//     plan          makeCageBase: the subdiv plan from the base's snapshot
+//     check         tiesAgree: every delivered vertex placed from its tie on the plan's rest
+//                   surface against where it was delivered
+//     copies        the copies of positions and normals, and the scratch pair
+// and the bytes the controller holds for the hand beyond the delivery itself: idle (a
+// recorded base: references only) and during a drag (the plan's typed arrays, the limit
+// normals, the copies and the scratch).
 //   dragValidity L1, L2   the drag validity check (subdiv/index.js) alone, at levels 1 and
 //                 2 of the base's plan; DRAG_CHECK_LEVEL is the level the drag uses
 // and the first curl, stepping every finger's curl past 90° in 0.5° steps with every
@@ -32,7 +41,7 @@ import hand, { cageHand } from "../src/parts/cage-hand.js";
 import whale, { whaleCage } from "../src/parts/organic-whale.js";
 import { probePoses } from "../src/framework/pose-probe.js";
 import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
-import { makeCageBase, deformCage } from "../src/framework/skin/cage-deform.js";
+import { makeCageBase, tiesAgree, deformCage } from "../src/framework/skin/cage-deform.js";
 import { dragValidity, DRAG_CHECK_LEVEL } from "../src/framework/geometry/subdiv/index.js";
 import { createCage } from "../src/framework/geometry/subdiv/cage.js";
 
@@ -166,6 +175,41 @@ for (const { c, info, rows } of results) {
   console.log(`\ncage-hand drag, CPU ms, median of ${DRAG_RUNS}: ${n / 3} delivered vertices, ${base.plan.indices.length / 3} limit triangles (level ${base.plan.level})`);
   console.log(`  ${"deformCage".padEnd(14)} ${f1(median(deformMs)).padStart(8)}`);
   console.log(`  ${"skin deform()".padEnd(14)} ${f1(median(controllerMs)).padStart(8)}   (live probe + check + deformCage)`);
+
+  // The first deform of a drag: a fresh controller each time, so each one makes its drag state.
+  const firstMs = [], planMs = [], agreeMs = [], copyMs = [];
+  for (let i = 0; i <= 8; i++) {
+    const q = { ...at };
+    const fresh = createSkinDrag(hand, viewer, { params: q, getView: () => "assembly", getParamsVersion: () => (q.indexCurl === at.indexCurl ? 0 : 1) });
+    fresh.recordDelivered("hand", delivered, { view: "assembly", params: { ...at } });
+    q.indexCurl = 40;
+    const [names, ms] = time(() => fresh.deform({ before: at }));
+    if (names.length !== 1) throw new Error("the first deform did not deform the hand");
+    const [b, pms] = time(() => makeCageBase(probeAt(at).cages[0], delivered.ties));
+    const [agree, ams] = time(() => tiesAgree(b, delivered.positions));
+    if (!agree) throw new Error("the hand's plan and ties disagree");
+    const [, cms] = time(() => [delivered.positions.slice(), delivered.normals.slice(), new Float32Array(n), new Float32Array(n)]);
+    if (i > 0) { firstMs.push(ms); planMs.push(pms); agreeMs.push(ams); copyMs.push(cms); }
+  }
+  console.log(`  ${"first deform".padEnd(14)} ${f1(median(firstMs)).padStart(8)}   (the drag state, then a deform)`);
+  console.log(`    ${"plan".padEnd(12)} ${f1(median(planMs)).padStart(8)}`);
+  console.log(`    ${"check".padEnd(12)} ${f1(median(agreeMs)).padStart(8)}`);
+  console.log(`    ${"copies".padEnd(12)} ${f1(median(copyMs)).padStart(8)}`);
+
+  // Bytes held beyond the delivery: every typed array reachable from the plan, once each.
+  const seen = new Set();
+  const typedBytes = (o) => {
+    if (!o || typeof o !== "object" || seen.has(o)) return 0;
+    seen.add(o);
+    if (ArrayBuffer.isView(o)) return o.byteLength;
+    let sum = 0;
+    for (const v of Array.isArray(o) ? o : Object.values(o)) sum += typedBytes(v);
+    return sum;
+  };
+  const planBytes = typedBytes(base.plan) + base.limitNormals.byteLength;
+  const meshBytes = 4 * 4 * n;   // copies of positions and normals, and the scratch pair (Float32)
+  const mb = (x) => (x / 2 ** 20).toFixed(1);
+  console.log(`  bytes held: idle 0 MB (references to the delivery); during a drag ${mb(planBytes + meshBytes)} MB (plan ${mb(planBytes)}, copies + scratch ${mb(meshBytes)})`);
   for (const level of [1, 2]) {
     console.log(`  ${`dragValidity L${level}`.padEnd(14)} ${f1(median(checkMs[level])).padStart(8)}${level === DRAG_CHECK_LEVEL ? "   (the drag's level)" : ""}`);
   }

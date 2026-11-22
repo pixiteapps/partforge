@@ -237,6 +237,9 @@ const gen = async (part, params) => {
 beforeAll(async () => {
   k = await bootManifoldKernel({ quality: "preview" });
   for (const swing of [0, 5, 60]) built[swing] = await gen(makePart(), { swing });
+  // Bases at size 22 (an ordinary edit): the drag checks a base's mesh against its own cage.
+  built.s22 = await gen(makePart(), { swing: 0, size: 22 });
+  built.s22swing3 = await gen(makePart(), { swing: 3, size: 22 });
   built.plain = await gen(plainPart(), { swing: 0 });
 }, 120_000);
 // A fresh copy of a delivery: the fake viewer writes deformed poses into the payload's arrays.
@@ -476,7 +479,7 @@ describe("a full build after a cage drag that passes through itself", () => {
     vi.advanceTimersByTime(200);
     expect(generates(w).at(-1)[0].params.size).toBe(22);
     // The batch carries the mesh, the final reply carries only the job's warnings.
-    w.onmessage({ data: { type: "meshes-partial", meshes: [delivery(0)] } });
+    w.onmessage({ data: { type: "meshes-partial", meshes: [delivery("s22")] } });
     reply([], warned);
     input(5);
     release();
@@ -490,10 +493,12 @@ describe("a full build after a cage drag that passes through itself", () => {
     const { runtime, v, w, input, release, reply } = setup();
     runtime.setParams({ size: 22 });
     vi.advanceTimersByTime(200);
-    w.onmessage({ data: { type: "meshes-partial", meshes: [delivery(0)] } });
+    w.onmessage({ data: { type: "meshes-partial", meshes: [delivery("s22")] } });
     reply([]);
     input(5);
     release();
+    // The drag deformed (a release with no drag would leave its build on the debounce timer).
+    expect(generates(w).at(-1)[0].params.swing).toBe(5);
     const geo = v.setSubGeometry.mock.calls.length;
     reply([delivery(5)], warned);
     expect(v.setSubGeometry.mock.calls.length).toBe(geo);         // refused
@@ -573,10 +578,10 @@ describe("a full build after a cage drag that passes through itself", () => {
     runtime.setParams({ size: 22 });
     vi.advanceTimersByTime(200);
     expect(generates(w).at(-1)[0].params.size).toBe(22);
-    reply([delivery(0)], warned);    // an ordinary build that warns is shown
+    reply([delivery("s22")], warned);    // an ordinary build that warns is shown
     runtime.setParams({ swing: 3 });
     vi.advanceTimersByTime(200);
-    reply([delivery(0)]);             // clean, at size 22 swing 3: the cage base
+    reply([delivery("s22swing3")]);      // clean, at size 22 swing 3: the cage base
     input(5);
     release();
     reply([delivery(5)], warned);
@@ -607,6 +612,67 @@ describe("a full build after a cage drag that passes through itself", () => {
     expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);
     vi.runAllTimers();
     expect(generates(w).length).toBe(n);
+  });
+});
+
+// Two sub-parts: the cage body, and a post whose height `w` sets. The body never reads `w`,
+// so an edit to it rebuilds the post alone and leaves the body's base where it was built.
+const twoPart = () => {
+  const base = makePart();
+  return {
+    ...base,
+    defaults: { ...base.defaults, w: 4 },
+    parts: { ...base.parts, post: { label: "Post", views: ["v"], build: (kk, p) => kk.box({ min: [-40, 0, 0], max: [-38, 2, p.w] }) } },
+    parameters: [...base.parameters, { id: "post", title: "Post", controls: [{ key: "w", label: "W", min: 1, max: 20, step: 1 }] }],
+  };
+};
+
+describe("I1: a cage drag after an edit to another sub-part's param", () => {
+  let posts;
+  beforeAll(async () => {
+    const at = async (w) => {
+      const post = vi.fn();
+      await handle(k, twoPart(), { type: "generate", subparts: ["post"], view: "v", params: { ...twoPart().defaults, w } }, post);
+      return post.mock.calls.map(([m]) => m).find((m) => m.type === "meshes").meshes[0];
+    };
+    posts = { 4: await at(4), 9: await at(9) };
+  }, 120_000);
+  const fresh = (m) => ({ ...m, positions: m.positions.slice(), normals: m.normals.slice() });
+
+  function twoSetup() {
+    const t = setup({ part: twoPart(), first: delivery(0) });
+    t.reply([fresh(posts[4])]);
+    // The post's edit: only the post rebuilds; the body's base stays the one built at w 4.
+    t.runtime.setParams({ w: 9 });
+    vi.advanceTimersByTime(200);
+    expect(generates(t.w).at(-1)[0].subparts).toEqual(["post"]);
+    t.reply([fresh(posts[9])]);
+    return t;
+  }
+
+  test("(a) a release build refused for passing through itself reverts the drag's key alone; the commit keeps the edit", () => {
+    const { w, input, release, reply, els, onParamsCommit } = twoSetup();
+    input(5);
+    release();
+    expect(generates(w).at(-1)[0].params).toMatchObject({ swing: 5, w: 9 });
+    const n = generates(w).length;
+    reply([delivery(5)], warned);
+    vi.runAllTimers();
+    expect(els.controls.querySelectorAll('input[type="range"]')[2].value).toBe("9");
+    // Nothing went back to w 4, so the post needs no build.
+    expect(generates(w).length).toBe(n);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0, w: 9 }) }]);
+  });
+
+  test("(b) an invalid first move holds at the live params, the edit included", () => {
+    const { w, input, release, els, onParamsCommit } = twoSetup();
+    const n = generates(w).length;
+    input(140);
+    release();
+    vi.runAllTimers();
+    expect(els.controls.querySelectorAll('input[type="range"]')[2].value).toBe("9");
+    expect(generates(w).length).toBe(n);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0, w: 9 }) }]);
   });
 });
 
@@ -648,7 +714,8 @@ describe("the skin controller with a cage base", () => {
   test("an invalid pose is held, not drawn; lastValidParams names the last pose drawn", () => {
     const { skin, viewer, edit } = controller();
     expect(skin.hasBase("body")).toBe(true);
-    expect(skin.lastValidParams()).toEqual({ swing: 0, size: 20 });
+    // A base records no pose of its own: the drag's start is the live params where it begins.
+    expect(skin.lastValidParams()).toBeNull();
     edit({ swing: 60 });
     expect(skin.deform()).toEqual(["body"]);
     expect(viewer.setSubVertices).toHaveBeenCalledTimes(1);
@@ -671,7 +738,7 @@ describe("the skin controller with a cage base", () => {
     let fail = false;
     const probe = (part, view, p, opts) => {
       const map = probePoses(part, view, p, opts);
-      if (fail) for (const name of map.keys()) map.set(name, { trusted: false });
+      if (fail) for (const name of map.keys()) map.set(name, { trusted: false, threw: true, cages: [], implicitSpecs: [] });
       return map;
     };
     const { skin, viewer, edit } = controller({ probe });
@@ -690,6 +757,32 @@ describe("the skin controller with a cage base", () => {
     expect(viewer.setSubVertices).toHaveBeenCalledTimes(1);
     expect(skin.holdsInvalid()).toBe(true);
     expect(skin.lastValidParams()).toEqual({ swing: 20, size: 20 });
+  });
+
+  test("a live entry untrusted for another reason is no invalid pose: the drag falls back to a rebuild", () => {
+    let untrusted = false;
+    const probe = (part, view, p, opts) => {
+      const map = probePoses(part, view, p, opts);
+      // The build queried geometry at these params: untrusted, but nothing threw.
+      if (untrusted) for (const [name, e] of map) map.set(name, { ...e, trusted: false });
+      return map;
+    };
+    const { skin, viewer, edit } = controller({ probe });
+    edit({ swing: 20 });
+    expect(skin.deform()).toEqual(["body"]);
+    expect(viewer.setSubVertices).toHaveBeenCalledTimes(1);
+    untrusted = true;
+    edit({ swing: 21 });
+    expect(skin.deform()).toEqual([]);
+    expect(skin.holdsInvalid()).toBe(false);
+    // The exact base goes back, and the change is the regen loop's.
+    expect(viewer.setSubVertices).toHaveBeenCalledTimes(2);
+    expect(viewer.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: false });
+    expect(skin.isDragging() || skin.cageDragActive()).toBe(false);
+    // A handle frame there is not refused either.
+    const g = skin.validityGuard(null);
+    expect(g.isClear({ swing: 22, size: 20 })).toBe(true);
+    expect(g.settle({ swing: 21, size: 20 }, { swing: 22, size: 20 }).params).toEqual({ swing: 22, size: 20 });
   });
 
   test("validityGuard: the inner guard itself with no cage base, else a guard that stops at the last clear pose", () => {
