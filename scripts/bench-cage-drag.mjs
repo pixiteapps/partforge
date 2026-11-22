@@ -16,7 +16,13 @@
 // median of 20 moves of one curl from one delivered base:
 //   deformCage    one re-pose of the delivered mesh from the moved cage's points
 //   skin deform() one full skin controller deform(): the live build probe at the new
-//                 params, then deformCage, then the viewer write (a no-op stub here)
+//                 params, the drag validity check, then deformCage, then the viewer write
+//                 (a no-op stub here)
+//   dragValidity L1, L2   the drag validity check (subdiv/index.js) alone, at levels 1 and
+//                 2 of the base's plan; DRAG_CHECK_LEVEL is the level the drag uses
+// and the first curl, stepping every finger's curl past 90° in 0.5° steps with every
+// knuckle at 90° and the thumb at 60°, that the full check (the body's own level, as
+// meshSubdiv builds it) and the drag check each refuse.
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { levelFor, subdivide, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
@@ -27,6 +33,8 @@ import whale, { whaleCage } from "../src/parts/organic-whale.js";
 import { probePoses } from "../src/framework/pose-probe.js";
 import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
 import { makeCageBase, deformCage } from "../src/framework/skin/cage-deform.js";
+import { dragValidity, DRAG_CHECK_LEVEL } from "../src/framework/geometry/subdiv/index.js";
+import { createCage } from "../src/framework/geometry/subdiv/cage.js";
 
 const RUNS = 12;
 const PREVIEW = { quality: "preview" };
@@ -131,12 +139,17 @@ for (const { c, info, rows } of results) {
   const base = makeCageBase(probeAt(at).cages[0], delivered.ties);
   const n = delivered.positions.length;
   const P = new Float32Array(n), N = new Float32Array(n);
-  const deformMs = [];
+  const deformMs = [], checkMs = { 1: [], 2: [] };
   for (let i = 0; i <= DRAG_RUNS; i++) {
     const live = probeAt({ ...at, indexCurl: 30 + i }).cages[0];
     const [ok, ms] = time(() => deformCage(base, live, P, N));
     if (!ok) throw new Error("deformCage refused the hand's own cage");
     if (i > 0) deformMs.push(ms);
+    for (const level of [1, 2]) {
+      const [bad, cms] = time(() => dragValidity(base.plan, live.points, { level }));
+      if (bad) throw new Error(`the drag check refused a pose in the hand's range: ${bad.message}`);
+      if (i > 0) checkMs[level].push(cms);
+    }
   }
   const params = { ...at };
   let version = 0;
@@ -152,5 +165,24 @@ for (const { c, info, rows } of results) {
   }
   console.log(`\ncage-hand drag, CPU ms, median of ${DRAG_RUNS}: ${n / 3} delivered vertices, ${base.plan.indices.length / 3} limit triangles (level ${base.plan.level})`);
   console.log(`  ${"deformCage".padEnd(14)} ${f1(median(deformMs)).padStart(8)}`);
-  console.log(`  ${"skin deform()".padEnd(14)} ${f1(median(controllerMs)).padStart(8)}   (live probe + deformCage)`);
+  console.log(`  ${"skin deform()".padEnd(14)} ${f1(median(controllerMs)).padStart(8)}   (live probe + check + deformCage)`);
+  for (const level of [1, 2]) {
+    console.log(`  ${`dragValidity L${level}`.padEnd(14)} ${f1(median(checkMs[level])).padStart(8)}${level === DRAG_CHECK_LEVEL ? "   (the drag's level)" : ""}`);
+  }
+
+  // What the drag check misses: the first curl past the range each check refuses.
+  const { p } = resolveParams(hand, at);
+  const curled = (c) => cageHand(createCage, p, {
+    ...Object.fromEntries(["index", "middle", "ring", "pinky"].map((f) => [f, [90, c, 0.75 * c]])), thumb: [60],
+  }).snapshot();
+  let full = null, coarse = null;
+  for (let c = 90; c <= 135 && (full === null || coarse === null); c += 0.5) {
+    const s = curled(c);
+    if (full === null) {
+      const lf = levelFor(s, tolerance, { maxTriangles });
+      if (selfIntersections(subdivide(s, lf.level, lf.mesh)).length) full = c;
+    }
+    if (coarse === null && dragValidity(base.plan, s.points)) coarse = c;
+  }
+  console.log(`  first curl refused (knuckles 90°, thumb 60°): full check ${full ?? "none"}°, drag check ${coarse ?? "none"}°`);
 }

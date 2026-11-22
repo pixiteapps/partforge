@@ -1,5 +1,5 @@
 // The subdivision cage: a coarse closed quad mesh an author box-models with k.cage(...).
-import { subdivide, levelFor, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES, MAX_SUBDIV_LEVEL } from "./surface.js";
+import { subdivide, levelFor, applySubdivPlanAt, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES, MAX_SUBDIV_LEVEL } from "./surface.js";
 import { selfIntersections } from "./self-intersect.js";
 
 // The pieces stay in their own modules (cage.js, surface.js, self-intersect.js), which
@@ -36,6 +36,30 @@ export function meshSubdiv(snapshot, tier, { maxTriangles } = {}) {
     warnings.push(through);
   }
   return { level, positions: mesh.positions, indices: mesh.indices, triFace: mesh.triFace, triRegion: mesh.triRegion, regions: mesh.regions, creasePairs: mesh.creasePairs, warnings };
+}
+
+// The drag validity check (docs/superpowers/specs/2026-11-22-cage-pose-drag-design.md,
+// "Stopping at the last valid pose"): meshSubdiv's two refusals, the body passing through
+// itself and the body with no volume, on a coarser surface, fast enough to run before each
+// pose a drag draws. The level is min(plan.level, DRAG_CHECK_LEVEL): 1, because level 2
+// costs about 11 ms a move on the cage hand and level 1 about 3 ms (npm run
+// bench:cage-drag; the budget is 5 ms). A coarse surface can miss a fine crossing: the
+// exact build after release still runs the full check.
+export const DRAG_CHECK_LEVEL = 1;
+
+/**
+ * Is a drag pose of a cage drawable? `plan` is a subdivPlan (surface.js) and `points` the
+ * cage's points in the plan's snapshot order. `ids` names the cage faces in the message
+ * (the faces' indices are used without it). Kernel-free and DOM-free.
+ * @returns {null | { message: string }} null for a valid pose, else meshSubdiv's message
+ */
+export function dragValidity(plan, points, { ids = [], level = Math.min(plan.level, DRAG_CHECK_LEVEL) } = {}) {
+  let positions;
+  try { positions = applySubdivPlanAt(plan, points, level); } catch (err) { return { message: `subdiv: ${err.message}` }; }
+  const { indices, triFace } = plan.levels[level];
+  const through = throughMessage(selfIntersections({ positions, indices, triFace }), ids);
+  if (!(signedVolume(positions, indices) > 0)) return { message: through ?? "subdiv: the body has no volume" };
+  return through ? { message: through } : null;
 }
 
 // "subdiv: the body passes through itself between A and B; C and D", or null for no

@@ -247,6 +247,22 @@ it.
 A pose `rotate` or `scale` refuses (an edge shorter than 1e-6) is treated the same way
 as a failed check.
 
+**Built** (Task 15): the check runs at level 1 (`DRAG_CHECK_LEVEL`). On the cage hand level
+1 costs 3.0 ms a move and level 2 costs 12.3 ms (`npm run bench:cage-drag`, M1 Max), so
+level 2 is over the budget. Stepping every finger's curl past 90° in 0.5° steps, with every
+knuckle at 90° and the thumb at 60°, the full check and the drag check both refuse first
+at 92.5°. The check uses the drag plan's quad diagonals, which are picked at the base
+pose, so it can miss a crossing the full check sees with diagonals picked at the live
+pose: a 3 × 3 box whose middle top face is pushed down through the bottom is never
+refused at level 1 or 2, while the full build warns from 25 mm. The full build after
+release catches that case.
+
+A handle drag stops through the session's drag guard, the way a collision does: the skin
+wraps the collision guard (`validityGuard`), and a frame whose pose fails settles at the
+last clear values. A refused full build after a drag is not drawn, and its revert is
+reported to the host as a second `onParamsCommit` (the release's commit already carried
+the refused values).
+
 ### What the drag shape may differ in
 
 - **Level.** If the full build would pick another level at the new pose, the drag shape

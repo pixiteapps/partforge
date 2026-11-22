@@ -26,11 +26,22 @@
 // point positions) is equal, and deformCage accepts the live cage's topology. A sub-part's
 // base is one kind or the other, never both; every other rule (the copies, the scratch,
 // restore, hold, the drag flag) is shared.
+//
+// A cage pose must not pass through itself (the design's "Stopping at the last valid
+// pose"). Before a cage base draws a live pose, the drag validity check runs on it
+// (cage-deform.js's cagePoseValidity); while the drag is live (the sub-part is deformed or
+// held, or a handle is being dragged), a live entry that is not trusted (the cage code
+// threw: rotate and scale refuse an edge shorter than 1e-6) fails too. A pose that fails
+// is not drawn: the sub-part HOLDS what it shows (the last valid pose, or its base), the
+// controller reports it held (holdsInvalid), and lastValidParams() names the params of the
+// last pose a cage base drew, or the base's own. mount.js puts the params back there
+// before a build goes out, and a handle drag asks first through validityGuard. An
+// implicit base never runs any of it.
 import { viewSubParts } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { framesOnlyChange } from "./frames-only.js";
 import { frameMotions, skinVertices } from "./deform.js";
-import { makeCageBase, deformCage } from "./cage-deform.js";
+import { makeCageBase, deformCage, cagePoseValidity } from "./cage-deform.js";
 
 /** The pause with no slider input after which a drag's exact build is dispatched. */
 export const SKIN_PAUSE_MS = 150;
@@ -57,21 +68,53 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
   const bases = new Map();
   const deformed = new Set();
   let dragging = false;
+  // Cage bases held at an invalid live pose by the last deform(), and the params of the
+  // last pose a cage base drew (a base's own params when it was recorded).
+  const invalid = new Set();
+  let lastValid = null;
   // hold(): while any hold is out, nothing deforms (an async capture is reading the
   // exact meshes). A counter, so overlapping holders compose.
   let holds = 0;
 
   // The live build-scope probe and the per-name motions, memoized per (version, view).
   let liveKey = null, liveMap = null, motionMemo = new Map();
+  // The probe validityGuard last ran, at its candidate params: a handle frame checks a
+  // pose and then writes it, so the deform that follows reuses it instead of probing again.
+  let checked = null;
+  const sameParams = (a, b) => {
+    for (const k of Object.keys(a)) if (!Object.is(a[k], b[k])) return false;
+    for (const k of Object.keys(b)) if (!(k in a)) return false;
+    return true;
+  };
   const liveProbe = () => {
     const key = `${getParamsVersion()}|${getView()}`;
     if (key !== liveKey) {
       liveKey = key;
-      liveMap = probe(part, getView(), params, { scope: "build" });
+      liveMap = checked && checked.view === getView() && sameParams(checked.params, params)
+        ? checked.map : probe(part, getView(), params, { scope: "build" });
       motionMemo = new Map();
     }
     return liveMap;
   };
+  // A cage base's verdict on a probe entry: undefined (not a cage drag: no cage base, or a
+  // live cage it cannot re-pose), null (valid) or { message }. An untrusted entry fails
+  // only while a cage drag is live (`dragLive`): the cage code threw at this pose. Before
+  // that it is an ordinary change the probe cannot follow, and the exact build takes it.
+  // A trusted entry's verdict is memoized per probe map (one check per params version).
+  const verdictMemo = new WeakMap();
+  function cageVerdict(name, map, dragLive) {
+    const base = bases.get(name);
+    if (base?.kind !== "cage") return undefined;
+    const e = map.get(name);
+    if (!e?.trusted) return dragLive ? { message: "subdiv: the cage code failed at this pose" } : undefined;
+    let memo = verdictMemo.get(map);
+    if (!memo) verdictMemo.set(map, (memo = new Map()));
+    if (!memo.has(name)) {
+      memo.set(name, cagePosableBetween({ trusted: true, cagePosable: true, cages: [base.cage.snapshot], shapeHash: base.shapeHash }, e)
+        ? cagePoseValidity(base.cage, e.cages[0]) : undefined);
+    }
+    return memo.get(name);
+  }
   // The probe at a dispatch record's params. One record is shared by every sub-part of
   // its dispatch, so it is memoized by identity.
   const atMemo = new WeakMap();
@@ -84,6 +127,7 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
   function forget(name) {
     bases.delete(name);
     deformed.delete(name);
+    invalid.delete(name);
     motionMemo.delete(name);
   }
 
@@ -109,6 +153,7 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
       scratch: { positions: new Float32Array(n), normals: new Float32Array(n) },
     });
     deformed.delete(name); // a delivery replaced the geometry: whatever was deformed is gone
+    invalid.delete(name);
     motionMemo.delete(name);
   }
 
@@ -134,7 +179,9 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
       scratch: { positions: new Float32Array(n), normals: new Float32Array(n) },
     });
     deformed.delete(name);
+    invalid.delete(name);
     motionMemo.delete(name);
+    lastValid = { ...at.params };
     return true;
   }
 
@@ -148,8 +195,9 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
 
   // Implicit bases only: mount rebases a stale delivery with bindings mid-drag, because
   // skinning drifts from the exact shape as the pose moves away from the base. A cage
-  // deform is the smooth surface at the live points wherever the drag goes, so a cage
-  // base is never rebased.
+  // base is never rebased: its smooth skin is exact at the live points wherever the drag
+  // goes. (A cut is not redone during a drag, so the seam vertices ride the skin until the
+  // exact build lands.)
   function canRebase(name, at) {
     if (!at?.params) return false;
     return skinnableBetween(probeAt(at).get(name), liveProbe().get(name));
@@ -187,9 +235,19 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     }
     const inView = viewSubParts(part, getView(), params);
     const skinned = [];
+    let cageDrawn = false;
+    const wasHeld = new Set(invalid);
+    invalid.clear();
     for (const name of inView) {
       if (!bases.has(name) || !viewer.hasSubMesh(name)) continue;
       const base = bases.get(name);
+      // A cage pose that fails the check is not drawn: what is on screen stays.
+      if (base.kind === "cage" && cageVerdict(name, liveProbe(), deformed.has(name) || wasHeld.has(name))) {
+        invalid.add(name);
+        dragging = true;
+        skinned.push(name);
+        continue;
+      }
       const live = canSkin(name) ? liveProbe().get(name) : null;
       // At the base's own build the exact base IS the live shape: show it, not an
       // identity skin (which would also keep the edge lines hidden).
@@ -204,6 +262,7 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
       }
       if (!moved) {
         if (deformed.has(name)) restore(name);
+        if (atBase && base.kind === "cage") cageDrawn = true;
         continue;
       }
       let ok;
@@ -217,14 +276,29 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
       deformed.add(name);
       dragging = true;
       skinned.push(name);
+      if (base.kind === "cage") cageDrawn = true;
     }
+    if (cageDrawn && invalid.size === 0) lastValid = { ...params };
     // A deformed sub-part that left the view goes back to its exact base.
     const shown = new Set(inView);
     for (const name of [...deformed]) if (!shown.has(name)) restore(name);
-    // Nothing left deformed (back at the base, or a change skinning cannot follow):
-    // the drag is over, so a release takes the ordinary path.
-    if (deformed.size === 0) dragging = false;
+    // Nothing left deformed (back at the base, or a change skinning cannot follow) and
+    // nothing held: the drag is over, so a release takes the ordinary path.
+    if (deformed.size === 0 && invalid.size === 0) dragging = false;
     return skinned;
+  }
+
+  // Is every in-view cage base's pose at `candidate` drawable? A handle drag is a live drag
+  // from its first frame. (One probe, kept for the deform that follows a write of these
+  // params.)
+  function poseValidAt(candidate) {
+    const view = getView();
+    const map = probe(part, view, candidate, { scope: "build" });
+    checked = { view, params: { ...candidate }, map };
+    for (const name of viewSubParts(part, view, candidate)) {
+      if (viewer.hasSubMesh(name) && cageVerdict(name, map, true)) return false;
+    }
+    return true;
   }
 
   function restoreAll() {
@@ -239,7 +313,31 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     isDeformed: (name) => deformed.has(name),
     anyDeformed: () => deformed.size > 0,
     isDragging: () => dragging,
-    endDrag: () => { dragging = false; },
+    endDrag: () => { dragging = false; invalid.clear(); },
+    // A cage pose the last deform() refused is held on screen (see the header).
+    holdsInvalid: () => invalid.size > 0,
+    lastValidParams: () => (lastValid ? { ...lastValid } : null),
+    // A cage base is deformed or held: what a build sent now follows is a cage drag.
+    cageDragActive: () => invalid.size > 0 || [...deformed].some((n) => bases.get(n)?.kind === "cage"),
+    /**
+     * A Pose-mode drag guard (pose-session.js's COLLISIONS contract) that refuses a pose an
+     * in-view cage base may not draw, wrapping `inner` (the collision guard, or null).
+     * Returns `inner` itself when no cage base is in view, so a part with no cage gets
+     * exactly the guard it had. A refused settle stays at `from`, the last clear pose.
+     */
+    validityGuard(inner) {
+      const view = getView();
+      const anyCage = viewSubParts(part, view, params).some((n) => bases.get(n)?.kind === "cage" && viewer.hasSubMesh(n));
+      if (!anyCage) return inner;
+      return {
+        settle(from, to, opts) {
+          const s = inner ? inner.settle(from, to, opts) : { params: { ...to }, blocked: null };
+          return poseValidAt({ ...from, ...s.params }) ? s : { params: { ...from }, blocked: null };
+        },
+        isClear: (p) => (inner ? inner.isClear(p) : true) && poseValidAt(p),
+        release: () => inner?.release?.(),
+      };
+    },
     // Hold deformation off until the returned release is called (idempotent). The
     // caller restores what is deformed now (restoreAll); later deform() calls restore
     // and return [] while held.

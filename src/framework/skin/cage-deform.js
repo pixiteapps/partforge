@@ -21,6 +21,7 @@
 // Pure: no DOM, no kernel, worker-safe.
 import { subdivPlan, applySubdivPlan, topologyKey, sameTopology } from "../geometry/subdiv/surface.js";
 import { TIE_WEIGHTS } from "../geometry/subdiv/ties.js";
+import { dragValidity } from "../geometry/subdiv/index.js";
 
 const sameFaces = (a, b) => {
   if (a === b) return true;
@@ -90,6 +91,18 @@ function vertexNormals(P, I, out) {
     if (len > 0) { out[i] /= len; out[i + 1] /= len; out[i + 2] /= len; }
   }
   return out;
+}
+
+/**
+ * Whether the base may draw `snapshot`'s pose (the drag validity check, subdiv/index.js's
+ * dragValidity, on the base's plan). Undefined when `snapshot` is not the base's topology
+ * (deformCage refuses it, and the exact build takes over); null for a valid pose; else
+ * `{ message }`, meshSubdiv's own wording.
+ */
+export function cagePoseValidity(base, snapshot) {
+  if (!base || !sameCage(base, snapshot)) return undefined;
+  // The plan's triangles name the BASE snapshot's faces (a pose may list them in another order).
+  return dragValidity(base.plan, snapshot.points, { ids: base.snapshot.ids ?? [] });
 }
 
 /**
