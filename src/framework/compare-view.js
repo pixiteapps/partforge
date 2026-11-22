@@ -8,6 +8,12 @@
 // the viewer (setCompare), which draws them in place of the pair. One pair per view:
 // the first in the part's declaration order.
 //
+// The job runs WHATEVER the "Show differences" switch says: the switch (and the
+// hidden pieces) decide only what is drawn on screen (viewer.setCompareShown). The
+// viewer holds the result either way, because the agent's captures always draw the
+// comparison (viewer.js withCompareForced): its picture must not depend on a setting
+// it cannot see.
+//
 // It also owns:
 //   - the on-stage legend, three chips in the viewbar's readout slot ("Matches",
 //     "Missing", "Extra"); Missing and Extra are buttons that hide their piece. It shows
@@ -82,6 +88,7 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
   let currentPair = null;
   const listeners = new Set();
   const waiters = [];
+  viewer.setCompareShown?.(enabled);
 
   // --- the legend ------------------------------------------------------------------
   const box = viewbar ? createViewbarReadout("div", "pf-compare-legend") : null;
@@ -164,12 +171,12 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
     const p = pair();
     const pairMoved = currentPair?.name !== p?.name || currentPair?.ref !== p?.ref;
     currentPair = p;
-    if (!p || !enabled) {
+    if (!p) {
       // Nothing to compare: announced only when something changed, since a playing
       // animation re-shows the assembly (and so lands here) every frame.
       const busy = timer || pendingJob || pieces;
       stop(); clearShown();
-      if (!p) { refusedKey = null; refusal = null; }
+      refusedKey = null; refusal = null;
       if (busy || pairMoved) changed();
       return;
     }
@@ -221,7 +228,7 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
     const key = pendingKey;
     pendingKey = null;
     const p = pair();
-    if (!enabled || !p || keyFor(p) !== key) { refresh(); changed(); return true; }
+    if (!p || keyFor(p) !== key) { refresh(); changed(); return true; }
     if (data.type !== "compare-meshes" || data.skipped || !isObj(data.pieces)) {
       refuse(key, data.type === "compare-meshes" ? REFUSED[data.skipped] ?? REFUSED_ERROR : REFUSED_ERROR);
       return true;
@@ -240,11 +247,11 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
     viewer.setCompareHidden?.(kind, hidden[kind]);
     changed();
   }
+  // What is drawn on screen only: the result (or the job for it) is kept either way.
   function setEnabled(on) {
     if (enabled === !!on) return;
     enabled = !!on;
-    if (enabled) { refusedKey = null; refusal = null; }
-    refresh();
+    viewer.setCompareShown?.(enabled);
     changed();
   }
 

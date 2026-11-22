@@ -96,11 +96,22 @@ function shown() {
 const pieces = () => ({ common: boxPayload(2), missing: boxPayload(4), excess: boxPayload(1, [3, 0, 0]) });
 const materialOf = (v, kind) => v._compareMeshes.find((m) => m.userData.compare === kind).material;
 
+const OriginalGetContext = globalThis.HTMLCanvasElement.prototype.getContext;
+const OriginalToDataURL = globalThis.HTMLCanvasElement.prototype.toDataURL;
+
 beforeEach(() => {
   state.renderer = null;
   globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  // happy-dom has no 2D canvas, and renderOffscreen encodes its readback through one.
+  globalThis.HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+    if (type !== "2d") return OriginalGetContext.call(this, type, ...rest);
+    return { createImageData: (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }), putImageData: () => {} };
+  };
+  globalThis.HTMLCanvasElement.prototype.toDataURL = () => "data:image/jpeg;base64,AAAA";
 });
 afterEach(() => {
+  globalThis.HTMLCanvasElement.prototype.getContext = OriginalGetContext;
+  globalThis.HTMLCanvasElement.prototype.toDataURL = OriginalToDataURL;
   globalThis.ResizeObserver = OriginalResizeObserver;
   document.body.innerHTML = "";
   vi.restoreAllMocks();
@@ -308,6 +319,153 @@ describe("pick", () => {
     expect(selection.subPart).toBe("body");
     expect(selection.compare).toBe("missing");
     expect(formatSelection(selection, { style: "prompt" })).toMatch(/material missing from \*\*Body\*\*, near \[/);
+    v.dispose();
+  });
+});
+
+// What each offscreen render (a capture) drew: the pieces' and the pair's visibility.
+function recordAtCapture(v) {
+  const seen = [];
+  let target = null;
+  const setRenderTarget = state.renderer.setRenderTarget.bind(state.renderer);
+  state.renderer.setRenderTarget = (t) => { target = t; setRenderTarget(t); };
+  const render = state.renderer.render.bind(state.renderer);
+  state.renderer.render = (scene, camera) => { if (target) seen.push(snapshot(v)); render(scene, camera); };
+  return seen;
+}
+function snapshot(v) {
+  return {
+    pieces: Object.fromEntries(v._compareMeshes.map((m) => [m.userData.compare, m.visible])),
+    body: v.__subMesh("body").visible,
+    ref: v.__subMesh("ref").visible,
+    bodyLines: v.__subLines("body").visible,
+  };
+}
+
+describe("setCompareShown", () => {
+  test("held off screen: the pair draws as before, the pieces not; on again shows them", () => {
+    const v = shown();
+    v.setCompareShown(false);
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    expect(v.getCompare()).not.toBeNull();
+    expect(snapshot(v)).toEqual({ pieces: { common: false, missing: false, excess: false }, body: true, ref: true, bodyLines: true });
+    v.setCompareShown(true);
+    expect(snapshot(v)).toEqual({ pieces: { common: true, missing: true, excess: true }, body: false, ref: false, bodyLines: false });
+    v.setCompareHidden("missing", true);
+    v.setCompareShown(false);
+    v.setCompareShown(true);
+    expect(snapshot(v).pieces).toEqual({ common: true, missing: false, excess: true });
+    v.dispose();
+  });
+
+  test("held off screen, the pair is the cutaway's section and the pieces are not", () => {
+    const v = shown();
+    v.setCompareShown(false);
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    expect(v.setCutawayEnabled(true)).toBe(true);
+    expect(v.__compareSection("common").cap.visible).toBe(false);
+    expect(v.__subMesh("body").material.clippingPlanes?.length).toBeGreaterThan(0);
+    v.setCompareShown(true);
+    expect(v.__compareSection("common").cap.visible).toBe(true);
+    v.setCutawayEnabled(false);
+    v.dispose();
+  });
+});
+
+describe("captures draw the comparison", () => {
+  const forced = { pieces: { common: true, missing: true, excess: true }, body: false, ref: false, bodyLines: false };
+
+  test("captureCanonicalViews draws all three pieces with the toggle off and a piece hidden, then puts the screen back", () => {
+    const v = shown();
+    v.setCompareShown(false);
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    v.setCompareHidden("missing", true);
+    const before = snapshot(v);
+    const seen = recordAtCapture(v);
+    expect(v.captureCanonicalViews(["iso", "front"])).toHaveLength(2);
+    expect(seen).toHaveLength(2);
+    for (const s of seen) expect(s).toEqual(forced);
+    expect(snapshot(v)).toEqual(before);
+    expect(v.getCompare().hidden).toEqual({ missing: true, excess: false });
+    v.dispose();
+  });
+
+  test("captureCurrent with includeHidden (build sight) draws them too; without, it is what the user sees", () => {
+    const v = shown();
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    v.setCompareHidden("excess", true);
+    const seen = recordAtCapture(v);
+    expect(v.captureCurrent({ size: 512, includeHidden: true })).toMatch(/^data:image/);
+    expect(seen.at(-1)).toEqual(forced);
+    v.captureCurrent({ size: 512 });
+    expect(seen.at(-1).pieces).toEqual({ common: true, missing: true, excess: false });
+    v.setCompareShown(false);
+    v.captureCurrent({ size: 512 });
+    expect(seen.at(-1)).toEqual({ pieces: { common: false, missing: false, excess: false }, body: true, ref: true, bodyLines: true });
+    v.dispose();
+  });
+
+  test("a user see-through on a pair member does not bring it back into the capture", () => {
+    const v = shown();
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    v.setSubPartDisplay("body", { opacity: 0.3 });
+    v.setSubPartDisplay("ref", { hidden: false, opacity: 0.5 });
+    const seen = recordAtCapture(v);
+    v.captureCanonicalViews(["iso"]);
+    v.captureCurrent({ size: 512, includeHidden: true });
+    for (const s of seen) expect(s).toEqual(forced);
+    expect(v.__subMesh("body").visible).toBe(false);
+    v.dispose();
+  });
+
+  test("the legend is DOM chrome: no capture reads it", () => {
+    const v = shown();
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    const legend = document.createElement("div");
+    legend.className = "pf-viewbar-readout pf-compare-legend";
+    for (const key of ["hidden", "children", "textContent", "innerHTML", "getBoundingClientRect"]) {
+      Object.defineProperty(legend, key, { get() { throw new Error(`capture read the legend's ${key}`); } });
+    }
+    v.domElement.parentElement.append(legend);
+    expect(v.captureCanonicalViews(["iso"])).toHaveLength(1);
+    expect(v.captureCurrent({ size: 512, includeHidden: true })).toMatch(/^data:image/);
+    v.dispose();
+  });
+
+  test("the thumbnail scene (captureView / captureDefault) is its own: no pieces, the live state untouched", () => {
+    const v = shown();
+    v.setCompareShown(false);
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    const before = snapshot(v);
+    const scenes = [];
+    const render = state.renderer.render.bind(state.renderer);
+    state.renderer.render = (scene, camera) => { scenes.push(scene); render(scene, camera); };
+    expect(v.renderMeshPayloads([{ name: "body", ...boxPayload() }])).toMatch(/^data:image/);
+    let pieceDrawn = false;
+    for (const sc of scenes) sc.traverse((o) => { if (o.userData?.compare) pieceDrawn = true; });
+    expect(pieceDrawn).toBe(false);
+    expect(snapshot(v)).toEqual(before);
+    v.dispose();
+  });
+
+  test("with no result held, a capture draws the part and its ghost as today", () => {
+    const v = shown();
+    const seen = recordAtCapture(v);
+    v.captureCanonicalViews(["iso"]);
+    expect(seen[0]).toEqual({ pieces: {}, body: true, ref: true, bodyLines: true });
+    v.dispose();
+  });
+
+  test("a borrowed look (realistic live view) keeps the forced pieces for the capture", async () => {
+    const v = shown();
+    v.setCompareShown(false);
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    expect(await v.setRenderMode("realistic")).toBe("realistic");
+    const seen = recordAtCapture(v);
+    v.captureCanonicalViews(["iso"]);
+    expect(seen.at(-1)).toEqual(forced);
+    expect(snapshot(v).body).toBe(true);
+    expect(snapshot(v).pieces.common).toBe(false);
     v.dispose();
   });
 });

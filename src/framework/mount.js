@@ -97,7 +97,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, compareState, beforeCapture }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, compareState, captureReady, beforeCapture }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
@@ -131,11 +131,17 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     captureView,
     // Always CAD, whatever the live render mode: these are the agent's renders.
     captureViews: (viewNames) => prepared(() => viewer.captureCanonicalViews(viewNames)),
+    // Resolves once the reference comparison for the current build is held or
+    // refused (compare-view.js; bounded at 10 s) — at once with no pair in view.
+    // captureViews and captureCurrent stay synchronous and draw what is held at that
+    // moment, so a host awaits this first; renderViews awaits it itself.
+    captureReady: () => captureReady?.() ?? Promise.resolve(),
     // captureViews in a chosen appearance: renderMode "cad" (the default) is
     // exactly captureViews() in either live mode; "realistic" borrows the realistic look for the
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
     renderViews: async (viewNames, opts) => {
+      await captureReady?.();
       const release = prepare();
       try {
         return await (renderViews ? renderViews(viewNames, opts) : viewer.captureCanonicalViews(viewNames));
@@ -2666,6 +2672,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       } : null,
       poseState: () => (poseMode && poseMode.pinCount() > 0 ? { pins: poseMode.getPins() } : null),
       compareState: () => { const c = compareView.getState(); return isDefaultCompareState(c) ? null : c; },
+      captureReady: () => compareView.captureReady(),
       annotate: annotateMode ? {
         isEnabled: annotateMode.isEnabled,
         setEnabled: (on) => { if (on && previewGate.isActive()) return; annotateMode.setEnabled(on); },

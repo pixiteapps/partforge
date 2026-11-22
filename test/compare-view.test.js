@@ -29,6 +29,8 @@ function fakeViewer() {
     setCompare: vi.fn(({ name, ref }) => { compare = { name, ref }; }),
     clearCompare: vi.fn(() => { compare = null; }),
     setCompareHidden: vi.fn((kind, h) => { hidden[kind] = h; }),
+    setCompareShown: vi.fn((on) => { v.shown = on; }),
+    shown: true,
     getCompare: () => (compare ? { ...compare, hidden: { ...hidden } } : null),
     setSubPartDisplay: (name, patch) => {
       overrides = { ...overrides, [name]: { ...overrides[name], ...patch } };
@@ -263,24 +265,58 @@ describe("compare view: the legend", () => {
 });
 
 describe("compare view: the toggle and viewer state", () => {
-  it("setEnabled(false) clears, hides the legend, and is the state", () => {
-    const { viewer, cv, reply, legend } = setup();
+  it("setEnabled(false) keeps the result held but off screen, hides the legend, and is the state", () => {
+    const { viewer, cv, reply, legend, send } = setup();
     viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS);
     reply({ pieces: PIECES });
     cv.setEnabled(false);
-    expect(viewer.getCompare()).toBe(null);
+    expect(viewer.shown).toBe(false);
+    expect(viewer.getCompare()).toEqual({ name: "base", ref: "ref", hidden: { missing: false, excess: false } }); // held for captures
     expect(legend().hidden).toBe(true);
     expect(cv.getState().enabled).toBe(false);
     expect(cv.seam.state().toggle).toEqual({ on: false, disabled: false, text: "Show differences" });
+    expect(cv.seam.state().pieces).toBe(null);
+    cv.setEnabled(true);
+    expect(viewer.shown).toBe(true);
+    expect(legend().hidden).toBe(false);
+    vi.advanceTimersByTime(SETTLE_MS * 3);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("a remount with initial { enabled: false } sends no job; turning it on sends one", () => {
-    const { viewer, cv, send } = setup({ initial: { enabled: false } });
-    viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS * 3);
-    expect(send).not.toHaveBeenCalled();
-    cv.setEnabled(true);
-    vi.advanceTimersByTime(SETTLE_MS);
+  it("a remount with initial { enabled: false } still sends the job and holds the result off screen; turning it on shows it with no new job", () => {
+    const { viewer, cv, send, reply, legend } = setup({ initial: { enabled: false } });
+    expect(viewer.shown).toBe(false);
+    viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS);
     expect(send).toHaveBeenCalledTimes(1);
+    reply({ pieces: PIECES });
+    expect(viewer.setCompare).toHaveBeenCalledWith({ name: "base", ref: "ref", pieces: PIECES });
+    expect(viewer.shown).toBe(false);
+    expect(legend().hidden).toBe(true);
+    cv.setEnabled(true);
+    expect(viewer.shown).toBe(true);
+    expect(legend().hidden).toBe(false);
+    vi.advanceTimersByTime(SETTLE_MS * 3);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("captureReady waits on the job with the toggle off too", async () => {
+    const { viewer, cv, reply } = setup({ initial: { enabled: false } });
+    viewer.emitAssembly();
+    let done = false;
+    cv.captureReady().then(() => { done = true; });
+    vi.advanceTimersByTime(SETTLE_MS);
+    await Promise.resolve();
+    expect(done).toBe(false);
+    reply({ pieces: PIECES });
+    await Promise.resolve();
+    expect(done).toBe(true);
+  });
+
+  it("a refusal with the toggle off still disables the switch with its reason", () => {
+    const { viewer, cv, reply } = setup({ initial: { enabled: false } });
+    viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS);
+    reply({ skipped: "too-large" });
+    expect(cv.seam.state().toggle).toEqual({ on: false, disabled: true, text: "Differences not available (model too large)" });
   });
 
   it("ignores a malformed initial state", () => {

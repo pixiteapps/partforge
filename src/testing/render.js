@@ -5,6 +5,8 @@ import { ORIENTATIONS, cameraOrbitProblem, cameraPoseForView, cameraCueLabel } f
 import { buildView } from "../framework/oracle/build.js";
 import { renderStyled } from "../framework/softrender/index.js";
 import { getRenderStyle } from "../framework/renderStyles.js";
+import { compareTolerance, COMPARE_MAX_TRIANGLES } from "../framework/oracle/compare.js";
+import { COMPARE_COLORS } from "../framework/compare-colors.js";
 
 // Canonical view directions in MODEL space (Z-up). `dir` is the direction from
 // the part centre toward the camera; `up` is the camera up vector.
@@ -78,9 +80,15 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
     const v = Number(opacity[name]);
     return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1; // a junk value renders solid
   };
-  const subparts = buildView(kernel, part, view, params) // meshes are JS-owned: safe after cleanup
-    .map((b) => ({ name: b.name, mesh: b.mesh, display: part.parts?.[b.name]?.display, opacity: opacityOf(b.name) }));
-  kernel.cleanup?.();
+  const built = buildView(kernel, part, view, params);
+  let subparts;
+  try {
+    // meshes are JS-owned: safe after cleanup
+    subparts = withComparison(kernel, part, built, opacityOf)
+      ?? built.map((b) => ({ name: b.name, mesh: b.mesh, display: part.parts?.[b.name]?.display, opacity: opacityOf(b.name) }));
+  } finally {
+    kernel.cleanup?.();
+  }
   return views.map((angle) => {
     const img = renderStyled(subparts, { view: angle, style, size, supersample, edges });
     const png = new PNG({ width: img.width, height: img.height });
@@ -88,6 +96,34 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
     // `angle` is always a string: an orbit cue comes back as its label (az30-el20),
     // which is also what names its file.
     return { angle: cameraCueLabel(angle), png: PNG.sync.write(png) };
+  });
+}
+
+// The reference compare view (compare-view.js) on the CPU renderer: when the view
+// shows a sub-part together with the sub-part its `reference` names (the first such
+// pair in declaration order, neither at opacity 0), the pair is drawn as the three
+// difference solids (_compareSolids) in their flat, opaque colours, in the pair's
+// place in the list — what the viewer draws, and what its captures always show.
+// Null (render as built) with no pair, no _compareSolids (OCCT), or a refusal.
+function withComparison(kernel, part, built, opacityOf) {
+  if (typeof kernel._compareSolids !== "function") return null;
+  const byName = new Map(built.map((b) => [b.name, b]));
+  const shown = (n) => byName.has(n) && opacityOf(n) > 0;
+  const name = Object.keys(part.parts ?? {}).find((n) => {
+    const ref = part.parts[n].reference;
+    return typeof ref === "string" && ref !== n && shown(n) && shown(ref);
+  });
+  if (!name) return null;
+  const a = byName.get(name).solid, b = byName.get(part.parts[name].reference).solid;
+  const c = kernel._compareSolids(a, b, { tolerance: compareTolerance(a.boundingBox(), b.boundingBox()), maxTriangles: COMPARE_MAX_TRIANGLES });
+  if (!c || c.skipped) return null;
+  const pieces = ["common", "missing", "excess"].filter((kind) => c[kind])
+    .map((kind) => ({ name: `${name}:${kind}`, mesh: c[kind].toMesh(), display: { color: COMPARE_COLORS[kind] }, opacity: 1 }));
+  const pair = new Set([name, part.parts[name].reference]);
+  const at = built.findIndex((x) => pair.has(x.name));
+  return built.flatMap((sp, i) => {
+    if (pair.has(sp.name)) return i === at ? pieces : [];
+    return [{ name: sp.name, mesh: sp.mesh, display: part.parts?.[sp.name]?.display, opacity: opacityOf(sp.name) }];
   });
 }
 

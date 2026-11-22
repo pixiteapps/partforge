@@ -56,3 +56,51 @@ test("a non-positive or non-finite supersample is refused", async () => {
       .rejects.toThrow("renderStyled: supersample must be a positive integer");
   }
 });
+
+// The reference compare view on the CPU renderer: a plate against a reference of the
+// plate plus a boss. Drawn as the comparison, the boss is Missing (blue) and the
+// plate Matches (grey), whatever the reference's ghost display says.
+const plateWithReference = () => ({
+  meta: { title: "plate" },
+  defaults: {},
+  views: { main: {} },
+  parts: {
+    plate: { views: ["main"], reference: "scan", build: (kk) => kk.box({ size: [40, 40, 4] }) },
+    scan: {
+      views: ["main"],
+      display: { opacity: 0.4, color: 0xff8800 },
+      build: (kk) => kk.box({ size: [40, 40, 4] }).union(kk.box({ size: [10, 10, 10] }).at([0, 0, 4])),
+    },
+  },
+});
+const pixel = (png, x, y) => { const i = (y * png.width + x) * 4; return [png.data[i], png.data[i + 1], png.data[i + 2]]; };
+const renderTop = async (kernel, part) => PNG.sync.read((await renderViewImages(kernel, part, "main", { views: ["top"], size: [96, 96], edges: false }))[0].png);
+
+test("a view with a pair renders the comparison: the boss is Missing, the plate Matches", async () => {
+  const png = await renderTop(k, plateWithReference());
+  const boss = pixel(png, 48, 48);
+  expect(boss[2]).toBeGreaterThan(boss[0] + 60); // the missing blue (#3b82f6), shaded
+  expect(boss[2]).toBeGreaterThan(boss[1] + 20);
+  const plate = pixel(png, 48, 14);
+  const bg = hex(RENDER_STYLES.cad.background);
+  expect(plate.every((v, i) => Math.abs(v - bg[i]) <= 3)).toBe(false); // on the part, not the background
+  expect(Math.max(...plate) - Math.min(...plate)).toBeLessThan(30); // the common grey (#9ca3af): no orange ghost
+  expect(plate[2]).toBeGreaterThanOrEqual(plate[0]);
+});
+
+test("a refused comparison renders the part and its ghost as before", async () => {
+  const refused = { ...k, _compareSolids: () => ({ skipped: "too-large" }) };
+  const without = { ...k, _compareSolids: undefined };
+  const a = await renderTop(refused, plateWithReference());
+  const b = await renderTop(without, plateWithReference());
+  expect(Buffer.compare(PNG.sync.write(a), PNG.sync.write(b))).toBe(0);
+  const boss = pixel(a, 48, 48);
+  expect(boss[0]).toBeGreaterThan(boss[2]); // the warm ghost over the plate, no blue
+});
+
+test("a view with no pair renders byte-for-byte as without a comparison kernel", async () => {
+  const spy = { ...k, _compareSolids: () => { throw new Error("no pair: never asked"); } };
+  const [a] = await renderViewImages(spy, demo, "spacer", { views: ["iso"], size: [64, 64] });
+  const [b] = await renderViewImages(k, demo, "spacer", { views: ["iso"], size: [64, 64] });
+  expect(Buffer.compare(a.png, b.png)).toBe(0);
+});

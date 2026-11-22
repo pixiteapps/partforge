@@ -794,6 +794,8 @@ export interface PartRuntime {
    * `opts.renderMode` pins one.
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
+  /** Resolves once the view's reference comparison is held or refused (bounded at 10 s; at once with no pair in view): await it before a synchronous `captureViews` / `captureCurrent({ includeHidden: true })` so the capture draws the comparison. `renderViews` awaits it itself. */
+  captureReady(): Promise<void>;
   /** The active view (tab) name. Never null once mounted. */
   getView(): string;
   /** Switch the active view; `false` if the part declares no such view. Persists per part for the session. */
