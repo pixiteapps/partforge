@@ -224,11 +224,66 @@ describe("always opaque", () => {
 });
 
 describe("cutaway", () => {
-  test("the pieces are clipped by the cut plane", () => {
+  test("each shown piece is its own section, clipped and capped in its colour, gone after clearCompare", () => {
+    const v = shown();
+    v.setCompare({ name: "body", ref: "ref", pieces: { ...pieces(), excess: null } });
+    v.setCompareHidden("missing", true);
+    expect(v.setCutawayEnabled(true)).toBe(true);
+    const common = v.__compareSection("common");
+    expect(common).not.toBeNull();
+    expect(common.cap.visible).toBe(true);
+    expect(common.back.visible && common.front.visible).toBe(true);
+    expect(common.cap.material.uniforms.uBase.value.getHex()).toBe(COMPARE_COLORS.common);
+    expect(materialOf(v, "common").clippingPlanes?.length).toBeGreaterThan(0);
+    // A hidden piece is not sectioned; showing it brings its cap back.
+    expect(v.__compareSection("missing").cap.visible).toBe(false);
+    v.setCompareHidden("missing", false);
+    expect(v.__compareSection("missing").cap.visible).toBe(true);
+    expect(v.__compareSection("excess")).toBeNull(); // a null piece has no section
+    // The hidden pair is out of the cutaway's set: no cap of its own draws.
+    expect(v.__subMesh("body").children.every((c) => !c.visible)).toBe(true);
+    const cap = common.cap;
+    v.clearCompare();
+    expect(v.__compareSection("common")).toBeNull();
+    expect(v.__compareSection("missing")).toBeNull();
+    expect(cap.parent).toBeNull();
+    expect(v.__subMesh("body").material.clippingPlanes?.length).toBeGreaterThan(0); // the pair is sectioned again
+    v.setCutawayEnabled(false);
+    v.dispose();
+  });
+
+  test("a mode switch with the cutaway on keeps the pieces clipped and in their colours", async () => {
     const v = shown();
     v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
     expect(v.setCutawayEnabled(true)).toBe(true);
-    for (const mesh of v._compareMeshes) expect(mesh.material.clippingPlanes?.length).toBeGreaterThan(0);
+    for (const mode of ["cel", "realistic", "cad"]) {
+      await v.setRenderMode(mode);
+      for (const kind of ["common", "missing", "excess"]) {
+        const m = materialOf(v, kind);
+        expect(m.clippingPlanes?.length).toBeGreaterThan(0);
+        expect(m.color.getHex()).toBe(COMPARE_COLORS[kind]);
+        expect(v.__compareSection(kind).cap.material.uniforms.uBase.value.getHex()).toBe(COMPARE_COLORS[kind]);
+      }
+    }
+    v.setCutawayEnabled(false);
+    v.dispose();
+  });
+});
+
+describe("bounds and framing", () => {
+  test("the reframe button and the cutaway still count the pair while a comparison hides it", () => {
+    const v = createViewer(createContainer(), part);
+    v.setSubGeometry("body", boxPayload(4));
+    v.setSubGeometry("ref", boxPayload(4, [20, 0, 0]));
+    v.setSubGeometry("other", boxPayload(1));
+    v.showAssembly(["body", "ref"], { frame: true });
+    const framed = v.camera.position.clone();
+    v.setCompare({ name: "body", ref: "ref", pieces: { common: boxPayload(1), missing: null, excess: null } });
+    v.camera.position.multiplyScalar(5);
+    v.frame();
+    expect(v.camera.position.distanceTo(framed)).toBeLessThan(1e-6);
+    // The cutaway seeds its plane from the visible bounds: enabling it works.
+    expect(v.setCutawayEnabled(true)).toBe(true);
     v.setCutawayEnabled(false);
     v.dispose();
   });
