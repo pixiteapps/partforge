@@ -39,6 +39,20 @@ describe("dragValidity on the cage hand", () => {
     expect(dragValidity(plan, handAt({ ...max, thumbCurl: 60 }).points)).toBeNull();
   });
 
+  test("is null at 240 seeded random poses inside the slider ranges, every parameter varied together", () => {
+    let seed = 0x5eed1234;
+    const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; };
+    const controls = hand.parameters.flatMap((g) => g.controls);
+    const refused = [];
+    for (let i = 0; i < 240; i++) {
+      const params = Object.fromEntries(controls.map((c) => [c.key, c.min + rand() * (c.max - c.min)]));
+      const snapshot = handAt(params);
+      const r = dragValidity(plan, snapshot.points, { ids: base.ids });
+      if (r) refused.push({ params, message: r.message, full: meshSubdiv(snapshot, "preview").warnings });
+    }
+    expect(refused).toEqual([]);
+  });
+
   test("names the faces of a finger curled through the palm", () => {
     const r = dragValidity(plan, handCage(90, 110, 60).points, { ids: base.ids });
     expect(r?.message).toMatch(/^subdiv: the body passes through itself between /);

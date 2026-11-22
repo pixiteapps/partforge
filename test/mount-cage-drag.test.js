@@ -193,8 +193,8 @@ import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
 // A box with an arm out of +x; `swing` turns the arm's last segment about its hinge. At 60°
 // it is clear; at 140° it is back through the arm, and the drag check refuses it; at 120°
 // the drag check passes it but the full build warns that it passes through itself.
-const armCage = (make, deg) => {
-  const c = make({ box: { size: [20, 20, 20] } });
+const armCage = (make, deg, size = 20) => {
+  const c = make({ box: { size: [size, 20, 20] } });
   let a = c.extrude("+x:0,0", { by: 8 });
   a = c.extrude(a, { by: 8 });
   const hinge = c.centroid(a);
@@ -204,11 +204,15 @@ const armCage = (make, deg) => {
 };
 const makePart = ({ handles = false } = {}) => ({
   meta: { title: "Swing", backend: "manifold" },
-  defaults: { swing: 0 },
+  defaults: { swing: 0, size: 20 },
   ...(handles ? { handles: { arm: { point: () => [0, 0, 0], drag: "point", params: ["swing"] } } } : {}),
   views: { v: { label: "V" } },
-  parts: { body: { label: "Body", views: ["v"], build: (k, p) => k.subdiv(armCage(k.cage, p.swing)) } },
-  parameters: [{ id: "pose", title: "Pose", controls: [{ key: "swing", label: "Swing", min: 0, max: 170, step: 1 }] }],
+  // `size` is an ordinary edit: it changes the cage's points but not by a pose.
+  parts: { body: { label: "Body", views: ["v"], build: (k, p) => k.subdiv(armCage(k.cage, p.swing, p.size)) } },
+  parameters: [{ id: "pose", title: "Pose", controls: [
+    { key: "swing", label: "Swing", min: 0, max: 170, step: 1 },
+    { key: "size", label: "Size", min: 16, max: 30, step: 1 },
+  ] }],
 });
 // No cage: a box whose height a slider sets.
 const plainPart = () => ({
@@ -271,7 +275,7 @@ function makeElements() {
 const generates = (w) => w.postMessage.mock.calls.filter(([m]) => m?.type === "generate");
 const THROUGH = "subdiv: the body passes through itself between +x:0,0>>.s1 and +x:0,0>>>.s1";
 
-function setup({ part = makePart(), first = delivery(0), onParamsCommit = vi.fn(), ms = 2000 } = {}) {
+function setup({ part = makePart(), first = delivery(0), firstWarnings, onParamsCommit = vi.fn(), ms = 2000 } = {}) {
   const els = makeElements();
   const { workers, createWorker } = makeWorkers();
   const runtime = mount(part, { createWorker, elements: els, onParamsCommit });
@@ -280,7 +284,7 @@ function setup({ part = makePart(), first = delivery(0), onParamsCommit = vi.fn(
   // Slow, as the hand is: a handle drag of a cheap part would rebuild as it goes instead.
   const reply = (meshes, extra = {}) => w.onmessage({ data: { type: "meshes", meshes, ms, ...extra } });
   w.onmessage({ data: { type: "ready" } });
-  reply([first]);
+  reply([first], firstWarnings ? { warnings: firstWarnings } : {});
   const slider = () => els.controls.querySelector('input[type="range"]');
   const input = (value) => {
     const s = slider();
@@ -306,9 +310,12 @@ afterEach(() => vi.useRealTimers());
 // The positions of every setSubVertices call since `from`, as plain arrays.
 const drawsSince = (v, from) => v.setSubVertices.mock.calls.slice(from).map(([, { positions }, opts]) => ({ p: Array.from(positions), opts }));
 
+const warned = { warnings: [{ part: "body", message: THROUGH }] };
+const commits = (fn) => fn.mock.calls.map(([c]) => c);
+
 describe("a handle drag on a cage body", () => {
   test("Review Focus 3: a move into an invalid pose draws nothing new, writes the last valid params, commits none of it; a valid move draws", () => {
-    const { v, w, pose, params, onParamsCommit } = setup({ part: makePart({ handles: true }) });
+    const { v, w, pose, params, reply, onParamsCommit } = setup({ part: makePart({ handles: true }) });
     const s = pose.session;
     expect(s.begin("arm")).toBe(true);
     s.frame([60, 0, 0]);
@@ -332,28 +339,30 @@ describe("a handle drag on a cage body", () => {
 
     const n = generates(w).length;
     s.end();
-    expect(onParamsCommit).toHaveBeenCalledTimes(1);
-    expect(onParamsCommit.mock.calls[0][0]).toEqual({ changed: ["swing"], params: expect.objectContaining({ swing: 50 }) });
     expect(generates(w).length).toBe(n + 1);
     expect(generates(w).at(-1)[0].params.swing).toBe(50);
+    // The commit waits for the exact build, then carries what is shown.
+    expect(onParamsCommit).not.toHaveBeenCalled();
+    reply([delivery(5)]);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 50 }) }]);
   });
 
   test("a drag released while held at the last valid pose commits that pose", () => {
-    const { w, pose, onParamsCommit } = setup({ part: makePart({ handles: true }) });
+    const { w, pose, reply, onParamsCommit } = setup({ part: makePart({ handles: true }) });
     const s = pose.session;
     s.begin("arm");
     s.frame([60, 0, 0]);
     s.frame([140, 0, 0]);
     s.end();
-    expect(onParamsCommit).toHaveBeenCalledTimes(1);
-    expect(onParamsCommit.mock.calls[0][0].params.swing).toBe(60);
     expect(generates(w).at(-1)[0].params.swing).toBe(60);
+    reply([delivery(60)]);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 60 }) }]);
   });
 });
 
 describe("a slider drag on a cage body", () => {
   test("held at an invalid pose the body does not move; the release builds and commits the last valid pose, and the slider shows it", () => {
-    const { v, w, input, release, slider, onParamsCommit } = setup();
+    const { v, w, input, release, reply, slider, onParamsCommit } = setup();
     input(60);
     const drawn = v.setSubVertices.mock.calls.length;
     expect(drawn).toBe(1);
@@ -363,9 +372,10 @@ describe("a slider drag on a cage body", () => {
     release();
     expect(generates(w).length).toBe(n + 1);
     expect(generates(w).at(-1)[0].params.swing).toBe(60);
-    expect(onParamsCommit).toHaveBeenCalledTimes(1);
-    expect(onParamsCommit.mock.calls[0][0].params.swing).toBe(60);
     expect(slider().value).toBe("60");
+    expect(onParamsCommit).not.toHaveBeenCalled();
+    reply([delivery(60)]);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 60 }) }]);
     vi.runAllTimers();
     expect(generates(w).length).toBe(n + 1);
   });
@@ -382,69 +392,152 @@ describe("a slider drag on a cage body", () => {
     expect(onParamsCommit).not.toHaveBeenCalled();
   });
 
-  test("an invalid first move holds the exact base: the build goes out at the base's params", () => {
-    const { v, w, input, release } = setup();
+  test("an invalid first move holds the exact base: nothing is built, and the commit goes out at once", () => {
+    const { w, input, release, onParamsCommit } = setup();
+    const n = generates(w).length;
     input(140);
-    expect(v.setSubVertices).not.toHaveBeenCalled();
     release();
-    // Back at the delivered pose: nothing is missing, so nothing is built.
     vi.runAllTimers();
-    expect(generates(w).every(([m]) => m.params.swing !== 140)).toBe(true);
+    // Back at the delivered pose: nothing is missing, so nothing is built.
+    expect(generates(w).length).toBe(n);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) }]);
+  });
+
+  test("a clean exact build: exactly one commit, with the released values, when it lands", () => {
+    const { w, input, release, reply, onParamsCommit } = setup();
+    input(5);
+    release();
+    expect(generates(w).at(-1)[0].params.swing).toBe(5);
+    expect(onParamsCommit).not.toHaveBeenCalled();
+    reply([delivery(5)]);
+    vi.runAllTimers();
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
+  });
+
+  test("a mount disposed before the exact build lands still sends the held commit", () => {
+    const { runtime, input, release, onParamsCommit } = setup();
+    input(5);
+    release();
+    runtime.dispose();
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
+  });
+
+  test("another edit before the exact build lands sends the held commit first, with its own values", () => {
+    const { runtime, input, release, onParamsCommit } = setup();
+    input(5);
+    release();
+    runtime.setParams({ size: 22 });
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5, size: 20 }) }]);
   });
 });
 
 describe("a full build after a cage drag that passes through itself", () => {
-  test("is not shown: the params go back to the last clean build's, whose mesh is still on screen", () => {
+  test("is not shown: the drag's keys go back to where it began, with exactly one commit carrying them", () => {
     const { v, w, input, release, reply, slider, onParamsCommit } = setup();
     input(5);
     release();
     expect(generates(w).at(-1)[0].params.swing).toBe(5);
     const geo = v.setSubGeometry.mock.calls.length;
     const n = generates(w).length;
-    reply([delivery(5)], { warnings: [{ part: "body", message: THROUGH }] });
+    reply([delivery(5)], warned);
     expect(v.setSubGeometry.mock.calls.length).toBe(geo); // the refused mesh is never drawn
     expect(slider().value).toBe("0");
-    expect(onParamsCommit.mock.calls.at(-1)[0]).toEqual({ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) });
-    // The clean build is the skin's base: the exact mesh goes back, and nothing is missing.
+    // The base is the start pose: the exact mesh goes back, and nothing is missing.
     expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: false });
     vi.runAllTimers();
     expect(generates(w).length).toBe(n);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) }]);
   });
 
-  test("one build runs at the last clean build's params when its mesh is gone, and that build is shown even if it warns", () => {
-    const { runtime, v, w, input, release, reply, onParamsCommit } = setup();
-    // An ordinary edit whose build warns is shown, and is not a clean build.
-    runtime.setParams({ swing: 60 });
-    vi.advanceTimersByTime(200);
-    reply([delivery(60)], { warnings: [{ part: "body", message: THROUGH }] });
+  test("a pause build refused mid-drag reverts and commits nothing; the release commits once", () => {
+    const { input, release, reply, slider, onParamsCommit } = setup();
+    input(5);
+    vi.advanceTimersByTime(SKIN_PAUSE);
+    reply([delivery(5)], warned);
+    expect(slider().value).toBe("0");
+    expect(onParamsCommit).not.toHaveBeenCalled();
+    release();
+    vi.runAllTimers();
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) }]);
+  });
+
+  test("Finding 1: a revert that dispatched nothing leaves the next drag's backstop in place", () => {
+    const { v, w, input, release, reply } = setup();
+    input(5);
+    release();
+    reply([delivery(5)], warned);   // reverted to 0, nothing built
+    vi.runAllTimers();
     input(5);
     release();
     expect(generates(w).at(-1)[0].params.swing).toBe(5);
     const geo = v.setSubGeometry.mock.calls.length;
-    const n = generates(w).length;
-    reply([delivery(5)], { warnings: [{ part: "body", message: THROUGH }] });
+    reply([delivery(5)], warned);
     expect(v.setSubGeometry.mock.calls.length).toBe(geo);
-    expect(generates(w).length).toBe(n + 1);
-    expect(generates(w).at(-1)[0].params.swing).toBe(0);
-    expect(onParamsCommit.mock.calls.at(-1)[0].params.swing).toBe(0);
-    // One revert per release: the revert's own build is shown, warning or not.
-    reply([delivery(0)], { warnings: [{ part: "body", message: THROUGH }] });
-    expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);
-    vi.runAllTimers();
-    expect(generates(w).length).toBe(n + 1);
+    expect(v.setSubVertices.mock.calls.at(-1)[2]).toEqual({ deformed: false });
   });
 
-  test("after a handle drag too", () => {
+  test("a drag whose pause build went stale goes back to its base's pose, with one commit", () => {
+    const { v, w, input, release, reply, onParamsCommit } = setup();
+    input(5);
+    release();
+    reply([delivery(5)]);            // clean: the base is now at 5
+    vi.runAllTimers();
+    input(60);
+    vi.advanceTimersByTime(SKIN_PAUSE); // the pause build at 60 goes out...
+    input(62);                         // ...and is outdated by a later move
+    reply([delivery(60)]);             // stale: discarded; the 62 build goes out after the pause
+    vi.advanceTimersByTime(SKIN_PAUSE);
+    release();
+    expect(generates(w).at(-1)[0].params.swing).toBe(62);
+    const geo = v.setSubGeometry.mock.calls.length;
+    const n = generates(w).length;
+    reply([delivery(60)], warned);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo);
+    // The drag began at 5 (the cage base): it goes back there. The base mesh is at 5, so
+    // nothing needs building.
+    expect(generates(w).length).toBe(n);
+    expect(commits(onParamsCommit).slice(1)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
+  });
+
+  test("after a handle drag too: back to the hold's start, one commit", () => {
     const { v, w, pose, reply, onParamsCommit } = setup({ part: makePart({ handles: true }) });
     pose.session.begin("arm");
     pose.session.frame([5, 0, 0]);
     pose.session.end();
     expect(generates(w).at(-1)[0].params.swing).toBe(5);
     const geo = v.setSubGeometry.mock.calls.length;
-    reply([delivery(5)], { warnings: [{ part: "body", message: THROUGH }] });
+    reply([delivery(5)], warned);
     expect(v.setSubGeometry.mock.calls.length).toBe(geo);
     expect(pose.opts.getParams().swing).toBe(0);
-    expect(onParamsCommit.mock.calls.at(-1)[0].params.swing).toBe(0);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) }]);
+  });
+
+  test("Finding 2a: an earlier ordinary edit to another param is not undone by a later drag's revert", () => {
+    const { runtime, w, input, release, reply, els, onParamsCommit } = setup();
+    runtime.setParams({ size: 22 });
+    vi.advanceTimersByTime(200);
+    expect(generates(w).at(-1)[0].params.size).toBe(22);
+    reply([delivery(0)], warned);    // an ordinary build that warns is shown
+    runtime.setParams({ swing: 3 });
+    vi.advanceTimersByTime(200);
+    reply([delivery(0)]);             // clean, at size 22 swing 3: the cage base
+    input(5);
+    release();
+    reply([delivery(5)], warned);
+    const last = commits(onParamsCommit).at(-1);
+    expect(last).toEqual({ changed: ["swing"], params: expect.objectContaining({ swing: 3, size: 22 }) });
+    expect(els.controls.querySelectorAll('input[type="range"]')[1].value).toBe("22");
+  });
+
+  test("Finding 2b: a drag that starts from a pose that already passes through itself is not reverted", () => {
+    const { v, input, release, reply, slider, onParamsCommit } = setup({ firstWarnings: warned.warnings });
+    input(5);
+    release();
+    const geo = v.setSubGeometry.mock.calls.length;
+    reply([delivery(5)], warned);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);   // shown: the drag did not cause it
+    expect(slider().value).toBe("5");
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
   });
 
   test("an ordinary setParams build that warns is shown as before", () => {
@@ -454,27 +547,32 @@ describe("a full build after a cage drag that passes through itself", () => {
     expect(generates(w).at(-1)[0].params.swing).toBe(5);
     const geo = v.setSubGeometry.mock.calls.length;
     const n = generates(w).length;
-    reply([delivery(5)], { warnings: [{ part: "body", message: THROUGH }] });
+    reply([delivery(5)], warned);
     expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);
     vi.runAllTimers();
     expect(generates(w).length).toBe(n);
   });
 });
 
-test("a part with no cage base: the check never runs, and a handle drag gets no guard", () => {
+test("a part with no cage base: the check never runs, no guard, and every commit goes out as before", () => {
   const plain = delivery("plain");
   expect(plain.ties).toBeFalsy();
   const { w, input, release, reply, pose, onParamsCommit } = setup({ part: plainPart(), first: plain });
   expect(pose.opts.collide({ handle: plainPart().handles.arm, handleId: "arm", snapshot: { swing: 0 } })).toBeNull();
+  // Snapshot against the old order: the release commit goes out right after its dispatch,
+  // with no reply needed.
+  const order = [];
+  w.postMessage.mockImplementation((m) => { if (m?.type === "generate") order.push(`generate ${m.params.swing}`); });
+  onParamsCommit.mockImplementation((c) => order.push(`commit ${c.params.swing}`));
   input(140);
   release();
+  vi.advanceTimersByTime(200);
   expect(generates(w).at(-1)[0].params.swing).toBe(140);
-  expect(onParamsCommit.mock.calls.at(-1)[0].params.swing).toBe(140);
-  reply([{ ...plain }], { warnings: [{ part: "body", message: THROUGH }] });
+  reply([{ ...plain }], warned);
   pose.session.begin("arm");
   pose.session.frame([30, 0, 0]);
   pose.session.end();
-  expect(generates(w).at(-1)[0].params.swing).toBe(30);
+  expect(order).toEqual(["commit 140", "generate 140", "generate 30", "commit 30"]);
   expect(spies.validity).not.toHaveBeenCalled();
 });
 
@@ -494,23 +592,23 @@ describe("the skin controller with a cage base", () => {
   test("an invalid pose is held, not drawn; lastValidParams names the last pose drawn", () => {
     const { skin, viewer, edit } = controller();
     expect(skin.hasBase("body")).toBe(true);
-    expect(skin.lastValidParams()).toEqual({ swing: 0 });
+    expect(skin.lastValidParams()).toEqual({ swing: 0, size: 20 });
     edit({ swing: 60 });
     expect(skin.deform()).toEqual(["body"]);
     expect(viewer.setSubVertices).toHaveBeenCalledTimes(1);
     expect(skin.holdsInvalid()).toBe(false);
-    expect(skin.lastValidParams()).toEqual({ swing: 60 });
+    expect(skin.lastValidParams()).toEqual({ swing: 60, size: 20 });
     edit({ swing: 140 });
     expect(skin.deform()).toEqual(["body"]);   // still shown by the skin, at 60°
     expect(viewer.setSubVertices).toHaveBeenCalledTimes(1);
     expect(skin.holdsInvalid()).toBe(true);
     expect(skin.isDeformed("body") && skin.isDragging() && skin.cageDragActive()).toBe(true);
-    expect(skin.lastValidParams()).toEqual({ swing: 60 });
+    expect(skin.lastValidParams()).toEqual({ swing: 60, size: 20 });
     edit({ swing: 50 });
     skin.deform();
     expect(viewer.setSubVertices).toHaveBeenCalledTimes(2);
     expect(skin.holdsInvalid()).toBe(false);
-    expect(skin.lastValidParams()).toEqual({ swing: 50 });
+    expect(skin.lastValidParams()).toEqual({ swing: 50, size: 20 });
   });
 
   test("a live entry the cage code threw on is held as invalid", () => {
@@ -535,7 +633,7 @@ describe("the skin controller with a cage base", () => {
     skin.deform();
     expect(viewer.setSubVertices).toHaveBeenCalledTimes(1);
     expect(skin.holdsInvalid()).toBe(true);
-    expect(skin.lastValidParams()).toEqual({ swing: 20 });
+    expect(skin.lastValidParams()).toEqual({ swing: 20, size: 20 });
   });
 
   test("validityGuard: the inner guard itself with no cage base, else a guard that stops at the last clear pose", () => {

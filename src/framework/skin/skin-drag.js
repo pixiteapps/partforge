@@ -64,7 +64,7 @@ const cagePosableBetween = (from, to) =>
 
 export function createSkinDrag(part, viewer, { params, getView, getParamsVersion, probe = probePoses }) {
   // name -> { kind: "implicit", positions, normals, bindings, specs, shapeHash, baseHash, scratch }
-  //       | { kind: "cage", positions, normals, cage, shapeHash, baseHash, scratch }
+  //       | { kind: "cage", positions, normals, cage, shapeHash, baseHash, scratch, params }
   const bases = new Map();
   const deformed = new Set();
   let dragging = false;
@@ -177,6 +177,7 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
       shapeHash: e.shapeHash,
       baseHash: e.baseHash,
       scratch: { positions: new Float32Array(n), normals: new Float32Array(n) },
+      params: { ...at.params },   // what the drag began from (cageDragStart)
     });
     deformed.delete(name);
     invalid.delete(name);
@@ -301,6 +302,12 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     return true;
   }
 
+  function cageDragNames() {
+    const out = [...invalid];
+    for (const n of deformed) if (bases.get(n)?.kind === "cage" && !invalid.has(n)) out.push(n);
+    return out;
+  }
+
   function restoreAll() {
     const restored = [];
     for (const name of [...deformed]) if (restore(name)) restored.push(name);
@@ -318,7 +325,14 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     holdsInvalid: () => invalid.size > 0,
     lastValidParams: () => (lastValid ? { ...lastValid } : null),
     // A cage base is deformed or held: what a build sent now follows is a cage drag.
-    cageDragActive: () => invalid.size > 0 || [...deformed].some((n) => bases.get(n)?.kind === "cage"),
+    cageDragActive: () => cageDragNames().length > 0,
+    // The cage bases a drag is showing (deformed or held), and the params the first of them
+    // was built at: where that drag began (null with none).
+    cageDragNames,
+    cageDragStart() {
+      const name = cageDragNames()[0];
+      return name ? { ...bases.get(name).params } : null;
+    },
     /**
      * A Pose-mode drag guard (pose-session.js's COLLISIONS contract) that refuses a pose an
      * in-view cage base may not draw, wrapping `inner` (the collision guard, or null).

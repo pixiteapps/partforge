@@ -259,9 +259,18 @@ release catches that case.
 
 A handle drag stops through the session's drag guard, the way a collision does: the skin
 wraps the collision guard (`validityGuard`), and a frame whose pose fails settles at the
-last clear values. A refused full build after a drag is not drawn, and its revert is
-reported to the host as a second `onParamsCommit` (the release's commit already carried
-the refused values).
+last clear values. When the full build after a drag is refused, it is not drawn. Only the
+keys the drag changed go back, to their values where the drag began (a handle drag's
+start, else the cage base's params). A drag that began from a pose that already passed
+through itself is not reverted. The commit of a slider or handle drag on a cage body waits
+for that build, so the host gets one `onParamsCommit` with the values shown. A part with no
+cage base commits exactly as before.
+
+A pause build refused during a slider drag reverts the same way but commits nothing: the
+release commits. Residual: if another edit comes before the build answers, the waiting
+commit goes out at once with the released values, and that build is discarded as stale,
+so the full check never answers for them. The host then has one commit with values that
+passed only the drag check. A later edit's build still shows the warning, as for any edit.
 
 ### What the drag shape may differ in
 
