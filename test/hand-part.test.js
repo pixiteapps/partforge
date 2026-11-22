@@ -109,5 +109,5 @@ test("reports every fingertip's frame", () => {
 
 test("verifies, and is the organic domain's reference part", () => {
   expect(verify(k, part).ok).toBe(true);
-  expect(organic.referenceParts).toEqual(["src/parts/organic-hand.js", "src/parts/organic-whale.js"]);
+  expect(organic.referenceParts).toEqual(["src/parts/organic-hand.js", "src/parts/organic-whale.js", "src/parts/cage-hand.js"]);
 });

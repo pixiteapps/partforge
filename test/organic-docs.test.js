@@ -27,6 +27,7 @@ import { finishKernel } from "../src/framework/geometry/kernel-front.js";
 import { implicitDistance } from "../src/framework/geometry/implicit/distance.js";
 import { handSpec } from "./fixtures/implicit-trees.js";
 import whale, { whaleCage } from "../src/parts/organic-whale.js";
+import cageHandPart, { cageHand } from "../src/parts/cage-hand.js";
 import { MAX_CAGE_FACES } from "../src/framework/geometry/subdiv/cage.js";
 import { levelFor, subdivide, SUBDIV_TOLERANCE, MAX_SUBDIV_LEVEL, MIN_SUBDIV_LEVEL, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
 
@@ -79,14 +80,14 @@ beforeAll(async () => {
     expect(plain(run()), src).toEqual(evalValue(text));
     checked.push(src);
   };
-  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage, handCage };`;
+  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage, cageHand, poseDigits, bendsOf };`;
   scope = new Function("k", "limb", "implicitDistance", "check", ...Object.keys(organic), body)(k, limb, implicitDistance, check, ...Object.values(organic));
   scope.checked = checked;
 });
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(39);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(44);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -275,17 +276,42 @@ test("the whale's numbers in the guide are the code's", () => {
   expect(text).toContain(`prints at level ${print.level} (${tris(print.level)} triangles)`);
 });
 
-test("the guide's hand builds clean, open and as a fist, at preview and at print", async () => {
+test("the guide's hand is the reference part's, line for line", () => {
+  const file = read("../src/parts/cage-hand.js");
+  const block = fences("js", section("Worked example: a hand that curls", "###"))[0];
+  const constants = /^import \{ limb \}[\s\S]*?\nconst DIGITS = .*;$/m.exec(file)[0];
+  expect(block).toContain(constants);
+  expect(block).toContain(/^(function poseDigits[\s\S]*?\n\})\n/m.exec(file)[1]);
+  expect(block).toContain(/^export (function cageHand[\s\S]*?\n\})\n/m.exec(file)[1]);
+  expect(block).toContain(/^const bendsOf = .*;$/m.exec(file)[0]);
+  // The guide's functions make the part's cage, and the shown params are its defaults.
+  const handParams = /^const handParams = (\{[\s\S]*?\});$/m.exec(block)[1];
+  expect(evalValue(handParams)).toEqual(cageHandPart.defaults);
+  const d = cageHandPart.derive(cageHandPart.defaults);
+  const bends = Object.fromEntries(Object.entries(d).map(([n, posed]) => [n, posed.values]));
+  expect(scope.bendsOf(scope.poseDigits(cageHandPart.defaults))).toEqual(bends);
+  expect(scope.cageHand(k.cage, cageHandPart.defaults, bends).snapshot()).toEqual(cageHand(k.cage, cageHandPart.defaults, bends).snapshot());
+  expect(organicManifest.referenceParts).toContain("src/parts/cage-hand.js");
+  // "within 1 mm of its cage tip" at the defaults.
+  const c = cageHand(k.cage, cageHandPart.defaults, bends);
+  for (const [n, posed] of Object.entries(d)) expect(Math.hypot(...posed.report.tip.map((v, i) => v - c.centroid(`${n}Tip`)[i])), n).toBeLessThan(1);
+});
+
+test("the guide's hand builds clean open, at its defaults and as a fist, at preview and at print", async () => {
   const { createManifoldKernel } = await import("../src/framework/geometry/manifold-backend.js");
   const Module = (await import("manifold-3d")).default;
   const wasm = await Module(); wasm.setup();
   const print = createManifoldKernel(wasm, { quality: "print" });
-  for (const curl of [0, 0.5, 1]) {
+  const controls = cageHandPart.parameters.flatMap((g) => g.controls);
+  const open = Object.fromEntries(controls.map((c) => [c.key, 0]));
+  const fist = Object.fromEntries(controls.map((c) => [c.key, c.max]));
+  for (const p of [open, cageHandPart.defaults, fist]) {
+    const bends = scope.bendsOf(scope.poseDigits(p));
     k.takeBuildWarnings();
-    expect(k.subdiv(scope.handCage(k.cage, { curl })).volume()).toBeGreaterThan(50000);
+    expect(k.subdiv(scope.cageHand(k.cage, p, bends)).volume()).toBeGreaterThan(50000);
     expect(k.takeBuildWarnings()).toEqual([]);
     print.takeBuildWarnings();
-    expect(print.subdiv(scope.handCage(print.cage, { curl })).volume()).toBeGreaterThan(50000);
+    expect(print.subdiv(scope.cageHand(print.cage, p, bends)).volume()).toBeGreaterThan(50000);
     expect(print.takeBuildWarnings()).toEqual([]);
   }
   // The recipe's rule, on a 20 mm thick limb bent 90° over three rings: rings a quarter
