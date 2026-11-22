@@ -38,6 +38,7 @@ import { createDimScene, worldPerPx, orthoWorldPerPx } from "./dim3-scene.js";
 import { buildSnapIndex, findSnap, SNAP_PX } from "./snaps.js";
 import { firstReading, spanReading, frameAxesFor } from "./readings.js";
 import { createSnapMarker } from "./snap-marker.js";
+import { isUnitId } from "../units.js";
 
 // How many distinct placements the cache holds. An orbit sweeps a bounded set
 // of side choices; anything past that is ground the user has moved on from.
@@ -89,7 +90,10 @@ function keyedCache(limit) {
   };
 }
 
-export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage, schedule = (cb) => requestAnimationFrame(cb), idle = defaultIdle }) {
+// `units` (optional): a shared display-units state (units.js createUnitsState) — the
+// mount's one state, so the unit tag and the panel's mm/in switch move together.
+// Without it the mode keeps a private unit, as before.
+export function createMeasureMode(viewer, { part, getContext, revealParams, getReads, stage, schedule = (cb) => requestAnimationFrame(cb), idle = defaultIdle, units: unitsState = null }) {
   const pinListeners = new Set();
   const notifyPins = () => { for (const cb of [...pinListeners]) cb(); };
   const modeListeners = new Set();
@@ -104,7 +108,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   };
 
   let enabled = false;
-  let units = "mm";            // display only; values stay mm internally
+  let units = unitsState ? unitsState.get() : "mm"; // display only; values stay mm internally
+  const unitListeners = new Set();
+  const notifyUnits = () => {
+    for (const cb of [...unitListeners]) {
+      try { cb(units); } catch (err) { console.error("units listener failed", err); }
+    }
+  };
   let scene = null;            // created on first enable, kept across toggles
   let marker = null;           // the hover snap marker + the clicked-point dots
   let detached = false;
@@ -945,6 +955,13 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     notifyMode();
   }
 
+  function applyUnits(next) {
+    units = next;
+    rebuild(); // labels re-render in the new unit; the cache key carries it
+    notifyUnits();
+  }
+  const offUnits = unitsState ? unitsState.onChange((next) => { if (!detached) applyUnits(next); }) : () => {};
+
   return {
     setEnabled,
     isEnabled: () => enabled,
@@ -973,16 +990,21 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
     },
     getUnits: () => units,
     setUnits(next) {
-      if (next === units || !(next in { mm: 1, in: 1 })) return;
-      units = next;
-      rebuild(); // labels re-render in the new unit; the cache key carries it
+      if (next === units || !isUnitId(next)) return;
+      // with a shared state its change listener (below) applies the unit
+      if (unitsState) { unitsState.set(next); return; }
+      applyUnits(next);
     },
+    // Hears every unit change, whoever made it (the tag, or the shared state).
+    onUnitsChange: (cb) => { unitListeners.add(cb); return () => unitListeners.delete(cb); },
     onPinsChange: (cb) => { pinListeners.add(cb); return () => pinListeners.delete(cb); },
     onModeChange: (cb) => { modeListeners.add(cb); return () => modeListeners.delete(cb); },
     detach() {
       if (detached) return;
       detached = true;
       enabled = false;
+      offUnits();
+      unitListeners.clear();
       stopPrebuild();
       offFrame();
       unsubscribeHandleHover();

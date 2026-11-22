@@ -95,6 +95,7 @@ import { limbInfo, jointRings, goalGrabJoints, planarDragNormal } from "./param-
 import { handleKind, handleAt, handleRecord } from "./handle-source.js";
 import { startDrag as startKindDrag, dragTarget } from "./drag-kinds.js";
 import { planeGuide, rotaryGuide, sweepPath, pathKey, pathParam, readoutText, readoutItems } from "./handle-guides.js";
+import { formatLength } from "../units.js";
 import { resolveParams } from "../part-model.js";
 import { aimTurn } from "../solve/aim.js";
 import { withDeriveMemo } from "../derive-memo.js";
@@ -222,6 +223,8 @@ export function createPoseMode(viewer, {
   createScene = createPoseScene,
   createGizmo = createAimGizmo,
   createJointRings = createJointGizmo,
+  // the display unit the readout shows lengths in ("mm" | "in"); params stay millimetres
+  getUnits = () => "mm",
 }) {
   const handles = part?.handles && typeof part.handles === "object" ? part.handles : {};
   const dom = viewer.domElement;
@@ -1345,13 +1348,19 @@ export function createPoseMode(viewer, {
     const source = hit.kind === "jring" ? { readout: hit.compound ? hit.compound.vars.map((v) => v.param) : hit.ring?.slots?.[hit.name]?.param }
       : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
       : handle;
-    const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
-    if (blocked?.b) {
-      items.push({ key: "blocked", label: "Stopped at", text: part?.parts?.[blocked.b]?.label ?? blocked.b });
-    } else if (Number.isFinite(residual)) {
-      items.push({ key: "reach", label: "Out of reach", unit: "mm", value: residual, text: residual.toFixed(1) });
-    }
-    setReadout({ handleId: hit.handleId, text: items.map((i) => `${i.key} ${i.text}`).join(" · "), items });
+    readoutBuild = () => {
+      const units = getUnits();
+      const items = readoutItems(part, { ...part.defaults, ...getParams() }, source, units);
+      if (blocked?.b) {
+        items.push({ key: "blocked", label: "Stopped at", text: part?.parts?.[blocked.b]?.label ?? blocked.b });
+      } else if (Number.isFinite(residual)) {
+        items.push(units === "in"
+          ? { key: "reach", label: "Out of reach", unit: "in", value: residual, text: formatLength(residual, "in"), converts: true }
+          : { key: "reach", label: "Out of reach", unit: "mm", value: residual, text: residual.toFixed(1) });
+      }
+      setReadout({ handleId: hit.handleId, text: items.map((i) => `${i.key} ${i.text}`).join(" · "), items });
+    };
+    readoutBuild();
   }
 
   function genericStep(ev, ray) {
@@ -1361,8 +1370,12 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.generic && e.handleId === press.hit.handleId);
     if (!s) return;
     scene?.setActive({ limb: s.info.name, grab: "tip", clamped: [] });
-    const params = { ...part.defaults, ...getParams() };
-    setReadout({ handleId: s.handleId, text: readoutText(part, params, s.handle), items: readoutItems(part, params, s.handle) });
+    readoutBuild = () => {
+      const units = getUnits();
+      const params = { ...part.defaults, ...getParams() };
+      setReadout({ handleId: s.handleId, text: readoutText(part, params, s.handle, units), items: readoutItems(part, params, s.handle, units) });
+    };
+    readoutBuild();
     viewer.requestRender?.();
   }
 
@@ -1370,7 +1383,10 @@ export function createPoseMode(viewer, {
   // (pose mode draws no text): the bottom readout slot (drag-readout.js) shows it, as
   // measure shows its X/Y/Z.
   let readout = null;
+  // rebuilds the live readout from the drag's last frame, in the unit now (refreshReadout)
+  let readoutBuild = null;
   function setReadout(r) {
+    if (!r) readoutBuild = null;
     if (!r && !readout) return;
     readout = r;
     notify(readoutListeners, r ? { ...r, items: r.items.map((i) => ({ ...i })) } : null);
@@ -1826,11 +1842,14 @@ export function createPoseMode(viewer, {
     onDragEnd: (cb) => { dragEndListeners.add(cb); return () => dragEndListeners.delete(cb); },
     /**
      * Fires on every frame of a drag (a generic handle's, or a limb's dot, joint ring or aim
-     * ring) with `{ handleId, text, items }` (handle-guides' readoutText / readoutItems; a
-     * limb drag out of reach adds a last `reach` item), and with null when the drag ends.
+     * ring) with `{ handleId, text, items }` (handle-guides' readoutText / readoutItems, in the
+     * display unit getUnits gives; a limb drag out of reach adds a last `reach` item), and
+     * with null when the drag ends.
      * The bottom readout (drag-readout.js) listens.
      */
     onReadout: (cb) => { readoutListeners.add(cb); return () => readoutListeners.delete(cb); },
+    /** Re-emit the live drag readout (if any) in the display unit now: a units switch mid-drag. */
+    refreshReadout: () => { if (readout && readoutBuild) readoutBuild(); },
     /** The live drag readout now, as onReadout last gave it, or null. */
     getReadout: () => (readout ? { ...readout, items: readout.items.map((i) => ({ ...i })) } : null),
     session,

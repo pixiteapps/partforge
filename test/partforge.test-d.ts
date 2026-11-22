@@ -278,6 +278,11 @@ expectType<string | null>(runtime.captureCurrent());
 expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
+// Display units.
+expectType<"mm" | "in">(runtime.getUnits());
+expectType<void>(runtime.setUnits("in"));
+expectType<() => void>(runtime.onUnitsChange((u) => { expectType<"mm" | "in">(u); }));
+expectType<"mm" | "in" | undefined>(runtime.getViewerState().units);
 // The cached preview (0.147.0).
 expectType<boolean>(runtime.previewActive);
 // @ts-expect-error - previewActive is read-only

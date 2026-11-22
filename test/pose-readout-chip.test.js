@@ -297,3 +297,91 @@ describe("attachReadoutChip", () => {
     t.mode.end({ handleId: "corner", changed: ["width"] }); // no listener left
   });
 });
+
+describe("attachReadoutChip in the display unit", () => {
+  const sized = {
+    parameters: [{ id: "s", title: "S", controls: [
+      { key: "gap", label: "Gap", unit: "mm", min: 0, max: 400, step: 0.01 },
+      { key: "tilt", label: "Tilt", unit: "°", min: 0, max: 90, step: 1 },
+    ] }],
+    defaults: { gap: 12.5, tilt: 30 },
+    handles: { g: { point: () => [0, 0, 0], params: ["gap", "tilt"], drag: "plane", normal: [0, 0, 1] } },
+  };
+  function setupIn(getUnits) {
+    const stage = document.createElement("div");
+    const canvas = document.createElement("canvas");
+    stage.append(canvas);
+    document.body.append(stage);
+    const viewer = { domElement: canvas, onFrame: () => () => {} };
+    const mode = fakeMode();
+    mode.handlePoints = () => [{ handleId: "g", at: "point", x: 100, y: 120 }];
+    const params = { ...sized.defaults };
+    const applied = [];
+    attachReadoutChip(viewer, mode, { stage }, {
+      part: sized, getParams: () => params, apply: (v) => { applied.push(v); Object.assign(params, v); }, getUnits,
+    });
+    const el = () => stage.querySelector(".pf-pose-chip");
+    const edit = () => { mode.end({ handleId: "g", changed: ["gap"] }); el().querySelector("button").click(); return [...el().querySelectorAll("input")]; };
+    const enter = (input) => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return { mode, params, applied, el, edit, enter };
+  }
+
+  it("shows a mm value in inches; a ° value as today", () => {
+    const t = setupIn(() => "in");
+    t.mode.end({ handleId: "g", changed: ["gap"] });
+    expect(t.el().textContent).toBe("Gap 0.492 in · Tilt 30 °");
+  });
+
+  it("inch inputs are decimal text with no step; a ° input stays a number", () => {
+    const t = setupIn(() => "in");
+    const [gap, tilt] = t.edit();
+    expect(gap.type).toBe("text");
+    expect(gap.inputMode).toBe("decimal");
+    expect(gap.hasAttribute("step")).toBe(false);
+    expect(gap.value).toBe("0.492");
+    expect(gap.parentElement.querySelector(".pf-pose-chip-unit").textContent).toBe("in");
+    expect(tilt.type).toBe("number");
+    expect(tilt.step).toBe("1");
+  });
+
+  it("a typed 3/4 applies 19.05 mm", () => {
+    const t = setupIn(() => "in");
+    const [gap] = t.edit();
+    gap.value = "3/4";
+    t.enter(gap);
+    expect(t.applied).toEqual([{ gap: 19.05 }]);
+  });
+
+  it("an untouched inch input writes nothing (0.492 is never written back as 12.4968)", () => {
+    const t = setupIn(() => "in");
+    const [gap] = t.edit();
+    t.enter(gap);
+    expect(t.applied).toEqual([]);
+    expect(t.params.gap).toBe(12.5);
+  });
+
+  it("bad text in an inch input writes nothing for that key", () => {
+    const t = setupIn(() => "in");
+    for (const [bad, deg] of [["3/", "40"], ["abc", "45"]]) {
+      const [gap, tilt] = t.edit();
+      gap.value = bad;
+      tilt.value = deg;
+      t.enter(gap);
+    }
+    expect(t.applied).toEqual([{ tilt: 40 }, { tilt: 45 }]);
+    expect(t.params.gap).toBe(12.5);
+  });
+
+  it("millimetre mode (and no getUnits) is as today", () => {
+    for (const getUnits of [() => "mm", undefined]) {
+      const t = setupIn(getUnits);
+      t.mode.end({ handleId: "g", changed: ["gap"] });
+      expect(t.el().textContent).toBe("Gap 12.50 mm · Tilt 30 °");
+      const [gap] = t.edit();
+      expect(gap.type).toBe("number");
+      expect(gap.step).toBe("0.01");
+      expect(gap.value).toBe("12.5");
+      document.body.innerHTML = "";
+    }
+  });
+});

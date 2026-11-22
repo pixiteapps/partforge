@@ -191,6 +191,30 @@ select.preset, select.select-input {
 .row .num::-webkit-outer-spin-button, .row .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .row .num { -moz-appearance: textfield; }
 .row .unit { font-family: var(--pf-mono); color: var(--pf-muted); font-size: 10px; }
+/* The mm/in display-units switch: two small segmented buttons, right-aligned.
+   With no host slot it leads the controls at the rail's own padding. In a
+   host's `data-pf-units-slot` (a row of its own in the rail foot, above the
+   download actions) the foot supplies the padding. The foot's shared button
+   metrics (`.pf-rail-foot button`, `.dl-row button`: flex 1, wide tracking)
+   must not reach it, which is why these selectors carry the extra
+   [data-units]. */
+.pf-units { display: flex; justify-content: flex-end; gap: 0; padding: 10px var(--pf-rail-pad) 0; }
+.pf-units button[data-units] {
+  flex: none; font-family: var(--pf-mono); font-size: 10px; font-weight: 500; line-height: 1;
+  letter-spacing: 0; cursor: pointer;
+  padding: 4px 8px; color: var(--pf-muted); background: transparent;
+  border: 1px solid var(--pf-border); border-radius: 0; margin: 0;
+}
+.pf-units button[data-units] + button { border-left: 0; }
+.pf-units button[data-units]:first-child { border-radius: var(--pf-radius-control) 0 0 var(--pf-radius-control); }
+.pf-units button[data-units]:last-child { border-radius: 0 var(--pf-radius-control) var(--pf-radius-control) 0; }
+.pf-units button[data-units]:hover:not(:disabled) { color: var(--pf-text-strong); border-color: var(--pf-border); }
+.pf-units button[data-units][aria-pressed="true"] { color: var(--pf-text-strong); background: var(--pf-surface-2); }
+.pf-units button[data-units]:focus-visible { outline: none; border-color: var(--pf-accent); position: relative; z-index: 1;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+[data-pf-units-slot] { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+[data-pf-units-slot][hidden] { display: none; }
+[data-pf-units-slot] .pf-units { padding: 0; }
 .text-input {
   display: block; width: 100%; font: 12px/1.4 var(--pf-mono);
   background: var(--pf-input-bg); color: var(--pf-text-strong);

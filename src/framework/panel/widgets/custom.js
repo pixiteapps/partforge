@@ -49,7 +49,7 @@ function stripNested(controls, report) {
   return out;
 }
 
-export function makeCustom(node, params, { onChange, onCommit, info, custom = {} } = {}) {
+export function makeCustom(node, params, { onChange, onCommit, info, units = null, custom = {} } = {}) {
   const { files = null, panelState = null, onError, buildSubPanel } = custom;
   const label = node.label ?? node.key;
   const wrap = el("div", "pf-custom");
@@ -66,6 +66,7 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
   const ownedKeys = [node.key, ...(Array.isArray(node.keys) ? node.keys.filter((k) => typeof k === "string") : [])];
   const pending = new Set();    // keys set since the last commit
   const subPanels = new Set();  // disposers of open host.controls panels
+  const unitSubs = new Set();   // unsubscribes of host.onUnitsChange, released on dispose
   let instance = null;
   let retired = false;
   let lastDerived = "{}";
@@ -84,6 +85,7 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     retired = true;
     const message = errorText(e);
     report(phase, message);
+    for (const off of [...unitSubs]) off();
     for (const d of [...subPanels]) { try { d(); } catch { /* already failing */ } }
     subPanels.clear();
     const card = el("div", "pf-custom-error");
@@ -109,6 +111,17 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     state: restoredState ?? {},
     derived: {},
     get disabled() { return wrap.classList.contains("disabled"); },
+    // The display unit ("mm" | "in") lengths are shown in; params stay millimetres.
+    get units() { return units?.get() ?? "mm"; },
+    // Hear a unit switch (cb(unit)); returns an unsubscribe. A throw retires the
+    // widget like any other widget code. Released when the control is disposed.
+    onUnitsChange(cb) {
+      if (!units || typeof cb !== "function" || retired) return () => {};
+      const off = units.onChange((u) => guarded("event", () => cb(u)));
+      const release = () => { off(); unitSubs.delete(release); };
+      unitSubs.add(release);
+      return release;
+    },
 
     get(key = node.key) { return cloneValue(params[key]); },
 
@@ -259,6 +272,7 @@ export function makeCustom(node, params, { onChange, onCommit, info, custom = {}
     },
     getState: () => host.state,
     dispose: () => {
+      for (const off of [...unitSubs]) off();
       for (const d of [...subPanels]) { try { d(); } catch { /* disposing anyway */ } }
       subPanels.clear();
       // Attempted even when retired: a widget that already failed once (a

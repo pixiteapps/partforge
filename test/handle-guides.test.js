@@ -163,3 +163,32 @@ describe("the readout chip's values (readoutKeys, chipValues)", () => {
     }
   });
 });
+
+describe("readoutItems / readoutText in the display unit", () => {
+  const sized = {
+    parameters: [{ id: "s", title: "S", controls: [
+      { key: "width", label: "Width", unit: "mm", min: 10, max: 400, step: 1 },
+      { key: "angle", label: "Angle", unit: "°", min: 0, max: 90, step: 1 },
+      { key: "area", label: "Area", unit: "mm²", min: 0, max: 900, step: 1 },
+    ] }],
+    defaults: { width: 184, angle: 30, area: 400 },
+    derive: () => ({}),
+  };
+  const h = { params: ["width", "angle", "area"] };
+
+  it("inch mode: a mm control's text is in inches, value stays mm; other units unchanged", () => {
+    const items = readoutItems(sized, sized.defaults, h, "in");
+    expect(items[0]).toEqual({ key: "width", label: "Width", unit: "in", value: 184, text: "7.244", converts: true });
+    expect(items[1]).toEqual({ key: "angle", label: "Angle", unit: "°", value: 30, text: "30", converts: false });
+    expect(items[2]).toMatchObject({ unit: "mm²", text: "400", converts: false });
+    expect(readoutText(sized, sized.defaults, h, "in")).toBe("width 7.244 · angle 30 · area 400");
+  });
+
+  it("millimetre mode, no units, or an unknown unit: exactly as today", () => {
+    const today = readoutItems(sized, sized.defaults, h);
+    expect(today[0]).toEqual({ key: "width", label: "Width", unit: "mm", value: 184, text: "184" });
+    expect(readoutItems(sized, sized.defaults, h, "mm")).toEqual(today);
+    expect(readoutItems(sized, sized.defaults, h, "furlong")).toEqual(today);
+    expect(readoutText(sized, sized.defaults, h, "mm")).toBe(readoutText(sized, sized.defaults, h));
+  });
+});
