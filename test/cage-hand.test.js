@@ -38,7 +38,7 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   ].sort());
   for (const f of FINGERS) {
     expect(CONTROLS.find((c) => c.key === `${f}Knuckle`)).toMatchObject({ min: -10, max: 90 });
-    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 110 });
+    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 90 });
   }
   expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 60 });
   expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());
@@ -52,9 +52,12 @@ test("is listed as an organic reference part", () => {
   expect(organic.referenceParts).toContain("src/parts/cage-hand.js");
 });
 
-// Defaults, then each parameter alone at its min and at its max.
+// Defaults, every parameter at its min at once and at its max at once (a fist: the
+// tightest pose the sliders reach), then each parameter alone at its min and at its max.
 const CASES = [
   ["defaults", {}],
+  ["every parameter at its min", Object.fromEntries(CONTROLS.map((c) => [c.key, c.min]))],
+  ["every parameter at its max", Object.fromEntries(CONTROLS.map((c) => [c.key, c.max]))],
   ...CONTROLS.flatMap((c) => [[`${c.key} min`, { [c.key]: c.min }], [`${c.key} max`, { [c.key]: c.max }]]),
 ];
 

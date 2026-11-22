@@ -46,7 +46,10 @@ const THUMB_AXIS = [
   THUMB_DIR[0] * THUMB_BEND[1] - THUMB_DIR[1] * THUMB_BEND[0],
 ];
 
-const RANGE = { knuckle: [-10, 90], curl: [0, 110], thumbCurl: [0, 60] };
+// The curl stops at 90°: with every knuckle at 90° and a curl past about 92° the pinky's
+// tip, the shortest finger, presses into the palm's front, and a cage may not pass through
+// itself. Every pose within these ranges builds, all of them at their max at once included.
+const RANGE = { knuckle: [-10, 90], curl: [0, 90], thumbCurl: [0, 60] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 const LABEL = { index: "Index", middle: "Middle", ring: "Ring", pinky: "Pinky", thumb: "Thumb" };
 
