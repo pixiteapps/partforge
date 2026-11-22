@@ -529,10 +529,19 @@ export function createOcctKernel(replicad) {
   // real CIRCLE B-rep entity, not a fan of LINEs. Cubic segments ({ to, c1, c2 })
   // map to cubicBezierCurveTo for exact B-rep spline edges. close() joins the last
   // point back to the start with a straight edge (mirrors the implied ArcContour closure).
+  // A point list may repeat a point (an outline whose chamfer is 0 lists its corner
+  // twice). Manifold ignores the zero-length edge; OCCT throws StdFail_NotDone building
+  // it, so a part previews and then fails STEP export. Skip the repeats — the outline
+  // is the same shape without them.
+  const samePoint = (a, b) => a[0] === b[0] && a[1] === b[1];
   const contourDrawing = (contour) => {
     if (Array.isArray(contour)) {
-      let pen = draw(contour[0]);
-      for (let i = 1; i < contour.length; i++) pen = pen.lineTo(contour[i]);
+      let pen = draw(contour[0]), at = contour[0];
+      for (let i = 1; i < contour.length; i++) {
+        if (samePoint(contour[i], at)) continue;
+        pen = pen.lineTo(contour[i]);
+        at = contour[i];
+      }
       return pen.close();
     }
     let pen = draw(contour.start);
