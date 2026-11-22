@@ -483,3 +483,82 @@ describe("compare view: fix round 1", () => {
     expect(COMPARE_HEX).toEqual({ common: "#9ca3af", missing: "#3b82f6", excess: "#ec4899" });
   });
 });
+
+// The comparison is keyed on the PAIR's own params (recorded reads plus enabled() and
+// place()), never the whole params object: an animation or slider the pair does not
+// read must not clear it every frame (final review, fix 1).
+describe("compare view: what invalidates the comparison", () => {
+  const posedPart = () => ({
+    parts: {
+      base: { label: "Base", reference: "ref", views: ["assembly"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.size, p.size, p.size] }) },
+      ref: {
+        label: "Scan", views: ["assembly"], enabled: (p) => p.showRef !== false,
+        build: (k) => k.box({ min: [0, 0, 0], max: [1, 1, 1] }),
+        place: (s, { p }) => s.translate([p.lift, 0, 0]),
+      },
+      spinner: { label: "Spinner", views: ["assembly"], build: (k, p) => k.box({ min: [0, 0, 0], max: [p.spin + 1, 1, 1] }) },
+    },
+    defaults: { size: 10, showRef: true, lift: 0, spin: 0 },
+  });
+  const reads = { base: new Set(["size"]), ref: new Set([]), spinner: new Set(["spin"]) };
+  function drawn() {
+    const viewer = fakeViewer();
+    const params = { ...posedPart().defaults };
+    const send = vi.fn();
+    const viewbar = document.createElement("div");
+    document.body.append(viewbar);
+    const cv = createCompareView({
+      part: posedPart(), viewer, view: () => "assembly", params: () => params, send, viewbar,
+      readsOf: (n) => reads[n] ?? null,
+    });
+    const changes = vi.fn();
+    cv.refresh();
+    vi.advanceTimersByTime(SETTLE_MS);
+    cv.handleMessage({ type: "compare-meshes", jobId: send.mock.calls.at(-1)[0].jobId, tolerance: 0.05, ms: 1, pieces: PIECES });
+    cv.seam.onChange(changes);
+    viewer.setCompare.mockClear(); viewer.clearCompare.mockClear(); send.mockClear();
+    return { viewer, params, send, cv, changes, legend: () => viewbar.querySelector(".pf-compare-legend") };
+  }
+
+  it("a param the pair does not read, changing every frame, leaves the comparison drawn", async () => {
+    const { viewer, params, send, cv, changes, legend } = drawn();
+    const chips = [...legend().children];
+    for (let i = 1; i <= 20; i++) { params.spin = i; cv.refresh(); vi.advanceTimersByTime(16); }
+    expect(viewer.clearCompare).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(changes).not.toHaveBeenCalled();
+    expect([...legend().children]).toEqual(chips); // the same nodes: never redrawn
+    let done = false;
+    cv.captureReady().then(() => { done = true; });
+    await Promise.resolve();
+    expect(done).toBe(true);
+  });
+
+  it("a param the pair's build reads clears it at once and recomputes after settle", () => {
+    const { viewer, params, send, cv, changes } = drawn();
+    params.size = 12;
+    cv.refresh();
+    expect(viewer.clearCompare).toHaveBeenCalledTimes(1);
+    expect(changes).toHaveBeenCalled();
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].params.size).toBe(12);
+  });
+
+  it("a param only the pair's place() reads clears it too", () => {
+    const { viewer, params, send, cv } = drawn();
+    params.lift = 3;
+    cv.refresh();
+    expect(viewer.clearCompare).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("the reference's enabled() gate param is part of the key", () => {
+    const { viewer, params, cv } = drawn();
+    // showRef stays true-ish but changes value: the gate reads it, so the key moves.
+    params.showRef = "yes";
+    cv.refresh();
+    expect(viewer.clearCompare).toHaveBeenCalledTimes(1);
+  });
+});

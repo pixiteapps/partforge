@@ -4,7 +4,7 @@ import { safeName } from "../framework/safe-name.js";
 import { ORIENTATIONS, cameraOrbitProblem, cameraPoseForView, cameraCueLabel } from "../framework/view-angles.js";
 import { buildView } from "../framework/oracle/build.js";
 import { renderStyled } from "../framework/softrender/index.js";
-import { getRenderStyle } from "../framework/renderStyles.js";
+import { getRenderStyle, RENDER_STYLES } from "../framework/renderStyles.js";
 import { compareTolerance, COMPARE_MAX_TRIANGLES } from "../framework/oracle/compare.js";
 import { COMPARE_COLORS } from "../framework/compare-colors.js";
 
@@ -84,7 +84,10 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
   let subparts;
   try {
     // meshes are JS-owned: safe after cleanup
-    subparts = withComparison(kernel, part, built, opacityOf)
+    // The thumbnail is the product shot of the part as authored, like the viewer's
+    // captureView: no comparison, so a server-made card matches a browser-made one.
+    const thumbnail = style === "thumbnail" || resolved === RENDER_STYLES.thumbnail;
+    subparts = (thumbnail ? null : withComparison(kernel, part, built, opacityOf))
       ?? built.map((b) => ({ name: b.name, mesh: b.mesh, display: part.parts?.[b.name]?.display, opacity: opacityOf(b.name) }));
   } finally {
     kernel.cleanup?.();
@@ -104,6 +107,7 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
 // pair in declaration order, neither at opacity 0), the pair is drawn as the three
 // difference solids (_compareSolids) in their flat, opaque colours, in the pair's
 // place in the list — what the viewer draws, and what its captures always show.
+// Never for the thumbnail style (the caller skips it).
 // Null (render as built) with no pair, no _compareSolids (OCCT), or a refusal.
 function withComparison(kernel, part, built, opacityOf) {
   if (typeof kernel._compareSolids !== "function") return null;

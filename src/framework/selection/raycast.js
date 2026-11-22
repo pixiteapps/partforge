@@ -213,14 +213,16 @@ export function firstSurfaceHit(ray, meshes, { bvhFor = null, accept = null } = 
 // dimension pinned to a plane the user can move is not a dimension.
 // `bvhFor` (measure mode) routes the surface ray through firstSurfaceHit; it is
 // ignored with `includeSection`, whose cut-face test needs every hit.
-export function raycastViewer(viewer, clientX, clientY, { includeSection = false, bvhFor = null } = {}) {
+// `compare: false` (measure mode) skips a reference comparison's pieces: measure
+// tracks its clicks against viewer._subMeshes, which never holds one.
+export function raycastViewer(viewer, clientX, clientY, { includeSection = false, bvhFor = null, compare = true } = {}) {
   const rect = viewer.domElement.getBoundingClientRect();
   ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
   ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(ndc, viewer.camera);
   // A reference comparison's pieces are hit as their PART (mesh.name), tagged
   // with which piece (withCompare) — the pair's own meshes are hidden meanwhile.
-  const meshes = [...Object.values(viewer._subMeshes), ...(viewer._compareMeshes ?? [])].filter((m) => m.visible);
+  const meshes = [...Object.values(viewer._subMeshes), ...(compare ? viewer._compareMeshes ?? [] : [])].filter((m) => m.visible);
   if (bvhFor && !includeSection) {
     const found = firstSurfaceHit(raycaster.ray.clone(), meshes, {
       bvhFor,

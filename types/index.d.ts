@@ -149,6 +149,14 @@ export interface Selection {
    * normal faces the half the section removed.
    */
   onCutPlane?: true;
+  /**
+   * Present when the click landed on one of a reference comparison's pieces:
+   * which one. A pick on the Matches solid carries `"common"` and otherwise
+   * reads as an ordinary pick of the part.
+   */
+  compare?: "common" | "missing" | "excess";
+  /** The part's label, present with `compare` (for the sentence describing the piece). */
+  subPartLabel?: string;
 }
 
 export interface PickEvent {
@@ -434,6 +442,8 @@ export interface ViewerState {
   renderMode?: RenderMode;
   /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
+  /** The reference compare view's "Show differences" switch and which pieces are hidden; present only when changed from the default (on, nothing hidden). Never saved to the part. */
+  compare?: { enabled: boolean; hidden: { missing: boolean; excess: boolean } };
 }
 
 /** The viewer's appearance: the drafting view, physical materials under an environment, or the cel-shaded look. */

@@ -116,3 +116,14 @@ test("a view with no pair renders byte-for-byte as without a comparison kernel",
   const [b] = await renderViewImages(k, demo, "spacer", { views: ["iso"], size: [64, 64] });
   expect(Buffer.compare(a.png, b.png)).toBe(0);
 });
+
+// A card thumbnail is the product shot of the part as authored (the browser's
+// captureView draws no comparison), so the thumbnail style never compares: the
+// server-made thumbnail matches the browser's. The agent's renders keep it.
+test("the thumbnail style never draws the comparison", async () => {
+  const without = { ...k, _compareSolids: undefined };
+  const opts = { views: ["top"], size: [96, 96], edges: false, style: "thumbnail" };
+  const [a] = await renderViewImages(k, plateWithReference(), "main", opts);
+  const [b] = await renderViewImages(without, plateWithReference(), "main", opts);
+  expect(Buffer.compare(a.png, b.png)).toBe(0);
+});

@@ -607,7 +607,7 @@ export function createMeasureMode(viewer, { part, getContext, revealParams, getR
   }
   // The snap a pointer at client (x, y) would grab, or null over empty space.
   function snapAt(x, y) {
-    const hit = raycastViewer(viewer, x, y, { bvhFor: builtBVH });
+    const hit = raycastViewer(viewer, x, y, { bvhFor: builtBVH, compare: false });
     if (!hit) return null;
     const { mesh } = hit;
     const rect = viewer.domElement.getBoundingClientRect();

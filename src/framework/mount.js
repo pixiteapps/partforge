@@ -1114,8 +1114,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // the worker once the build has settled. Built here, before the popover, because
     // the Parts seam carries its switch and piece rows. `send` and `settled` are read
     // only from its settle timer, after this function has run to the end.
+    // `readsOf` is displayReadsOf, declared below with the mesh cache; until then (no
+    // build has landed) the prediction rung answers.
+    let compareReadsOf = null;
     const compareView = createCompareView({
       part, viewer, view, params: () => params,
+      readsOf: (name) => (compareReadsOf ? compareReadsOf(name) : null),
       send: (msg) => service.send(msg, backendFor()),
       settled: () => missingParts().length === 0 && !poseHold && !skin.isDragging(),
       viewbar: els.viewer.querySelector("#viewbar"),
@@ -1431,6 +1435,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // probe for it; only a sub-part with no stamp at all gets the prediction.
     // (cache.readsOf itself keeps null for both — the pose fast path needs that.)
     const displayReadsOf = (name) => cache.readsOf(name) ?? (cache.hasStamp(name) ? new Set(Object.keys(params)) : null);
+    compareReadsOf = displayReadsOf;
     // A sub-part a transient (mid-drag) build made current still awaits the real build
     // the host sees: it counts as missing, and as unsettled to export and the floor.
     const isSettled = (n) => isCurrent(n) && !owed.has(n);

@@ -22,9 +22,10 @@
 //   - the `seam` the view style popover's Parts section reads (parts-list.js): the
 //     "Show differences" switch and the three piece rows under the part's row.
 //
-// Every geometry or view change clears the comparison at once (the viewer shows the
-// stable ghost meanwhile) and the job runs again after it settles. A reply is matched
-// by job id: anything but the latest is dropped, never drawn over newer geometry. A
+// Every change to the pair's geometry, pose or view clears the comparison at once
+// (the viewer shows the stable ghost meanwhile) and the job runs again after it
+// settles; a param the pair does not read changes nothing. A reply is matched by job
+// id: anything but the latest is dropped, never drawn over newer geometry. A
 // refused comparison (skipped, or the worker's error reply) draws nothing and leaves
 // the switch disabled with the reason, until the next change.
 //
@@ -34,6 +35,7 @@ import { viewSubParts } from "./part-model.js";
 import { partLabel } from "./export-select.js";
 import { createViewbarReadout } from "./viewbar-clear.js";
 import { COMPARE_COLORS } from "./compare-colors.js";
+import { relevanceHash, subPartParamKeys } from "./param-deps.js";
 
 /** How long a view must rest before the comparison runs (a slider drag shows the ghost). */
 export const SETTLE_MS = 180;
@@ -74,7 +76,7 @@ export function isDefaultCompareState(s) {
   return s.enabled === true && !s.hidden.missing && !s.hidden.excess;
 }
 
-export function createCompareView({ part, viewer, view, params, send, viewbar, initial, settled = () => true }) {
+export function createCompareView({ part, viewer, view, params, send, viewbar, initial, settled = () => true, readsOf }) {
   const build = ++builds;
   const start = readCompareState(initial);
   let nextId = 1, disposed = false;
@@ -154,7 +156,19 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
     }
     return null;
   }
-  const keyFor = (p) => JSON.stringify([view(), p.name, p.ref, params()]);
+  // Keyed on the pair's OWN params (each one's recorded reads, its enabled() gate and
+  // its place() reads in this view — param-deps.subPartParamKeys, the ladder selection
+  // and measure use), never the whole params object: an animation or slider the pair
+  // does not read must not clear the comparison every frame. `readsOf` is mount's
+  // displayReadsOf; without one the prediction rung answers.
+  const keyFor = (p) => {
+    const v = view(), ps = params();
+    const keys = new Set([
+      ...subPartParamKeys(part, v, ps, readsOf, p.name),
+      ...subPartParamKeys(part, v, ps, readsOf, p.ref),
+    ]);
+    return JSON.stringify([v, p.name, p.ref, relevanceHash([...keys], ps)]);
+  };
 
   function stop() {
     clearTimeout(timer); timer = null;

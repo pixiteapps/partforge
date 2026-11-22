@@ -324,6 +324,24 @@ test("the snap marker drops when its mesh goes invisible", () => {
   mode.detach();
 });
 
+// A reference comparison draws its pieces in place of the pair (viewer._compareMeshes,
+// the pair's own meshes hidden). Measure tracks clicks against viewer._subMeshes, so it
+// must never snap to a piece: it would lose the click on the next frame (isStale).
+test("measure ignores a reference comparison's pieces", () => {
+  const { mesh, viewer, mode, snapShown } = setup();
+  const piece = plateMesh();
+  piece.name = "plate";
+  piece.userData.compare = "missing";
+  viewer.__parts.add(piece);
+  viewer.__parts.updateMatrixWorld(true);
+  viewer._compareMeshes = [piece];
+  mesh.visible = false;
+  mode.setEnabled(true);
+  move(viewer.domElement);
+  expect(snapShown()).toBe(false);
+  mode.detach();
+});
+
 test("cutaway handle hover suppresses the snap marker; release resumes it", () => {
   const { viewer, mode, snapShown } = setup();
   mode.setEnabled(true);

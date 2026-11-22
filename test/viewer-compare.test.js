@@ -321,6 +321,26 @@ describe("pick", () => {
     expect(formatSelection(selection, { style: "prompt" })).toMatch(/material missing from \*\*Body\*\*, near \[/);
     v.dispose();
   });
+
+  // Measure mode's clicks must refer to the sub-part meshes it tracks (isStale reads
+  // viewer._subMeshes): it asks for the pieces to be skipped, so it never snaps to one.
+  test("{ compare: false } skips the pieces (measure mode)", () => {
+    const v = shown();
+    v.setCompare({ name: "body", ref: "ref", pieces: { common: null, missing: boxPayload(4), excess: null } });
+    v.showAssembly(["body", "ref"], { frame: true });
+    v.domElement.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 });
+    let root = v._compareMeshes[0];
+    while (root.parent) root = root.parent;
+    root.updateMatrixWorld(true);
+    v.camera.updateMatrixWorld(true);
+    expect(raycastViewer(v, 200, 150)?.compare).toBe("missing");
+    const hit = raycastViewer(v, 200, 150, { compare: false });
+    expect(hit?.compare).toBeUndefined();
+    if (hit) expect(Object.values(v._subMeshes)).toContain(hit.mesh);
+    const bvh = raycastViewer(v, 200, 150, { compare: false, bvhFor: () => null });
+    expect(bvh?.compare).toBeUndefined();
+    v.dispose();
+  });
 });
 
 // What each offscreen render (a capture) drew: the pieces' and the pair's visibility.
