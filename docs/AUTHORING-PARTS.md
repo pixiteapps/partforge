@@ -4511,7 +4511,7 @@ instead of (or in addition to) the built-in `#part` bar:
   clicked face: the parameters of the operation that created it, newest first. It is
   rebuilt on each click, not on each rebuild. A parameter a handle drags is offered
   here too. A `k.subdiv` body is one face, so it answers by cage face: the
-  parameters read before the `extrude`, `move` or `scale` that made or reshaped the cage
+  parameters read before the `extrude`, `move`, `scale` or `rotate` that made or reshaped the cage
   face under the click, then those of the face it was extruded from. A face with no record, a part on OCCT, and a click on a section
   cap fall back to the piece's own build reads, first three in the panel's order. Those
   leave out the piece's `enabled()` and `place()` reads, so they can be fewer than

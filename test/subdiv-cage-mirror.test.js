@@ -86,3 +86,17 @@ it("stays a closed, consistently wound mesh through mirrored changes", () => {
   expect(points.length - directed.size / 2 + faces.length).toBe(2);
   expect(reflectY(points)).toEqual(points.map((p) => p.join()).sort());
 });
+
+it("rotates a side face and its reflection the opposite way; a point on the plane stays on it", () => {
+  const c = createCage({ box: { size: [60, 30, 20], segs: [4, 2, 1] }, mirror: "xz" });
+  const fin = c.extrude("+y:0,0", { by: 10 });
+  c.rotate(fin, { axis: "x", deg: 30 });
+  const n = c.normal(fin), t = c.normal(`${fin}~`);
+  expect(n[2]).toBeCloseTo(0.5, 9);
+  expect(t).toEqual([n[0], -n[1], n[2]]);
+  c.rotate("+z:1,1", { axis: "x", deg: 20 });             // has an edge on the plane
+  const pts = c.snapshot().points;
+  // The face's plane edge did not leave the plane, so it stretched rather than turned rigidly.
+  expect(c.snapshot().faces[c.snapshot().ids.indexOf("+z:1,1")].filter((p) => pts[p][1] === 0).length).toBe(2);
+  expect(reflectY(pts)).toEqual(pts.map((p) => p.join()).sort());
+});

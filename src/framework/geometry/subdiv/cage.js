@@ -1,5 +1,5 @@
 // The Cage: a coarse, closed quad mesh an author box-models from a box start with
-// extrude / move / scale, read back by face id, and hands to k.subdiv as snapshot().
+// extrude / move / scale / rotate, read back by face id, and hands to k.subdiv as snapshot().
 // Plain JavaScript, no kernel: every method changes the cage in place or throws a
 // `cage: ` error naming the problem, and every change leaves the mesh closed.
 //
@@ -448,6 +448,34 @@ function makeCage(state) {
     for (const [p, q] of next) points[p] = q;
   }
 
+  // Turn the faces' points by `deg` about the line through `about` along `axis`
+  // (right-handed: a positive angle about +X turns +Y toward +Z).
+  const AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+  function rotate(face, opts = {}) {
+    const ids = faceList(face);
+    const { axis, deg } = opts;
+    const dir = typeof axis === "string" ? AXES[axis] : axis;
+    if (!isVec3(dir) || !(Math.hypot(...dir) > 0))
+      fail(`rotate axis must be "x", "y", "z" or a non-zero [x, y, z], not ${JSON.stringify(axis)}`);
+    if (!Number.isFinite(deg)) fail(`rotate deg must be a finite number, not ${JSON.stringify(deg)}`);
+    const pts = uniquePoints(ids);
+    const about = opts.about ?? mean(pts.map((p) => points[p]));
+    if (!isVec3(about)) fail("rotate about must be [x, y, z] finite numbers");
+    const u = unit(dir);
+    const t = ((deg % 360) * Math.PI) / 180, co = Math.cos(t), si = Math.sin(t);
+    const turn = (q) => {
+      const v = sub(q, about);
+      const along = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+      const across = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      return add(about, [0, 1, 2].map((i) => v[i] * co + across[i] * si + u[i] * along * (1 - co)));
+    };
+    const next = withMirror(new Map(pts.map((p) => [p, turn(points[p])])));
+    const touched = [...faces.values()].filter((v) => v.some((p) => next.has(p)));
+    if (shortEdge(touched, (p) => next.get(p) ?? points[p]))
+      fail(`rotate ${JSON.stringify(deg)} makes an edge shorter than ${MIN_EDGE} mm`);
+    for (const [p, q] of next) points[p] = q;
+  }
+
   // Mark the border of the face or region as a hard edge. A region touching the mirror
   // plane is taken joined with its reflection, so no crease is left on the plane.
   const edgeKey = (a, b) => (a < b ? `${a}>${b}` : `${b}>${a}`);
@@ -525,6 +553,7 @@ function makeCage(state) {
     extrude,
     move,
     scale,
+    rotate,
     crease,
     centroid: (id) => noNegZero(mean(ptsOf(resolve(id)))),
     normal: (id) => noNegZero(unit(newell(ptsOf(resolve(id))))),
