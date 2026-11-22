@@ -107,6 +107,11 @@ export function captureViewsFromScene(viewNames, { renderer, liveCamera, grid, b
 // captures against the CPU renderer's parity check, not by eye on the hex.
 export const THUMBNAIL_BG = RENDER_STYLES.thumbnail.background;
 
+// The reference compare view's three difference solids (setCompare): in both
+// (Matches), in the reference only (Missing), in the part only (Extra).
+export const COMPARE_COLORS = { common: 0x9ca3af, missing: 0x3b82f6, excess: 0xec4899 };
+const COMPARE_KINDS = ["common", "missing", "excess"];
+
 // Resolve renderMeshPayloads' `background` option to what Scene.background
 // wants. Exported for its own sake: renderMeshPayloads needs a GL context and
 // so is untestable directly, and this is the whole of the decision. `null` is
@@ -521,6 +526,96 @@ export function createViewer(container, part, {
     else mesh.layers.disable(CEL_LAYER);
     mesh.visible = meshVisible;
     lines.visible = linesVisible && meshVisible && !deformedSubs.has(name);
+    // A comparison draws this pair as its three difference solids instead.
+    if (compare?.names.includes(name)) { mesh.visible = false; lines.visible = false; }
+  }
+
+  // --- reference compare: three difference solids -----------------------------
+  // A sub-part and its reference drawn as three opaque solids that share no
+  // volume: common (in both), missing (in the reference only), excess (in the
+  // part only). The pair's own meshes and edges are hidden while it stands
+  // (applySubOpacity above); every other sub-part is untouched. The pieces take
+  // a flat colour in every mode, never the part's display: a standard material
+  // in CAD and realistic (the environment lights it), the cel band shader in
+  // cel, whose scene lights are off. Always opaque — nothing here reads an
+  // opacity, a user see-through or a fade. The materials are clippable, so the
+  // cutaway cuts them; they are not capped. A hit on a piece is picked as the
+  // PART (mesh.name), with `userData.compare` naming the piece.
+  let compare = null; // { name, ref, names, objects: [{ kind, mesh, lines, standard, cel, offs }], lineMat, lineOff }
+  const compareHidden = new Set(); // "missing" | "excess"
+  const compareMeshes = [];        // the live piece meshes, in kind order (the raycast reads them)
+  const compareGroup = new THREE.Group();
+  partsGroup.add(compareGroup);
+  function compareLinesVisible(kind) { return renderMode !== "realistic" && !compareHidden.has(kind); }
+  function syncCompareLook() {
+    if (!compare) return;
+    for (const o of compare.objects) {
+      o.mesh.material = renderMode === "cel" ? o.cel : o.standard;
+      o.lines.visible = compareLinesVisible(o.kind);
+    }
+  }
+  function disposeCompareObjects(was) {
+    for (const o of was.objects) {
+      compareGroup.remove(o.mesh, o.lines);
+      for (const off of o.offs) off();
+      o.standard.dispose();
+      o.cel.dispose();
+      o.mesh.geometry.userData.edges?.dispose();
+      o.mesh.geometry.dispose();
+    }
+    was.lineOff();
+    was.lineMat.dispose();
+    compareMeshes.length = 0;
+  }
+  function clearCompare() {
+    if (!compare) return;
+    const was = compare;
+    compare = null;
+    disposeCompareObjects(was);
+    for (const n of was.names) applySubOpacity(n);
+    requestRender();
+  }
+  function setCompare({ name, ref, pieces }) {
+    clearCompare();
+    const lineMat = lineMaterial.clone();
+    lineMat.resolution.copy(lineMaterial.resolution);
+    const lineOff = cutaway.registerClippableMaterial(lineMat);
+    const objects = [];
+    for (const kind of COMPARE_KINDS) {
+      const piece = pieces?.[kind];
+      if (!piece) continue;
+      const standard = material.clone();
+      standard.color = new THREE.Color(COMPARE_COLORS[kind]);
+      standard.metalness = 0;
+      standard.roughness = 0.8;
+      const cel = buildCelMaterial({ color: COMPARE_COLORS[kind] });
+      const offs = [cutaway.registerClippableMaterial(standard), cutaway.registerClippableMaterial(cel)];
+      const geo = buildGeometry(piece);
+      const mesh = new THREE.Mesh(geo, standard);
+      mesh.name = name;
+      mesh.userData.compare = kind;
+      mesh.layers.enable(CEL_LAYER); // opaque, so the ink outlines it
+      mesh.visible = !compareHidden.has(kind);
+      const lines = new LineSegments2(geo.userData.edges, lineMat);
+      compareGroup.add(mesh, lines);
+      compareMeshes.push(mesh);
+      objects.push({ kind, mesh, lines, standard, cel, offs });
+    }
+    compare = { name, ref, names: [name, ref], objects, lineMat, lineOff };
+    syncCompareLook();
+    for (const n of compare.names) applySubOpacity(n);
+    requestRender();
+  }
+  function setCompareHidden(kind, hidden) {
+    if (kind !== "missing" && kind !== "excess") return;
+    if (hidden) compareHidden.add(kind); else compareHidden.delete(kind);
+    const o = compare?.objects.find((x) => x.kind === kind);
+    if (o) { o.mesh.visible = !hidden; o.lines.visible = compareLinesVisible(kind); }
+    requestRender();
+  }
+  function getCompare() {
+    if (!compare) return null;
+    return { name: compare.name, ref: compare.ref, hidden: { missing: compareHidden.has("missing"), excess: compareHidden.has("excess") } };
   }
 
   /** The animation-channel opacity setSubPartOpacity last left on `name` (1 when none). */
@@ -780,7 +875,7 @@ export function createViewer(container, part, {
   // Feature lines are CAD-only: applySubOpacity reads the render mode
   // directly, so this just re-applies it to every sub-part after a mode
   // change (enterRealistic/enterCad both call it once they've set renderMode).
-  function refreshFeatureLines() { for (const n of names) applySubOpacity(n); }
+  function refreshFeatureLines() { for (const n of names) applySubOpacity(n); syncCompareLook(); }
 
   const physicalMats = new Map();    // name -> MeshPhysicalMaterial (environment-independent, cached)
   const celMats = new Map();         // name -> the cel band ShaderMaterial (cached like physicalMats)
@@ -2651,6 +2746,8 @@ export function createViewer(container, part, {
   function showAssembly(visibleNames, { frame = false } = {}) {
     matchGeneration++;
     lastShown = [...visibleNames];
+    // A view without both sub-parts of a comparison has nothing left to compare.
+    if (compare && !compare.names.every((n) => visibleNames.includes(n))) clearCompare();
     for (const name of names) {
       if (visibleNames.includes(name)) {
         subMesh[name].geometry = subCache[name]; // cached geometries reused, not disposed
@@ -2717,6 +2814,7 @@ export function createViewer(container, part, {
     lineMaterial.opacity = opacity;
     lineMaterial.transparent = true; // always: the feathered edges blend
     for (const m of fadeLineMats.values()) m.color.set(color);
+    if (compare) { compare.lineMat.color.set(color); compare.lineMat.opacity = opacity; }
   }
 
   // Swap the scene background, grid, and edge-line colors for the given theme.
@@ -2749,6 +2847,7 @@ export function createViewer(container, part, {
   function hideAssembly() {
     matchGeneration++;
     lastShown = [];
+    clearCompare();
     for (const m of Object.values(subMesh)) m.visible = false;
     for (const l of Object.values(subLines)) l.visible = false;
     cutaway.setVisible([]);
@@ -2772,6 +2871,7 @@ export function createViewer(container, part, {
     applyOrthoFrustum({ halfH, halfW: halfH * (w / h) });
     lineMaterial.resolution.set(w, h); // fat lines need the viewport size for px width
     for (const m of fadeLineMats.values()) m.resolution.set(w, h); // clones need it too
+    compare?.lineMat.resolution.set(w, h);
     cutaway.setViewportSize(w, h, renderer.getPixelRatio());
     requestRender(); // a resize clears the drawing buffer
   }
@@ -3889,6 +3989,7 @@ export function createViewer(container, part, {
     flashGeometry.dispose();
     _thumbSphere?.dispose();
     materialThumbs.clear();
+    if (compare) { disposeCompareObjects(compare); compare = null; }
     cutaway.dispose();
     for (const n of names) {
       const g = subCache[n];
@@ -3961,6 +4062,10 @@ export function createViewer(container, part, {
     onFrame,
     onRendered,
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
+    setCompare,
+    clearCompare,
+    setCompareHidden,
+    getCompare,
     tweenCameraTo,
     getCameraCue,
     holdGround,
@@ -3990,6 +4095,7 @@ export function createViewer(container, part, {
     // viewer's life: a projection swap re-targets it, never replaces it.
     orbitControls: controls,
     _subMeshes: subMesh,
+    _compareMeshes: compareMeshes, // the compare pieces, picked as their PART (selection/raycast.js)
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],
     // Test hook (scripts/check-pose.mjs): the realistic floor as placed — the
