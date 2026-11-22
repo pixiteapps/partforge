@@ -7,7 +7,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { smoothLineMaterial } from "./smooth-lines.js";
 import { UltraHDRLoader } from "three/addons/loaders/UltraHDRLoader.js";
-import { buildCadMaterial, buildPhysicalMaterial } from "./materials/physical.js";
+import { buildCadMaterial, buildPhysicalMaterial, ghostOffset } from "./materials/physical.js";
 import { grainAxisFor, setGrainAxis } from "./materials/patterns.js";
 import { ensureBoxUVs } from "./materials/uv.js";
 import { loadEnvironmentRig } from "./materials/environment.js";
@@ -456,6 +456,7 @@ export function createViewer(container, part, {
       m = baseMats[name].clone();
       m.transparent = true;
       m.depthWrite = false;
+      ghostOffset(m);
       fadeUnregisters.set(m, cutaway.registerClippableMaterial(m));
       fadeMats.set(name, m);
     }

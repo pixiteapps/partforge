@@ -2,9 +2,9 @@
 // and for its "Probes" section (the `probes` block below measures the import
 // live into the measure report) — the worked example for BOTH import uses in
 // one part:
-//   • reference — `ref` is a translucent ghost of the imported scan (never
-//     exported); `body` is a parametric rebuild of the same block, bound to
-//     the scan via `reference: "scan"` and held to it by the three ref*
+//   • reference — `ref` is the imported scan as a non-exported sub-part;
+//     `body` is a parametric rebuild of the same block, compared against it
+//     via `reference: "ref"` and held to it by the three ref*
 //     deviation metrics in `verify.expect.body`.
 //   • component — `mount` uses the import as a real boolean tool: a plate
 //     with a through-socket cut to the scan's own shape (scaled up by `fit`
@@ -60,30 +60,28 @@ export default {
   // the two solids never interpenetrate regardless of the current dimensions.
   derive: (p) => ({ mountOffsetX: p.scanW + p.gap }),
   parts: {
-    // Ghost overlay of the raw import — ref* deviation is computed against
-    // this by name (`reference: "scan"` on `body`, below) regardless of which
-    // view is active, so `ref` only needs to appear in the "reference" view,
-    // where it's shown translucent over `body` for visual alignment checking.
-    // It is deliberately absent from "assembly": measure()'s `ok` requires
-    // zero sub-part overlaps in the measured view, and a ghost coincident
-    // with its rebuild always overlaps by design.
+    // The raw import as a sub-part. `body` names it as its reference
+    // (`reference: "ref"`, below); measure() compares against `ref` posed for
+    // the measured view whether or not that view shows it, so `ref` appears
+    // only in "reference", over `body`. The opacity is just a look. The
+    // (body, ref) pair is left out of overlaps and gaps.
     ref: {
-      label: "Reference (ghost)",
+      label: "Reference",
       views: ["reference"],
       exportable: false,
       display: { opacity: 0.3 },
       build: (k) => k.import("scan"),
     },
-    // Parametric rebuild of the scanned block. `reference: "scan"` tells
+    // Parametric rebuild of the scanned block. `reference: "ref"` tells
     // measure() to compute deviation facts (xorVolume / volumeDeltaPct /
-    // bboxDelta) against the import; verify.expect.body below gates on them.
-    // Shown in both views: alone (fitted with `mount`) in "assembly", and
-    // against the ghost in "reference".
+    // bboxDelta, plus missing/excess regions) against the `ref` sub-part;
+    // verify.expect.body below gates on them. Shown alone (with `mount`) in
+    // "assembly", and with `ref` in "reference".
     body: {
       label: "Rebuild",
       views: ["assembly", "reference"],
       export: { name: "body" },
-      reference: "scan",
+      reference: "ref",
       build: (k, p) => k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }),
     },
     // The import used as a real component: a plate with a through-socket cut
@@ -106,18 +104,17 @@ export default {
     },
   },
   // "assembly" is first so `measure`/`verify`/`render` (which default to the
-  // first view key) see only the two real, non-overlapping parts — `mount`'s
-  // socket never touches `body` (see `mountOffsetX`). "reference" is the
-  // ghost-overlay view, browsed by hand or with an explicit view argument.
+  // first view key) and thumbnails show the part without the scan. "reference"
+  // shows `ref` and `body` together, browsed by hand or with an explicit view
+  // argument.
   views: { assembly: { label: "Assembly" }, reference: { label: "Reference overlay" } },
   // Probes — measurements that land in the `measure` report instead of the
   // scene (docs/AUTHORING-PARTS.md "Probes"). Pure (k, p, d) functions like
   // build; never rendered, never exported, reported for every view.
   probes: {
     // Paired 1 mm cross-sections of the rebuild and the scan at the same X
-    // station — the localizing instrument for the deviation gate above: when
-    // refXorVolume creeps up, slide the slab along X to find WHERE the two
-    // solids disagree instead of guessing from one whole-part number.
+    // station. `deviation.regions` says where the two solids differ; move the
+    // slab there to compare their profiles.
     midSlab: (k, p) => {
       const slab = () => k.box({ min: [9.5, -50, -50], max: [10.5, 50, 50] });
       return {
@@ -144,11 +141,8 @@ export default {
         refBboxDelta: "<=[0.2,0.2,0.2]",
       },
       mount: { holes: 1, watertight: true, bbox: "<=[40,25,10]" },
-      // Checked against the default ("assembly") view only — `body` and
-      // `mount` are real, non-overlapping parts by construction (see
-      // `mountOffsetX`). The "reference" view's ghost is deliberately
-      // coincident with `body` (that's the point of the overlay) and would
-      // always read overlaps > 0, which is why it isn't the default view.
+      // `body` and `mount` never overlap (see `mountOffsetX`). The
+      // (body, ref) pair is exempt, so this holds in "reference" too.
       _view: { overlaps: 0 },
     },
   },
