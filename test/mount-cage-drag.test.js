@@ -414,12 +414,21 @@ describe("a slider drag on a cage body", () => {
     expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
   });
 
-  test("a mount disposed before the exact build lands still sends the held commit", () => {
-    const { runtime, input, release, onParamsCommit } = setup();
+  test("N2: a mount disposed before the exact build lands sends the held commit once, from the panel's teardown", () => {
+    const { runtime, w, els, input, release, onParamsCommit } = setup();
     input(5);
     release();
+    const seen = [];
+    onParamsCommit.mockImplementation((c) => seen.push({
+      swing: c.params.swing,
+      panelUp: els.controls.querySelectorAll('input[type="range"]').length > 0,
+      workerUp: w.terminate.mock.calls.length === 0,
+    }));
     runtime.dispose();
-    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
+    expect(onParamsCommit).toHaveBeenCalledTimes(1);
+    expect(commits(onParamsCommit)[0]).toEqual({ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) });
+    // Before the panel is torn down and before the loop and workers are.
+    expect(seen).toEqual([{ swing: 5, panelUp: true, workerUp: true }]);
   });
 
   test("another edit before the exact build lands sends the held commit first, with its own values", () => {
@@ -458,6 +467,53 @@ describe("a full build after a cage drag that passes through itself", () => {
     expect(onParamsCommit).not.toHaveBeenCalled();
     release();
     vi.runAllTimers();
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) }]);
+  });
+
+  test("N1: a warned sub-part delivered in a progressive batch counts as warned: a drag from it is not reverted", () => {
+    const { runtime, v, w, input, release, reply, onParamsCommit } = setup();
+    runtime.setParams({ size: 22 });
+    vi.advanceTimersByTime(200);
+    expect(generates(w).at(-1)[0].params.size).toBe(22);
+    // The batch carries the mesh, the final reply carries only the job's warnings.
+    w.onmessage({ data: { type: "meshes-partial", meshes: [delivery(0)] } });
+    reply([], warned);
+    input(5);
+    release();
+    const geo = v.setSubGeometry.mock.calls.length;
+    reply([delivery(5)], warned);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);   // shown: the drag began there
+    expect(commits(onParamsCommit).at(-1)).toEqual({ changed: ["swing"], params: expect.objectContaining({ swing: 5, size: 22 }) });
+  });
+
+  test("N1: a clean final reply after a batch leaves the backstop in place", () => {
+    const { runtime, v, w, input, release, reply } = setup();
+    runtime.setParams({ size: 22 });
+    vi.advanceTimersByTime(200);
+    w.onmessage({ data: { type: "meshes-partial", meshes: [delivery(0)] } });
+    reply([]);
+    input(5);
+    release();
+    const geo = v.setSubGeometry.mock.calls.length;
+    reply([delivery(5)], warned);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo);         // refused
+  });
+
+  test("TRACE: a live handle drag whose transient build rebased the cage still gets the backstop, and one commit", () => {
+    const { v, w, pose, reply, onParamsCommit } = setup({ part: makePart({ handles: true }), ms: 50 });
+    const s = pose.session;
+    s.begin("arm");
+    s.frame([5, 0, 0]);
+    // A cheap part rebuilds as it goes: a transient build at 5 is out, and lands.
+    expect(generates(w).at(-1)[0].params.swing).toBe(5);
+    reply([delivery(5)]);
+    const n = generates(w).length;
+    s.end();
+    expect(generates(w).length).toBe(n + 1);                     // the real build the host is owed
+    const geo = v.setSubGeometry.mock.calls.length;
+    reply([delivery(5)], warned);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo);         // refused: not shown
+    expect(pose.opts.getParams().swing).toBe(0);
     expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 0 }) }]);
   });
 

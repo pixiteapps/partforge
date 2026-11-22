@@ -266,6 +266,12 @@ through itself is not reverted. The commit of a slider or handle drag on a cage 
 for that build, so the host gets one `onParamsCommit` with the values shown. A part with no
 cage base commits exactly as before.
 
+A cage drag's commit waits for its exact build. A mount disposed before that build answers
+sends the commit from `dispose()`, in the panel's teardown, as the font picker sends its
+commit when its widget is disposed: the host sees it once, with the released values,
+while the mount is being disposed. So a host that mutes viewer commits around its own
+remount (an undo) drops it, as it drops the font picker's.
+
 A pause build refused during a slider drag reverts the same way but commits nothing: the
 release commits. Residual: if another edit comes before the build answers, the waiting
 commit goes out at once with the released values, and that build is discarded as stale,

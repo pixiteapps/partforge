@@ -752,7 +752,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         animCtl?.viewChanged();
         // A pose drag does not survive a tab switch: the outgoing view's deformed
         // meshes go back to their exact bases (the cache may show them again later).
-        skin.restoreAll(); skin.endDrag();
+        skin.restoreAll(); skin.endDrag(); cageDrag = null;
         releaseGround(); // a new view places its floor afresh
         pendingPosed.clear(); cutawayChrome.reset();
         // place() may read `view`: re-pose the incoming view's canonical meshes
@@ -863,22 +863,29 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     let holdStart = null; // the params at hold(true): a drag that ends there owes nothing
     let lastBuildMs = null; // data.ms of the last successful generate that built anything
     let cycleTransient = false; // the in-flight dispatch cycle is a mid-drag build (one cycle at a time)
-    // The refused full build (skin-drag.js's header). The build sent while a cage drag shows
-    // its pose carries `cageCycle`: where the drag began (a handle drag's hold start, else
-    // the cage base's params) and whether the build it began from already passed through
-    // itself. When that build's reply warns that the body passes through itself it is not
+    // The refused full build (skin-drag.js's header). A cage drag is recorded when it first
+    // deforms (`cageDrag`: the cage base's params, and whether the build it began from
+    // already passed through itself), and stays recorded until an exact build at the live
+    // params is shown, a revert, a build error, or a change that is not a drag; reading the
+    // skin's deformed set at send time would lose it when a live drag's transient build
+    // rebases the cage. The build sent while one is recorded carries `cageCycle` (its start
+    // is a handle drag's hold start when there is one). When that build's reply warns that the body passes through itself it is not
     // shown: the keys the drag changed go back to their start values, and one build runs
     // there if their mesh is no longer on screen (revertDragKeys). A drag that began from a pose already warned is not reverted:
     // the drag did not cause it. The revert's own dispatch is never a cage-drag cycle (it
     // sends at revertVersion, the version the revert wrote), so one release reverts at most
     // once. The drag's commit waits for that answer (pendingCommit, commitParams), so the
     // host sees one commit, with the values shown.
+    let cageDrag = null;
     let cageCycle = null;
     let revertVersion = -1;
     let handleDragStart = null; // a released handle drag's start values, for its release build
     let pendingCommit = null;   // { changed, params }: a cage drag's commit, waiting for its build
     let reverting = false;      // mount itself is writing params back: no pending commit fires
     const throughWarned = new Set(); // sub-parts whose last applied delivery passes through itself
+    // Sub-parts a progressive batch (meshes-partial) delivered this cycle: a batch carries no
+    // warnings, so their verdict waits for the job's final reply (noteThroughWarnings).
+    const awaitingWarnings = new Set();
     const owed = new Set(); // sub-parts a transient build made current: the host has not seen them built
     let poseVisible = null; // handle ids shown in this view (null: all), set by updateRelevance
     let poseVisibleKey = null; // poseVisible joined, to tell a real change (syncPoseVisible)
@@ -960,7 +967,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // that build replaces it, as a slider release leaves it (an ordinary
           // change would put the exact base, the pose before the drag, back first).
           const skinned = skin.anyDeformed();
-          onParamChange({ interactive: skinned });
+          // A cage drag a transient build rebased is still a drag: its record must reach the
+          // release build (see cageDrag), which the ordinary change would clear.
+          onParamChange({ interactive: skinned || cageDrag !== null });
           if (skinned) skin.endDrag();
           loop.kick();
         }),
@@ -1461,10 +1470,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // cycle only after this one's last reply, so the flag travels with its jobs.
         cycleTransient = poseHold;
         cageCycle = null;
+        // A batch left unanswered by an outdated cycle has no verdict: read as clean.
+        for (const n of awaitingWarnings) throughWarned.delete(n);
+        awaitingWarnings.clear();
         if (!cycleTransient) {
-          const start = revertVersion !== loop.version() && skin.cageDragActive()
-            ? (handleDragStart ?? skin.cageDragStart()) : null;
-          if (start) cageCycle = { start, startWarned: skin.cageDragNames().some((n) => throughWarned.has(n)) };
+          if (cageDrag && revertVersion !== loop.version()) cageCycle = { ...cageDrag, start: handleDragStart ?? cageDrag.start };
           handleDragStart = null;
         }
         const at = { view: view(), params: { ...params } };
@@ -1782,13 +1792,26 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
 
     // Apply a delivery built at the LIVE params — a final `meshes` whose build is still
     // fresh, or a progressive batch (meshes-partial) of a build that still is.
-    function applyFreshMeshes(meshes, warnings) {
+    // Whether each sub-part's applied delivery passes through itself (a cage drag that
+    // begins from it is not reverted for that: see cageDrag), from a final `meshes` reply's
+    // warnings. A job's warnings cover every sub-part it built, its batches included; the
+    // last reply of the cycle settles any batch no reply has named.
+    function noteThroughWarnings(data) {
+      const warned = (n) => passesThroughItself({ warnings: data.warnings?.filter((w) => w?.part === n) });
+      for (const m of data.meshes) {
+        awaitingWarnings.delete(m.name);
+        if (warned(m.name)) throughWarned.add(m.name); else throughWarned.delete(m.name);
+      }
+      for (const n of [...awaitingWarnings]) if (warned(n)) { throughWarned.add(n); awaitingWarnings.delete(n); }
+      if (loop.pendingJobs() === 0) {
+        for (const n of awaitingWarnings) throughWarned.delete(n);
+        awaitingWarnings.clear();
+      }
+    }
+
+    function applyFreshMeshes(meshes) {
       liveDelivered = true; // only a delivery that is applied beats a preview still decoding
       for (const m of meshes) {
-        // Whether this delivery passes through itself (a cage drag that begins from it is
-        // not reverted for that: see cageCycle).
-        if (passesThroughItself({ warnings: warnings?.filter((w) => w?.part === m.name) })) throughWarned.add(m.name);
-        else throughWarned.delete(m.name);
         viewer.setSubGeometry(m.name, m); // disposes any previous mesh for this name
         provisional.delete(m.name);
         lastExact.set(m.name, m);
@@ -1938,7 +1961,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           // A batch of a progressive build: shown only while that build is still
           // current. It settles nothing — the job's final `meshes` does.
           if (!loop.isFresh()) break;
-          applyFreshMeshes(data.meshes, data.warnings);
+          applyFreshMeshes(data.meshes);
+          for (const m of data.meshes) awaitingWarnings.add(m.name);
           showPartial();
           updateRelevance();
           break;
@@ -1993,7 +2017,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // calls the session's delivered), and nothing else — no busy/status/debug line,
             // no onBuild, no preview hand-over, ready or floor. refreshView keeps export
             // off: the sub-parts it drew are owed.
-            applyFreshMeshes(data.meshes, data.warnings);
+            applyFreshMeshes(data.meshes);
+            noteThroughWarnings(data);
             refreshView();
             updateRelevance();
           } else if (!fresh && cycleTransient && poseHold) {
@@ -2010,14 +2035,20 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
             // sent the drag's held commit). A build they need goes out now, not after the
             // drag pause.
             cageCycle = null;
+            cageDrag = null;
             revertProvisional(data.meshes.map((m) => m.name).filter((n) => provisional.has(n)));
             refreshView();
             loop.kick();
             break;
           } else if (fresh) { // stale results (params changed mid-build) are discarded
-            applyFreshMeshes(data.meshes, data.warnings);
-            // A cage drag's held commit goes out once its build is on screen: the values shown.
-            if (pendingCommit && missingParts().length === 0) firePendingCommit();
+            applyFreshMeshes(data.meshes);
+            noteThroughWarnings(data);
+            // The exact build at the live params is shown: a cage drag's record ends, and its
+            // held commit goes out with the values shown.
+            if (missingParts().length === 0) {
+              cageDrag = null;
+              firePendingCommit();
+            }
             // The whole view is live: every sub-part the preview drew has just been
             // replaced in place, so the tools it held back come back. Before
             // refreshView, so showView restores a carried cutaway on this build.
@@ -2199,6 +2230,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           if (skin.anyDeformed()) skin.restoreAll();
           // A cage drag's held commit is the user's edit, built or not.
           firePendingCommit(pendingCommit?.params);
+          cageDrag = null;
           skin.endDrag();
           // The change this build was for will never land: a held floor would wait
           // for it through every later edit, so it is placed afresh instead.
@@ -2249,7 +2281,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       { fontCatalog, imageCatalog, onAssetUpload,
         declaredSource: declaredSourceLookup(part, params),
         files, panelState });
-    cleanup.defer(() => panel.dispose());
+    // A cage drag's commit held for a build that will not answer goes out here, in the
+    // panel's own teardown, where a font picker's dispose sends its commit too.
+    cleanup.defer(() => { firePendingCommit(pendingCommit?.params); panel.dispose(); });
     panelRef = panel;
     updateRelevance = () => {
       // A throwing derive() must not break every slider drag — mount's pick
@@ -2296,9 +2330,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       if (interactive) {
         const skinned = skin.deform();
         if (skinned.length) { lastSkinInputAt = Date.now(); loop.delayKick(SKIN_PAUSE_MS); }
+        // The first deform of a cage drag records where it began (see cageDrag).
+        if (!cageDrag && skin.cageDragActive()) {
+          cageDrag = { start: skin.cageDragStart(), startWarned: skin.cageDragNames().some((n) => throughWarned.has(n)) };
+        }
       } else {
         if (skin.anyDeformed()) skin.restoreAll();
         skin.endDrag();
+        cageDrag = null;
       }
     }
 
@@ -2351,7 +2390,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // commit of a part with no cage base, goes out at once, as before.
     function commitParams(changed) {
       if (pendingCommit) firePendingCommit(pendingCommit.params);
-      if (skin.cageDragActive() && missingParts().length > 0) {
+      // Never held during teardown: nothing would answer it (a font picker's dispose commits).
+      if (cageDrag && missingParts().length > 0 && !cleanup.isDisposed()) {
         pendingCommit = { changed: [...changed], params: { ...params } };
         return;
       }
@@ -2363,8 +2403,6 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       pendingCommit = null;
       onParamsCommit?.({ changed: p.changed, params: { ...at } });
     }
-    // A mount disposed before a held commit's build answered still owes the host the edit.
-    cleanup.defer(() => firePendingCommit(pendingCommit?.params));
 
     // Programmatic param entry point — the animation-system hook. Same change
     // path as a slider edit: pose-only changes repair synchronously (no worker
