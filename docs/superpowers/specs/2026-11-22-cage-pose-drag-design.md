@@ -107,6 +107,27 @@ check and the level search (which builds one level past the chosen one) dominate
 
 The numbers decide how much of the rest is built. See "Order and gates".
 
+**Measured** (`npm run bench:cage-drag`, Apple M1 Max, Node v24.19.0, CPU ms, median of
+12, preview tier):
+
+| Stage | cage-hand | organic-whale |
+| --- | ---: | ---: |
+| Level, cage faces, triangles | 4, 300, 153,600 | 2, 132, 4,224 |
+| Cage code + `snapshot()` | 3.8 | 0.7 |
+| `levelFor` | 14.7 | 1.4 |
+| `subdivide` (reusing the search's mesh) | 3.8 | 0.1 |
+| `selfIntersections` | 215.6 | 4.6 |
+| Manifold import | 164.2 | 3.7 |
+| The part's `cut` | 96.1 | 3.1 |
+| `toMesh` (preview) | 27.5 | 0.8 |
+| Whole `build` + `toMesh` | 527.7 | 60.4 |
+| Cage code + Manifold import + cut + `toMesh` | 291.5 | 8.4 |
+
+The self-intersection check is the largest single stage on the hand, then the Manifold
+import. The whale's whole build is much more than its stages add up to, so something
+outside these stages (about 40 ms) is not yet accounted for.
+
+
 ### The topology key
 
 A cage snapshot is `{ points, faces, ids, creases }`. Its **topology key** is a hash of
