@@ -1,7 +1,8 @@
 // A posable hand from one subdivision cage: the organic domain's reference part for Pose
-// mode on a k.subdiv body. The cage is the guide's handCage (docs/domains/organic.md,
-// "Worked example: a hand that curls"); here each digit's bends come from a limb posed in
-// derive instead of one curl param, so Pose mode can drag a fingertip.
+// mode on a k.subdiv body, and the worked example "a hand that curls" in
+// docs/domains/organic.md, which shows this file's code from the import to bendsOf
+// (test/organic-docs.test.js holds the two equal). Each digit's bends come from a limb
+// posed in derive, so Pose mode can drag a fingertip.
 //
 // Authoring frame: the palm faces -Y, the fingers point to +Z, the thumb leaves the +X side.
 // One cage, no mirror. Each finger is a limb of three joints (mcp, pip, and dip following
