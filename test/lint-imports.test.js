@@ -176,3 +176,75 @@ test("a ref* metric inside a function-form verify.expect WITH a reference is not
   const r = lintPart(part);
   expect(ids(r.warnings)).not.toContain("ref-metric-without-reference");
 });
+
+// --- reference to a sub-part -------------------------------------------------
+
+const box = (k) => k.box({ size: [1, 1, 1] });
+const refPart = (parts, extra = {}) => partWith({ parts, ...extra });
+
+test("a reference naming a sub-part, with no import, is not flagged", () => {
+  const r = lintPart(refPart({
+    body: { views: ["main"], reference: "ref", build: box },
+    ref: { views: ["main"], exportable: false, build: box },
+  }));
+  const all = [...r.errors, ...r.warnings].map((f) => f.rule);
+  for (const id of ["reference-unknown", "reference-ambiguous", "reference-self", "reference-exportable"]) {
+    expect(all).not.toContain(id);
+  }
+});
+
+test("a reference naming neither an import nor a sub-part names both places", () => {
+  const r = lintPart(refPart({ body: { views: ["main"], reference: "nope", build: box } }));
+  const f = find(r, "reference-unknown");
+  expect(f.message).toContain("import");
+  expect(f.message).toContain("sub-part");
+});
+
+test("a name that is both an import and a sub-part is ambiguous only", () => {
+  const r = lintPart(refPart({
+    body: { views: ["main"], reference: "ref", build: box },
+    ref: { views: ["main"], exportable: false, build: box },
+  }, { imports: { ref: () => new ArrayBuffer(0) } }));
+  expect(ids(r.errors)).toContain("reference-ambiguous");
+  expect(ids(r.errors)).not.toContain("reference-unknown");
+});
+
+test("a sub-part referencing itself is reference-self", () => {
+  const r = lintPart(refPart({ body: { views: ["main"], reference: "body", build: box } }));
+  expect(ids(r.errors)).toContain("reference-self");
+  expect(find(r, "reference-self").path).toBe("parts.body.reference");
+});
+
+test("a two-part cycle is reported once per sub-part", () => {
+  const r = lintPart(refPart({
+    a: { views: ["main"], reference: "b", exportable: false, build: box },
+    b: { views: ["main"], reference: "a", exportable: false, build: box },
+  }));
+  const paths = r.errors.filter((f) => f.rule === "reference-self").map((f) => f.path).sort();
+  expect(paths).toEqual(["parts.a.reference", "parts.b.reference"]);
+});
+
+test("a chain leading into a cycle flags only the cycle members", () => {
+  const r = lintPart(refPart({
+    a: { views: ["main"], reference: "b", exportable: false, build: box },
+    b: { views: ["main"], reference: "c", exportable: false, build: box },
+    c: { views: ["main"], reference: "b", exportable: false, build: box },
+  }));
+  const paths = r.errors.filter((f) => f.rule === "reference-self").map((f) => f.path).sort();
+  expect(paths).toEqual(["parts.b.reference", "parts.c.reference"]);
+});
+
+test("a reference sub-part that is still exportable is a warning at its exportable key", () => {
+  const r = lintPart(refPart({
+    body: { views: ["main"], reference: "ref", build: box },
+    ref: { views: ["main"], build: box },
+  }));
+  expect(ids(r.warnings)).toContain("reference-exportable");
+  expect(find(r, "reference-exportable").path).toBe("parts.ref.exportable");
+});
+
+test("ref-metric-without-reference's hint names the sub-part form", () => {
+  const part = partWith({ verify: { expect: { body: { refXorVolume: "<=50mm3" } } } });
+  const r = lintPart(part);
+  expect(find(r, "ref-metric-without-reference").hint).toContain('reference: "<sub-part name>"');
+});

@@ -1066,6 +1066,56 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         build,
       );
     },
+    // The reference compare view (oracle/compare.js): the part `a` and its reference
+    // `b` in, three solids out that share no volume — common, missing (in `b` only)
+    // and excess (in `a` only). A difference piece whose mean thickness (2V/A) is
+    // under `tolerance` is a facet skin, not a feature: it is dropped, and so stays
+    // part of `common` = (a ∪ b) − missing − excess. Refused before any boolean when
+    // the two together pass the triangle ceiling, or when either is empty. Never
+    // cached, and every WASM object is T()-tracked, so the caller's cleanup() frees
+    // the intermediates (the returned solids live until that cleanup too). The
+    // default ceiling is COMPARE_MAX_TRIANGLES, written as a literal because the
+    // kernel must not import ./oracle/* (the kit never loads it; kit-layering.test.js).
+    _compareSolids: (a, b, { tolerance = 0, maxTriangles = 300000 } = {}) => {
+      settleSolid(a); settleSolid(b);
+      if (a._m.numTri() + b._m.numTri() > maxTriangles) return { skipped: "too-large" };
+      if (a._m.isEmpty() || b._m.isEmpty()) return { skipped: "not-closed" };
+      const regions = [];
+      const thick = (mm, change) => {
+        const kept = [];
+        let total = 0;
+        for (const piece of mm.decompose()) {
+          T(piece);
+          const v = piece.volume(), area = piece.surfaceArea();
+          if (!(v > 1e-6 && area > 0 && (2 * v) / area >= tolerance)) continue;
+          kept.push(piece);
+          total += v;
+          const { min, max } = piece.boundingBox();
+          regions.push({
+            change,
+            mm3: v,
+            at: [0, 1, 2].map((i) => (min[i] + max[i]) / 2),
+            size: [0, 1, 2].map((i) => max[i] - min[i]),
+          });
+        }
+        return { m: kept.length ? T(Manifold.compose(kept)) : null, volume: total };
+      };
+      const missing = thick(T(b._m.subtract(a._m)), "missing");
+      const excess = thick(T(a._m.subtract(b._m)), "excess");
+      let common = T(a._m.add(b._m));
+      if (missing.m) common = T(common.subtract(missing.m));
+      if (excess.m) common = T(common.subtract(excess.m));
+      const out = (m, tag) => (m ? wrap(m, h("compare", tag, a._hash, b._hash, tolerance)) : null);
+      regions.sort((x, y) => y.mm3 - x.mm3);
+      return {
+        common: out(common.isEmpty() ? null : common, "common"),
+        missing: out(missing.m, "missing"),
+        excess: out(excess.m, "excess"),
+        missingVolume: missing.volume,
+        excessVolume: excess.volume,
+        regions: regions.slice(0, 8),
+      };
+    },
     // The change tracker's boolean diff (oracle/changes.js): two plain meshes in,
     // added (new − old) and removed (old − new) material out, split into connected
     // pieces. Never cached — it runs outside any beginSubPart bracket — and every

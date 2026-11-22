@@ -75,13 +75,71 @@ export const IMPORT_RULES = [
   {
     id: "reference-unknown",
     run: ({ part }) => {
-      const known = new Set(declaredImports(part));
+      const imports = new Set(declaredImports(part));
+      const subs = new Set(Object.keys(part?.parts ?? {}));
       return Object.entries(part?.parts ?? {})
-        .filter(([, sp]) => sp?.reference && !known.has(sp.reference))
+        .filter(([, sp]) => sp?.reference && !imports.has(sp.reference) && !subs.has(sp.reference))
         .map(([name, sp]) => err("reference-unknown",
-          `sub-part "${name}" declares reference: "${sp.reference}" but no such import exists`,
-          "reference must name a key of the part's imports field.",
+          `sub-part "${name}" declares reference: "${sp.reference}" but no import and no sub-part has that name`,
+          "reference must name a key of the part's imports field or another sub-part of this part.",
           `parts.${name}.reference`));
+    },
+  },
+  {
+    id: "reference-ambiguous",
+    run: ({ part }) => {
+      const imports = new Set(declaredImports(part));
+      const subs = new Set(Object.keys(part?.parts ?? {}));
+      return Object.entries(part?.parts ?? {})
+        .filter(([, sp]) => sp?.reference && imports.has(sp.reference) && subs.has(sp.reference))
+        .map(([name, sp]) => err("reference-ambiguous",
+          `sub-part "${name}" declares reference: "${sp.reference}", which is both an import and a sub-part`,
+          "Rename the import or the sub-part so the reference names exactly one thing.",
+          `parts.${name}.reference`));
+    },
+  },
+  {
+    id: "reference-self",
+    run: ({ part }) => {
+      const imports = new Set(declaredImports(part));
+      const parts = part?.parts ?? {};
+      const next = (n) => {
+        const r = parts[n]?.reference;
+        return typeof r === "string" && !imports.has(r) && Object.hasOwn(parts, r) ? r : null;
+      };
+      const out = [];
+      for (const name of Object.keys(parts)) {
+        // Follow the chain from `name`; it is in a cycle iff it comes back to itself.
+        const seen = new Set();
+        let cur = next(name);
+        while (cur && cur !== name && !seen.has(cur)) { seen.add(cur); cur = next(cur); }
+        if (cur !== name) continue;
+        out.push(err("reference-self",
+          `sub-part "${name}" is its own reference, directly or through a chain of references`,
+          "A reference must point at a different sub-part (or an import) and the chain must end; break the cycle.",
+          `parts.${name}.reference`));
+      }
+      return out;
+    },
+  },
+  {
+    id: "reference-exportable",
+    run: ({ part }) => {
+      const imports = new Set(declaredImports(part));
+      const parts = part?.parts ?? {};
+      const seen = new Set();
+      const out = [];
+      for (const sp of Object.values(parts)) {
+        const r = sp?.reference;
+        if (typeof r !== "string" || imports.has(r) || !Object.hasOwn(parts, r) || seen.has(r)) continue;
+        seen.add(r);
+        if (parts[r]?.exportable === false) continue;
+        out.push(warn("reference-exportable",
+          `sub-part "${r}" is used as a reference but is exportable, so it prints and ships with the part`,
+          `Set exportable: false on sub-part "${r}".`,
+          `parts.${r}.exportable`));
+      }
+      return out;
     },
   },
   {
@@ -108,7 +166,7 @@ export const IMPORT_RULES = [
           Object.keys(metrics).some((k) => REF_METRICS.has(k)) && !part?.parts?.[sub]?.reference)
         .map(([sub]) => warn("ref-metric-without-reference",
           `verify.expect.${sub} uses a ref* metric but sub-part "${sub}" declares no reference`,
-          `Add reference: "<import name>" to sub-part "${sub}", or the ref* checks always report status "skip".`,
+          `Add reference: "<sub-part name>" (or an import name) to sub-part "${sub}", or the ref* checks always report status "skip".`,
           `verify.expect.${sub}`));
     },
   },

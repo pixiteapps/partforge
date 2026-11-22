@@ -101,7 +101,7 @@ export default {
       enabled?: (p) => boolean,            // optional — gate a conditional sub-part
       display?: { color?, opacity?, material?, …overrides }, // viewer-only appearance — see "Materials and appearance"
       export?: { name },                   // filename/object name on export; defaults to the key
-      reference?: string,                  // name of a declared import — measure() computes a deviation fact against it (see below)
+      reference?: string,                  // name of another sub-part (e.g. one that imports a scan) — measure() computes a deviation fact against it (see below)
     },
   },
   views: { <name>: { label, default?, animations? } },  // view tabs; a view may own animations (below)
@@ -457,7 +457,7 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - Overrides — each clamped to its range: `roughness` (0–1), `metalness` (0–1),
   `clearcoat` (0–1), `clearcoatRoughness` (0–1), `anisotropy` (0–1), `textureScale` (0.01–1000).
   Transmission, index of refraction, sheen and iridescence come only from a preset.
-- `opacity` — unchanged: a ghost stays a ghost and casts no shadow.
+- `opacity` — unchanged: a ghost stays a ghost and casts no shadow. A ghost face lying on an opaque face is hidden there.
 - **One material per sub-part.** Something that needs two finishes (a knurled
   grip in rubber on an aluminium body) is two sub-parts.
 
@@ -2916,19 +2916,30 @@ The framework resolves these — fetch/read bytes, detect the format (filename e
 
 **Caching & content-stability:** import sources are **content-stable for a session** — the same rule as `fonts`. Bytes are memoized process-wide by source identity (not by digest) the first time a source resolves, and stay resident for the life of that worker/process: the raw bytes in the resolver's cache, and the parsed master (a Manifold mesh or an OCCT B-rep shape) in the kernel that parsed it. A multi-megabyte STEP or STL file is read and parsed once, not on every slider drag or view switch — but it also means a changed file on disk needs a fresh worker/process to be picked up (a rebind/remount, same as changing a font). Downstream, every op built from an import folds the file's content digest into its cache key (`h("import", name, digest)`), so an actually-changed file (a new digest) still invalidates every dependent cache node correctly. On the STEP-on-Manifold crossover, note that the file is fetched **independently by both workers** — the Manifold worker resolves it to get a digest, and the OCCT worker resolves it again to tessellate — so a large STEP file used this way is held in memory twice, once per worker.
 
-**Performance:** a `reference` deviation check (below) costs one solid boolean per verify run. On a Manifold-routed part that's cheap; on an **OCCT-routed** part it's a full OpenCASCADE boolean against the entire imported B-rep, and `docs/geometry-backend-strategy.md` measures OCCT booleans at 75–1486× slower than the equivalent Manifold operation. A `reference`-bound sub-part on OCCT is a deliberate trade — exactness for STEP export vs. a slower `measure`/`verify` loop — worth knowing about before wiring one up on a large imported assembly.
+**Performance:** a `reference` deviation check (below) costs one solid boolean per verify run, plus a mesh comparison on Manifold. On a Manifold-routed part that's cheap; on an **OCCT-routed** part it's a full OpenCASCADE boolean against the entire imported B-rep, and `docs/geometry-backend-strategy.md` measures OCCT booleans at 75–1486× slower than the equivalent Manifold operation. A `reference`-bound sub-part on OCCT is a deliberate trade — exactness for STEP export vs. a slower `measure`/`verify` loop — worth knowing about before wiring one up on a large imported assembly.
 
 **The `reference` field and the deviation gate:**
 
-A sub-part can bind itself to an import by name; `measure()` then computes a `deviation` fact against it (symmetric-difference volume, volume delta %, and per-axis bbox-corner drift), which three `ref*` metrics in `verify.expect` can gate on — the same `SUBPART_METRICS` registry `holes`/`volume`/`bbox` live in, so they take the same assertion DSL:
+Put the import in a sub-part of its own, then name that sub-part as the rebuild's `reference`. `measure()` computes a `deviation` fact for the rebuild against it, and three `ref*` metrics in `verify.expect` can gate on that fact. They use the same assertion DSL as `holes`/`volume`/`bbox`:
 
 ```js
 parts: {
+  // The import, as a sub-part. Never exported; posed like any sub-part.
+  ref: {
+    label: "Reference",
+    views: { reference: true },
+    exportable: false,
+    build: (k) => k.import("scan"),
+  },
+  // The parametric rebuild, compared against `ref`.
   body: {
-    reference: "scan",   // an import name — measure() computes s.deviation against it
+    label: "Rebuild",
+    views: { assembly: true, reference: true },
+    reference: "ref",    // a sub-part name — measure() computes s.deviation against it
     build: (k, p) => k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }),
   },
 },
+views: { assembly: { label: "Assembly" }, reference: { label: "Reference" } },
 verify: {
   expect: {
     body: {
@@ -2940,41 +2951,11 @@ verify: {
 },
 ```
 
-Deviation is measured in build coordinates on the posed display solid — aligning the rebuild to the reference is the part author's job, and the ghost overlay (next) is how you check it by eye. A sub-part with no `reference` gets `deviation: null` and skips any `ref*` assertion rather than failing it; `npx partforge lint` catches the inverse mistake — a `ref*` assertion on a sub-part that declares no `reference` — statically, as `ref-metric-without-reference` (see "Linting" → Rule catalog → "Geometry imports", below).
+The comparison uses the two posed display solids in the measured view, in build coordinates. A reference the view does not show is still built and posed for it, and a view may show both: verify passes either way. Aligning the rebuild to the reference (by a pose on either sub-part) is the author's job. The (rebuild, reference) pair is left out of `overlaps` and `gaps`, so a view that shows both still passes `_view: { overlaps: 0 }`. List the view without the reference first: `measure`/`verify`/`render` and thumbnails use the **first** view key, `default: true` notwithstanding. A low `display.opacity` on the reference is a fine look but is not required.
 
-**The two-view ghost pattern:** `measure()`'s `ok` gate is **view-scoped and overlap-strict** — it requires zero sub-part overlaps among whatever the *current* view shows. A translucent ghost of the raw import, shown in the same view as its parametric rebuild, is by construction coincident with that rebuild — so that view's `overlaps` would always read greater than zero, failing `verify` on a part that is otherwise exactly correct. The fix is not a bigger overlap tolerance; it's two views:
+The `deviation` fact is `{ ref, xorVolume, volumeDeltaPct, bboxDelta, missingVolume, excessVolume, regions, tolerance }`. `xorVolume`, `volumeDeltaPct` and `bboxDelta` are exact (no tolerance), and the `ref*` metrics read them. The other fields say where the two differ: `missingVolume` is in the reference but not the part, `excessVolume` is in the part but not the reference, and `regions` lists the differences largest first (at most 8) as `{ change: "missing" | "excess", mm3, at: [x, y, z], size: [dx, dy, dz] }`. Those three ignore slivers thinner than `tolerance` (mm: 0.1% of the pair's bounding-box diagonal, clamped to 0.02–0.25). When that comparison cannot run, `missingVolume`, `excessVolume`, `regions` and `tolerance` are all absent and `compareSkipped` says why: `"too-large"` (over 300,000 triangles combined), `"not-closed"` (either solid is empty, e.g. a reference that built to nothing), `"unsupported"` (the exact OCCT kernel) or `"error"`. A sub-part with no `reference` gets `deviation: null` and skips any `ref*` assertion rather than failing it; lint flags that mistake as `ref-metric-without-reference`. `reference` may also name a declared import directly, the older form. `src/parts/import-demo.js` is this shape, fully commented.
 
-```js
-parts: {
-  // Ghost overlay: only in "reference" — never coincides with body in "assembly".
-  ref: {
-    label: "Reference (ghost)",
-    views: { reference: true },
-    exportable: false,
-    display: { opacity: 0.3 },
-    build: (k) => k.import("scan"),
-  },
-  // The parametric rebuild — shown alone in "assembly", and against the ghost
-  // in "reference" for visual alignment checking.
-  body: {
-    label: "Rebuild",
-    views: { assembly: true, reference: true },
-    reference: "scan",
-    build: (k, p) => k.box({ min: [0, 0, 0], max: [p.scanW, p.scanD, p.scanH] }),
-  },
-},
-views: { assembly: { label: "Assembly" }, reference: { label: "Reference overlay" } },
-verify: {
-  expect: {
-    body: { refXorVolume: "<=5mm3", /* … */ },
-    _view: { overlaps: 0 },   // checked against the DEFAULT ("assembly") view only
-  },
-},
-```
-
-`assembly` is listed first so `measure`/`verify`/`render` — which all default to the **first** view key, `default: true` notwithstanding — see only the real, non-overlapping parts. `reference` is the ghost-overlay view: browse it by hand in the viewer, or pass it explicitly to `measure`/`render`, to eyeball how closely the rebuild tracks the scan. Declare `ref` `exportable: false` (it's not a real part of the design) and give it a `display.opacity` well under 1 so it reads as an overlay rather than an opaque duplicate. This is exactly `src/parts/import-demo.js`'s shape — read its `parts.ref`/`parts.body`/`views`/`verify` blocks for the fully worked, commented version.
-
-**Using an import as a real component** — the other use, no ghost involved — is an ordinary boolean, chainable like any `Solid`: `import-demo.js`'s `mount` sub-part cuts a through-socket shaped to the scan itself (scaled up slightly for clearance) out of a plate:
+**Using an import as a real component** — the other use — is an ordinary boolean, chainable like any `Solid`: `import-demo.js`'s `mount` sub-part cuts a through-socket shaped to the scan itself (scaled up slightly for clearance) out of a plate:
 
 ```js
 build: (k, p, d) => {
@@ -2989,7 +2970,7 @@ build: (k, p, d) => {
 },
 ```
 
-**Linting:** `npx partforge lint` learns `import` as a known op and adds four static checks — `import-unknown-name`, `import-mesh-on-occt`, `reference-unknown`, `ref-metric-without-reference` — described in full under "Linting" → Rule catalog → "Geometry imports", below; this section only points there rather than repeating it.
+**Linting:** `npx partforge lint` learns `import` as a known op and adds static checks — `import-unknown-name`, `import-mesh-on-occt`, the `reference-*` rules, `ref-metric-without-reference` — described in full under "Linting" → Rule catalog → "Geometry imports", below; this section only points there rather than repeating it.
 
 **CLI:** `partforge measure|render|lint` work on an importing part exactly as on any other — the `imports` field resolves in the CLI's Node boot the same way `fonts` does, no extra flags.
 
@@ -3961,7 +3942,7 @@ verify: {
   sweeps). Verify runs each declared sweep where the motion is: in the verified view and in every
   other view where it moves something, and the other views' rows carry `view` (they come
   back as `verify().sweeps`, and in an inspect report they join `measure.sweeps`). A view
-  that shows the same pieces (a non-exportable ghost counts) and poses the moving ones
+  that shows the same pieces (a non-exportable reference counts) and poses the moving ones
   against the others exactly as a view already swept is not swept again. So `sweepContacts` on a print view still reads the assembly's swing, and an
   exploded view that lifts the lid clear cannot answer for the assembly view that swings it
   through the base.
@@ -5336,7 +5317,10 @@ Only extension-detectable `imports` sources — a `URL` or string path — are
 checked; a bytes/thunk source's format can't be known without resolving it, so
 lint skips it and the lazy `k.import` error entry at build time remains the
 runtime authority for those cases), `reference-unknown` (a sub-part's
-`reference` names no declared import) (all errors); `ref-metric-without-reference`
+`reference` names neither a declared import nor a sub-part), `reference-ambiguous`
+(the name is both), `reference-self` (a sub-part is its own reference, directly or
+through a cycle) (all errors); `reference-exportable` (a sub-part used as a
+reference does not declare `exportable: false`) (warning); `ref-metric-without-reference`
 (a sub-part's `verify.expect` uses a `ref*` metric — `refXorVolume`,
 `refVolumeDeltaPct`, `refBboxDelta` — but the sub-part declares no `reference`,
 so the deviation gate always reports status "skip") (warning).
@@ -5915,7 +5899,7 @@ exportable sub-part in the view, joining two whenever they overlap or their gap
 is within the same ~1 µm `contacts` tolerates, and fails naming each sub-part not
 connected to the base — the lowest sub-part by its bounds, or the one you name
 with `held: "body"`. The location is the first floating sub-part's centre of
-mass. A reference ghost (`exportable: false`) is left out entirely: it neither
+mass. A reference sub-part (`exportable: false`) is left out entirely: it neither
 counts nor holds, since it is never printed (lint refuses one named as the base).
 A named base that is `enabled()`-off
 in a case skips that case; a name that exists nowhere throws, like a `contacts`

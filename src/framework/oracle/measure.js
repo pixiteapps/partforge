@@ -24,6 +24,7 @@ import { previewHandles } from "../preview-pose.js";
 import { runSweeps } from "./sweep.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { normalizeCollisions } from "../collide/declaration.js";
+import { compareTolerance, COMPARE_MAX_TRIANGLES } from "./compare.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -292,15 +293,50 @@ function printPoseBboxes(kernel, part, view, built, { p, d }) {
   } finally { kernel.endSubPart?.(); }
 }
 
+// A sub-part's deviation from its reference solid. xorVolume, volumeDeltaPct and
+// bboxDelta are exact (no tolerance); missingVolume, excessVolume and regions come
+// from the kernel's _compareSolids (compare.js), at the tolerance the two bounds
+// give. A kernel without it, or a comparison it refuses, leaves those out and says
+// why in `compareSkipped`.
+function deviationFacts(kernel, solid, vol, b, ref, refName) {
+  const refVol = ref.volume();
+  const rb = ref.boundingBox();
+  const inter = solid.intersect(ref).volume();
+  const deviation = {
+    ref: refName,
+    xorVolume: vol + refVol - 2 * inter, // symmetric difference, one boolean
+    volumeDeltaPct: refVol > 1e-9 ? (100 * Math.abs(vol - refVol)) / refVol : null,
+    bboxDelta: [0, 1, 2].map((i) => Math.max(Math.abs(b.min[i] - rb.min[i]), Math.abs(b.max[i] - rb.max[i]))),
+  };
+  if (typeof kernel._compareSolids !== "function") return { ...deviation, compareSkipped: "unsupported" };
+  const tolerance = compareTolerance(b, { min: rb.min, max: rb.max });
+  let c;
+  try {
+    c = kernel._compareSolids(solid, ref, { tolerance, maxTriangles: COMPARE_MAX_TRIANGLES });
+  } catch {
+    // The exact fields above stand; a failed comparison must not fail the measure.
+    return { ...deviation, compareSkipped: "error" };
+  }
+  if (c.skipped) return { ...deviation, compareSkipped: c.skipped };
+  return {
+    ...deviation,
+    missingVolume: c.missingVolume,
+    excessVolume: c.excessVolume,
+    regions: c.regions.map((r) => ({ change: r.change, mm3: r.mm3, at: [...r.at], size: [...r.size] })),
+    tolerance,
+  };
+}
+
 // Headless geometric report for one view of a part (Manifold-only). Reads exact
 // solid facts (volume/genus/emptiness) and mesh facts (bbox/area/triangles), plus
 // the assembly overlap check plus pair gap distances (near misses are reported,
 // never folded into `ok`). All solid facts are read BEFORE assemblyOverlaps,
 // which frees the shared kernel's objects at its end. A sub-part that declares
-// `reference: "<import name>"` also gets a `deviation` fact — the posed solid's
-// symmetric-difference volume, volume delta %, and bbox-corner drift against
-// that import — for the `ref*` gate metrics (verify-metrics.js); every other
-// sub-part gets `deviation: null`.
+// `reference: "<sub-part or import name>"` also gets a `deviation` fact — the posed
+// solid's symmetric-difference volume, volume delta %, and bbox-corner drift
+// against that reference (for the `ref*` gate metrics, verify-metrics.js), plus
+// where they differ (deviationFacts) — and its overlap with a reference SUB-PART
+// is exempt from overlaps and gaps; every other sub-part gets `deviation: null`.
 //   → { part, view, measuredMinWall, subparts[], aggregate, overlaps[], gaps[],
 //       nearMisses[], ok }
 export function measure(kernel, part, view = Object.keys(part.views)[0], params = {}, opts = {}) {
@@ -394,6 +430,26 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const printBboxes = measuredPrintBboxes ? printPoseBboxes(kernel, part, view, built, sheetParams) : null;
   // The clock the budget runs on is Date.now, or a test's own (opts.now).
   const sheetBudget = { left: opts.sheetBudgetMs ?? SHEET_CHECK_BUDGET_MS, now: opts.now ?? Date.now };
+  // The solid a `reference` names, or null when it cannot be had. A sub-part wins over
+  // an import of the same name (lint refuses the ambiguity). A reference sub-part the
+  // view shows is the solid already built; one it does not is built posed for this
+  // view, once, and a build that throws leaves the sub-part with no deviation.
+  const builtByName = new Map(built.map((x) => [x.name, x.solid]));
+  const referenceSolid = (refName) => {
+    if (part.parts[refName]) {
+      if (!builtByName.has(refName)) {
+        let solid = null;
+        kernel.beginSubPart?.(`oracle:reference:${view}`);
+        try {
+          const { p, d } = resolveParams(part, params, undefined, reads);
+          solid = buildPosed(kernel, part, refName, { purpose: "display", view, p, d });
+        } catch { solid = null; } finally { kernel.endSubPart?.(); }
+        builtByName.set(refName, solid);
+      }
+      return builtByName.get(refName);
+    }
+    return typeof kernel.import === "function" ? kernel.import(refName) : null;
+  };
   const subparts = built.map(({ name, solid, mesh }) => {
     const sheet = isSheetPart(part.parts[name]);
     // A sub-part that is never printed (`exportable: false` — a reference ghost, a
@@ -419,7 +475,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // real sub-part's entry), and the display→print matrix the overhang reading
     // poses the mesh by (it comes from place() and the params, not the geometry, so
     // a param that moves only the print pose leaves the hash unchanged). Withheld for sheet parts, a declared `reference`
-    // sub-part (deviation reads another import), any sub-part when the view
+    // sub-part (deviation reads another sub-part or import, which this sub-part's hash
+    // does not cover — so a reference change is always measured fresh), any sub-part when the view
     // holds a sheet part (the budgeted 2-D pass and print-pose sizes are
     // call-scoped, not per-sub-part cacheable), and a solid with no `_hash`
     // (nothing to key reuse on).
@@ -454,26 +511,15 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     const exportBc = exportBed ? exportPoseBedContact(kernel, part, name, view, poseParams) : null;
     const bc = exportBc?.error ? null : (exportBc ?? posedBc);
     const vol = solid.volume();
-    // Deviation-from-reference: only for a sub-part that declares `reference:
-    // "<import name>"` (Task 12 — the gate that holds a parametric rebuild to
-    // its imported reference), and only when this kernel can import at all (a
-    // bare/third-party kernel may lack `import`). Read here, alongside every
-    // other solid fact, so it is captured before assemblyOverlaps/cleanup below
-    // frees the shared kernel's objects.
+    // Deviation-from-reference: only for a sub-part that declares `reference`. It
+    // names another sub-part (its posed display solid for this view — built here
+    // when the view does not show it — so the reference can be posed) or, failing
+    // that, an import (Task 12: the raw import, when this kernel can import at all).
+    // Read here, alongside every other solid fact, so it is captured before
+    // assemblyOverlaps/cleanup below frees the shared kernel's objects.
     const refName = part.parts[name]?.reference;
-    let deviation = null;
-    if (refName && typeof kernel.import === "function") {
-      const ref = kernel.import(refName);
-      const refVol = ref.volume();
-      const rb = ref.boundingBox();
-      const inter = solid.intersect(ref).volume();
-      deviation = {
-        ref: refName,
-        xorVolume: vol + refVol - 2 * inter, // symmetric difference, one boolean
-        volumeDeltaPct: refVol > 1e-9 ? (100 * Math.abs(vol - refVol)) / refVol : null,
-        bboxDelta: [0, 1, 2].map((i) => Math.max(Math.abs(b.min[i] - rb.min[i]), Math.abs(b.max[i] - rb.max[i]))),
-      };
-    }
+    const ref = refName ? referenceSolid(refName) : null;
+    const deviation = ref ? deviationFacts(kernel, solid, vol, b, ref, refName) : null;
     const facts = {
       name,
       bbox: size(b),
@@ -584,6 +630,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // pairGapChecks reads an empty table as "measured, and this pair has no distance"
   // and fails a declared gate on it, while an absent table reads as no reading.
   const measuredGaps = opts.gaps !== false;
+  const referencePairs = new Set(Object.entries(part.parts)
+    .filter(([n, sp]) => sp?.reference && sp.reference !== n && part.parts[sp.reference])
+    .map(([n, sp]) => pairKey(n, sp.reference)));
   const hashOf = new Map(built.map(({ name, solid }) => [name, solid?._hash ?? null]));
   const gaps = measuredGaps
     ? (built.length > 1
@@ -591,7 +640,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
         bvhCache,
         prior: opts.memo ? (a, b) => (hashOf.get(a) && hashOf.get(b) ? opts.memo.getPair(a, hashOf.get(a), b, hashOf.get(b)) : undefined) : undefined,
         onPair: opts.memo ? (a, b, g) => { if (hashOf.get(a) && hashOf.get(b)) opts.memo.setPair(a, hashOf.get(a), b, hashOf.get(b), g); } : undefined,
-      })
+      }).filter((g) => !referencePairs.has(pairKey(g.a, g.b)))
       : [])
     : undefined;
   // Both BVH passes (min-wall above, gaps here) are done: free the indexes this
@@ -604,7 +653,9 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // above is already read, so this is safe.
   const canIntersect = built.length > 0 && typeof built[0].solid.intersect === "function";
   // `collisions.allow` pairs may touch, so the overlaps gate never reports them.
-  const allow = normalizeCollisions(part)?.allow;
+  // A sub-part and the reference sub-part it is compared against overlap on purpose,
+  // so that pair is exempt too (and from gaps, above) — that pair and no other.
+  const allow = new Set([...(normalizeCollisions(part)?.allow ?? []), ...referencePairs]);
   const overlaps = canIntersect ? assemblyOverlaps(kernel, part, view, params, { reads, allow }) : [];
   kernel.cleanup?.();
 
