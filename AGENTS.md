@@ -32,7 +32,7 @@ at `clearance: 0` and gated; `test/fixtures/pin-hinge.js` is the guide's real pi
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
 per-sub-part routing), `import-demo.js` (the `imports`/`k.import`
-reference part - STL ghost + deviation gate + import-in-boolean + the `probes`
+reference part - STL import as a reference sub-part + deviation gate + import-in-boolean + the `probes`
 block, part-declared measurements reported by measure/inspect),
 `propeller.js` (the `k.loftSmooth` reference part - spline-interpolated
 airfoil blades with a live smooth/raw A/B toggle),

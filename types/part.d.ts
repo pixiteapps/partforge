@@ -391,11 +391,13 @@ export interface SubPartDefinition<P = ResolvedParams, D = Derived> {
   /** `false` = reference/preview-only: shown in the viewer, never exported. */
   exportable?: boolean;
   /**
-   * Name of a declared `imports` entry this sub-part is held to. When set,
-   * `measure()` computes a `deviation` fact (symmetric-difference volume,
-   * volume delta %, bbox-corner drift) against that import's posed solid, and
-   * `verify.expect.<subpart>` may use the `refXorVolume` / `refVolumeDeltaPct`
-   * / `refBboxDelta` gate metrics.
+   * Name of another sub-part (usually an `exportable: false` one that builds
+   * `k.import(...)`) this sub-part is held to; a declared import name also
+   * works. When set, `measure()` computes a `deviation` fact against that
+   * solid posed for the measured view (symmetric-difference volume, volume
+   * delta %, bbox-corner drift, and where they differ), the pair is left out
+   * of `overlaps` and `gaps`, and `verify.expect.<subpart>` may use the
+   * `refXorVolume` / `refVolumeDeltaPct` / `refBboxDelta` gate metrics.
    */
   reference?: string;
   /** Viewer-only appearance. See docs/AUTHORING-PARTS.md "Materials and appearance". */
@@ -624,11 +626,11 @@ export interface SubPartExpectations {
    * `<=45`; reported as a cost (`standing`), never a failure.
    */
   flexTilt?: Expectation;
-  /** Symmetric-difference volume vs. the sub-part's declared `reference` import. */
+  /** Symmetric-difference volume vs. the sub-part's declared `reference`. */
   refXorVolume?: Expectation;
-  /** Percent volume delta vs. the sub-part's declared `reference` import. */
+  /** Percent volume delta vs. the sub-part's declared `reference`. */
   refVolumeDeltaPct?: Expectation;
-  /** Bounding-box corner drift `[dx, dy, dz]` vs. the sub-part's declared `reference` import. */
+  /** Bounding-box corner drift `[dx, dy, dz]` vs. the sub-part's declared `reference`. */
   refBboxDelta?: Expectation;
   /**
    * Sheet parts only (`sheetPart()`): the narrowest web or finger in the cut
