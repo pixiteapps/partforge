@@ -32,7 +32,7 @@ at `clearance: 0` and gated; `test/fixtures/pin-hinge.js` is the guide's real pi
 `text-smoke.js` (worker text-render CI fixture), `mixed-smoke.js` (the
 split-backend CI fixture — a shelled sub-part beside a plain one, exercising
 per-sub-part routing), `import-demo.js` (the `imports`/`k.import`
-reference part - STL import as a reference sub-part + deviation gate + import-in-boolean + the `probes`
+reference part - STL import as a reference sub-part + deviation gate + the reference compare view + import-in-boolean + the `probes`
 block, part-declared measurements reported by measure/inspect),
 `propeller.js` (the `k.loftSmooth` reference part - spline-interpolated
 airfoil blades with a live smooth/raw A/B toggle),
@@ -155,7 +155,8 @@ the installed package, so let the publish finish before bumping the dep there.
   entry), `controls.js` + `param-deps.js` (relevance-aware control panel; `pose-fast-path.js`
   is the pose ladder: rung 1 poses a canonical `place()`-able delivery by matrix,
   rung 2 keeps the trailing-transform build-delta path, posed deliveries keep the full-scope delta repair),
-  `viewer.js` (three.js), `worker.js` / `jobs.js` / `geometry-service.js` (job
+  `viewer.js` (three.js; `compare-view.js` is the reference compare view's controller and legend,
+  `compare-colors.js` its three colours), `worker.js` / `jobs.js` / `geometry-service.js` (job
   loop across workers; `kernel-error.js` is what a build's error post says when
   the exception-less OCCT build throws a bare number — an uncaught C++ exception's
   address — and the heap read that names its C++ type), `part-model.js` (the pure part model - `viewSubParts` /
@@ -547,7 +548,7 @@ the installed package, so let the publish finish before bumping the dep there.
 - **`src/framework/oracle/`** - the geometric oracle: `measure.js`, `verify.js`,
   `build.js`, `gaps.js`, `min-wall.js`, `overhang.js`, `bed-contact.js` (bed contact, and
   the posed `base` extent and `lowestAt` that `measure.js` turns into `footprintPct`), `bvh.js`, `mesh.js`, `assert-dsl.js`,
-  `dfm-profiles.js`, `cases.js`. Despite reading like test code this is shared
+  `dfm-profiles.js`, `cases.js`, `compare.js` (the reference comparison's tolerance and triangle ceiling). Despite reading like test code this is shared
   runtime: the browser worker runs it for the `inspect` job, and `lint` reads its
   DFM profiles and assertion grammar. It is therefore DOM-free, `three`-free and
   `node:`-free, same as the rest of the worker graph

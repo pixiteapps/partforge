@@ -63,8 +63,10 @@ export default {
     // The raw import as a sub-part. `body` names it as its reference
     // (`reference: "ref"`, below); measure() compares against `ref` posed for
     // the measured view whether or not that view shows it, so `ref` appears
-    // only in "reference", over `body`. The opacity is just a look. The
-    // (body, ref) pair is left out of overlaps and gaps.
+    // only in "reference", with `body`. A view showing both draws their
+    // difference (grey matches, blue missing, pink extra) instead of the two
+    // shapes; the opacity is the look when that comparison is off or
+    // unavailable. The (body, ref) pair is left out of overlaps and gaps.
     ref: {
       label: "Reference",
       views: ["reference"],
@@ -105,8 +107,8 @@ export default {
   },
   // "assembly" is first so `measure`/`verify`/`render` (which default to the
   // first view key) and thumbnails show the part without the scan. "reference"
-  // shows `ref` and `body` together, browsed by hand or with an explicit view
-  // argument.
+  // shows `ref` and `body` together, so it draws the comparison; browse it by
+  // hand or with an explicit view argument.
   views: { assembly: { label: "Assembly" }, reference: { label: "Reference overlay" } },
   // Probes — measurements that land in the `measure` report instead of the
   // scene (docs/AUTHORING-PARTS.md "Probes"). Pure (k, p, d) functions like
