@@ -112,6 +112,7 @@ test("the cage hand is cage-posable, one shape across its whole slider range", (
   const base = handProbe({}).r;
   for (const params of settings) {
     const { r, p, d } = handProbe(params);
+    expect(r.trusted).toBe(true);
     expect(r.cagePosable).toBe(true);
     expect(r.shapeHash).toBe(base.shapeHash);
     const bends = Object.fromEntries(DIGITS.map((n) => [n, d[n].values]));

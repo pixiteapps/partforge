@@ -1218,7 +1218,9 @@ hand.centroid("indexTip").map(Math.round);   // [32, -42, 183]
 
 - `derive: (p) => poseDigits(p)` poses every digit.
 - `build: (k, p, d) => k.subdiv(cageHand(k.cage, p, bendsOf(d)))`, then an ordinary
-  `cut` with a box under the wrist for a flat to stand on.
+  `cut` with a box under the wrist for a flat to stand on. The box's top is the cage's
+  lowest point (`cage.bounds().min[2]`, the arm's end) plus 2.4 mm. The smooth body lies
+  inside the cage, so that removes a slab about 1.5 mm thick at every pose.
 - `handles` has one `angles` handle per digit: `{ on: "index", drag: "angles", params:
   ["indexKnuckle", "indexCurl"] }` for each finger, and `{ on: "thumb", drag: "angles",
   params: ["thumbCurl"] }`. Drag a fingertip and the drag solves that finger's knuckle
@@ -1226,6 +1228,9 @@ hand.centroid("indexTip").map(Math.round);   // [32, -42, 183]
 
 The points to copy:
 
+- **Place a print flat from the cage or from constants, not from the solid's
+  `boundingBox()`.** A build that measures its own solid cannot be re-posed without a
+  rebuild.
 - **One top face per finger.** `segs: [4, 1, 2]` gives the palm four faces across X on
   its top and one face through its thickness, so its edge is round. Each finger starts
   with a short narrower neck, which keeps the fingers separate.
