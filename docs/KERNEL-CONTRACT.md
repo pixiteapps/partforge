@@ -572,6 +572,14 @@ exactly the old behavior. The same array also carries *job-level* notices that
 belong to no single sub-part — currently a font source refused by its control's
 `allow` list — as entries with `part: null`.
 
+**Repeated outline points are skipped** (B-rep backend, partforge 0.200.1): a point
+list handed to `prism`, `extrude`, `revolve` or `loft` may list the same point twice
+in a row — an outline whose chamfer is 0 writes its corner twice. Manifold ignores the
+zero-length edge; OCCT threw `StdFail_NotDone` building it, so the part previewed and
+then failed its STEP export (feedback #279). The B-rep backend now drops a point equal
+to the one before it, which leaves the same outline. Only exact repeats are dropped; a
+near-repeat already built.
+
 **Freeform booleans merge edges only** (B-rep backend, partforge 0.198.1,
 `occt-boolean.js`): replicad ends every cut, fuse and intersect with
 `SimplifyResult(true, true, 1e-3)`, and the face half of that merge grinds without
