@@ -262,6 +262,8 @@ const options: MountOptions = {
     expectType<string>(e.label);
     expectType<string>(e.selection.subPart);
     expectType<string | undefined>(e.selection.feature?.label);
+    expectType<"common" | "missing" | "excess" | undefined>(e.selection.compare);
+    expectType<string | undefined>(e.selection.subPartLabel);
   },
   onDownload: ({ data, filename, mime }) => void [data, filename, mime],
 };
@@ -275,6 +277,7 @@ expectType<Array<{ view: string; dataUrl: string }>>(runtime.captureViews(["iso"
 expectType<Array<{ view: string; dataUrl: string }>>(runtime.captureViews());
 expectType<string | null>(runtime.captureCurrent({ size: 2048, hideGrid: false, quality: 0.9 }));
 expectType<string | null>(runtime.captureCurrent());
+expectType<Promise<void>>(runtime.captureReady());
 expectType<string | null>(runtime.captureCurrent({ renderMode: "cad" }));
 expectType<void>(runtime.setActive(false));
 expectType<() => void>(runtime.onContextLost(() => {}));
@@ -365,6 +368,7 @@ expectType<boolean>(runtime.declaresMaterials);
 expectType<Promise<Array<{ view: string; dataUrl: string }>>>(runtime.renderViews(["iso"], { renderMode: "realistic" }));
 expectType<"cad" | "realistic" | "cel" | undefined>(runtime.getViewerState().renderMode);
 expectType<SelectionRuntime | null>(runtime.selection);
+expectType<{ enabled: boolean; hidden: { missing: boolean; excess: boolean } } | undefined>(runtime.getViewerState().compare);
 expectType<{ subPart: string | null; point: [number, number, number]; page: "spot" | "appearance" } | undefined>(runtime.getViewerState().selection);
 
 // @ts-expect-error - "photo" is not a render mode

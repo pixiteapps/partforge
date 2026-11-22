@@ -40,6 +40,7 @@ import { exportableRows, exportFormatList } from "./export-rows.js";
 import { describeKitRows } from "./export/kit/describe.js";
 import { createExportController } from "./export-controller.js";
 import { createCaptureBuild } from "./capture-build.js";
+import { createCompareView, isDefaultCompareState } from "./compare-view.js";
 import { attachAnimationControls } from "./animation-controls.js";
 import { resolveDefaultView } from "./default-view.js";
 import { createMeasureMode } from "./measure/measure-mode.js";
@@ -96,7 +97,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
+export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, compareState, captureReady, beforeCapture }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
@@ -130,11 +131,17 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     captureView,
     // Always CAD, whatever the live render mode: these are the agent's renders.
     captureViews: (viewNames) => prepared(() => viewer.captureCanonicalViews(viewNames)),
+    // Resolves once the reference comparison for the current build is held or
+    // refused (compare-view.js; bounded at 10 s) — at once with no pair in view.
+    // captureViews and captureCurrent stay synchronous and draw what is held at that
+    // moment, so a host awaits this first; renderViews awaits it itself.
+    captureReady: () => captureReady?.() ?? Promise.resolve(),
     // captureViews in a chosen appearance: renderMode "cad" (the default) is
     // exactly captureViews() in either live mode; "realistic" borrows the realistic look for the
     // capture (waiting on the environment's assets) without switching the live
     // view. Rejects if realistic's assets fail to load.
     renderViews: async (viewNames, opts) => {
+      await captureReady?.();
       const release = prepare();
       try {
         return await (renderViews ? renderViews(viewNames, opts) : viewer.captureCanonicalViews(viewNames));
@@ -189,6 +196,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
       // Pose mode's pins ("<handle>:<at>" ids) — viewer state, never parameters.
       // Only while one is set, like `display`.
       ...(() => { const p = poseState?.(); return p ? { pose: p } : {}; })(),
+      // The reference compare view's switch and hidden pieces (compare-view.js) —
+      // viewer state, never the part's. Only while it differs from the default.
+      ...(() => { const c = compareState?.(); return c ? { compare: c } : {}; })(),
     }),
     // The selection popover (mount's `selectionPopover` option), or null:
     // { setSlotHeight(px), onSlotChange(cb) → off, onClose(cb) → off, close(), isOpen() }.
@@ -1099,6 +1109,28 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // cube's bottom-right corner, in the stack, hiding with the cube. It is
     // a #viewbar child, so --pf-viewbar-clear below measures it for free (the
     // bar grows wider, not taller).
+    // The reference compare view (compare-view.js): a sub-part shown with the
+    // sub-part its `reference` names is drawn as three difference solids, asked of
+    // the worker once the build has settled. Built here, before the popover, because
+    // the Parts seam carries its switch and piece rows. `send` and `settled` are read
+    // only from its settle timer, after this function has run to the end.
+    // `readsOf` is displayReadsOf, declared below with the mesh cache; until then (no
+    // build has landed) the prediction rung answers.
+    let compareReadsOf = null;
+    const compareView = createCompareView({
+      part, viewer, view, params: () => params,
+      readsOf: (name) => (compareReadsOf ? compareReadsOf(name) : null),
+      send: (msg) => service.send(msg, backendFor()),
+      settled: () => missingParts().length === 0 && !poseHold && !skin.isDragging(),
+      viewbar: els.viewer.querySelector("#viewbar"),
+      initial: viewerState?.compare,
+    });
+    cleanup.defer(() => compareView.dispose());
+    // A view switch whose incoming view has no mesh yet hides the assembly rather
+    // than showing it, which fires no assembly event: re-read the view here too.
+    const compareOnView = () => compareView.refresh();
+    viewChangeListeners.add(compareOnView);
+    cleanup.defer(() => viewChangeListeners.delete(compareOnView));
     // The Parts seam (view-style-controls.js), shared with the selection
     // popover below; an older popover ignores it.
     const partsSeam = {
@@ -1108,6 +1140,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       onChange: (cb) => viewer.onDisplayChange?.(cb) ?? (() => {}),
       onViewChange: (cb) => { viewChangeListeners.add(cb); return () => viewChangeListeners.delete(cb); },
       getState: (name) => viewer.getSubPartDisplayState(name),
+      compare: compareView.seam,
     };
     const viewStyle = attachViewStyleControls(viewer, {
       stage: els.viewer,
@@ -1402,6 +1435,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // probe for it; only a sub-part with no stamp at all gets the prediction.
     // (cache.readsOf itself keeps null for both — the pose fast path needs that.)
     const displayReadsOf = (name) => cache.readsOf(name) ?? (cache.hasStamp(name) ? new Set(Object.keys(params)) : null);
+    compareReadsOf = displayReadsOf;
     // A sub-part a transient (mid-drag) build made current still awaits the real build
     // the host sees: it counts as missing, and as unsettled to export and the floor.
     const isSettled = (n) => isCurrent(n) && !owed.has(n);
@@ -1885,6 +1919,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // Like exportCtl, it also claims a disposed mount's late capture reply on
       // a worker the host kept, so a stale "error" never reads as a failed build.
       if (captureBuild.handleMessage(data)) return;
+      // The compare view's one-shot job: its replies (an error included, which must
+      // never read as a failed build), and any compare reply a disposed mount left.
+      if (compareView.handleMessage(data)) return;
       switch (data.type) {
         case "ready":
           loop.ready(); // auto-build the default view (keeps the busy spinner up)
@@ -2240,6 +2277,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (skin.anyDeformed()) skin.restoreAll();
         skin.endDrag();
       }
+      // A pose-only edit moves the pair by matrix (fastPath.repair) with no
+      // showAssembly, so the compare view hears of every param change here: the
+      // pieces on screen are out of date at once (back to the ghost), and the
+      // comparison runs again once the change settles. Every slider input, drag
+      // frame and animation frame comes through here.
+      compareView.refresh();
     }
 
     // Programmatic param entry point — the animation-system hook. Same change
@@ -2633,6 +2676,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         __lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),
       } : null,
       poseState: () => (poseMode && poseMode.pinCount() > 0 ? { pins: poseMode.getPins() } : null),
+      compareState: () => { const c = compareView.getState(); return isDefaultCompareState(c) ? null : c; },
+      captureReady: () => compareView.captureReady(),
       annotate: annotateMode ? {
         isEnabled: annotateMode.isEnabled,
         setEnabled: (on) => { if (on && previewGate.isActive()) return; annotateMode.setEnabled(on); },

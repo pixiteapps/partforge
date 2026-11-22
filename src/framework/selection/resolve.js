@@ -47,5 +47,11 @@ export function resolveSelection(part, ctx, hit) {
   // not on a surface the part was built with. Callers that describe the click
   // in words need to say so — the coordinates alone read as a normal surface.
   if (hit.onCutPlane) selection.onCutPlane = true;
+  // A pick on a reference comparison's piece (the viewer's setCompare): which
+  // piece, and the part's label for the sentence. Absent on every other pick.
+  if (hit.compare) {
+    selection.compare = hit.compare;
+    selection.subPartLabel = part?.parts?.[hit.subPart]?.label ?? hit.subPart;
+  }
   return selection;
 }

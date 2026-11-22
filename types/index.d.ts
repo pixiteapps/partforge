@@ -149,6 +149,14 @@ export interface Selection {
    * normal faces the half the section removed.
    */
   onCutPlane?: true;
+  /**
+   * Present when the click landed on one of a reference comparison's pieces:
+   * which one. A pick on the Matches solid carries `"common"` and otherwise
+   * reads as an ordinary pick of the part.
+   */
+  compare?: "common" | "missing" | "excess";
+  /** The part's label, present with `compare` (for the sentence describing the piece). */
+  subPartLabel?: string;
 }
 
 export interface PickEvent {
@@ -434,6 +442,8 @@ export interface ViewerState {
   renderMode?: RenderMode;
   /** The realistic environment id, present only when one was CHOSEN (`environment.set`, the picker) — a merely seeded default is left out so the part's own `meta.environment` still applies on remount. An unknown id falls back to `"studio"`. */
   environment?: string;
+  /** The reference compare view's "Show differences" switch and which pieces are hidden; present only when changed from the default (on, nothing hidden). Never saved to the part. */
+  compare?: { enabled: boolean; hidden: { missing: boolean; excess: boolean } };
 }
 
 /** The viewer's appearance: the drafting view, physical materials under an environment, or the cel-shaded look. */
@@ -791,9 +801,12 @@ export interface PartRuntime {
    * the showcase capture. Returns a `data:image/jpeg;base64,…` string, or `null`
    * when disposed or nothing is built yet. Throws only as `captureViews` does,
    * while a provisional stage is in view. Follows the live render mode unless
-   * `opts.renderMode` pins one.
+   * `opts.renderMode` pins one. `includeHidden: true` (build sight) also draws the
+   * view's reference comparison in full when one is held (see `captureReady`).
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
+  /** Resolves once the view's reference comparison is held or refused (bounded at 10 s; at once with no pair in view): await it before a synchronous `captureViews` / `captureCurrent({ includeHidden: true })` so the capture draws the comparison. `renderViews` awaits it itself. */
+  captureReady(): Promise<void>;
   /** The active view (tab) name. Never null once mounted. */
   getView(): string;
   /** Switch the active view; `false` if the part declares no such view. Persists per part for the session. */

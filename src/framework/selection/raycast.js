@@ -213,19 +213,23 @@ export function firstSurfaceHit(ray, meshes, { bvhFor = null, accept = null } = 
 // dimension pinned to a plane the user can move is not a dimension.
 // `bvhFor` (measure mode) routes the surface ray through firstSurfaceHit; it is
 // ignored with `includeSection`, whose cut-face test needs every hit.
-export function raycastViewer(viewer, clientX, clientY, { includeSection = false, bvhFor = null } = {}) {
+// `compare: false` (measure mode) skips a reference comparison's pieces: measure
+// tracks its clicks against viewer._subMeshes, which never holds one.
+export function raycastViewer(viewer, clientX, clientY, { includeSection = false, bvhFor = null, compare = true } = {}) {
   const rect = viewer.domElement.getBoundingClientRect();
   ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
   ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(ndc, viewer.camera);
-  const meshes = Object.values(viewer._subMeshes).filter((m) => m.visible);
+  // A reference comparison's pieces are hit as their PART (mesh.name), tagged
+  // with which piece (withCompare) — the pair's own meshes are hidden meanwhile.
+  const meshes = [...Object.values(viewer._subMeshes), ...(compare ? viewer._compareMeshes ?? [] : [])].filter((m) => m.visible);
   if (bvhFor && !includeSection) {
     const found = firstSurfaceHit(raycaster.ray.clone(), meshes, {
       bvhFor,
       accept: (point) => viewer.isWorldPointVisible?.(point) ?? true,
     });
     if (!found) return null;
-    return {
+    return withCompare({
       mesh: found.mesh,
       subPart: found.mesh.name,
       triIndex: found.tri,
@@ -233,7 +237,7 @@ export function raycastViewer(viewer, clientX, clientY, { includeSection = false
       pointLocal: worldToSubPartLocal(found.mesh, found.point),
       normalLocal: found.normal ? normalInSubPartFrame(found.mesh, found.normal) : [0, 0, 0],
       feature: featureAt(found.mesh, found.tri),
-    };
+    });
   }
   const hits = raycaster.intersectObjects(meshes, false);
   const hit = hits.find((candidate) =>
@@ -244,10 +248,10 @@ export function raycastViewer(viewer, clientX, clientY, { includeSection = false
   // there it is what the pointer is over.
   if (includeSection) {
     const section = sectionHit(viewer, meshes, hits, hit);
-    if (section) return section;
+    if (section) return withCompare(section);
   }
   if (!hit) return null;
-  return {
+  return withCompare({
     mesh: hit.object,
     subPart: hit.object.name,
     triIndex: hit.faceIndex,
@@ -258,5 +262,12 @@ export function raycastViewer(viewer, clientX, clientY, { includeSection = false
     // rigid, so rotating the direction by that matrix is exact.
     normalLocal: hit.face ? normalInSubPartFrame(hit.object, hit.face.normal) : [0, 0, 0],
     feature: featureAt(hit.object, hit.faceIndex),
-  };
+  });
+}
+
+// A hit on a compare piece carries `compare` ("common" | "missing" | "excess");
+// any other hit is returned exactly as it was.
+function withCompare(hit) {
+  const kind = hit.mesh.userData?.compare;
+  return kind ? { ...hit, compare: kind } : hit;
 }

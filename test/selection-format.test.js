@@ -46,3 +46,26 @@ test("a section pick keeps the feature slot free — a cut face has no label", (
   // Belt and braces: if a caller ever does supply both, neither is dropped.
   expect(formatSelection(s)).toBe("@spacer · Bore · section · pt(0,0,5.2) n(+X) · {bore:3.4,h:10}");
 });
+
+// Reference compare picks (the viewer's setCompare): Missing and Extra say which
+// piece; a Matches pick reads exactly as an ordinary pick of the part.
+test("a pick on the Missing piece names the missing material and the part's label", () => {
+  const s = { ...L0, compare: "missing", subPartLabel: "Spacer" };
+  expect(formatSelection(s, { style: "prompt" }))
+    .toBe("On sub-part **spacer**, the user pointed at material missing from **Spacer**, near [0, 0, 5.2], normal +X, with params {bore: 3.4, h: 10}.");
+  expect(formatSelection(s)).toBe("@spacer · missing · pt(0,0,5.2) n(+X) · {bore:3.4,h:10}");
+});
+
+test("a pick on the Extra piece names the extra material; the cut face is said too", () => {
+  const s = { ...L0, compare: "excess", subPartLabel: "Spacer", onCutPlane: true };
+  expect(formatSelection(s, { style: "prompt" }))
+    .toBe("On sub-part **spacer**, the user pointed at extra material on **Spacer**, near [0, 0, 5.2] on the cutaway section face, normal +X, with params {bore: 3.4, h: 10}.");
+  expect(formatSelection(s)).toBe("@spacer · extra · section · pt(0,0,5.2) n(+X) · {bore:3.4,h:10}");
+  expect(formatSelection(s, { style: "prompt" })).not.toMatch(/excess|common/);
+});
+
+test("a pick on the Matches piece reads as an ordinary pick", () => {
+  const s = { ...L0, compare: "common", subPartLabel: "Spacer" };
+  expect(formatSelection(s, { style: "prompt" })).toBe(formatSelection(L0, { style: "prompt" }));
+  expect(formatSelection(s)).toBe(formatSelection(L0));
+});

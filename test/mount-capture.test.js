@@ -67,4 +67,38 @@ describe("mount handle captureViews", () => {
     handle.setParams({ openAngle: 45 });
     expect(setParams).toHaveBeenCalledWith({ openAngle: 45 });
   });
+
+  it("exposes captureReady, resolving at once when nothing is wired", async () => {
+    const viewer = { captureCanonicalViews: vi.fn() };
+    await expect(makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer }).captureReady()).resolves.toBeUndefined();
+    const captureReady = vi.fn(() => Promise.resolve());
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer, captureReady });
+    await handle.captureReady();
+    expect(captureReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("captureViews stays synchronous and does not wait on the comparison", () => {
+    const viewer = { captureCanonicalViews: vi.fn(() => [{ view: "iso", dataUrl: "d" }]) };
+    const captureReady = vi.fn(() => new Promise(() => {}));
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer, captureReady });
+    expect(handle.captureViews(["iso"])).toEqual([{ view: "iso", dataUrl: "d" }]);
+    expect(captureReady).not.toHaveBeenCalled();
+  });
+
+  it("renderViews awaits captureReady before it captures", async () => {
+    let settle;
+    const captureReady = vi.fn(() => new Promise((r) => { settle = r; }));
+    const renderViews = vi.fn(async () => [{ view: "iso", dataUrl: "d" }]);
+    const beforeCapture = vi.fn(() => () => {});
+    const viewer = { captureCanonicalViews: vi.fn() };
+    const handle = makeHandle({ ready: Promise.resolve(), dispose: () => {}, viewer, renderViews, captureReady, beforeCapture });
+    const out = handle.renderViews(["iso"], { renderMode: "realistic" });
+    await Promise.resolve();
+    expect(captureReady).toHaveBeenCalled();
+    expect(renderViews).not.toHaveBeenCalled();
+    expect(beforeCapture).not.toHaveBeenCalled();
+    settle();
+    await expect(out).resolves.toEqual([{ view: "iso", dataUrl: "d" }]);
+    expect(renderViews).toHaveBeenCalledWith(["iso"], { renderMode: "realistic" });
+  });
 });

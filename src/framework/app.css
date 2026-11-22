@@ -618,6 +618,17 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
   font-size: 13px; font-variant-numeric: tabular-nums; color: var(--pf-text);
 }
 #viewbar .pf-pose-readout-label { color: var(--pf-muted-2); }
+/* The reference compare view's legend (compare-view.js), in the same readout slot:
+   a swatch and a word per piece. Matches is text; Missing and Extra are buttons that
+   hide their piece (dimmed while hidden). Only the swatches carry the fixed colours. */
+#viewbar .pf-compare-legend { align-items: center; }
+#viewbar .pf-compare-chip {
+  display: inline-flex; align-items: center; gap: 6px; width: auto; min-width: auto; height: 28px;
+  padding: 0 8px; white-space: nowrap; font-size: 13px; color: var(--pf-text);
+}
+#viewbar button.pf-compare-chip.off { color: var(--pf-hint); }
+#viewbar button.pf-compare-chip.off .pf-compare-swatch { opacity: .35; }
+.pf-compare-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18); }
 #viewbar .pf-measure-parts button.on { background: var(--pf-surface-2, rgba(127, 127, 127, .14)); color: var(--pf-text, inherit); }
 #viewbar button:disabled { opacity: .38; cursor: not-allowed; }
 #viewbar button:disabled:hover { color: var(--pf-muted-2); background: transparent; }
@@ -845,7 +856,26 @@ button.action:focus-visible, .adv-toggle:focus-visible, .sec-title:focus-visible
 .pf-parts-open:hover .pf-parts-swatch { box-shadow: inset 0 0 0 1px rgb(0 0 0 / .18), 0 0 0 2px var(--pf-surface), 0 0 0 4px var(--pf-accent); }
 .pf-parts-name { font-size: 13px; color: var(--pf-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-parts-mat { font-size: 11.5px; color: var(--pf-muted); white-space: nowrap; }
-.pf-parts-eye:focus-visible, .pf-parts-open:focus-visible, .pf-parts-showall:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
+/* The compare view's rows (parts-list.js with a compare seam): the "Show differences"
+   switch above the list, and the three piece rows under the part — no appearance button. */
+.pf-parts-compare {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 4px 6px; border: 0; border-radius: var(--pf-radius-control); background: none;
+  font: inherit; font-size: 13px; color: var(--pf-text); text-align: left; cursor: pointer;
+}
+.pf-parts-compare[hidden] { display: none; }
+.pf-parts-compare:hover:not(:disabled) { background: var(--pf-surface-2); }
+.pf-parts-compare:disabled { color: var(--pf-muted); cursor: default; }
+.pf-parts-compare::after {
+  content: ""; flex: none; width: 28px; height: 16px; border-radius: 8px;
+  background: var(--pf-border) radial-gradient(circle at 8px 50%, var(--pf-surface) 5px, transparent 5.5px);
+}
+.pf-parts-compare[aria-checked="true"]::after { background: var(--pf-accent) radial-gradient(circle at 20px 50%, var(--pf-on-accent) 5px, transparent 5.5px); }
+.pf-parts-compare:disabled::after { display: none; }
+.pf-parts-piece-body { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 3px 6px 3px 0; }
+.pf-parts-piece .pf-parts-swatch { width: 14px; height: 14px; border-radius: 3px; justify-self: center; }
+.pf-parts-eye-spacer { width: 28px; height: 28px; }
+.pf-parts-eye:focus-visible, .pf-parts-open:focus-visible, .pf-parts-showall:focus-visible, .pf-parts-compare:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--pf-accent) 35%, transparent); }
 /* The appearance card (appearance-card.js): the popover's second page. The
    popover shows one page at a time by hiding the other's nodes; the grid and
    the Parts section set display, which beats the UA's [hidden] rule, so the

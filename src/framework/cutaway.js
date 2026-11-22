@@ -292,6 +292,17 @@ export function createCutaway({
     return true;
   }
 
+  // Drop one section render set (a sub-part that is going away — the viewer's
+  // reference-compare pieces): its stencil passes, cap and outline go, and the
+  // mesh and lines are put back on their source materials.
+  function removeSubpart(name) {
+    const entry = renderSets.get(name);
+    if (!entry || disposed) return false;
+    entry.renderSet.dispose();
+    renderSets.delete(name);
+    return true;
+  }
+
   function updateGeometry(name, geometry) {
     const entry = renderSets.get(name);
     if (!entry || disposed) return false;
@@ -619,6 +630,7 @@ export function createCutaway({
     get isSupported() { return supported; },
     get isEnabled() { return enabled; },
     setSubpart,
+    removeSubpart,
     updateGeometry,
     setVisible,
     setEnabled,
