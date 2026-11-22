@@ -71,6 +71,26 @@ lands during the moves that follow, and the drag goes on with one 73 ms gap.
 Node: 88° has them). A pause there forgets the cage base; for the rest of that drag no
 shape was drawn and no build was sent (135 moves), and the body moved only on release.
 
+**Fixed after the measurement.** The ties were sound; the check was too tight. Every
+vertex was tied, and every vertex placed from its tie landed within 8e-6 mm of where it
+was delivered. The weight rule refused them: near the top of the curl range each
+fingertip has sliver limit triangles (one edge about 0.06 mm), and float32 rounding puts a
+vertex delivered at a corner of one up to 0.72 of a float32 step outside it (7.9e-6 mm at
+z = 136 mm). Across a height of about 0.015 mm, that is a weight about 1.1e-4 past [0, 1],
+over the 1e-4 slack. A vertex now also passes when it lies outside its triangle by no
+more than two float32 steps of its largest coordinate (`TIE_ROUNDING_ULPS`,
+`subdiv/ties.js`). A vertex that is really outside its triangle is still refused. A sweep of
+each digit's curl over its whole range in 1° steps (425 poses, the other params at their
+defaults) delivered ties at 415 poses before and 425 after, and the viewer's check
+(`tiesAgree`) took all 425. The worst vertex outside its triangle was 0.72 of a step
+(worker and viewer alike), against the limit of 2.
+
+The body that stopped moving followed the ordinary rule for a slider on a sub-part with
+no cage base: its build is debounced (180 ms). While input arrives every frame, no build
+goes out. The first build goes out 180 ms after the last input, released or not. Once the base was gone, the drag already fell back to that rule; nothing in the
+skin controller or in mount held a build back. `test/mount-cage-drag.test.js` pins it for a
+slider and for a live handle drag.
+
 On SwiftShader (`--use-angle=swiftshader`, measured on 0.199.0) the JS per move was the
 same (25.8 ms) but the draw set the pace: the slider's (a) was 117 ms (p90 136).
 

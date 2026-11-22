@@ -115,6 +115,24 @@ describe("deformCage on the cage hand", () => {
     expect(worst.nearCut.angle).toBeLessThan(2);
   }, 120_000);
 
+  // A base at 90°, whose fingertip slivers have corners float32 rounding puts just outside
+  // their triangles (subdiv/ties.js's TIE_ROUNDING_ULPS): re-posed back to the defaults, it
+  // lands on the exact build there.
+  test("a base at indexCurl 90 re-posed to the defaults: within 1e-3 mm of the exact build", async () => {
+    const C = { ...A, indexCurl: 90 };
+    const [m90] = await gen(hand, "assembly", C);
+    expect(m90.ties).toBeTruthy();
+    const b90 = makeCageBase(entryAt(C).cages[0], m90.ties);
+    expect(tiesAgree(b90, m90.positions)).toBe(true);
+    const n = m90.positions.length;
+    const P = new Float32Array(n), N = new Float32Array(n);
+    expect(deformCage(b90, entryAt(A).cages[0], P, N)).toBe(true);
+    const near = vertexGrid(mesh.positions);
+    let worst = 0;
+    for (let v = 0; v < n / 3; v++) worst = Math.max(worst, near(P[3 * v], P[3 * v + 1], P[3 * v + 2]).d);
+    expect(worst).toBeLessThan(1e-3);
+  }, 120_000);
+
   test("the thumb pose lists the cage's faces in another order: the same topology, the base's plan", () => {
     const a = entryAt(A).cages[0], b = entryAt(THUMB).cages[0];
     const sameOrder = JSON.stringify(a.faces) === JSON.stringify(b.faces);

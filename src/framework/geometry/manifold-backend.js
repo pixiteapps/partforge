@@ -443,8 +443,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // the mesh is the SAME preview, crease-free k.subdiv body with no transform on it (a
   // moved body would be placed in the wrong frame), and every vertex is tied — a unioned
   // piece's own vertices are not, so it sends none. Last, every vertex placed from its tie
-  // on the rest limit mesh must land where it was delivered, with every weight in [0, 1]
-  // (tiesHold): a wrong tie is never sent.
+  // on the rest limit mesh must land where it was delivered, inside its triangle (every
+  // weight in [0, 1], or outside by float32 rounding at most: tiesHold): a wrong tie is
+  // never sent.
   function skinTies(g, positions) {
     if (subdivSkins.size === 0) return null;
     const roid = g.runOriginalID, ri = g.runIndex, rt = g.runTransform, fid = g.faceID;

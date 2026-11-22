@@ -124,19 +124,59 @@ export function tieError({ tri, w }, positions, limitPositions, limitIndices) {
 export const TIE_WEIGHT_SLACK = 1e-4;
 // How far (mm) a vertex placed from its tie on the rest limit mesh may be from where it was delivered.
 export const TIE_TOLERANCE = 1e-3;
+// How far outside its triangle a vertex may lie, in float32 steps (ulps) of its largest
+// coordinate. The delivered positions are float32: a vertex Manifold delivers at a corner or
+// on an edge of its triangle can be rounded up to about 0.87 of a step outside it (half a
+// step on each axis), and the plan's rest surface on the viewer side rounds as well. On a
+// sliver triangle (a 0.06 mm edge on the cage hand's fingertips) that rounding alone is a
+// weight about 1.1e-4 outside [0, 1], past TIE_WEIGHT_SLACK, though the vertex is less than
+// 1e-5 mm from the triangle.
+export const TIE_ROUNDING_ULPS = 2;
+
+// One float32 step at magnitude `m` (the smallest normal step at 0).
+const ulp32 = (m) => {
+  const a = Math.fround(Math.abs(m));
+  if (!(a >= 2 ** -126)) return 2 ** -149;
+  return 2 ** (Math.floor(Math.log2(a)) - 23);
+};
 
 /**
  * Whether ties may be sent: every vertex placed from its tie on the rest limit mesh lands
- * within TIE_TOLERANCE of its delivered position, and all three of its weights (w0, w1,
- * 1 − w0 − w1) are within [−TIE_WEIGHT_SLACK, 1 + TIE_WEIGHT_SLACK]. A weight outside that
- * range can still reproduce the rest position (a vertex Manifold left on a near-coplanar
- * neighbour of its triangle) but would extrapolate at a new pose.
+ * within TIE_TOLERANCE of its delivered position, and the vertex lies in its triangle: all
+ * three of its weights (w0, w1, 1 − w0 − w1) are within [−TIE_WEIGHT_SLACK,
+ * 1 + TIE_WEIGHT_SLACK], or it lies outside the triangle by no more than float32 rounding
+ * (TIE_ROUNDING_ULPS steps of its largest coordinate; the distance a weight puts it past an
+ * edge is that weight's excess times the triangle's height over that edge). A vertex
+ * genuinely outside its triangle can still reproduce the rest position (a vertex Manifold
+ * left on a near-coplanar neighbour of its triangle) but would extrapolate at a new pose.
  */
 export function tiesHold(ties, positions, limitPositions, limitIndices) {
   const { w } = ties, lo = -TIE_WEIGHT_SLACK, hi = 1 + TIE_WEIGHT_SLACK;
   for (let v = 0; v < ties.tri.length; v++) {
     const w0 = w[2 * v], w1 = w[2 * v + 1], w2 = 1 - w0 - w1;
-    if (!(w0 >= lo && w0 <= hi && w1 >= lo && w1 <= hi && w2 >= lo && w2 <= hi)) return false;
+    if (w0 >= lo && w0 <= hi && w1 >= lo && w1 <= hi && w2 >= lo && w2 <= hi) continue;
+    if (!withinRounding(ties.tri[v], [w0, w1, w2], positions, 3 * v, limitPositions, limitIndices)) return false;
   }
   return tieError(ties, positions, limitPositions, limitIndices) <= TIE_TOLERANCE;
+}
+
+// Is a vertex with weights `ws` on limit triangle `s` outside it by float32 rounding at most?
+function withinRounding(s, ws, positions, o, P, I) {
+  const c = [3 * I[3 * s], 3 * I[3 * s + 1], 3 * I[3 * s + 2]];
+  const e1x = P[c[1]] - P[c[0]], e1y = P[c[1] + 1] - P[c[0] + 1], e1z = P[c[1] + 2] - P[c[0] + 2];
+  const e2x = P[c[2]] - P[c[0]], e2y = P[c[2] + 1] - P[c[0] + 1], e2z = P[c[2] + 2] - P[c[0] + 2];
+  const twoArea = Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
+  if (!(twoArea > 0)) return false;
+  const tol = TIE_ROUNDING_ULPS * ulp32(Math.max(Math.abs(positions[o]), Math.abs(positions[o + 1]), Math.abs(positions[o + 2])));
+  for (let i = 0; i < 3; i++) {
+    const excess = Math.max(-ws[i], ws[i] - 1);
+    if (!(excess <= 0)) {
+      if (!(excess < Infinity)) return false;
+      // The edge opposite corner i, and the triangle's height over it.
+      const a = c[(i + 1) % 3], b = c[(i + 2) % 3];
+      const edge = Math.hypot(P[a] - P[b], P[a + 1] - P[b + 1], P[a + 2] - P[b + 2]);
+      if (!(edge > 0) || !(excess * (twoArea / edge) <= tol)) return false;
+    }
+  }
+  return true;
 }

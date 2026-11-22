@@ -7,9 +7,11 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { levelFor, subdivide, subdivPlan, applySubdivPlan, topologyKey, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
-import { tiesFor, tiesHold, placeFromTies, tieError } from "../src/framework/geometry/subdiv/ties.js";
+import { tiesFor, tiesHold, placeFromTies, tieError, TIE_WEIGHT_SLACK } from "../src/framework/geometry/subdiv/ties.js";
 import hand, { cageHand } from "../src/parts/cage-hand.js";
 import whale from "../src/parts/organic-whale.js";
+import { probePoses } from "../src/framework/pose-probe.js";
+import { makeCageBase, tiesAgree } from "../src/framework/skin/cage-deform.js";
 
 let k, kPrint;
 beforeAll(async () => {
@@ -96,6 +98,26 @@ describe("the cage hand with its cut", () => {
     expect(cap.length, "cut-face vertices").toBeGreaterThan(0);
     expect(max(skin), `skin: ${skin.length} vertices, worst distance to the pose-B build (mm)`).toBeLessThan(1e-2);
     expect(max(cap), `cut face: ${cap.length} vertices, worst distance to the pose-B build (mm)`).toBeLessThan(1e-2);
+  }, 120_000);
+});
+
+// The hand's tie coverage: every digit's curl across its whole range (the others at their
+// defaults) delivers ties, and the viewer's check (tiesAgree) takes them. 89° and 90° on the
+// index were refused once: a sliver limit triangle at the fingertip (a 0.06 mm edge), whose
+// corner vertex float32 rounding put 7e-6 mm outside it, a weight 1.1e-4 past [0, 1].
+describe("the cage hand's tie coverage", () => {
+  const curls = [0, 20, 40, 60, 75, 85, 88, 89, 90];
+  const poses = [
+    ...Object.keys(hand.defaults).filter((key) => key.endsWith("Curl") && key !== "thumbCurl")
+      .flatMap((key) => curls.map((a) => [key, a])),
+    ...[0, 20, 40, 60].map((a) => ["thumbCurl", a]),
+  ];
+  test.each(poses)("%s %i° delivers ties the viewer takes", async (key, a) => {
+    const p = { ...hand.defaults, [key]: a };
+    const [m] = await gen(hand, "assembly", p);
+    expect(m.ties, "ties").toBeTruthy();
+    const snapshot = probePoses(hand, "assembly", p, { scope: "build" }).get("hand").cages[0];
+    expect(tiesAgree(makeCageBase(snapshot, m.ties), m.positions)).toBe(true);
   }, 120_000);
 });
 
@@ -236,6 +258,25 @@ describe("tiesFor", () => {
     expect(t.w[2]).toBeLessThan(0);
     expect(tieError(t, out, limitPositions, limitIndices)).toBeLessThan(1e-6);
     expect(tiesHold(t, out, limitPositions, limitIndices)).toBe(false);
+  });
+  // A sliver at the hand's scale (z = 136 mm, one float32 step there is 1.5e-5 mm): corner B
+  // sits 0.015 mm off edge AC, so corner A moved 7e-6 mm off AC, away from B, is a weight
+  // past the slack.
+  const sliver = Float64Array.of(30, 0, 136, 30.06, 0, 136, 30.8, 0.2, 136);
+  const offAC = (d) => Float32Array.of(30 - 0.2425 * d, 0.9701 * d, 136, 30.06, 0, 136, 30.8, 0.2, 136);
+  const sliverWeights = (p) => tiesFor({ positions: p, faceTri: Int32Array.of(0), limitPositions: sliver, limitIndices });
+  test("a corner vertex float32 rounding put just outside a sliver triangle holds", () => {
+    const p = offAC(7e-6);
+    const t = sliverWeights(p);
+    const ws = [t.w[0], t.w[1], 1 - t.w[0] - t.w[1]];
+    expect(Math.min(...ws)).toBeLessThan(-TIE_WEIGHT_SLACK);
+    expect(tiesHold(t, p, sliver, limitIndices)).toBe(true);
+  });
+  test("the same sliver, its vertex more than rounding outside: does not hold", () => {
+    const p = offAC(1e-4);
+    const t = sliverWeights(p);
+    expect(tieError(t, p, sliver, limitIndices)).toBeLessThan(1e-3);   // it reproduces at rest
+    expect(tiesHold(t, p, sliver, limitIndices)).toBe(false);
   });
 });
 

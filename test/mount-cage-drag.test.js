@@ -601,6 +601,51 @@ describe("a full build after a cage drag that passes through itself", () => {
     expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 5 }) }]);
   });
 
+  test("a pause build whose delivery has no ties: the drag goes on as a rebuild, builds the final values and commits once", () => {
+    const { v, w, input, release, reply, onParamsCommit } = setup();
+    input(5);
+    vi.advanceTimersByTime(SKIN_PAUSE);   // the pause build at 5 goes out
+    expect(generates(w).at(-1)[0].params.swing).toBe(5);
+    const { ties: _ties, ...untied } = delivery(5);
+    reply([untied]);                      // shown, but no cage base comes with it
+    const n = generates(w).length;
+    // The drag goes on, an input a frame: the moves are rebuilt as a part with no cage
+    // base's are (the debounced build), never frozen.
+    for (const value of [10, 20, 30, 40, 60]) { input(value); vi.advanceTimersByTime(16); }
+    vi.advanceTimersByTime(DEBOUNCE);
+    expect(generates(w).length).toBe(n + 1);
+    expect(generates(w).at(-1)[0].params.swing).toBe(60);
+    release();
+    const geo = v.setSubGeometry.mock.calls.length;
+    reply([delivery(60)]);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);   // the final values, shown
+    vi.runAllTimers();
+    expect(generates(w).length).toBe(n + 1);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 60 }) }]);
+  });
+
+  test("a live handle drag whose transient build has no ties goes on rebuilding live, then builds and commits once", () => {
+    const { v, w, pose, reply, onParamsCommit } = setup({ part: makePart({ handles: true }), ms: 50 });
+    const s = pose.session;
+    s.begin("arm");
+    s.frame([5, 0, 0]);
+    expect(generates(w).at(-1)[0].params.swing).toBe(5);   // a cheap part rebuilds as it goes
+    const { ties: _ties, ...untied } = delivery(5);
+    reply([untied]);                                       // drawn; the cage base is gone
+    s.frame([60, 0, 0]);
+    expect(generates(w).at(-1)[0].params.swing).toBe(60);  // the next move is rebuilt live
+    reply([delivery(60)]);
+    const n = generates(w).length;
+    s.end();
+    expect(generates(w).length).toBe(n + 1);               // the real build the host is owed
+    const geo = v.setSubGeometry.mock.calls.length;
+    reply([delivery(60)]);
+    expect(v.setSubGeometry.mock.calls.length).toBe(geo + 1);
+    vi.runAllTimers();
+    expect(generates(w).length).toBe(n + 1);
+    expect(commits(onParamsCommit)).toEqual([{ changed: ["swing"], params: expect.objectContaining({ swing: 60 }) }]);
+  });
+
   test("an ordinary setParams build that warns is shown as before", () => {
     const { runtime, v, w, reply } = setup();
     runtime.setParams({ swing: 5 });
@@ -804,3 +849,4 @@ describe("the skin controller with a cage base", () => {
 });
 
 const SKIN_PAUSE = 150;
+const DEBOUNCE = 180;
