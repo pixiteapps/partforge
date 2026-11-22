@@ -42,6 +42,10 @@ const loadInspect = () => Promise.all([
   import("./oracle/changes.js"),
 ]);
 
+// The reference compare view's tolerance and triangle ceiling (compare-generate),
+// lazily the same way.
+const loadCompare = () => import("./oracle/compare.js");
+
 // The change tracker's baseline lives for the worker's lifetime (a tab, a headless
 // pool member) — one per worker, not per job, so an `inspect` can diff against the
 // PREVIOUS one under the same `changesKey`. Created lazily on first use so a
@@ -594,6 +598,35 @@ async function runJob(kernel, part, msg, post, opts) {
         [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer].filter(Boolean));
       post({ type: "capture-meshes", jobId: msg.jobId, meshes,
              ...(warnings.length ? { warnings } : {}) }, captureTransfer);
+    } else if (msg.type === "compare-generate") {
+      // The reference compare view (oracle/compare.js): one sub-part against the
+      // sub-part its `reference` names, both posed for display in msg.view, as three
+      // solids that share no volume — common, missing (in the reference only) and
+      // excess (in the part only). A one-shot job correlated by jobId, like
+      // capture-generate; nothing is cached, and the solids live until the cleanup
+      // in the finally below. A kernel without _compareSolids (OCCT) answers
+      // "unsupported" before building anything.
+      const t0 = Date.now();
+      if (typeof kernel._compareSolids !== "function") {
+        return void post({ type: "compare-meshes", jobId: msg.jobId, skipped: "unsupported" });
+      }
+      const { compareTolerance, COMPARE_MAX_TRIANGLES } = await loadCompare();
+      try {
+        const a = posed(msg.name, "display"), b = posed(msg.ref, "display");
+        const tolerance = compareTolerance(a.boundingBox(), b.boundingBox());
+        const c = kernel._compareSolids(a, b, { tolerance, maxTriangles: COMPARE_MAX_TRIANGLES });
+        if (c.skipped) return void post({ type: "compare-meshes", jobId: msg.jobId, skipped: c.skipped });
+        const piece = (s) => {
+          if (!s) return null;
+          const m = s.toMesh({ quality: "preview" });
+          return { positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, mm3: s.volume() };
+        };
+        const pieces = { common: piece(c.common), missing: piece(c.missing), excess: piece(c.excess) };
+        post({ type: "compare-meshes", jobId: msg.jobId, pieces, tolerance, ms: Date.now() - t0 },
+          transferOf(Object.values(pieces).filter(Boolean)));
+      } finally {
+        kernel.cleanup?.();
+      }
     } else if (msg.type === "export-stl") {
       const names = selected();
       if (names.length === 0) throw new Error("no exportable parts selected");
