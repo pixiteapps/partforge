@@ -14,7 +14,7 @@ export { SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES } from "./surface.js";
 // more faces, the triangle limit for fewer). A body passing through itself throws at
 // print and warns at preview, naming the cage faces; a body with no volume throws at both
 // (with the through-itself message when it has one). `maxTriangles` overrides the tier's
-// limit, there for tests.
+// limit, there for tests. `level` is the level it built.
 export function meshSubdiv(snapshot, tier, { maxTriangles } = {}) {
   const tolerance = SUBDIV_TOLERANCE[tier];
   if (tolerance === undefined) throw new Error(`subdiv: quality must be "preview" or "print", not ${JSON.stringify(tier)}`);
@@ -35,7 +35,7 @@ export function meshSubdiv(snapshot, tier, { maxTriangles } = {}) {
     if (tier === "print") throw new Error(through);
     warnings.push(through);
   }
-  return { positions: mesh.positions, indices: mesh.indices, triFace: mesh.triFace, triRegion: mesh.triRegion, regions: mesh.regions, creasePairs: mesh.creasePairs, warnings };
+  return { level, positions: mesh.positions, indices: mesh.indices, triFace: mesh.triFace, triRegion: mesh.triRegion, regions: mesh.regions, creasePairs: mesh.creasePairs, warnings };
 }
 
 // "subdiv: the body passes through itself between A and B; C and D", or null for no

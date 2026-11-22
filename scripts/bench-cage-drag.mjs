@@ -9,6 +9,8 @@
 //   manifold      manifoldFromWeldedMesh, the Manifold import
 //   cut           the part's boolean cut on the imported body
 //   toMesh        toMesh({ quality: "preview" }) on the cut body
+//   toMesh+ties   the same toMesh with ties (subdiv/ties.js), as a canonical generate asks;
+//                 "ties" below is its median minus toMesh's: the cost of the ties alone
 //   whole build   k.subdiv + cut + toMesh from the part's own build function
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { resolveParams } from "../src/framework/part-model.js";
@@ -58,7 +60,7 @@ function cutOf(k, body) {
 const tolerance = SUBDIV_TOLERANCE.preview, maxTriangles = SUBDIV_MAX_TRIANGLES.preview;
 const results = [];
 for (const c of CASES) {
-  const rows = { "cage code": [], levelFor: [], subdivide: [], selfIntersect: [], manifold: [], cut: [], toMesh: [], "whole build": [] };
+  const rows = { "cage code": [], levelFor: [], subdivide: [], selfIntersect: [], manifold: [], cut: [], toMesh: [], "toMesh+ties": [], "whole build": [] };
   let info = {};
   // Run 0 warms the engine and is dropped; runs 1..RUNS are timed.
   for (let i = 0; i <= RUNS; i++) {
@@ -86,6 +88,9 @@ for (const c of CASES) {
       const [cutBody, tCut] = time(() => cutOf(kernel, body));
       push("cut", tCut);
       push("toMesh", time(() => cutBody.toMesh(PREVIEW))[1]);
+      const [withTies, tTies] = time(() => cutBody.toMesh({ ...PREVIEW, ties: true }));
+      if (!withTies.ties) throw new Error(`${c.name}: the cut body carries no ties`);
+      push("toMesh+ties", tTies);
     });
     // The whole thing, as the worker builds it.
     bracket(c.name, () => {
@@ -101,5 +106,6 @@ for (const { c, info, rows } of results) {
   console.log(`\n${c.name}: level ${info.level}${info.met ? "" : " (tolerance unmet)"}, ${info.faces} cage faces, ${info.triangles} triangles`);
   for (const [row, v] of Object.entries(rows)) console.log(`  ${row.padEnd(14)} ${f1(median(v)).padStart(8)}`);
   const d = (r) => median(rows[r]);
+  console.log(`  ${"ties".padEnd(14)} ${f1(d("toMesh+ties") - d("toMesh")).padStart(8)}   (toMesh+ties − toMesh)`);
   console.log(`  ${"drag sum".padEnd(14)} ${f1(d("cage code") + d("manifold") + d("cut") + d("toMesh")).padStart(8)}   (cage code + manifold + cut + toMesh)`);
 }
