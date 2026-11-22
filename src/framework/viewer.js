@@ -36,6 +36,7 @@ import { buildCelMaterial, aimCelLight, restCelLight } from "./cel/cel-material.
 import { createCelInk, CEL_LAYER } from "./cel/cel-ink.js";
 import { createCelGround } from "./cel/cel-ground.js";
 import { buildContactShadowPlane } from "./contact-shadow-plane.js";
+import { COMPARE_COLORS } from "./compare-colors.js";
 export { srgbEncodeInPlace }; // was exported from here; keep the name importable
 
 // Readback (a realistic capture's target) → linear floats: half-float bits,
@@ -109,7 +110,7 @@ export const THUMBNAIL_BG = RENDER_STYLES.thumbnail.background;
 
 // The reference compare view's three difference solids (setCompare): in both
 // (Matches), in the reference only (Missing), in the part only (Extra).
-export const COMPARE_COLORS = { common: 0x9ca3af, missing: 0x3b82f6, excess: 0xec4899 };
+export { COMPARE_COLORS };
 const COMPARE_KINDS = ["common", "missing", "excess"];
 
 // Resolve renderMeshPayloads' `background` option to what Scene.background

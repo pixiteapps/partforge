@@ -3,7 +3,8 @@
 // when it asks the worker for the three difference solids, what it does with the
 // reply, its on-stage legend, and the Parts-list seam the view style popover reads.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCompareView, SETTLE_MS } from "../src/framework/compare-view.js";
+import { createCompareView, SETTLE_MS, JOB_TIMEOUT_MS, COMPARE_HEX } from "../src/framework/compare-view.js";
+import { COMPARE_COLORS } from "../src/framework/compare-colors.js";
 import { attachPartsList } from "../src/framework/parts-list.js";
 import { subPartRows } from "../src/framework/sub-part-list.js";
 
@@ -384,5 +385,65 @@ describe("mount handle: getViewerState().compare", () => {
     const { cv } = setup({ initial: { enabled: false, hidden: { excess: true } } });
     const again = setup({ initial: JSON.parse(JSON.stringify(cv.getState())) });
     expect(again.cv.getState()).toEqual({ enabled: false, hidden: { missing: false, excess: true } });
+  });
+});
+
+describe("compare view: fix round 1", () => {
+  it("a param change with no assembly event (a pose-only edit) clears at once and re-runs after settling", () => {
+    const { viewer, params, send, reply, cv, legend } = setup();
+    viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS);
+    reply({ pieces: PIECES });
+    params.size = 14; // mount: fastPath.repair moved the pair by matrix, then refresh()
+    cv.refresh();
+    expect(viewer.getCompare()).toBe(null);
+    expect(legend().hidden).toBe(true);
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].params.size).toBe(14);
+  });
+
+  it("motion that keeps changing params (a playing track, a drag) holds the job until it rests", () => {
+    const { viewer, params, send, reply, cv } = setup();
+    viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS);
+    reply({ pieces: PIECES });
+    for (let i = 0; i < 20; i++) { params.size = 10 + i; cv.refresh(); vi.advanceTimersByTime(16); }
+    expect(viewer.getCompare()).toBe(null);
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("a job with no reply is refused after the deadline and frees captureReady", async () => {
+    const { viewer, cv, send } = setup();
+    viewer.emitAssembly(); vi.advanceTimersByTime(SETTLE_MS);
+    let done = false;
+    cv.captureReady().then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(JOB_TIMEOUT_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+    expect(cv.seam.state().toggle).toEqual({ on: false, disabled: true, text: "Differences not available" });
+    expect(viewer.setCompare).not.toHaveBeenCalled();
+    // its late reply is dropped, and a later change compares again
+    expect(cv.handleMessage({ type: "compare-meshes", jobId: send.mock.calls[0][0].jobId, pieces: PIECES, tolerance: 0.05 })).toBe(true);
+    expect(viewer.setCompare).not.toHaveBeenCalled();
+  });
+
+  it("captureReady resolves after the bound when the build never settles", async () => {
+    const { viewer, cv, send } = setup({ settled: () => false });
+    viewer.emitAssembly();
+    let done = false;
+    cv.captureReady().then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(JOB_TIMEOUT_MS);
+    expect(done).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    cv.dispose();
+  });
+
+  it("the legend's colours are the viewer's", () => {
+    for (const k of ["common", "missing", "excess"]) {
+      expect(COMPARE_HEX[k]).toBe(`#${COMPARE_COLORS[k].toString(16).padStart(6, "0")}`);
+    }
+    expect(COMPARE_HEX).toEqual({ common: "#9ca3af", missing: "#3b82f6", excess: "#ec4899" });
   });
 });

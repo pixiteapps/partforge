@@ -27,11 +27,16 @@
 import { viewSubParts } from "./part-model.js";
 import { partLabel } from "./export-select.js";
 import { createViewbarReadout } from "./viewbar-clear.js";
+import { COMPARE_COLORS } from "./compare-colors.js";
 
 /** How long a view must rest before the comparison runs (a slider drag shows the ghost). */
 export const SETTLE_MS = 180;
 const JOB_ID = /^cmp-\d+-\d+$/;
-const COMPARE_HEX = { common: "#9ca3af", missing: "#3b82f6", excess: "#ec4899" };
+const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
+export const COMPARE_HEX = Object.fromEntries(Object.entries(COMPARE_COLORS).map(([k, v]) => [k, hex(v)]));
+/** A compare job with no reply by then is refused (a wedged or reset worker must not
+ * hold the controller), and captureReady() gives up waiting on an unsettled build. */
+export const JOB_TIMEOUT_MS = 10_000;
 const LEGEND = [
   { kind: "common", label: "Matches" },
   { kind: "missing", label: "Missing" },
@@ -71,7 +76,7 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
   const hidden = { ...start.hidden };
   let shownKey = null;   // what the comparison on screen was computed from
   let pendingKey = null; // what the timer or the job in flight is for
-  let pendingJob = null, timer = null;
+  let pendingJob = null, timer = null, jobTimer = null;
   let refusedKey = null, refusal = null; // the change a refusal holds for, and its text
   let pieces = null;     // { common, missing, excess }: true / null, for the one on screen
   let currentPair = null;
@@ -146,6 +151,7 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
 
   function stop() {
     clearTimeout(timer); timer = null;
+    clearTimeout(jobTimer); jobTimer = null;
     pendingKey = null; pendingJob = null;
   }
   function clearShown() {
@@ -186,8 +192,22 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
       const p = pair();
       if (!p || keyFor(p) !== pendingKey) { pendingKey = null; refresh(); return; }
       pendingJob = `cmp-${build}-${nextId++}`;
+      const id = pendingJob;
+      jobTimer = setTimeout(() => {
+        jobTimer = null;
+        if (disposed || pendingJob !== id) return;
+        refuse(pendingKey, REFUSED_ERROR);
+      }, JOB_TIMEOUT_MS);
       send({ type: "compare-generate", jobId: pendingJob, name: p.name, ref: p.ref, view: view(), params: { ...params() } });
     }, SETTLE_MS);
+  }
+  // No comparison for this key: drawn as the plain pair, the reason in the switch.
+  function refuse(key, text) {
+    clearTimeout(jobTimer); jobTimer = null;
+    pendingJob = null; pendingKey = null;
+    refusedKey = key;
+    refusal = text;
+    changed();
   }
 
   // true iff the message is a reply to a compare job (mount's switch then skips it).
@@ -196,15 +216,14 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
     if (typeof jobId !== "string" || !JOB_ID.test(jobId)) return false;
     if (disposed || jobId !== pendingJob) return true; // an older job's, or another mount's: dropped
     if (data.type === "progress") return true;
+    clearTimeout(jobTimer); jobTimer = null;
     pendingJob = null;
     const key = pendingKey;
     pendingKey = null;
     const p = pair();
     if (!enabled || !p || keyFor(p) !== key) { refresh(); changed(); return true; }
     if (data.type !== "compare-meshes" || data.skipped || !isObj(data.pieces)) {
-      refusedKey = key;
-      refusal = data.type === "compare-meshes" ? REFUSED[data.skipped] ?? REFUSED_ERROR : REFUSED_ERROR;
-      changed();
+      refuse(key, data.type === "compare-meshes" ? REFUSED[data.skipped] ?? REFUSED_ERROR : REFUSED_ERROR);
       return true;
     }
     viewer.setCompare?.({ name: p.name, ref: p.ref, pieces: data.pieces });
@@ -262,7 +281,15 @@ export function createCompareView({ part, viewer, view, params, send, viewbar, i
     /** Re-read the view now (mount calls it on changes the viewer does not announce). */
     refresh,
     /** Resolves once the comparison for the current build has been drawn or refused. */
-    captureReady: () => (timer || pendingJob ? new Promise((resolve) => waiters.push(resolve)) : Promise.resolve()),
+    // Bounded: a build that never settles resolves it after JOB_TIMEOUT_MS, with no comparison.
+    captureReady: () => {
+      if (!timer && !pendingJob) return Promise.resolve();
+      return new Promise((resolve) => {
+        const done = () => { clearTimeout(t); const i = waiters.indexOf(done); if (i >= 0) waiters.splice(i, 1); resolve(); };
+        const t = setTimeout(done, JOB_TIMEOUT_MS);
+        waiters.push(done);
+      });
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

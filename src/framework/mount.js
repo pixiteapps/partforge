@@ -1116,6 +1116,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       initial: viewerState?.compare,
     });
     cleanup.defer(() => compareView.dispose());
+    // A view switch whose incoming view has no mesh yet hides the assembly rather
+    // than showing it, which fires no assembly event: re-read the view here too.
+    const compareOnView = () => compareView.refresh();
+    viewChangeListeners.add(compareOnView);
+    cleanup.defer(() => viewChangeListeners.delete(compareOnView));
     // The Parts seam (view-style-controls.js), shared with the selection
     // popover below; an older popover ignores it.
     const partsSeam = {
@@ -2261,6 +2266,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (skin.anyDeformed()) skin.restoreAll();
         skin.endDrag();
       }
+      // A pose-only edit moves the pair by matrix (fastPath.repair) with no
+      // showAssembly, so the compare view hears of every param change here: the
+      // pieces on screen are out of date at once (back to the ghost), and the
+      // comparison runs again once the change settles. Every slider input, drag
+      // frame and animation frame comes through here.
+      compareView.refresh();
     }
 
     // Programmatic param entry point — the animation-system hook. Same change
