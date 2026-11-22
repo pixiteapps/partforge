@@ -5336,7 +5336,10 @@ Only extension-detectable `imports` sources — a `URL` or string path — are
 checked; a bytes/thunk source's format can't be known without resolving it, so
 lint skips it and the lazy `k.import` error entry at build time remains the
 runtime authority for those cases), `reference-unknown` (a sub-part's
-`reference` names no declared import) (all errors); `ref-metric-without-reference`
+`reference` names neither a declared import nor a sub-part), `reference-ambiguous`
+(the name is both), `reference-self` (a sub-part is its own reference, directly or
+through a cycle) (all errors); `reference-exportable` (a sub-part used as a
+reference does not declare `exportable: false`) (warning); `ref-metric-without-reference`
 (a sub-part's `verify.expect` uses a `ref*` metric — `refXorVolume`,
 `refVolumeDeltaPct`, `refBboxDelta` — but the sub-part declares no `reference`,
 so the deviation gate always reports status "skip") (warning).
