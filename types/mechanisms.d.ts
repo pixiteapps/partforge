@@ -162,7 +162,7 @@ export interface CapstanReport {
   drumWidth: number;
   /** Per member: the angles between which no side runs out of rope; `inside` for this pose. */
   travel: Record<string, [number, number] | boolean>;
-  /** Only with `fixed: false`: what the least friction wrap holds, e^(mu · wrap). */
+  /** Only with `fixed: false`: what the whole wrap on the drum holds, e^(mu · wrap). The same at every angle. */
   holding?: { needs: "rope.mu" } | { mu: number; wrap: number; ratio: number };
   /** Only when the rope's EA is known. `upperBound` when it came from a preset. */
   stiffness?: { rope: [number, number]; joint: number; unit: string; upperBound: boolean };

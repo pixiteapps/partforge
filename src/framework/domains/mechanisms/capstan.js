@@ -131,9 +131,11 @@ export function capstan(def) {
       travel: { [input.name]: [r3(-limit), r3(limit)], [output.name]: [r3((-limit * rIn) / rOut), r3((limit * rIn) / rOut)], inside },
     };
     if (!fixed) {
-      // The capstan equation, per side: the tension ratio a friction wrap holds, e^(mu · wrap).
-      const least = Math.min(halves[0].wraps[1].angle, halves[1].wraps[0].angle) * RAD;
-      out.holding = rope.mu == null ? { needs: "rope.mu" } : { mu: rope.mu, wrap: r3(least / RAD), ratio: r3(Math.exp(rope.mu * least)) };
+      // The capstan equation: the tension ratio a friction wrap holds, e^(mu · wrap). Nothing
+      // pins the rope at M, so the wrap is everything on the drum between the two spans:
+      // both sides together, the same at every angle.
+      const whole = 2 * half * RAD;
+      out.holding = rope.mu == null ? { needs: "rope.mu" } : { mu: rope.mu, wrap: r3(2 * half), ratio: r3(Math.exp(rope.mu * whole)) };
     }
     if (rope.EA != null) {
       // Each half as a spring over its WHOLE length (the wrapped rope stretches too, held

@@ -116,11 +116,16 @@ describe("capstan: the rope", () => {
     expect(make(0).report().bend).toEqual({ drum: 10, pulley: 50 });
     expect(make(0, { rope: { minBendRatio: 12 } }).report().bend).toEqual({ drum: 10, pulley: 50, required: 12, ok: false });
   });
-  it("a friction capstan reports what its least wrap holds", () => {
+  it("a friction capstan reports what the whole wrap on its drum holds", () => {
     expect(make(0).report().holding).toBeUndefined();
     expect(make(0, { fixed: false }).report().holding).toEqual({ needs: "rope.mu" });
     const h = make(0, { fixed: false, rope: { mu: 0.2 } }).report().holding;
-    expect(h.ratio).toBeCloseTo(Math.exp((0.2 * h.wrap * Math.PI) / 180), 2);
+    expect(h.ratio / Math.exp((0.2 * h.wrap * Math.PI) / 180)).toBeCloseTo(1, 3);
+    // nothing pins the rope at the drum's middle, so friction acts over both sides' turns
+    // together, and turning the drum does not change how much rope is on it
+    const r0 = make(0, { fixed: false, rope: { mu: 0.2 } }).report();
+    expect(h.wrap).toBeCloseTo(r0.halves[0].drum.wrap + r0.halves[1].drum.wrap, 2);
+    expect(make(400, { fixed: false, rope: { mu: 0.2 } }).report().holding).toEqual(h);
   });
   it("stiffness and tension need the rope's EA; a preset's is marked an upper bound", () => {
     expect(make(90).report().stiffness).toBeUndefined();

@@ -194,7 +194,7 @@ probes: { rope: (k, p, d) => d.drive.report() },
 | `travel.<member>`, `travel.inside` | the angles between which no side runs out, and whether this pose is inside them |
 | `bend.<member>` | drum diameter over rope diameter; `bend.ok` only against a declared `minBendRatio` |
 | `drumWidth` | the drum length the rope covers over the whole `travel`, at this lead; the same at every pose |
-| `holding` | with `fixed: false`: the tension ratio the least wrap holds, `e^(mu * wrap)` |
+| `holding` | with `fixed: false`: the tension ratio the rope on the drum holds, `e^(mu * wrap)`, over both sides' turns together |
 | `stiffness` | with the rope's `EA`: each side in N/mm, and the joint in N·mm/rad; `upperBound` when the EA came from a preset |
 | `tensionChange`, `slack` | with `EA`: the tension the drift adds; with `pretension` too, whether it has gone slack |
 
