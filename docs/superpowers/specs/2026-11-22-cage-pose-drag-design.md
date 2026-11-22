@@ -263,6 +263,78 @@ corner can be placed from the smooth surface, before this part is planned.
 In this part a vertex made by a `cut` moves with the surface it lies on, so a flat base
 bends slightly during the drag. That is display only.
 
+### Spike result (Task 10)
+
+`node scripts/spike-cage-weights.mjs` (Apple M1 Max, Node v24.19.0, wall ms, median of
+20). The cage hand at level 4: 300 cage faces, 153,600 limit triangles, 76,802 limit
+vertices. Pose 0 is the defaults. Pose 1 curls the index, middle and ring fingers (knuckle
++20 to +30°, curl +30 to +40°). The truth is the part's own kernel build at pose 1.
+
+**Result: it works.** Every output vertex could be tied to the smooth surface, through the
+part's cut and through a union. Two layouts were tried. Both work. Use layout A.
+
+- **Layout A, `faceID` (use this).** At the import, set `MeshGL.faceID` to the limit
+  triangle's index. Manifold keeps an input `faceID` on every output triangle, and it keeps
+  the edges between different `faceID`s, so it merges no skin triangles. Pick the skin
+  triangles by `runOriginalID`. A corner's weights are its position written in barycentric
+  coordinates of its source triangle at rest. This is exact, because a piece of a triangle
+  lies in the plane of that triangle. There are no extra vertex properties, and the mesh
+  keeps one vertex per position.
+- **Layout B, properties per corner.** Each triangle corner is its own property vertex with
+  `[triangle, w0, w1]`, and the positions are merged with `mergeFromVert`/`mergeToVert`. A
+  boolean interpolates the properties only inside one source triangle, so the triangle stays
+  an exact integer. This also works, but it has 6 times as many property vertices (457,604
+  against 76,479) and it costs 2 times as much per move.
+- **Cutter and tool vertices.** A cutter vertex on the seam loop (where the skin meets the
+  cutter) is also a vertex of a skin triangle. It moves with that tie. On the box cuts that
+  were tried, the cap had no inner vertices: all its vertices are on the seam. A union tool's
+  own vertices away from the seam cannot be tied. The spike keeps them at rest.
+
+Distance from each placed vertex to the true pose-1 surface (layout A; layout B is the same
+within 0.5 mm):
+
+| Case | Skin, max / mean | Seam / cap vertices, max / mean | Untied |
+| --- | --- | --- | --- |
+| Control: skin left at rest | 40.8 / 7.1 mm | | |
+| The part's wrist cut | 0.000015 / 0.000001 mm | 0.0000 / 0.0000 mm (272) | 0 |
+| Wrist cut + sphere r8 on the palm | 0.000015 / 0.000001 mm | 0.0000 mm (436) | 265 sphere vertices, error 0 (the palm does not move) |
+| Stress: a cut through the moving index finger (z > 128) | 1.03 / 0.0002 mm | 1.48 / 0.055 mm (662) | 0 |
+| Stress: sphere r6 on the index finger | 0.000015 / 0.000001 mm | 0.0001 mm (430) | 254 sphere vertices, 7.6 / 3.6 mm left behind |
+
+The skin errors are float32 rounding. Against the plan's own pose-1 surface, the skin error
+is under 0.00001 mm in every case. In the stress cut the true build cuts the curled finger
+at the same world plane, so the cap moves to another place on the finger. The placed cap
+moves with the skin. This is the bend that Part 3 accepts, and it is at most 1.5 mm for this
+curl. On the part's own cut the error is zero, because the finger curls do not move the
+wrist.
+
+**Cost per move** (main thread): 8 to 9 ms with layout A. That is `applySubdivPlan` 4.2 ms,
+placing the 76,479 vertices and computing area-weighted vertex normals 2.1 to 2.7 ms, and the
+remainder allocation. The part's cage code and `snapshot()` are another 1.7 ms. Layout B is
+16 to 23 ms. Reading the tie back (one barycentric per corner) runs once per exact build in
+the worker. The spike did not time it.
+
+**Constraints on the design:**
+
+1. **Union tools that are not skin do not follow the drag.** Their vertices must be kept at
+   rest (correct only when the skin under them does not move), or moved rigidly with a
+   nearby skin point, or the case must be refused. The design must choose one. Cut caps
+   with no inner vertices are fine.
+2. **The `topologyKey` is not stable over the hand's own thumb range.** `thumbCurl` 20 to 45
+   gives a key different from the default (10). `extrude` numbers its side faces from a
+   geometric first edge (`cage.js` `orderedSides`/`firstEdge`), so the `thumb2` side faces
+   change ids when the thumb turns. The quads are the same and the plan gives the correct
+   surface, but the gate in "Recognise the case" would refuse the drag. The spike leaves the
+   thumb at its default for this reason. Before Part 3, either number the sides from
+   topology only, or make the key ignore which side id a quad has.
+3. **The import must set `faceID`** (`manifoldFromWeldedMesh` does not today) and keep the
+   rest limit mesh beside the solid (`subdivSources` already holds it). A solid that was
+   transformed needs its run's `runTransform` undone before the weights are computed, as
+   `bindingRepair` does. A `label()` or other re-stamp that gives the run a new
+   `originalID` must map the old id (`idMaps`), or the skin is not found.
+4. **Level 4 is the ceiling for display rate:** 153,600 triangles cost about 9 ms per move.
+   A body at level 5 (4 times the triangles) would cost about 35 ms.
+
 ## Part 4: dragging on a public page
 
 A cached preview (`mountPreview({ part })`) hides a handle whose parameter rebuilds a
