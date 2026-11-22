@@ -27,6 +27,15 @@
 // The params the file was written at (encoder version 6) come back as `params`,
 // null when absent or empty (see paramsOf).
 //
+// A cage body's ties (encoder version 7) come back on its payload as `ties`
+// { key, level, pose, tri: Uint32Array(n), w: Float32Array(2n) }, one per payload
+// vertex in the payload's order: the vertex sits at pose · (w0·A + w1·B +
+// (1 − w0 − w1)·C) on limit triangle `tri` of the cage's smooth surface at that
+// level, within the file's quantization: each position coordinate up to about 0.7 of
+// a step of 1/16383 of the mesh's widest extent (half a step of rounding, plus
+// gltf-transform's bit replication), weights to 1/65535. A payload without them has no `ties` key; so has one
+// whose ties are malformed (tiesOf), which a reader takes as "not re-posable".
+//
 // The baked animation (encoder version 4) comes back as `animation`, null for a
 // file without the partforgeAnimation extra (every version 1–3 file):
 // { ...the extra (name, label, loop, duration, cues, opacity, steps, animated),
@@ -195,6 +204,27 @@ function surfaceVertexCount(position, index) {
   return max + 1;
 }
 
+// The ties of one surface (see the header), or null: the node's partforgeTies extra
+// plus its two attributes, cut to the payload's `count` vertices.
+function tiesOf(node, geometry, count) {
+  const extra = node.userData?.partforgeTies;
+  const triAttr = geometry.getAttribute("_partforge_tie_tri");
+  const wAttr = geometry.getAttribute("_partforge_tie_w");
+  if (!extra || typeof extra !== "object" || !triAttr || !wAttr) return null;
+  const { key, level, pose } = extra;
+  if (typeof key !== "string" || !key || !Number.isInteger(level) || level < 0) return null;
+  if (!Array.isArray(pose) || pose.length !== 16 || !pose.every(Number.isFinite)) return null;
+  if (triAttr.itemSize !== 2 || wAttr.itemSize !== 2 || triAttr.count < count || wAttr.count < count) return null;
+  const tri = new Uint32Array(count);
+  const w = new Float32Array(2 * count);
+  for (let v = 0; v < count; v++) {
+    tri[v] = triAttr.getX(v) + triAttr.getY(v) * 65536;
+    w[2 * v] = wAttr.getX(v); // a normalized attribute: getX/getY denormalize
+    w[2 * v + 1] = wAttr.getY(v);
+  }
+  return { key, level, pose: pose.slice(), tri, w };
+}
+
 export async function decodePreviewGlb(bytes) {
   const data = toArrayBuffer(bytes);
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
@@ -236,6 +266,8 @@ export async function decodePreviewGlb(bytes) {
       edges: new Float32Array(0), // filled below from the node's LINES primitive, if any
       display: partforgeDisplay && typeof partforgeDisplay === "object" ? partforgeDisplay : null,
     };
+    const ties = tiesOf(node, geometry, count);
+    if (ties) payload.ties = ties;
     meshes.push(payload);
     if (!meshByNode.has(node)) meshByNode.set(node, payload);
     geometry.dispose();

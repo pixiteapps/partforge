@@ -221,13 +221,17 @@ test("a part with no cage: the payload's keys are unchanged", async () => {
     "reads", "pieceKeys", "frame", "bindings"]);
 });
 
-test("the preview encoder ignores ties", async () => {
+// Since encoder version 7 the preview file stores them (test/gltf-encode-ties.test.js
+// holds what it stores); a mesh without them writes what version 6 wrote.
+test("the preview encoder stores a delivery's ties", async () => {
   const { encodePreviewGlb } = await import("../src/framework/gltf/encode-preview.js");
   const [m] = await gen(whale, "whale");
   expect(m.ties).toBeTruthy();
   const { ties, ...plain } = m;
   const a = await encodePreviewGlb({ meshes: [m] }), b = await encodePreviewGlb({ meshes: [plain] });
-  expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
+  expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
+  expect(new TextDecoder("latin1").decode(a)).toContain("_PARTFORGE_TIE_TRI");
+  expect(new TextDecoder("latin1").decode(b)).not.toContain("_PARTFORGE_TIE_TRI");
 }, 60_000);
 
 describe("tiesFor", () => {
