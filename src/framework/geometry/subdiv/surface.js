@@ -337,12 +337,35 @@ function withParts(mesh, parts) {
 // The plan: everything subdivide computes that does not depend on the cage's points, so a
 // pose drag (which moves points and keeps the faces) re-runs only the position arithmetic.
 //
-// topologyKey names a snapshot's topology: its faces, ids and creases, never its points.
-// Two snapshots with one key have the same plan. ids are serialized as JSON first, since
-// the hash's own array form does not quote strings and an id may contain a comma.
+// topologyKey names a snapshot's topology: its quads and creases, never its points, never
+// its face ids and never the order or start corner the cage happened to list them in.
+// extrude numbers a side face's slot from a geometric first edge, so a pose can reorder
+// faces while the same quads (by point index) remain; the plan is built from one snapshot
+// and applied to points by index, so only the quad set matters. Each quad is rotated to
+// start at its lowest point index (winding kept, never reversed) and the quads are sorted;
+// creases are [low, high] pairs, sorted. Two snapshots with one key have the same surface
+// for the same points, though a plan's triangle order follows its own snapshot's faces.
+function canonicalTopology(snapshot) {
+  const { points, faces, creases } = snapshot ?? {};
+  const quads = (faces ?? []).map((f) => {
+    const m = f.indexOf(Math.min(...f));
+    return [...f.slice(m), ...f.slice(0, m)];
+  }).sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3]);
+  const pairs = (creases ?? []).map(([a, b]) => (a < b ? [a, b] : [b, a]))
+    .sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  return { n: points?.length ?? 0, quads, creases: pairs };
+}
+
 export function topologyKey(snapshot) {
-  const { faces, ids, creases } = snapshot ?? {};
-  return h("subdiv-topology", faces, JSON.stringify(ids ?? null), creases ?? null);
+  const { n, quads, creases } = canonicalTopology(snapshot);
+  return h("subdiv-topology", n, quads, creases);
+}
+
+// sameTopology: true exactly when the two canonical forms are equal (the same point count
+// and the same quads up to rotation, in any order, and the same creases), compared
+// exactly rather than by hash.
+export function sameTopology(a, b) {
+  return JSON.stringify(canonicalTopology(a)) === JSON.stringify(canonicalTopology(b));
 }
 
 // Plan: { key, level, pointCount, levels, indices, triFace, triRegion?, regions?,

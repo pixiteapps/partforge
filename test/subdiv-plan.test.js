@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createCage } from "../src/framework/geometry/subdiv/cage.js";
-import { subdivide, topologyKey, subdivPlan, applySubdivPlan, applySubdivPlanAt } from "../src/framework/geometry/subdiv/surface.js";
+import { resolveParams } from "../src/framework/part-model.js";
+import { cage } from "../src/framework/domains/organic/index.js";
+import handPart, { cageHand } from "../src/parts/cage-hand.js";
+import { subdivide, topologyKey, sameTopology, subdivPlan, applySubdivPlan, applySubdivPlanAt } from "../src/framework/geometry/subdiv/surface.js";
 
 const box = (opts = {}) => createCage({ box: { size: [20, 20, 20], ...opts.box }, mirror: opts.mirror });
 
@@ -28,6 +31,12 @@ const cages = {
   },
 };
 
+const handAt = (params) => {
+  const { p, d } = resolveParams(handPart, params);
+  const bends = Object.fromEntries(["index", "middle", "ring", "pinky", "thumb"].map((n) => [n, d[n].values]));
+  return cageHand(cage, p, bends).snapshot();
+};
+
 describe("topologyKey", () => {
   it("does not change when only the points move", () => {
     const c = box();
@@ -37,7 +46,7 @@ describe("topologyKey", () => {
     c.rotate("+y:0,0", { axis: "y", deg: 30 });
     expect(topologyKey(c.snapshot())).toBe(before);
   });
-  it("changes with the faces, the ids and the creases", () => {
+  it("changes with the faces and the creases", () => {
     const base = topologyKey(box().snapshot());
     const extruded = box(); extruded.extrude("+z:0,0", { by: 5 });
     expect(topologyKey(extruded.snapshot())).not.toBe(base);
@@ -55,9 +64,65 @@ describe("topologyKey", () => {
     ba.extrude("+x:0,0", { by: 5 }); ba.extrude("+z:0,0", { by: 5 });
     expect(topologyKey(ab.snapshot())).not.toBe(topologyKey(ba.snapshot()));
   });
-  it("does not read the points", () => {
+  it("does not read the ids", () => {
     const s = box().snapshot();
-    expect(topologyKey({ ...s, points: [] })).toBe(topologyKey(s));
+    const renamed = { ...s, ids: s.ids.map((id) => `x${id}`) };
+    expect(topologyKey(renamed)).toBe(topologyKey(s));
+  });
+  it("is the same for the cage hand at two thumb bends", () => {
+    expect(topologyKey(handAt({ thumbCurl: 45 }))).toBe(topologyKey(handAt({ thumbCurl: 10 })));
+  });
+  it("does not read the point values", () => {
+    const s = box().snapshot();
+    expect(topologyKey({ ...s, points: s.points.map(() => [0, 0, 0]) })).toBe(topologyKey(s));
+  });
+  it("ignores face order and each quad's start corner, not its winding or indices", () => {
+    const s = box().snapshot();
+    const rot = (f) => [...f.slice(1), f[0]];
+    expect(topologyKey({ ...s, faces: [...s.faces].reverse().map(rot) })).toBe(topologyKey(s));
+    const flipped = s.faces.map((f, i) => (i === 0 ? [f[0], f[3], f[2], f[1]] : f));
+    expect(topologyKey({ ...s, faces: flipped })).not.toBe(topologyKey(s));
+    const moved = s.faces.map((f, i) => (i === 0 ? [f[0], f[1], f[2], (f[3] + 1) % s.points.length] : f));
+    expect(topologyKey({ ...s, faces: moved })).not.toBe(topologyKey(s));
+  });
+  it("is the same for the cage hand across every parameter's min and max", () => {
+    const controls = handPart.parameters.flatMap((g) => g.controls);
+    const base = topologyKey(handAt({}));
+    for (const c of controls) {
+      expect(topologyKey(handAt({ [c.key]: c.min })), `${c.key} min`).toBe(base);
+      expect(topologyKey(handAt({ [c.key]: c.max })), `${c.key} max`).toBe(base);
+    }
+  });
+  it("applies a plan from one thumb pose to another pose's points as the same surface", () => {
+    const a = handAt({ thumbCurl: 10 }), b = handAt({ thumbCurl: 45 });
+    for (const L of [1, 2]) {
+      const got = applySubdivPlan(subdivPlan(a, L), b.points).positions;
+      const want = subdivide(b, L).positions;
+      expect(got.length).toBe(want.length);
+      const rows = (pos) => Array.from({ length: pos.length / 3 }, (_, i) => [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]])
+        .sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
+      const g = rows(got), w = rows(want);
+      g.forEach((r, i) => r.forEach((v, j) => expect(Math.abs(v - w[i][j])).toBeLessThan(1e-9)));
+    }
+  });
+});
+
+describe("sameTopology", () => {
+  it("is true for a moved cage and false after an extra extrude", () => {
+    const c = box();
+    const before = c.snapshot();
+    c.move("+z:0,0", [1, 2, 3]);
+    expect(sameTopology(before, c.snapshot())).toBe(true);
+    c.extrude("+z:0,0", { by: 5 });
+    expect(sameTopology(before, c.snapshot())).toBe(false);
+  });
+  it("compares creases, and the quads up to rotation in any order", () => {
+    const s = box().snapshot();
+    const creased = box(); creased.crease("+z:0,0");
+    expect(sameTopology(s, creased.snapshot())).toBe(false);
+    const rot = (f) => [...f.slice(1), f[0]];
+    expect(sameTopology(s, { ...s, faces: [...s.faces].reverse().map(rot) })).toBe(true);
+    expect(sameTopology(handAt({ thumbCurl: 10 }), handAt({ thumbCurl: 45 }))).toBe(true);
   });
 });
 
