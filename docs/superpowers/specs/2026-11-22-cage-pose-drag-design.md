@@ -32,6 +32,38 @@ The bench and the spike (both below) changed the route. The owner chose it on 20
 - **Stopping at the last valid pose** runs in the viewer: the coarse check runs before a
   pose is drawn.
 
+### Measured in a browser
+
+Headless Chromium through Playwright on an Apple M1 Max, `cage-hand.html` on the dev
+server, 2026-11-22, with temporary timers (not committed). GL: ANGLE on Metal
+(`--use-angle=metal --enable-gpu --ignore-gpu-blocklist`). Median of each run, p90 in
+brackets.
+
+| Drag | Moves | (a) one drawn drag shape to the next | (b) JS per move |
+| --- | --- | --- | --- |
+| `indexCurl` slider, an `input` event each animation frame, 20 → 90 → 0 → 45° | 205 | 28.1 ms (29.9) | 24.4 ms |
+| Index fingertip handle, in-page pointer events, one a frame | 60 | 31.1 ms (32.7) | 19.3 + 5.4 ms |
+| Index fingertip handle, Playwright `mouse.move` | 59 | 58.3 ms (59.0) | 19.8 + 5.8 ms |
+
+(a) is the time between two `setSubVertices(…, { deformed: true })` calls. (b) is the
+skin controller's `deform()`; for a handle, plus the validity guard that runs before the
+pose is written (the second number). Inside a slider move: the build probe 1.8 ms, the
+through-itself check 3.1 ms, the deform 11.8 ms, and about 7.5 ms writing the mesh to the
+viewer. The Playwright mouse row is held back by the test driver's own pace (each
+`mouse.move` round trip is about 58 ms), not by the drag's work. No `generate` job was
+posted during any drag; exactly one went out after each release, and the exact mesh
+replaced the deformed one. The first changed slider value deformed.
+
+**Gate: passed.** The slider drag's (a) is 28.1 ms, under 33 ms. The JS per move is
+about 24 ms of that, so there is little room left on this machine.
+
+On SwiftShader (`--use-angle=swiftshader`) the JS per move is the same (25.8 ms) but the
+draw sets the pace: the slider's (a) is 117 ms (p90 136), inside the 120 ms limit.
+
+A copy of the hand with the curl range widened to 160° (a temporary page) confirmed the
+hold: with the pinky's knuckle at 90°, a slider drag up from 80° drew its last pose at
+92°, drew nothing more from 93° to 160°, and the value went back to 92 on release.
+
 ## Why
 
 The cage is now the first choice for sculpted bodies. A user who drags a fingertip on a
@@ -323,7 +355,8 @@ bends slightly during the drag. That is display only.
 
 ### Spike result (Task 10)
 
-`node scripts/spike-cage-weights.mjs` (Apple M1 Max, Node v24.19.0, wall ms, median of
+`node scripts/spike-cage-weights.mjs` (removed in 0.199.0; it is in the git history)
+(Apple M1 Max, Node v24.19.0, wall ms, median of
 20). The cage hand at level 4: 300 cage faces, 153,600 limit triangles, 76,802 limit
 vertices. Pose 0 is the defaults. Pose 1 curls the index, middle and ring fingers (knuckle
 +20 to +30°, curl +30 to +40°). The truth is the part's own kernel build at pose 1.

@@ -630,8 +630,9 @@ it. It builds on Manifold only (see "Backend: Manifold only").
 - **Use an implicit tree for pieces that press together, blend where they meet, or pose
   by frames**: fingers that close against the palm, toes that fan and merge, a body with
   crease detail. The cage has none of these: it has no frames, no `contact`, no detail,
-  and a cage that passes through itself is an error. A pose drag on a cage rebuilds the
-  whole body.
+  and a cage that passes through itself is an error. A pose drag on a cage follows the
+  pointer (see "The surface: `k.subdiv`"), but it stops where the body would pass through
+  itself.
 - The two join each other only by ordinary booleans (`union`, `cut`), which leave a
   sharp seam where they meet. Do not plan on a smooth join between a cage and a tree.
 
@@ -834,9 +835,19 @@ no solid already built, so you can build, change and build again.
 - **A cage has at most 2,000 faces.**
 - **It shades smooth** and takes every ordinary `Solid` op afterwards. A flat to print
   on is an ordinary `cut` with a box.
-- **A change to the cage rebuilds the whole body.** A param that changes the cage (a
-  `rotate` angle, an extrude length) rebuilds it, and so does each move of a slider or
-  handle drag. The rebuild is fast for a small cage: the whale below rebuilds in well
+- **A drag that moves the cage's points follows the pointer.** While a slider or a
+  Pose-mode handle drag changes only where the cage's points are (a `rotate` angle, an
+  extrude length), the viewer re-poses the last exact mesh from the moved points, with
+  no build. The exact build replaces it after a 150 ms pause or on release, and the
+  drag's commit is reported once, after that build. This needs a build that smooths
+  exactly one cage with no creases and asks no geometry question of a solid (reading the
+  cage is fine), and a `place()`, if any, that only moves the body. A `cut` is fine.
+  During the drag a cut face is not recut (its rim rides the skin), and shading at a
+  sharply bent joint can differ slightly, until the exact build lands.
+- **Anything else rebuilds the whole body on each move**: a piece unioned onto the body
+  (eyes, nails), a fillet or chamfer on it, a creased cage, two cages in one sub-part, a
+  change to the cage's faces (an extrude count, `steps`), `setParams`, an animation and
+  the print tier. The rebuild is fast for a small cage: the whale below rebuilds in well
   under a second at print quality. A large cage, such as the hand below, takes longer.
 
 ```js
@@ -851,6 +862,11 @@ smoothBox([2, 2, 2]).max[0];   // 10
   limbs crossing) is an error at print quality and a build warning at preview. Both
   name the cage faces that cross, so you can find them. A face whose own surface
   crosses is named once, as `-y:1,0 folds through itself`.
+- **A drag never draws a pose that passes through itself.** A handle stops at the last
+  valid pose. A panel slider's thumb can move past it, but the body holds, and the value
+  returns to the last valid one. The drag's check is coarser than the build's, so the
+  exact build after the drag is the final word: if it refuses the pose, the params the
+  drag changed go back to where the drag began.
 - **A body with no volume throws** at both qualities, and so does one turned inside out.
   When it also passes through itself, the error names the crossing instead.
 - **Two faces lying exactly flat on each other are not detected.** Keep separate parts
@@ -911,8 +927,9 @@ In the part: `derive: (p) => ({ tail: eel(cage, p).centroid("tail") })`,
 `build: (k, p) => k.subdiv(eel(k.cage, p))`, and a handle
 `{ point: (p, d) => d.tail, params: ["tail"], drag: "axis", direction: [1, 0, 0] }`.
 The smooth surface lies inside the cage, so the handle sits just off the skin. Every
-handle on a cage, this one and the limb-driven ones below, works the same way: each move
-of the drag builds the cage again and smooths it again.
+handle on a cage, this one and the limb-driven ones below, follows the pointer as a
+slider does (see "The surface: `k.subdiv`"), and stops at the last pose in which the body
+does not pass through itself.
 
 **A limb that bends, driven by a `limb`.** For a finger, a leg or a tail that bends at
 joints, let a `limb` from `partforge/kinematics` decide the angles, and give the cage
@@ -1229,8 +1246,10 @@ hand.centroid("indexTip").map(Math.round);   // [32, -42, 183]
 The points to copy:
 
 - **Place a print flat from the cage or from constants, not from the solid's
-  `boundingBox()`.** A build that measures its own solid cannot be re-posed without a
-  rebuild.
+  `boundingBox()`.** The viewer re-poses the body during a drag only when it can trust
+  the build without running it. A build that measures its own solid cannot be trusted
+  that way, so each move of a drag would rebuild the whole hand, about half a second a
+  move. Reading the cage (`cage.bounds()`) is fine.
 - **One top face per finger.** `segs: [4, 1, 2]` gives the palm four faces across X on
   its top and one face through its thickness, so its edge is round. Each finger starts
   with a short narrower neck, which keeps the fingers separate.
