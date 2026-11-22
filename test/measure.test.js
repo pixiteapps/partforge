@@ -338,3 +338,50 @@ test("a throwing frame-set probe reports error", () => {
   const r = measure(k, framesPart({ f: (kk) => kk.implicitFrames(bad) }), "v");
   expect(r.probes.f.error).toContain("unknown frame");
 });
+
+// A sub-part compared against a reference sub-part overlaps it on purpose: that one
+// pair is exempt from the overlap gate and from gaps, and nothing else is.
+const refPairPart = (extra = {}) => ({
+  meta: { title: "RefPair", units: "mm" },
+  defaults: {},
+  views: { v: { label: "V" } },
+  parts: {
+    ref: { views: ["v"], exportable: false, build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) },
+    body: { views: ["v"], reference: "ref", build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 12] }) },
+    ...extra,
+  },
+});
+
+test("a sub-part and its reference sub-part may overlap", () => {
+  const r = measure(k, refPairPart(), "v");
+  expect(r.overlaps).toEqual([]);
+  expect(r.ok).toBe(true);
+  expect(r.gaps.some((g) => [g.a, g.b].sort().join() === "body,ref")).toBe(false);
+});
+
+test("a reference sub-part near but not touching its body is absent from gaps; other near pairs stay", () => {
+  const r = measure(k, {
+    meta: { title: "NearRef", units: "mm" },
+    defaults: {},
+    views: { v: { label: "V" } },
+    parts: {
+      ref: { views: ["v"], exportable: false, build: (kk) => kk.box({ min: [12, 0, 0], max: [22, 10, 10] }) },
+      body: { views: ["v"], reference: "ref", build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) },
+      other: { views: ["v"], build: (kk) => kk.box({ min: [-12, 0, 0], max: [-2, 10, 10] }) },
+    },
+  }, "v");
+  const pairs = r.gaps.map((g) => [g.a, g.b].sort().join());
+  expect(pairs).toContain("body,other");
+  expect(pairs).not.toContain("body,ref");
+});
+
+test("a third sub-part overlapping the body is still reported", () => {
+  const r = measure(k, refPairPart({
+    bolt: { views: ["v"], build: (kk) => kk.box({ min: [5, 5, 5], max: [15, 15, 15] }) },
+  }), "v");
+  const pairs = r.overlaps.map((o) => [o.a, o.b].sort().join());
+  expect(pairs).toContain("body,bolt");
+  expect(pairs).toContain("bolt,ref");
+  expect(pairs).not.toContain("body,ref");
+  expect(r.ok).toBe(false);
+});

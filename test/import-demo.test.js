@@ -39,7 +39,7 @@ test("import-demo measure passes on the default (assembly) view", () => {
   // all exactly zero at the defaults (box vs. box, byte-for-byte matching
   // dimensions) — well inside the gates' margins.
   const body = report.subparts.find((s) => s.name === "body");
-  expect(body.deviation.ref).toBe("scan");
+  expect(body.deviation.ref).toBe("ref");
   expect(body.deviation.xorVolume).toBeLessThan(5);
   const mount = report.subparts.find((s) => s.name === "mount");
   expect(mount.holes).toBe(1); // the socket cut clean through
