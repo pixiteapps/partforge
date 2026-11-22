@@ -193,7 +193,7 @@ probes: { rope: (k, p, d) => d.drive.report() },
 | `halves[i].runOff` | that side has no rope left on a member |
 | `travel.<member>`, `travel.inside` | the angles between which no side runs out, and whether this pose is inside them |
 | `bend.<member>` | drum diameter over rope diameter; `bend.ok` only against a declared `minBendRatio` |
-| `drumWidth` | the drum length the turns need at this lead |
+| `drumWidth` | the drum length the rope covers over the whole `travel`, at this lead; the same at every pose |
 | `holding` | with `fixed: false`: the tension ratio the least wrap holds, `e^(mu * wrap)` |
 | `stiffness` | with the rope's `EA`: each side in N/mm, and the joint in N·mm/rad; `upperBound` when the EA came from a preset |
 | `tensionChange`, `slack` | with `EA`: the tension the drift adds; with `pretension` too, whether it has gone slack |
@@ -206,14 +206,18 @@ What to read first:
   over the joint's travel: lengthen the span, or reduce the lead.
 - **`travel`.** Past it a side has run off its member and the numbers mean nothing. Give
   the joint's control a range inside `travel.<member>`.
-- **`drumWidth`** against the drum you drew.
+- **`drumWidth`** against the drum you drew. The rope is fixed to the drum at its middle,
+  so the wound band shifts along the drum as it turns; this is the band's whole reach.
 
 `lineInfo()` returns the rope's centreline as points (`kind: "partforge.lines"`, the line
 named `rope`). Nothing draws it yet.
 
-The helper models one rope in one plane across parallel axes, with the pulley's two
-grooves placed where the rope leaves the drum at rest. It does not model friction losses,
-creep, or a rope that crosses another joint.
+The helper models one rope across parallel axes. The pulley's two grooves sit either side
+of its own centre, as far apart as the rope's two ends on the drum at rest: a pulley level
+with the drum has no fleet at rest, and one set along the axis from it leans both spans at
+every angle. Members whose rope circles overlap across the axis throw, and so does a
+member named after a report field (`length`, `span`, `fleet`, `runOff`, `required`, `ok`,
+`inside`). It does not model friction losses, creep, or a rope that crosses another joint.
 
 ## `rack({ pinion, direction, name? })`
 

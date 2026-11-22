@@ -16,6 +16,8 @@ import { resolveRope } from "../../lines/materials.js";
 
 const RAD = Math.PI / 180;
 const r3 = (v) => { const x = Math.round(v * 1000) / 1000; return x === 0 ? 0 : x; };
+// The report keys a member's name sits beside (in `halves[i]`, `bend` and `travel`).
+const REPORT_KEYS = new Set(["length", "span", "fleet", "runOff", "required", "ok", "inside"]);
 
 /**
  * `rope`: `{ d, material?, mu?, EA?, minBendRatio? }` (mm; EA in N).
@@ -37,8 +39,10 @@ export function capstan(def) {
   const member = (key, q) => {
     if (!q || typeof q !== "object") fail(key, "must be { name, radius, center }");
     const axis = unit(fail, `${key}.axis`, q.axis ?? [0, 0, 1]);
+    const name = memberName(fail, `${key}.name`, q.name, seen);
+    if (REPORT_KEYS.has(name)) fail(`${key}.name`, `${JSON.stringify(name)} is a field of the report; give the member another name`);
     return {
-      name: memberName(fail, `${key}.name`, q.name, seen),
+      name,
       radius: num(fail, `${key}.radius`, q.radius, { positive: true }),
       center: vec3(fail, `${key}.center`, q.center),
       axis, frame: frameFor(fail, `${key}.axis`, axis),
@@ -60,6 +64,12 @@ export function capstan(def) {
 
   // pitch radii, and the way each member is wrapped (about the INPUT's axis)
   const rIn = input.radius + rope.d / 2, rOut = output.radius + rope.d / 2;
+  // The pulley's centre from the drum's: along the axis (the spans then lean, also at rest)
+  // and across it. Crossed or open, two members whose pitch circles meet cannot be roped.
+  const between3 = output.center.map((c, j) => c - input.center[j]);
+  const axial = dot(between3, input.axis);
+  const across = Math.sqrt(Math.max(0, dot(between3, between3) - axial * axial));
+  if (across < rIn + rOut - 1e-9) fail("output.center", `the members overlap: their centres are ${r3(across)} apart across the axis, and the rope's circles need ${r3(rIn + rOut)}`);
   const sOut = 1, sIn = cross ? -1 : 1;
   const sign = sIn / sOut;                       // output turn per input turn, by direction
   const ratio = rOut / rIn;                      // input turns per output turn
@@ -81,8 +91,9 @@ export function capstan(def) {
   const out2 = bare(drum({ fixed: { wrap: 0 } }), pulley(0, { fixed: { wrap: 0 } })).wraps[0].exit;
   const between = (((sIn * (out2 - in1)) % 360) + 360) % 360;
   const half = (between + 360 * turns) / 2;      // degrees of rope each side of M, at angle 0
-  // The pulley's two grooves sit where the rope leaves the drum at angle 0: no fleet at rest.
-  const wA = wM - (lead * half) / 360, wB = wM + (lead * half) / 360;
+  // The pulley's two grooves sit either side of its own centre, as far apart as the rope's
+  // two ends on the drum at angle 0: a pulley level with the drum has no fleet at rest.
+  const wA = wM + axial - (lead * half) / 360, wB = wM + axial + (lead * half) / 360;
 
   const solve = (th, ph) => [
     solveTaut({ d: rope.d, through: [pulley(wA, { fixed: { wrap: outWrap - sOut * ph } }), drum({ fixed: { wrap: half + sIn * th } })] }),
@@ -114,7 +125,9 @@ export function capstan(def) {
           runOff: a.runOff || b.runOff };
       }),
       bend,
-      drumWidth: r3((Math.abs(lead) * 2 * half) / 360 + rope.d),
+      // The rope is pinned at M, so the wound band shifts along the drum as it turns: over
+      // the travel each side reaches its rest turns plus the travel.
+      drumWidth: r3((Math.abs(lead) * 2 * (half + limit)) / 360 + rope.d),
       travel: { [input.name]: [r3(-limit), r3(limit)], [output.name]: [r3((-limit * rIn) / rOut), r3((limit * rIn) / rOut)], inside },
     };
     if (!fixed) {

@@ -90,9 +90,27 @@ describe("capstan: the rope", () => {
     const wide = make(0, { output: { wrap: 170 } }).report();
     expect(wide.travel.drum[1]).toBeCloseTo(wide.halves[0].drum.wrap, 2);
   });
-  it("the drum must be as wide as its turns laid side by side", () => {
+  it("the drum must be as wide as the band its rope covers over the whole travel", () => {
+    // the rope is pinned at M, so turning the drum shifts the wound band along it: at the
+    // travel's end one side holds its rest turns plus the travel
     const r = make(0).report();
-    expect(r.drumWidth).toBeCloseTo(1.2 * (r.halves[0].drum.turns + r.halves[1].drum.turns) + 1.2, 2);
+    const limit = r.travel.drum[1];
+    expect(r.drumWidth).toBeCloseTo((1.2 * (r.halves[0].drum.wrap + r.halves[1].drum.wrap + 2 * limit)) / 360 + 1.2, 2);
+    expect(make(200).report().drumWidth).toBe(r.drumWidth); // a property of the joint, not the pose
+    // and it covers every point the rope reaches on the drum, end to end of the travel
+    const zs = [-limit, 0, limit].flatMap((a) => make(a).lineInfo().lines.rope.points.filter((q) => Math.hypot(q[0], q[1]) < 6.7).map((q) => q[2]));
+    expect(Math.max(...zs) - Math.min(...zs) + 1.2).toBeCloseTo(r.drumWidth, 2);
+  });
+  it("a pulley set along the axis from the drum leans the spans, also at rest", () => {
+    const level = make(0).report(), off = make(0, { output: { center: [40, 0, 5] } });
+    const r = off.report();
+    expect(level.halves.map((h) => h.fleet)).toEqual([0, 0]);
+    for (const h of r.halves) expect(h.fleet).toBeCloseTo((Math.atan2(5, Math.sqrt(h.span ** 2 - 25)) * 180) / Math.PI, 2);
+    expect(r.length).toBeGreaterThan(level.length);
+    // the rope ends on the pulley where the pulley is placed
+    const pts = off.lineInfo().lines.rope.points;
+    expect(Math.abs(pts[0][2] - 5)).toBeLessThan(3);
+    expect(Math.abs(pts.at(-1)[2] - 5)).toBeLessThan(3);
   });
   it("bend ratios are drum diameter over rope diameter, judged only against a declared limit", () => {
     expect(make(0).report().bend).toEqual({ drum: 10, pulley: 50 });
@@ -151,7 +169,14 @@ describe("capstan: refusals", () => {
     bad({ input: { turns: 1.5 } }, /capstan: input\.turns/);
     bad({ output: { name: "drum" } }, /capstan: output\.name: duplicate name "drum"/);
     bad({ output: { axis: [0, 1, 0] } }, /capstan: output\.axis: must be parallel/);
-    bad({ output: { center: [5, 0, 0] } }, /no tangent between/);
+    bad({ output: { center: [5, 0, 0] } }, /capstan: output\.center: the members overlap/);
+    bad({ cross: false, output: { center: [28, 0, 0] } }, /capstan: output\.center: the members overlap/);
+    expect(() => make(0, { output: { center: [37.3, 0, 0] } })).not.toThrow(); // pitch radii 6.6 + 30.6
+    // a member's name is a key of the report, beside the report's own
+    for (const name of ["length", "span", "fleet", "runOff", "required", "ok", "inside"]) {
+      bad({ input: { name } }, new RegExp(`capstan: input\\.name: "${name}" is a field of the report`));
+      bad({ output: { name } }, new RegExp(`capstan: output\\.name: "${name}" is a field of the report`));
+    }
     expect(() => make(0).angleOf("motor")).toThrow(/capstan: angleOf: unknown member "motor"/);
     expect(() => capstan({ rope: { d: 1 }, input: { name: "a", radius: 5, center: [0, 0, 0] }, output: { name: "b", radius: 9, center: [30, 0, 0] }, drive: { member: "c", angle: 0 } })).toThrow(/capstan: drive\.member/);
   });

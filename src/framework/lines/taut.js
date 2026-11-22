@@ -35,6 +35,7 @@ const isVec = (v) => Array.isArray(v) && v.length === 3 && v.every((c) => Number
 const mod360 = (a) => ((a % 360) + 360) % 360;
 /** The most degrees of arc between two sampled points of a wrap. */
 export const ARC_STEP_DEG = 10;
+const GRAZE_DEG = 1e-9; // a wrap this close to a whole turn is a tangent rope with rounding in it
 
 const fail = (field, msg) => { throw new SpecError(`line: ${field ? `${field}: ` : ""}${msg}`, { field }); };
 
@@ -144,7 +145,10 @@ export function solveTaut({ d, through, closed = false }) {
       else { e.exit = e.entry + e.s * e.wrap; e.wOut = e.w; e.wIn = e.w - (e.lead * e.wrap) / 360; }
     } else {
       e.runOff = false;
-      e.wrap = mod360(e.s * (e.exit - e.entry)) + 360 * e.turns;
+      // a rope that only grazes the drum leaves where it lands; rounding can put the exit a
+      // hair BEFORE the entry, which is no wrap, not a whole turn
+      const swept = mod360(e.s * (e.exit - e.entry));
+      e.wrap = (swept > 360 - GRAZE_DEG ? 0 : swept) + 360 * e.turns;
       e.wIn = e.w; e.wOut = e.w + (e.lead * e.wrap) / 360;
     }
   }

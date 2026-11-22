@@ -23,7 +23,16 @@ describe("solveTaut: open lines", () => {
     // on top, touching at one point, so the wrap is 0 and the length the 40 between them
     const flat = solveTaut({ d: D, through: [{ kind: "anchor", at: [-20, 10, 0] }, drum("a", [0, 0, 0], 10, "cw"), { kind: "anchor", at: [20, 10, 0] }] });
     expect(flat.length).toBeCloseTo(40, 6);
-    expect(Math.min(flat.wraps[0].angle, 360 - flat.wraps[0].angle)).toBeLessThan(1e-4);
+    expect(flat.wraps[0].angle).toBeLessThan(1e-4);
+    // three equal drums in a row: the rope grazes the middle one. Rounding puts its exit a
+    // hair before its entry, which must read as no wrap, not a whole turn
+    const row = solveTaut({ d: 1.3, through: [
+      drum("a", [12.330333112801348, 125.73277147386383, 0], 10, "ccw", { fixed: { wrap: 0 } }),
+      drum("b", [72.33878382124882, 97.9396837288233, 0], 10, "ccw"),
+      drum("c", [121.46575989344427, 75.18638247702431, 0], 10, "ccw", { fixed: { wrap: 0 } }),
+    ] });
+    expect(row.wraps[1].angle).toBeLessThan(1e-6);
+    expect(row.length).toBeCloseTo(120.273, 2);
     // anchors straight below each side of the drum: a half turn over the top
     const over = solveTaut({ d: D, through: [{ kind: "anchor", at: [-10, -30, 0] }, drum("a", [0, 0, 0], 10, "cw"), { kind: "anchor", at: [10, -30, 0] }] });
     expect(over.wraps[0].angle).toBeCloseTo(180, 6);

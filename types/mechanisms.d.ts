@@ -158,7 +158,7 @@ export interface CapstanReport {
   halves: [CapstanHalf, CapstanHalf];
   /** Drum diameter / rope diameter per member; `required` and `ok` when the rope gives `minBendRatio`. */
   bend: Record<string, number | boolean>;
-  /** The drum length its turns need, laid side by side at the lead, mm. */
+  /** The drum length the rope covers over the whole travel, at the lead, mm. The same at every pose. */
   drumWidth: number;
   /** Per member: the angles between which no side runs out of rope; `inside` for this pose. */
   travel: Record<string, [number, number] | boolean>;
@@ -188,7 +188,9 @@ export interface Capstan {
 /**
  * A rope drive: the rope is terminated on the output at both ends and wound round the
  * input drum in between. Radii are groove radii; the rope's centreline runs d / 2 outside.
- * Throws when the axes are not parallel or the members overlap.
+ * A pulley whose centre sits along the axis from the drum's leans both spans.
+ * Throws when the axes are not parallel, when the members' rope circles overlap across the
+ * axis, or when a member is named after a report field.
  */
 export function capstan(def: {
   rope: Rope;
