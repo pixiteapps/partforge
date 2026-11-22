@@ -29176,7 +29176,7 @@
     "evaluated": 19
   },
   "import-demo.js#reference": {
-    "ok": false,
+    "ok": true,
     "view": "reference",
     "cases": [
       {
@@ -29212,16 +29212,10 @@
             "metric": "overlaps",
             "kind": "gate",
             "expr": "0",
-            "actual": 1,
-            "status": "fail",
-            "pass": false,
-            "message": "1 != 0",
-            "hint": "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
-            "location": [
-              10,
-              7,
-              4
-            ]
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
           },
           {
             "scope": "subpart",
@@ -29369,26 +29363,7 @@
         ]
       }
     ],
-    "failures": [
-      {
-        "case": "defaults",
-        "scope": "view",
-        "subpart": null,
-        "metric": "overlaps",
-        "kind": "gate",
-        "expr": "0",
-        "actual": 1,
-        "status": "fail",
-        "pass": false,
-        "message": "1 != 0",
-        "hint": "sub-parts interpenetrate near the reported location — adjust placement or add clearance in derive()",
-        "location": [
-          10,
-          7,
-          4
-        ]
-      }
-    ],
+    "failures": [],
     "warnings": [],
     "costs": [],
     "unevaluated": [],
