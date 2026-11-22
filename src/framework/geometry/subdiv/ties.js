@@ -119,3 +119,24 @@ export function tieError({ tri, w }, positions, limitPositions, limitIndices) {
   }
   return Math.sqrt(worst);
 }
+
+// How far a weight may stray outside [0, 1] (float rounding at a triangle's edge).
+export const TIE_WEIGHT_SLACK = 1e-4;
+// How far (mm) a vertex placed from its tie on the rest limit mesh may be from where it was delivered.
+export const TIE_TOLERANCE = 1e-3;
+
+/**
+ * Whether ties may be sent: every vertex placed from its tie on the rest limit mesh lands
+ * within TIE_TOLERANCE of its delivered position, and all three of its weights (w0, w1,
+ * 1 − w0 − w1) are within [−TIE_WEIGHT_SLACK, 1 + TIE_WEIGHT_SLACK]. A weight outside that
+ * range can still reproduce the rest position (a vertex Manifold left on a near-coplanar
+ * neighbour of its triangle) but would extrapolate at a new pose.
+ */
+export function tiesHold(ties, positions, limitPositions, limitIndices) {
+  const { w } = ties, lo = -TIE_WEIGHT_SLACK, hi = 1 + TIE_WEIGHT_SLACK;
+  for (let v = 0; v < ties.tri.length; v++) {
+    const w0 = w[2 * v], w1 = w[2 * v + 1], w2 = 1 - w0 - w1;
+    if (!(w0 >= lo && w0 <= hi && w1 >= lo && w1 <= hi && w2 >= lo && w2 <= hi)) return false;
+  }
+  return tieError(ties, positions, limitPositions, limitIndices) <= TIE_TOLERANCE;
+}

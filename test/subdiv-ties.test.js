@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { levelFor, subdivide, subdivPlan, applySubdivPlan, topologyKey, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
-import { tiesFor, placeFromTies, tieError } from "../src/framework/geometry/subdiv/ties.js";
+import { tiesFor, tiesHold, placeFromTies, tieError } from "../src/framework/geometry/subdiv/ties.js";
 import hand, { cageHand } from "../src/parts/cage-hand.js";
 import whale from "../src/parts/organic-whale.js";
 
@@ -92,11 +92,10 @@ describe("the cage hand with its cut", () => {
       (Math.abs(mesh.positions[3 * v + 2] - zMin) < 1e-4 ? cap : skin).push(d);
     }
     const max = (a) => a.reduce((m, x) => Math.max(m, x), 0);
-    console.log(`second pose: skin ${skin.length} vertices, max ${max(skin).toExponential(2)} mm; cut face ${cap.length}, max ${max(cap).toExponential(2)} mm`);
-    expect(skin.length).toBeGreaterThan(0);
-    expect(cap.length).toBeGreaterThan(0);
-    expect(max(skin)).toBeLessThan(1e-2);
-    expect(max(cap)).toBeLessThan(1e-2);
+    expect(skin.length, "skin vertices").toBeGreaterThan(0);
+    expect(cap.length, "cut-face vertices").toBeGreaterThan(0);
+    expect(max(skin), `skin: ${skin.length} vertices, worst distance to the pose-B build (mm)`).toBeLessThan(1e-2);
+    expect(max(cap), `cut face: ${cap.length} vertices, worst distance to the pose-B build (mm)`).toBeLessThan(1e-2);
   }, 120_000);
 });
 
@@ -227,6 +226,16 @@ describe("tiesFor", () => {
     const t = tiesFor({ positions: positions.subarray(0, 9), faceTri: Int32Array.of(0), limitPositions, limitIndices });
     expect(t.untied).toBe(0);
     expect(tieError(t, positions.subarray(0, 9), limitPositions, limitIndices)).toBeLessThan(1e-6);
+    expect(tiesHold(t, positions.subarray(0, 9), limitPositions, limitIndices)).toBe(true);
+  });
+  test("a vertex outside its triangle (in its plane) reproduces at rest but does not hold", () => {
+    // (12, 1, 0) is in the triangle's plane but past its B corner: w0 < 0.
+    const out = Float32Array.of(1, 1, 0, 12, 1, 0, 1, 5, 0);
+    const t = tiesFor({ positions: out, faceTri: Int32Array.of(0), limitPositions, limitIndices });
+    expect(t.untied).toBe(0);
+    expect(t.w[2]).toBeLessThan(0);
+    expect(tieError(t, out, limitPositions, limitIndices)).toBeLessThan(1e-6);
+    expect(tiesHold(t, out, limitPositions, limitIndices)).toBe(false);
   });
 });
 

@@ -14,7 +14,7 @@ import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
 import { implicitShapeHash } from "./implicit/call-id.js";
 import { createCage, isCage, meshSubdiv } from "./subdiv/index.js";
 import { topologyKey } from "./subdiv/surface.js";
-import { tiesFor, tieError } from "./subdiv/ties.js";
+import { tiesFor, tiesHold } from "./subdiv/ties.js";
 import { encodeBindingProps, decodeBindings, BIND_PROPS } from "./mesh-bindings.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
@@ -443,8 +443,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // the mesh is the SAME preview, crease-free k.subdiv body with no transform on it (a
   // moved body would be placed in the wrong frame), and every vertex is tied — a unioned
   // piece's own vertices are not, so it sends none. Last, every vertex placed from its tie
-  // on the rest limit mesh must land where it was delivered: a wrong tie is never sent.
-  const TIE_TOLERANCE = 1e-3;   // mm
+  // on the rest limit mesh must land where it was delivered, with every weight in [0, 1]
+  // (tiesHold): a wrong tie is never sent.
   function skinTies(g, positions) {
     if (subdivSkins.size === 0) return null;
     const roid = g.runOriginalID, ri = g.runIndex, rt = g.runTransform, fid = g.faceID;
@@ -453,7 +453,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     for (let r = 0; r < roid.length; r++) {
       const rec = subdivSkins.get(roid[r]);
       if (!rec) continue;
-      if ((skin && skin !== rec) || !isIdentityAt(rt, r)) return null;
+      if ((skin && skin !== rec) || !isIdentityAt(rt, r, roid.length)) return null;
       skin = rec;
     }
     if (!skin || !fid || fid.length !== nTri || positions.length !== nTri * 9) return null;
@@ -464,11 +464,16 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     }
     const t = tiesFor({ positions, faceTri, limitPositions: skin.positions, limitIndices: skin.indices });
     if (t.untied !== 0) return null;
-    if (!(tieError(t, positions, skin.positions, skin.indices) <= TIE_TOLERANCE)) return null;
+    if (!tiesHold(t, positions, skin.positions, skin.indices)) return null;
     return { key: skin.key, level: skin.level, tri: t.tri, w: t.w };
   }
-  const isIdentityAt = (rt, r) => {
-    if (!rt || rt.length < (r + 1) * 12) return true;
+  // Fails closed: a missing or short transform is not identity. The one exception is a
+  // mesh of ONE run with no transform array at all: Manifold gives a fresh original (an
+  // import no boolean has touched yet, such as a bare k.subdiv) an empty runTransform, and
+  // that run is in its own frame.
+  const isIdentityAt = (rt, r, runs) => {
+    if ((!rt || rt.length === 0) && runs === 1) return true;
+    if (!rt || rt.length < (r + 1) * 12) return false;
     const M = affineAt(rt, r);
     for (let i = 0; i < 12; i++) if (Math.abs(M[i] - IDENTITY[i]) > 1e-7) return false;
     return true;
