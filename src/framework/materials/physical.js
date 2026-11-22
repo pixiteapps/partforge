@@ -8,6 +8,15 @@ import { cadAppearance, resolveMaterial, hasAppearance } from "./resolve.js";
 import { applyBrushFrame, applyBurn, applyPattern, applyPlies } from "./patterns.js";
 import { PATTERN_TEXTURES } from "./assets.js";
 
+// A ghost surface is pushed further back than an opaque one (2/2 against the viewer's 1/1), so a
+// ghost face lying on an opaque face always loses the depth test instead of flashing against it.
+export function ghostOffset(m) {
+  m.polygonOffset = true;
+  m.polygonOffsetFactor = 2;
+  m.polygonOffsetUnits = 2;
+  return m;
+}
+
 export function buildCadMaterial(display, base) {
   if (!hasAppearance(display)) return base;
   const a = cadAppearance(display);
@@ -15,7 +24,7 @@ export function buildCadMaterial(display, base) {
   m.color = new THREE.Color(a.color);
   m.metalness = a.metalness;
   m.roughness = a.roughness;
-  if (a.opacity < 1) { m.transparent = true; m.opacity = a.opacity; m.depthWrite = false; }
+  if (a.opacity < 1) { m.transparent = true; m.opacity = a.opacity; m.depthWrite = false; ghostOffset(m); }
   return m;
 }
 
@@ -53,7 +62,7 @@ function buildPhysical(display, { printFrame, loadTexture } = {}) {
     envMapIntensity: params.envIntensity,
     specularIntensity: params.specularIntensity,
   });
-  if (params.opacity < 1) { m.transparent = true; m.opacity = params.opacity; m.depthWrite = false; }
+  if (params.opacity < 1) { m.transparent = true; m.opacity = params.opacity; m.depthWrite = false; ghostOffset(m); }
   m.userData.pfAnisotropic = params.anisotropy > 0;
   if (!loadTexture) {
     applyPattern(m, { kind: params.pattern, scale: params.textureScale, printFrame });

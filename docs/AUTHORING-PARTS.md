@@ -457,7 +457,7 @@ meta: { title: "…", units: "mm", environment: "studio" },
 - Overrides — each clamped to its range: `roughness` (0–1), `metalness` (0–1),
   `clearcoat` (0–1), `clearcoatRoughness` (0–1), `anisotropy` (0–1), `textureScale` (0.01–1000).
   Transmission, index of refraction, sheen and iridescence come only from a preset.
-- `opacity` — unchanged: a ghost stays a ghost and casts no shadow.
+- `opacity` — unchanged: a ghost stays a ghost and casts no shadow. A ghost face lying on an opaque face is hidden there.
 - **One material per sub-part.** Something that needs two finishes (a knurled
   grip in rubber on an aluminium body) is two sub-parts.
 
