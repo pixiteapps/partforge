@@ -14,7 +14,7 @@ export default {
   when: "smooth organic bodies: hands, paws, creatures, blobby or sculpted forms; blended signed-distance shapes with surface detail; one smooth skin box-modelled from a subdivision cage (k.cage, k.subdiv)",
   subpath: "partforge/organic",
   guide: "docs/domains/organic.md",
-  referenceParts: ["src/parts/organic-hand.js", "src/parts/organic-whale.js"],
+  referenceParts: ["src/parts/organic-hand.js", "src/parts/organic-whale.js", "src/parts/cage-hand.js"],
   kernelOps: [
     {
       name: "implicit",

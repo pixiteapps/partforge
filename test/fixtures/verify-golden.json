@@ -40,6 +40,84 @@
     "declared": 0,
     "evaluated": 0
   },
+  "cage-hand.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "indexKnuckle": 15,
+          "indexCurl": 20,
+          "middleKnuckle": 15,
+          "middleCurl": 20,
+          "ringKnuckle": 15,
+          "ringCurl": 20,
+          "pinkyKnuckle": 15,
+          "pinkyCurl": 20,
+          "thumbCurl": 10
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 1,
+    "evaluated": 1
+  },
+  "cage-hand.js#print": {
+    "ok": true,
+    "view": "print",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "indexKnuckle": 15,
+          "indexCurl": 20,
+          "middleKnuckle": 15,
+          "middleCurl": 20,
+          "ringKnuckle": 15,
+          "ringCurl": 20,
+          "pinkyKnuckle": 15,
+          "pinkyCurl": 20,
+          "thumbCurl": 10
+        },
+        "checks": [
+          {
+            "scope": "subpart",
+            "subpart": "hand",
+            "metric": "watertight",
+            "kind": "gate",
+            "expr": "true",
+            "actual": true,
+            "status": "pass",
+            "pass": true,
+            "message": "true == true"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 1,
+    "evaluated": 1
+  },
   "demo.js#spacer": {
     "ok": true,
     "view": "spacer",

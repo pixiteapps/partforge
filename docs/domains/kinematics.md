@@ -554,6 +554,14 @@ organic reference hand, `src/parts/organic-hand.js`, poses each digit with a lim
 `rotate` holds the finger's spread, and gives each digit an angles-mode handle on its
 knuckle, curl and spread.
 
+**A subdivision cage.** A `k.subdiv` body has no frames, but a limb can still pose it:
+pass `posed.values` (the joint angles in degrees, in joint order) to the cage's knuckle
+`rotate` calls, and give each limb one angles-mode handle. Centre each knuckle's rings
+on the limb's joint and make the cage's segment lengths the limb's `lengths`, and the
+handle sits on the cage's tip. The recipe is in `docs/domains/organic.md`, "Drag handles
+on a cage", and the reference part is `src/parts/cage-hand.js`. A pose change rebuilds
+the whole cage body.
+
 **Gripping an organic shape.** `grip.around` takes the plain shapes listed under "grip".
 For any other `k.implicit` node (a blended union, a warp, a `round`), pass
 `implicitDistance(node)` from `partforge/geometry`. It is the implicit engine's own
