@@ -98,6 +98,18 @@ test("a refused comparison renders the part and its ghost as before", async () =
   expect(boss[0]).toBeGreaterThan(boss[2]); // the warm ghost over the plate, no blue
 });
 
+test("a comparison that throws renders the part and its ghost, never fails the render", async () => {
+  const throwing = { ...k, _compareSolids: () => { throw new Error("kernel trap"); } };
+  const refused = { ...k, _compareSolids: () => ({ skipped: "too-large" }) };
+  const a = await renderTop(throwing, plateWithReference());
+  const b = await renderTop(refused, plateWithReference());
+  expect(Buffer.compare(PNG.sync.write(a), PNG.sync.write(b))).toBe(0);
+  // ...and a piece whose mesh cannot be read falls back the same way.
+  const badMesh = { ...k, _compareSolids: () => ({ common: { toMesh: () => { throw new Error("mesh"); } }, missing: null, excess: null }) };
+  const c = await renderTop(badMesh, plateWithReference());
+  expect(Buffer.compare(PNG.sync.write(c), PNG.sync.write(b))).toBe(0);
+});
+
 test("a view with no pair renders byte-for-byte as without a comparison kernel", async () => {
   const spy = { ...k, _compareSolids: () => { throw new Error("no pair: never asked"); } };
   const [a] = await renderViewImages(spy, demo, "spacer", { views: ["iso"], size: [64, 64] });

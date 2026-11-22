@@ -115,10 +115,17 @@ function withComparison(kernel, part, built, opacityOf) {
   });
   if (!name) return null;
   const a = byName.get(name).solid, b = byName.get(part.parts[name].reference).solid;
-  const c = kernel._compareSolids(a, b, { tolerance: compareTolerance(a.boundingBox(), b.boundingBox()), maxTriangles: COMPARE_MAX_TRIANGLES });
-  if (!c || c.skipped) return null;
-  const pieces = ["common", "missing", "excess"].filter((kind) => c[kind])
-    .map((kind) => ({ name: `${name}:${kind}`, mesh: c[kind].toMesh(), display: { color: COMPARE_COLORS[kind] }, opacity: 1 }));
+  let pieces;
+  try {
+    const c = kernel._compareSolids(a, b, { tolerance: compareTolerance(a.boundingBox(), b.boundingBox()), maxTriangles: COMPARE_MAX_TRIANGLES });
+    if (!c || c.skipped) return null;
+    pieces = ["common", "missing", "excess"].filter((kind) => c[kind])
+      .map((kind) => ({ name: `${name}:${kind}`, mesh: c[kind].toMesh(), display: { color: COMPARE_COLORS[kind] }, opacity: 1 }));
+  } catch {
+    // A kernel error in the comparison is a refusal, never a failed render: the part
+    // and its ghost, as before (the caller's cleanup frees what was built).
+    return null;
+  }
   const pair = new Set([name, part.parts[name].reference]);
   const at = built.findIndex((x) => pair.has(x.name));
   return built.flatMap((sp, i) => {

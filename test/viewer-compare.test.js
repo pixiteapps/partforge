@@ -418,6 +418,23 @@ describe("captures draw the comparison", () => {
     v.dispose();
   });
 
+  test("a capture that throws mid-pass still puts the on-screen compare state back exactly", () => {
+    const v = shown();
+    v.setCompareShown(false);
+    v.setCompare({ name: "body", ref: "ref", pieces: pieces() });
+    v.setCompareHidden("missing", true);
+    const before = snapshot(v);
+    const seen = [];
+    state.renderer.render = () => { seen.push(snapshot(v)); throw new Error("render failed"); };
+    expect(() => v.captureCanonicalViews(["iso"])).toThrow("render failed");
+    expect(seen[0]).toEqual(forced); // it was forced when it threw
+    expect(snapshot(v)).toEqual(before);
+    expect(v.getCompare().hidden).toEqual({ missing: true, excess: false });
+    v.setCompareShown(true);
+    expect(snapshot(v).pieces).toEqual({ common: true, missing: false, excess: true });
+    v.dispose();
+  });
+
   test("the legend is DOM chrome: no capture reads it", () => {
     const v = shown();
     v.setCompare({ name: "body", ref: "ref", pieces: pieces() });

@@ -791,7 +791,8 @@ export interface PartRuntime {
    * the showcase capture. Returns a `data:image/jpeg;base64,…` string, or `null`
    * when disposed or nothing is built yet. Throws only as `captureViews` does,
    * while a provisional stage is in view. Follows the live render mode unless
-   * `opts.renderMode` pins one.
+   * `opts.renderMode` pins one. `includeHidden: true` (build sight) also draws the
+   * view's reference comparison in full when one is held (see `captureReady`).
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
   /** Resolves once the view's reference comparison is held or refused (bounded at 10 s; at once with no pair in view): await it before a synchronous `captureViews` / `captureCurrent({ includeHidden: true })` so the capture draws the comparison. `renderViews` awaits it itself. */
