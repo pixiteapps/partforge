@@ -12,6 +12,11 @@
 //   toMesh+ties   the same toMesh with ties (subdiv/ties.js), as a canonical generate asks;
 //                 "ties" below is its median minus toMesh's: the cost of the ties alone
 //   whole build   k.subdiv + cut + toMesh from the part's own build function
+// Then, for the cage hand only, the viewer's side of a drag (skin/cage-deform.js), the
+// median of 20 moves of one curl from one delivered base:
+//   deformCage    one re-pose of the delivered mesh from the moved cage's points
+//   skin deform() one full skin controller deform(): the live build probe at the new
+//                 params, then deformCage, then the viewer write (a no-op stub here)
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { levelFor, subdivide, SUBDIV_TOLERANCE, SUBDIV_MAX_TRIANGLES } from "../src/framework/geometry/subdiv/surface.js";
@@ -19,6 +24,9 @@ import { selfIntersections } from "../src/framework/geometry/subdiv/self-interse
 import { manifoldFromWeldedMesh } from "../src/framework/geometry/mesh-build.js";
 import hand, { cageHand } from "../src/parts/cage-hand.js";
 import whale, { whaleCage } from "../src/parts/organic-whale.js";
+import { probePoses } from "../src/framework/pose-probe.js";
+import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
+import { makeCageBase, deformCage } from "../src/framework/skin/cage-deform.js";
 
 const RUNS = 12;
 const PREVIEW = { quality: "preview" };
@@ -108,4 +116,41 @@ for (const { c, info, rows } of results) {
   const d = (r) => median(rows[r]);
   console.log(`  ${"ties".padEnd(14)} ${f1(d("toMesh+ties") - d("toMesh")).padStart(8)}   (toMesh+ties − toMesh)`);
   console.log(`  ${"drag sum".padEnd(14)} ${f1(d("cage code") + d("manifold") + d("cut") + d("toMesh")).padStart(8)}   (cage code + manifold + cut + toMesh)`);
+}
+
+// The viewer's side of a cage drag on the hand: one delivered base, 20 moves of a curl.
+{
+  const DRAG_RUNS = 20;
+  const at = { ...hand.defaults };
+  const delivered = bracket("hand", () => {
+    const m = hand.parts.hand.build(kernel, at, resolveParams(hand, at).d).toMesh({ ...PREVIEW, ties: true });
+    return { frame: "canonical", positions: m.positions, normals: m.normals, ties: m.ties };
+  });
+  if (!delivered.ties) throw new Error("cage-hand: the delivered mesh carries no ties");
+  const probeAt = (p) => probePoses(hand, "assembly", p, { scope: "build" }).get("hand");
+  const base = makeCageBase(probeAt(at).cages[0], delivered.ties);
+  const n = delivered.positions.length;
+  const P = new Float32Array(n), N = new Float32Array(n);
+  const deformMs = [];
+  for (let i = 0; i <= DRAG_RUNS; i++) {
+    const live = probeAt({ ...at, indexCurl: 30 + i }).cages[0];
+    const [ok, ms] = time(() => deformCage(base, live, P, N));
+    if (!ok) throw new Error("deformCage refused the hand's own cage");
+    if (i > 0) deformMs.push(ms);
+  }
+  const params = { ...at };
+  let version = 0;
+  const viewer = { hasSubMesh: () => true, setSubVertices: () => true };
+  const skin = createSkinDrag(hand, viewer, { params, getView: () => "assembly", getParamsVersion: () => version });
+  skin.recordDelivered("hand", delivered, { view: "assembly", params: { ...at } });
+  const controllerMs = [];
+  for (let i = 0; i <= DRAG_RUNS; i++) {
+    params.indexCurl = 30 + 0.5 * i; version++;
+    const [names, ms] = time(() => skin.deform());
+    if (names.length !== 1) throw new Error("the skin controller did not deform the hand");
+    if (i > 0) controllerMs.push(ms);
+  }
+  console.log(`\ncage-hand drag, CPU ms, median of ${DRAG_RUNS}: ${n / 3} delivered vertices, ${base.plan.indices.length / 3} limit triangles (level ${base.plan.level})`);
+  console.log(`  ${"deformCage".padEnd(14)} ${f1(median(deformMs)).padStart(8)}`);
+  console.log(`  ${"skin deform()".padEnd(14)} ${f1(median(controllerMs)).padStart(8)}   (live probe + deformCage)`);
 }

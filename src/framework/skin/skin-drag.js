@@ -17,10 +17,20 @@
 // The deformed mesh is display only: mount restores the base before any capture, and
 // nothing that reads geometry as exact (exports, inspect, the geometry cache) reads the
 // viewer. No DOM, no three.js: the viewer is injected.
+//
+// A second kind of base, for a k.subdiv(cage) body (docs/superpowers/specs/2026-11-22-
+// cage-pose-drag-design.md): a CAGE BASE is a canonical delivery carrying `ties` whose
+// probe entry is trusted and cagePosable, with its subdiv plan built from that entry's own
+// cage snapshot (cage-deform.js). A slider change may deform it when, against the live
+// probe: both sides are trusted and cagePosable, the shapeHash (the build less the cage's
+// point positions) is equal, and deformCage accepts the live cage's topology. A sub-part's
+// base is one kind or the other, never both; every other rule (the copies, the scratch,
+// restore, hold, the drag flag) is shared.
 import { viewSubParts } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { framesOnlyChange } from "./frames-only.js";
 import { frameMotions, skinVertices } from "./deform.js";
+import { makeCageBase, deformCage } from "./cage-deform.js";
 
 /** The pause with no slider input after which a drag's exact build is dispatched. */
 export const SKIN_PAUSE_MS = 150;
@@ -33,8 +43,17 @@ const skinnableBetween = (from, to) =>
   && from.shapeHash !== undefined && from.shapeHash === to.shapeHash
   && framesOnlyChange(from.implicitSpecs, to.implicitSpecs);
 
+// A cage base's entry: one cage, trusted, cage-posable, a defined shapeHash.
+const cagePosableEntry = (e) => !!(e && e.trusted && e.cagePosable && Array.isArray(e.cages) && e.cages.length === 1
+  && e.shapeHash !== undefined);
+
+// Can a cage body built at `from` be re-posed to `to`? (deformCage checks the topology.)
+const cagePosableBetween = (from, to) =>
+  cagePosableEntry(from) && cagePosableEntry(to) && from.shapeHash === to.shapeHash;
+
 export function createSkinDrag(part, viewer, { params, getView, getParamsVersion, probe = probePoses }) {
-  // name -> { positions, normals, bindings, specs, shapeHash, baseHash, scratch }
+  // name -> { kind: "implicit", positions, normals, bindings, specs, shapeHash, baseHash, scratch }
+  //       | { kind: "cage", positions, normals, cage, shapeHash, baseHash, scratch }
   const bases = new Map();
   const deformed = new Set();
   let dragging = false;
@@ -69,6 +88,7 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
   }
 
   function recordDelivered(name, mesh, at) {
+    if (mesh?.ties && recordCage(name, mesh, at)) return;
     const b = mesh?.bindings;
     if (!b || mesh.frame !== "canonical" || !at?.params || !mesh.positions || !mesh.normals
       || !b.frameA || b.frameA.length * 3 !== mesh.positions.length || mesh.normals.length !== mesh.positions.length) {
@@ -79,6 +99,7 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     if (!skinnableEntry(e) || e.shapeHash === undefined) { forget(name); return; }
     const n = mesh.positions.length;
     bases.set(name, {
+      kind: "implicit",
       positions: mesh.positions.slice(),
       normals: mesh.normals.slice(),
       bindings: b,
@@ -91,13 +112,44 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     motionMemo.delete(name);
   }
 
+  // A delivery with ties becomes a cage base when its probe entry is cage-posable and
+  // the ties fit that entry's cage. False records nothing (recordDelivered goes on to
+  // the implicit rule, which forgets a delivery without bindings).
+  function recordCage(name, mesh, at) {
+    const ties = mesh.ties;
+    if (mesh.frame !== "canonical" || !at?.params || !mesh.positions || !mesh.normals
+      || !ties.tri || ties.tri.length * 3 !== mesh.positions.length || mesh.normals.length !== mesh.positions.length) return false;
+    const e = probeAt(at).get(name);
+    // The plan comes from the base delivery's own snapshot: the ties index its triangles.
+    const cage = cagePosableEntry(e) ? makeCageBase(e.cages[0], ties) : null;
+    if (!cage) return false;
+    const n = mesh.positions.length;
+    bases.set(name, {
+      kind: "cage",
+      positions: mesh.positions.slice(),
+      normals: mesh.normals.slice(),
+      cage,
+      shapeHash: e.shapeHash,
+      baseHash: e.baseHash,
+      scratch: { positions: new Float32Array(n), normals: new Float32Array(n) },
+    });
+    deformed.delete(name);
+    motionMemo.delete(name);
+    return true;
+  }
+
   function canSkin(name) {
     const base = bases.get(name);
     if (!base) return false;
     const live = liveProbe().get(name);
+    if (base.kind === "cage") return cagePosableBetween({ trusted: true, cagePosable: true, cages: [base.cage.snapshot], shapeHash: base.shapeHash }, live);
     return skinnableBetween({ trusted: true, skinnable: true, implicitSpecs: base.specs, shapeHash: base.shapeHash }, live);
   }
 
+  // Implicit bases only: mount rebases a stale delivery with bindings mid-drag, because
+  // skinning drifts from the exact shape as the pose moves away from the base. A cage
+  // deform is the smooth surface at the live points wherever the drag goes, so a cage
+  // base is never rebased.
   function canRebase(name, at) {
     if (!at?.params) return false;
     return skinnableBetween(probeAt(at).get(name), liveProbe().get(name));
@@ -137,17 +189,23 @@ export function createSkinDrag(part, viewer, { params, getView, getParamsVersion
     const skinned = [];
     for (const name of inView) {
       if (!bases.has(name) || !viewer.hasSubMesh(name)) continue;
+      const base = bases.get(name);
       const live = canSkin(name) ? liveProbe().get(name) : null;
       // At the base's own build the exact base IS the live shape: show it, not an
       // identity skin (which would also keep the edge lines hidden).
-      const atBase = live && bases.get(name).baseHash !== undefined && live.baseHash === bases.get(name).baseHash;
-      const motions = live && !atBase ? motionsOf(name) : null;
-      if (!motions) {
+      const atBase = live && base.baseHash !== undefined && live.baseHash === base.baseHash;
+      let moved = false;
+      if (live && !atBase) {
+        if (base.kind === "cage") moved = deformCage(base.cage, live.cages[0], base.scratch.positions, base.scratch.normals);
+        else {
+          const motions = motionsOf(name);
+          if (motions) { skinVertices(base, motions, base.scratch); moved = true; }
+        }
+      }
+      if (!moved) {
         if (deformed.has(name)) restore(name);
         continue;
       }
-      const base = bases.get(name);
-      skinVertices(base, motions, base.scratch);
       let ok;
       try {
         ok = viewer.setSubVertices(name, base.scratch, { deformed: true });
