@@ -30,10 +30,9 @@ implicit hand. What is missing is speed, and a guide recipe.
 
 ## Goals
 
-1. A handle drag in Pose mode on the guide's cage hand updates the shape on screen at
-   30 moves a second or better (33 ms or less from one drawn shape to the next, measured
-   in a browser on the bench machine). A panel slider is not in this goal; see "Open
-   for the owner".
+1. A handle drag in Pose mode, or a panel slider drag, on the guide's cage hand updates
+   the shape on screen at 30 moves a second or better (33 ms or less from one drawn
+   shape to the next, measured in a browser on the bench machine).
 2. The shape on screen during the drag is the real smooth surface for the dragged
    values, not a bent copy of the old one. Small, stated differences are allowed (see
    "What the drag shape may differ in").
@@ -115,8 +114,8 @@ level.
 The viewer already marks builds made while a pose handle is held: they are transient
 (`cycleTransient` in `mount.js`), drawn but not reported, and release owes one real
 build. A panel slider edit is not transient: it is an ordinary debounced build that is
-reported, exported and measured, with no release build after it. So the fast path
-applies to handle holds only, and the viewer sends a new flag on those builds (the
+reported, exported and measured, with no release build after it. Sliders get their own rule (see "Panel sliders" below). The viewer sends a new flag on
+drag builds (the
 existing `provisional: false` is sent only for skinned drags and playback). For a
 flagged build of a `k.subdiv` on the preview tier, when the worker holds a drag entry
 with the same topology key:
@@ -142,6 +141,22 @@ always runs the full path: level search, diagonals, self-intersection check. (My
 **No pause build.** The live-rebuild path has no pause build today; only skinned drags
 do. A drag held still keeps the drag shape until release. Adding a pause build would
 bring a full build's stall back into the drag. (My call.)
+
+**Panel sliders** (owner's decision, 2026-11-22: sliders are in). A panel edit already
+reaches the viewer marked `interactive` (`onParamChange({ interactive: true })`), which
+is what an implicit body's bend keys on. For an interactive change that touches a
+sub-part with a drag entry, the viewer does what it does for a skinned drag, with a
+drag build in place of the bend:
+
+- it sends a flagged drag build at once, and draws the result as a drag shape: not
+  reported to the host, not exportable, not measured, and captures read the last exact
+  mesh;
+- it delays the ordinary build with `loop.delayKick(SKIN_PAUSE_MS)`, so the full,
+  checked and reported build runs 150 ms after the last move, or at once on release.
+
+A non-interactive change (`setParams`, an animation, a host write) is an ordinary
+build, as today. So a slider, unlike a handle hold, does get a pause build: the panel
+has no hold to wait for.
 
 **The viewer must let the hand rebuild live.** Today `hold(true)` decides
 `liveRebuild` once, from the time of the last real build (`lastBuildMs <
@@ -230,6 +245,8 @@ Each PR is useful without the next.
   same vertex positions as that full build, to float precision.
 - A drag build after a topology change is a full build.
 - A release at the last drag pose is not answered from the cache.
+- A slider drag draws drag shapes and reports nothing to the host until the pause build
+  lands; `setParams` and an animation take the ordinary path.
 - Release after a drag runs the self-intersection check: a pose that cuts through
   itself draws during the drag and fails on release, and the previous exact mesh
   returns.
@@ -247,10 +264,6 @@ Each PR is useful without the next.
 
 ## Open for the owner
 
-0. **Panel sliders.** This spec speeds up handle drags only. A slider edit is an
-   ordinary reported build, so giving it the fast path would let the unchecked drag
-   shape be exported and measured. Bringing sliders in needs a hold and release for
-   the panel, which the viewer does not have. In scope later, or not needed?
 1. **Is 33 ms the right target**, or is "under 120 ms, follows the pointer" enough to
    stop after PR 2?
 2. **Public pages (Part 4):** in scope later, or not wanted?
