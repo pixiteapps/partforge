@@ -1,0 +1,76 @@
+// The cage hand (src/parts/cage-hand.js): a k.subdiv hand whose finger bends come from
+// limbs posed in derive, one angles-mode handle per digit. It lints clean, builds watertight
+// across its whole parameter range, each limb's tip sits on its cage tip, and posing never
+// changes the cage's faces (only its points move).
+import { beforeAll, expect, test } from "vitest";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { measure } from "../src/oracle.js";
+import { lintPart } from "../src/lint.js";
+import { resolveParams } from "../src/framework/part-model.js";
+import { cage } from "../src/framework/domains/organic/index.js";
+import part, { cageHand } from "../src/parts/cage-hand.js";
+import organic from "../src/framework/domains/organic/manifest.js";
+
+const FINGERS = ["index", "middle", "ring", "pinky"];
+const DIGITS = [...FINGERS, "thumb"];
+const CONTROLS = part.parameters.flatMap((g) => g.controls);
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+// The cage at params p, built the way the part's build does: bends from the posed limbs.
+function cageAt(p) {
+  const { p: params, d } = resolveParams(part, p);
+  const bends = Object.fromEntries(DIGITS.map((n) => [n, d[n].values]));
+  return { c: cageHand(cage, params, bends), d };
+}
+
+let k;
+beforeAll(async () => { k = await bootManifoldKernel({ quality: "preview" }); }, 120_000);
+
+test("lints with no errors or warnings", () => {
+  const { errors, warnings } = lintPart(part);
+  expect(errors).toEqual([]);
+  expect(warnings).toEqual([]);
+});
+
+test("params, derive and handles: one posed limb and one angles-mode handle per digit", () => {
+  expect(CONTROLS.map((c) => c.key).sort()).toEqual([
+    ...FINGERS.flatMap((f) => [`${f}Knuckle`, `${f}Curl`]), "thumbCurl",
+  ].sort());
+  for (const f of FINGERS) {
+    expect(CONTROLS.find((c) => c.key === `${f}Knuckle`)).toMatchObject({ min: -10, max: 90 });
+    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 110 });
+  }
+  expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 60 });
+  expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());
+  expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
+  expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
+  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`] });
+  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"] });
+});
+
+test("is listed as an organic reference part", () => {
+  expect(organic.referenceParts).toContain("src/parts/cage-hand.js");
+});
+
+// Defaults, then each parameter alone at its min and at its max.
+const CASES = [
+  ["defaults", {}],
+  ...CONTROLS.flatMap((c) => [[`${c.key} min`, { [c.key]: c.min }], [`${c.key} max`, { [c.key]: c.max }]]),
+];
+
+test.each(CASES)("builds watertight on the preview tier: %s", (_, params) => {
+  const report = measure(k, part, "assembly", params);
+  expect(report.ok).toBe(true);
+  expect(report.subparts.map((s) => s.watertight)).toEqual([true]);
+  expect(report.warnings).toEqual([]);
+}, 60_000);
+
+test("at its defaults each limb's tip is within 6 mm of its cage tip", () => {
+  const { c, d } = cageAt(part.defaults);
+  for (const n of DIGITS) expect(dist(d[n].report.tip, c.centroid(`${n}Tip`)), n).toBeLessThan(6);
+});
+
+test("posing moves points, never faces: the face count is the same at defaults and at every max", () => {
+  const count = cageAt(part.defaults).c.faces().length;
+  for (const ctl of CONTROLS) expect(cageAt({ ...part.defaults, [ctl.key]: ctl.max }).c.faces().length, ctl.key).toBe(count);
+});
