@@ -208,6 +208,42 @@ test("units: the switch renders once, first, for a tree with an mm control", () 
   panel.dispose();
 });
 
+test("units: a host slot in the rail takes the switch, and dispose empties and re-hides it", () => {
+  const rail = document.createElement("div");
+  rail.className = "pf-rail";
+  const root = document.createElement("div");
+  const slot = document.createElement("div");
+  slot.setAttribute("data-pf-units-slot", "");
+  slot.hidden = true;
+  rail.append(root, slot);
+  const units = createUnitsState("mm");
+  const panel = buildControls(root, lengthSec(), { w: 12.5 }, () => {}, () => {}, { units, unitsSwitch: true });
+  expect(root.querySelector(".pf-units")).toBeNull();
+  expect(slot.hidden).toBe(false);
+  expect(slot.querySelectorAll(".pf-units")).toHaveLength(1);
+  slot.querySelector('[data-units="in"]').click();
+  expect(units.get()).toBe("in");
+  expect(root.querySelector("input.num").value).toBe("0.492");
+  panel.dispose();
+  expect(slot.hidden).toBe(true);
+  expect(slot.childElementCount).toBe(0);
+});
+
+test("units: a slot stays hidden when the tree has nothing to convert", () => {
+  const rail = document.createElement("div");
+  rail.className = "pf-rail";
+  const root = document.createElement("div");
+  const slot = document.createElement("div");
+  slot.setAttribute("data-pf-units-slot", "");
+  slot.hidden = true;
+  rail.append(root, slot);
+  const parameters = [{ id: "a", controls: [{ key: "a", label: "Angle", type: "slider", unit: "°", min: 0, max: 90, step: 1 }] }];
+  const panel = buildControls(root, parameters, { a: 45 }, () => {}, () => {}, { units: createUnitsState("mm"), unitsSwitch: true });
+  expect(slot.hidden).toBe(true);
+  expect(slot.childElementCount).toBe(0);
+  panel.dispose();
+});
+
 test("units: a readout with an mm unit, nested in a group, also earns the switch", () => {
   const root = document.createElement("div");
   const parameters = [{ id: "u", title: "Size", controls: [

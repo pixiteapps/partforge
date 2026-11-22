@@ -66,6 +66,7 @@ function makeUnitsSwitch(units) {
   const buttons = UNIT_IDS.map((id) => {
     const b = el("button", "", id);
     b.type = "button";
+    b.title = id === "in" ? "Show lengths in inches" : "Show lengths in millimetres";
     b.dataset.units = id;
     b.addEventListener("click", () => units.set(id));
     group.append(b);
@@ -343,7 +344,19 @@ export function buildControls(root, parameters, params, onDirty, onCommit, opts 
   if (units && opts.unitsSwitch === true && hasConvertingNode(tree)) {
     const sw = makeUnitsSwitch(units);
     unitSyncs.push(sw.sync);
-    root.append(sw.el);
+    // A host that marks a place for it (`data-pf-units-slot`, shipped `hidden`,
+    // anywhere in the rail — its foot, beside the download actions) gets the
+    // switch there, where it stays in reach while the controls scroll. With no
+    // slot it leads the controls. The slot is outside `root`, so dispose
+    // empties and re-hides it.
+    const slot = root.closest?.(".pf-rail")?.querySelector("[data-pf-units-slot]") ?? null;
+    if (slot) {
+      slot.replaceChildren(sw.el);
+      slot.hidden = false;
+      disposers.push(() => { if (sw.el.parentNode === slot) { slot.replaceChildren(); slot.hidden = true; } });
+    } else {
+      root.append(sw.el);
+    }
   }
 
   for (const section of tree) {

@@ -135,6 +135,8 @@ runtime.getUnits();            // the display unit ("mm" | "in") for lengths the
                                // shows; params are always millimetres
 runtime.setUnits("in");        // switch the display unit; no param changes, no build
 runtime.onUnitsChange((u) => {});  // every display unit change; returns an unsubscribe
+// The mm | in switch is drawn into `[data-pf-units-slot]` in the rail when the host has one
+// (ship it `hidden`; the rail foot is the intended place), else at the top of the controls.
 const carried = runtime.getViewerState();  // camera + projection + cutaway, as plain JSON
 runtime.dispose();     // stops loops, workers, observers, listeners; frees GPU resources
 mount(nextPart, { createWorker, elements, viewerState: carried });  // resumes the view
