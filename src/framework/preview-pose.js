@@ -30,7 +30,16 @@ import { handleKeys } from "./pose/pose-collide.js";
 import { rangesOf } from "./pose/param-solve.js";
 import { probeSubPartPose } from "./pose-probe-core.js";
 import { topologyKey } from "./geometry/subdiv/surface.js";
+import { cagePosableEntry } from "./skin/cage-deform.js";
+import { normalizeCollisions } from "./collide/declaration.js";
 
+/**
+ * Whether a part's `collisions` keep Pose mode's pieces solid. The collision index is built
+ * from the file's meshes and a deform does not update it, so a preview does not re-pose a
+ * cage body of such a part: a dragged finger would pass through other pieces, and pieces
+ * dragged later would stop against its old place (preview-cage.js and the stepper below).
+ */
+export const collisionsCoverCages = (part) => normalizeCollisions(part)?.pose === true;
 /**
  * The params a preview file's meshes sit at: the live params under the t = 0 values of
  * the animation the file BAKES. `anim` is that animation (normalized, as
@@ -162,20 +171,25 @@ export function previewHandlesStepper(part, view, fileParams, meshNames, { cageK
     for (const n of drawn) if (!bad && placeMatrix(part.parts[n], view, r0.p, r0.d) == null) bad = `${n} has no rigid placement`;
     // The tied cage bodies the file side confirms: drawn, and re-posable at the file params
     // with the file's key. Each keeps its shapeHash for the samples.
+    // A tied body of a part whose collisions cover it is not re-posed (collisionsCoverCages):
+    // a handle that reshapes it is hidden with that reason instead of "rebuilds".
     const cages = new Map();
+    const covered = new Set();
     for (const n of drawn) {
       const key = cageKeys?.get(n);
       if (typeof key !== "string") continue;
       const e = cageEntry(n, r0);
-      if (e && topologyKey(e.cages[0]) === key) cages.set(n, { key, shapeHash: e.shapeHash });
+      if (!e || topologyKey(e.cages[0]) !== key) continue;
+      if (collisionsCoverCages(part)) covered.add(n);
+      else cages.set(n, { key, shapeHash: e.shapeHash });
     }
-    fileSide = { key: names.join("\u0000"), names, drawn, ids, cages, bad };
+    fileSide = { key: names.join("\u0000"), names, drawn, ids, cages, covered, bad };
     return fileSide;
   };
   // A sub-part's build-probe entry when it is the editor's cage base kind, else null.
   const cageEntry = (n, { p, d }) => {
     const e = probeSubPartPose(part.parts[n], { view, purpose: "display", p, d }, { scope: "build" });
-    return e.trusted && e.cagePosable && e.cages?.length === 1 && e.shapeHash !== undefined ? e : null;
+    return cagePosableEntry(e) ? e : null;
   };
   // Does a tied cage body's build at a sample move only its cage points?
   const cageFollows = (n, r, tied) => {
@@ -188,7 +202,7 @@ export function previewHandlesStepper(part, view, fileParams, meshNames, { cageK
   const verdictAt = (key, value) => {
     const memo = `${key}\u0000${value}`;
     if (verdicts.has(memo)) return verdicts.get(memo);
-    const { key: setKey, drawn, names, ids, cages } = fileFacts();
+    const { key: setKey, drawn, names, ids, cages, covered } = fileFacts();
     const params = { ...file, [key]: value };
     let reason = null;
     if (viewSubParts(part, view, params).join("\u0000") !== setKey) reason = `${key} changes which sub-parts the view shows`;
@@ -200,7 +214,11 @@ export function previewHandlesStepper(part, view, fileParams, meshNames, { cageK
       if (!reason) for (const n of names) {
         const id = buildIdentity(part, view, { p, d }, n);
         if (id == null) { reason = `${n}'s build cannot be read`; break; }
-        if (id !== ids.get(n) && !(cages.has(n) && cageFollows(n, { p, d }, cages.get(n)))) { reason = `${key} rebuilds ${n}`; break; }
+        if (id === ids.get(n) || (cages.has(n) && cageFollows(n, { p, d }, cages.get(n)))) continue;
+        reason = covered.has(n)
+          ? `${key} reshapes ${n}, and the part's collisions cover it (a preview checks them against the file's mesh only)`
+          : `${key} rebuilds ${n}`;
+        break;
       }
     }
     verdicts.set(memo, reason);

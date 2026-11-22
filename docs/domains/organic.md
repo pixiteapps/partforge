@@ -857,8 +857,12 @@ no solid already built, so you can build, change and build again.
   handle that moves only the cage's points then shows on the preview and re-poses the
   body there, with no kernel and the same limits: it stops at the last pose in which the
   body does not pass through itself. A preview has no exact build, so the last pose drawn
-  stays on screen after release. A preview file from an older version keeps those
-  handles hidden, and `partforge measure` names them under `preview handles:`.
+  stays on screen after release. The re-posed body is drawn without its edge lines until
+  it returns to the pose the file was built at. The handles stay hidden on a preview file
+  from an older version, and on a part with a `collisions` block that keeps pieces solid
+  in Pose mode (the preview checks collisions against the file's mesh only).
+  `partforge measure` answers for a file this version writes. So it lists such handles
+  under `preview handles:` as shown, unless the part's collisions hide them.
 - **Anything else rebuilds the whole body on each move**: a piece unioned onto the body
   (eyes, nails), a fillet or chamfer on it, a creased cage, two cages in one sub-part, a
   change to the cage's faces (an extrude count, `steps`), `setParams`, an animation and

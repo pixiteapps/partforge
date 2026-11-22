@@ -23,6 +23,14 @@ import { subdivPlan, applySubdivPlan, topologyKey, sameTopology } from "../geome
 import { TIE_WEIGHTS, tiesHold } from "../geometry/subdiv/ties.js";
 import { dragValidity } from "../geometry/subdiv/index.js";
 
+/**
+ * The cage-base entry rule (a build-probe entry): trusted, cagePosable, exactly one cage, a
+ * defined shapeHash. The ONE spelling: the editor's skin controller (skin-drag.js), the
+ * preview's (preview-cage.js) and the preview's handle stepper (preview-pose.js) all ask it.
+ */
+export const cagePosableEntry = (e) => !!(e && e.trusted && e.cagePosable && Array.isArray(e.cages) && e.cages.length === 1
+  && e.shapeHash !== undefined);
+
 const sameFaces = (a, b) => {
   if (a === b) return true;
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;

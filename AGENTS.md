@@ -486,7 +486,11 @@ the installed package, so let the publish finish before bumping the dep there.
   (tolerance from the decoder's `ties.step`), and `previewHandlesStepper`'s `cageKeys`
   accepts a handle whose samples keep that body trusted, cagePosable, of the file's key
   and shapeHash. A pose the deform cannot draw is invalid (no exact build follows), so
-  the guard stops the handle; the release leaves the last pose drawn. `measure()` learns
+  the guard stops the handle; the release leaves the last pose drawn. A part whose
+  `collisions` keep pieces solid in Pose mode gets no re-posed cage body
+  (`collisionsCoverCages`): the collision index holds the file's meshes. The cage-base
+  entry rule is one export, `cagePosableEntry` (skin/cage-deform.js), for the editor and
+  the preview. `measure()` learns
   the keys by meshing each cagePosable canonical build with `ties: true`
   (`previewTieKeys`), so its answer is for a file this version writes. While a baked animation plays, `getParams()` follows the
   player (the live params under its values); a press pauses it and writes them.

@@ -413,7 +413,17 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   };
   drawn.then(() => idle(slice), () => {});
 
-  Object.assign(preview, { params, fileParams, placer, cages, poseMode, poseCollide });
+  Object.assign(preview, {
+    params, fileParams, placer, cages, poseMode, poseCollide,
+    // Test hook (scripts/check-pose.mjs): a sum over a drawn sub-part's positions, as shown.
+    positionsSum: (name) => {
+      const p = viewer.getSubMeshPayload(name)?.positions;
+      if (!p) return null;
+      let s = 0;
+      for (let i = 0; i < p.length; i++) s += p[i] * ((i % 7) + 1);
+      return s;
+    },
+  });
   return {
     poseMode,
     getParams,

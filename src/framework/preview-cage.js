@@ -31,13 +31,19 @@
 // file animates: its decoded mesh sits at the animation's opening pose, which the player
 // re-poses.
 //
+// A part whose `collisions` keep Pose mode's pieces solid gets no re-posable cage body
+// (preview-pose.js's collisionsCoverCages): the collision index holds the file's meshes and
+// a deform does not update it, and a preview has no exact build to put it right.
+//
 // Fails closed: a sub-part with malformed or disagreeing ties is simply not re-posable (its
 // handles stay hidden through previewHandlesStepper, as for a version 6 file), and anything
 // that throws holds the pose. Pure apart from the injected viewer: no DOM, no kernel.
 import { probePoses } from "./pose-probe.js";
 import { viewSubParts } from "./part-model.js";
-import { makeCageBase, tiesFitCage, tiesAgree, deformCage, cagePoseValidity } from "./skin/cage-deform.js";
+import { makeCageBase, tiesFitCage, tiesAgree, deformCage, cagePoseValidity, cagePosableEntry } from "./skin/cage-deform.js";
 import { TIE_TOLERANCE, TIE_WEIGHTS } from "./geometry/subdiv/ties.js";
+import { isRigid, invertRigid, transformPositions, rotateNormals } from "./geometry/pose.js";
+import { collisionsCoverCages } from "./preview-pose.js";
 
 // How far, per axis, a decoded position may sit from its true place, in quantization steps:
 // half a step of rounding plus up to about 0.19 of a step from gltf-transform's bit
@@ -49,39 +55,6 @@ export const previewTieTolerance = (step) => TIE_TOLERANCE + PREVIEW_AXIS_STEPS 
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const isIdentity = (m) => m.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-12);
-// A column-major rigid motion: orthonormal columns, a positive determinant, an affine last row.
-function isRigid(m) {
-  if (!Array.isArray(m) || m.length !== 16 || !m.every(Number.isFinite)) return false;
-  if (Math.abs(m[3]) > 1e-9 || Math.abs(m[7]) > 1e-9 || Math.abs(m[11]) > 1e-9 || Math.abs(m[15] - 1) > 1e-9) return false;
-  const col = (j) => [m[4 * j], m[4 * j + 1], m[4 * j + 2]];
-  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const c = [col(0), col(1), col(2)];
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (Math.abs(dot(c[i], c[j]) - (i === j ? 1 : 0)) > 1e-6) return false;
-  const det = c[0][0] * (c[1][1] * c[2][2] - c[1][2] * c[2][1]) - c[1][0] * (c[0][1] * c[2][2] - c[0][2] * c[2][1]) + c[2][0] * (c[0][1] * c[1][2] - c[0][2] * c[1][1]);
-  return det > 0;
-}
-// Move 3-vectors by the rigid `m`, in place; `point` adds its translation.
-function moveBy(m, arr, point) {
-  for (let i = 0; i < arr.length; i += 3) {
-    const x = arr[i], y = arr[i + 1], z = arr[i + 2];
-    arr[i] = m[0] * x + m[4] * y + m[8] * z + (point ? m[12] : 0);
-    arr[i + 1] = m[1] * x + m[5] * y + m[9] * z + (point ? m[13] : 0);
-    arr[i + 2] = m[2] * x + m[6] * y + m[10] * z + (point ? m[14] : 0);
-  }
-  return arr;
-}
-// The inverse of a rigid column-major matrix (the transpose of its rotation).
-function invertRigid(m) {
-  const t = [m[12], m[13], m[14]];
-  return [
-    m[0], m[4], m[8], 0,
-    m[1], m[5], m[9], 0,
-    m[2], m[6], m[10], 0,
-    -(m[0] * t[0] + m[1] * t[1] + m[2] * t[2]), -(m[4] * t[0] + m[5] * t[1] + m[6] * t[2]), -(m[8] * t[0] + m[9] * t[1] + m[10] * t[2]), 1,
-  ];
-}
-// The editor's cage-base entry rule (skin-drag.js's cagePosableEntry).
-const cagePosableEntry = (e) => !!(e && e.trusted && e.cagePosable && Array.isArray(e.cages) && e.cages.length === 1 && e.shapeHash !== undefined);
 
 // Ties a reader may use at all: one tie per vertex, a whole number triangle index per
 // vertex (tri is a Uint32Array), finite weights, a rigid pose. The triangle bound needs the
@@ -108,6 +81,9 @@ function wellFormed(mesh) {
 export function createPreviewCages(part, view, fileParams, meshes, { animated = [], probe = probePoses } = {}) {
   const moving = new Set(animated);
   const records = new Map(); // name -> record (see accept)
+  // Tied bodies refused only because the part's collisions cover them (collisionsCoverCages):
+  // their keys still go to the handle stepper, which hides their handles with that reason.
+  const covered = new Map(); // name -> the file's topology key
   let fileMap = null;
   try { fileMap = probe(part, view, fileParams, { scope: "build" }); } catch { fileMap = null; }
   for (const mesh of meshes) {
@@ -122,6 +98,8 @@ export function createPreviewCages(part, view, fileParams, meshes, { animated = 
     const pose = isIdentity(mesh.ties.pose) ? null : mesh.ties.pose.slice();
     const snapshot = e.cages[0];
     if (!tiesFitCage(snapshot, mesh.ties)) return; // the file's key is not this cage's topology
+    // The collision index holds the file's meshes and a deform would not update it.
+    if (collisionsCoverCages(part)) { covered.set(name, mesh.ties.key); return; }
     records.set(name, {
       name, pose, snapshot, ties: mesh.ties,
       shapeHash: e.shapeHash, baseHash: e.baseHash,
@@ -141,7 +119,8 @@ export function createPreviewCages(part, view, fileParams, meshes, { animated = 
     const exact = rec.copy ?? rec.file;
     const cage = makeCageBase(rec.snapshot, rec.ties);
     // The file's positions in the cage's frame (a copy, only for a posed file).
-    const rest = rec.pose ? moveBy(invertRigid(rec.pose), Float32Array.from(exact.positions), true) : exact.positions;
+    let rest = exact.positions;
+    if (rec.pose) { rest = Float32Array.from(exact.positions); transformPositions(rest, invertRigid(rec.pose)); }
     if (!cage || !tiesAgree(cage, rest, { tolerance: rec.tolerance, quantized: true })) {
       records.delete(rec.name);
       return null;
@@ -210,7 +189,7 @@ export function createPreviewCages(part, view, fileParams, meshes, { animated = 
 
   return {
     /** The re-posable sub-parts and their file topology keys (previewHandlesStepper's `cageKeys`). */
-    keys: () => new Map([...records.values()].map((r) => [r.name, r.ties.key])),
+    keys: () => new Map([...covered, ...[...records.values()].map((r) => [r.name, r.ties.key])]),
     names: () => [...records.keys()],
     /**
      * Prove one unverified sub-part's ties against its rebuilt plan (the drag's own check, run
@@ -220,7 +199,10 @@ export function createPreviewCages(part, view, fileParams, meshes, { animated = 
     verifyNext() {
       const rec = [...records.values()].find((r) => !r.verified);
       if (!rec) return false;
-      if (prepare(rec) && !rec.deformed) { rec.drag = null; rec.copy = null; }
+      // A throw refuses this sub-part alone: the others, and every rigid handle, are unaffected.
+      try {
+        if (prepare(rec) && !rec.deformed) { rec.drag = null; rec.copy = null; }
+      } catch { records.delete(rec.name); }
       return true;
     },
     /** Whether every re-posable sub-part in view can be drawn at `params` (the file's pose, or a valid deform). */
@@ -243,7 +225,7 @@ export function createPreviewCages(part, view, fileParams, meshes, { animated = 
         let ok = false;
         try {
           ok = deformCage(cage, e.cages[0], scratch.positions, scratch.normals);
-          if (ok && rec.pose) { moveBy(rec.pose, scratch.positions, true); moveBy(rec.pose, scratch.normals, false); }
+          if (ok && rec.pose) { transformPositions(scratch.positions, rec.pose); rotateNormals(scratch.normals, rec.pose); }
           ok = ok && viewer.setSubVertices(rec.name, scratch, { deformed: true }) !== false;
         } catch { ok = false; }
         if (ok) rec.deformed = true; else held = true;

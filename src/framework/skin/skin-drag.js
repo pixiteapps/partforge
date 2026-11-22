@@ -58,7 +58,7 @@ import { viewSubParts } from "../part-model.js";
 import { probePoses } from "../pose-probe.js";
 import { framesOnlyChange } from "./frames-only.js";
 import { frameMotions, skinVertices } from "./deform.js";
-import { makeCageBase, tiesFitCage, tiesAgree, deformCage, cagePoseValidity } from "./cage-deform.js";
+import { makeCageBase, tiesFitCage, tiesAgree, deformCage, cagePoseValidity, cagePosableEntry } from "./cage-deform.js";
 
 /** The pause with no slider input after which a drag's exact build is dispatched. */
 export const SKIN_PAUSE_MS = 150;
@@ -71,9 +71,8 @@ const skinnableBetween = (from, to) =>
   && from.shapeHash !== undefined && from.shapeHash === to.shapeHash
   && framesOnlyChange(from.implicitSpecs, to.implicitSpecs);
 
-// A cage base's entry: one cage, trusted, cage-posable, a defined shapeHash.
-const cagePosableEntry = (e) => !!(e && e.trusted && e.cagePosable && Array.isArray(e.cages) && e.cages.length === 1
-  && e.shapeHash !== undefined);
+// A cage base's entry: cage-deform.js's cagePosableEntry (one cage, trusted, cage-posable,
+// a defined shapeHash).
 
 // Can a cage body built at `from` be re-posed to `to`? (deformCage checks the topology.)
 const cagePosableBetween = (from, to) =>

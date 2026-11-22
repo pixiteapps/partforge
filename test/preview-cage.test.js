@@ -16,7 +16,7 @@ import { topologyKey } from "../src/framework/geometry/subdiv/surface.js";
 import { composePose } from "../src/framework/geometry/pose.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import hand from "../src/parts/cage-hand.js";
-import handV6Like from "../src/parts/hand.js";
+import rigidHand from "../src/parts/hand.js";
 import robotArm from "../src/parts/robot-arm.js";
 import organicHand from "../src/parts/organic-hand.js";
 
@@ -83,6 +83,28 @@ const INDEX = { ...hand.defaults, indexKnuckle: 60, indexCurl: 70 };
 const FINGERS = Object.keys(hand.defaults).filter((key) => key !== "thumbCurl");
 const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 60 };
 
+// test/mount-cage-drag.test.js's swing arm: clear at 60°, back through itself at 140°.
+const armCage = (make, deg, x = 0) => {
+  const c = make({ box: { size: [20, 20, 20], center: [x, 0, 0] } });
+  let a = c.extrude("+x:0,0", { by: 8 });
+  a = c.extrude(a, { by: 8 });
+  const hinge = c.centroid(a);
+  a = c.extrude(a, { by: 25 });
+  c.rotate(a, { axis: "z", deg, about: hinge });
+  return c;
+};
+const swingPart = (extra = {}) => ({
+  meta: { title: "Swing", backend: "manifold" },
+  defaults: { swing: 0 },
+  handles: { arm: { point: () => [0, 0, 0], drag: "point", params: ["swing"] } },
+  views: { v: { label: "V" } },
+  parts: { body: { label: "Body", views: ["v"], build: (kk, p) => kk.subdiv(armCage(kk.cage, p.swing)) } },
+  parameters: [{ id: "pose", title: "Pose", controls: [{ key: "swing", label: "Swing", min: 0, max: 170, step: 1 }] }],
+  ...extra,
+});
+const swing = swingPart();
+const decodedFile = async (part, view, params, subparts) => decodePreviewGlb(await encodePreviewGlb({ meshes: await gen(part, view, params, subparts), part, view, params }));
+
 // A fresh decode of the hand's file at `at` (the viewer writes into the payload's arrays).
 const fileAt = async (glb) => decodePreviewGlb(glb);
 
@@ -105,9 +127,9 @@ describe("the cage hand's preview file", () => {
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < positions.length; i++) { lo[i % 3] = Math.min(lo[i % 3], positions[i]); hi[i % 3] = Math.max(hi[i % 3], positions[i]); }
     const extentStep = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / (2 ** 14 - 1);
-    console.log(`position step ${ties.step.toFixed(5)} mm (extent / 16383: ${extentStep.toFixed(5)} mm); tie tolerance ${previewTieTolerance(ties.step).toFixed(5)} mm`);
-    expect(ties.step).toBeGreaterThan(0);
-    expect(Math.abs(ties.step - extentStep) / extentStep).toBeLessThan(0.01);
+    const what = `step ${ties.step} mm, extent / 16383 ${extentStep} mm, tie tolerance ${previewTieTolerance(ties.step)} mm`;
+    expect(ties.step, what).toBeGreaterThan(0);
+    expect(Math.abs(ties.step - extentStep) / extentStep, what).toBeLessThan(0.01);
   });
 
   test("the hand is re-posable, and its ties agree with the plan rebuilt from the file's params", () => {
@@ -159,8 +181,7 @@ describe("the cage hand's preview file", () => {
     const [exact] = await gen(hand, "assembly", B);
     const gap = worstGap(file.meshes[0].positions, exact.positions);
     const step = file.meshes[0].ties.step;
-    console.log(`${label}: worst gap to the exact build ${gap.toExponential(3)} mm (step ${step.toFixed(4)} mm); first show ${first.toFixed(1)} ms`);
-    expect(gap).toBeLessThan(1e-4);
+    expect(gap, `${label}: worst gap ${gap} mm (step ${step} mm), first show ${first} ms`).toBeLessThan(1e-4);
   }, 120_000);
 
   test("per move: one deform of the preview mesh, timed", async () => {
@@ -176,29 +197,10 @@ describe("the cage hand's preview file", () => {
       times.push(performance.now() - t0);
     }
     const later = times.slice(1).sort((a, b) => a - b);
-    console.log(`preview mesh ${file.meshes[0].positions.length / 3} vertices: first move ${times[0].toFixed(1)} ms, later moves median ${later[later.length >> 1].toFixed(1)} ms, p90 ${later[Math.floor(later.length * 0.9)].toFixed(1)} ms`);
-    expect(viewer.writes.length).toBe(30);
+    expect(viewer.writes.length, `${file.meshes[0].positions.length / 3} vertices: first move ${times[0]} ms, later median ${later[later.length >> 1]} ms, p90 ${later[Math.floor(later.length * 0.9)]} ms`).toBe(30);
   }, 120_000);
 
   test("a pose through itself is not drawn, and the guard stops the handle at the last valid pose", async () => {
-    // test/mount-cage-drag.test.js's swing arm: clear at 60°, back through itself at 140°.
-    const armCage = (make, deg) => {
-      const c = make({ box: { size: [20, 20, 20] } });
-      let a = c.extrude("+x:0,0", { by: 8 });
-      a = c.extrude(a, { by: 8 });
-      const hinge = c.centroid(a);
-      a = c.extrude(a, { by: 25 });
-      c.rotate(a, { axis: "z", deg, about: hinge });
-      return c;
-    };
-    const swing = {
-      meta: { title: "Swing", backend: "manifold" },
-      defaults: { swing: 0 },
-      handles: { arm: { point: () => [0, 0, 0], drag: "point", params: ["swing"] } },
-      views: { v: { label: "V" } },
-      parts: { body: { label: "Body", views: ["v"], build: (kk, p) => kk.subdiv(armCage(kk.cage, p.swing)) } },
-      parameters: [{ id: "pose", title: "Pose", controls: [{ key: "swing", label: "Swing", min: 0, max: 170, step: 1 }] }],
-    };
     const [body] = await gen(swing, "v", { swing: 0 });
     const file = await decodePreviewGlb(await encodePreviewGlb({ meshes: [body], part: swing, view: "v", params: { swing: 0 } }));
     const viewer = fakeViewer(file.meshes);
@@ -287,8 +289,7 @@ describe("the cage hand's preview file", () => {
     cages.show(viewer, INDEX);
     const [exact] = await gen(hand, "assembly", INDEX);
     const gap = worstGap(file.meshes[0].positions, move(exact.positions));
-    console.log(`posed file, the index finger bent: worst gap to the exact build moved by the pose ${gap.toExponential(3)} mm`);
-    expect(gap).toBeLessThan(1e-4);
+    expect(gap, `posed file: worst gap ${gap} mm`).toBeLessThan(1e-4);
   }, 120_000);
 });
 
@@ -328,7 +329,7 @@ describe("which handles a preview shows", () => {
   // with an empty map, every part answers exactly as it did.
   test.each([
     ["robot-arm", robotArm, "assembly", { shown: ["tool"], hidden: {} }],
-    ["hand (rigid)", handV6Like, "assembly", { shown: ["thumb", "index", "middle", "ring", "pinky"], hidden: {} }],
+    ["hand (rigid)", rigidHand, "assembly", { shown: ["thumb", "index", "middle", "ring", "pinky"], hidden: {} }],
     ["organic-hand (implicit)", organicHand, "assembly", {
       shown: [],
       hidden: {
@@ -346,5 +347,66 @@ describe("which handles a preview shows", () => {
   test("an implicit body and a rigid part have no re-posable cage body", async () => {
     const [arm] = await gen(robotArm, "assembly", robotArm.defaults, [Object.keys(robotArm.parts)[0]]);
     expect(createPreviewCages(robotArm, "assembly", robotArm.defaults, [arm]).names()).toEqual([]);
+  }, 120_000);
+});
+
+describe("what keeps a cage body's handles hidden in a preview", () => {
+  test("a part whose collisions cover the cage body: hidden, with that reason, in the preview and in measure", async () => {
+    const colliding = swingPart({ collisions: {} });
+    const file = await decodedFile(colliding, "v", { swing: 0 });
+    const viewer = fakeViewer(file.meshes);
+    const cages = createPreviewCages(colliding, "v", { swing: 0 }, file.meshes);
+    expect(cages.names()).toEqual([]);                    // nothing re-posable
+    expect(cages.isClear(viewer, { swing: 60 })).toBe(true);
+    expect(cages.show(viewer, { swing: 60 })).toBe(false);
+    expect(viewer.writes).toEqual([]);
+    const want = { shown: [], hidden: { arm: "swing reshapes body, and the part's collisions cover it (a preview checks them against the file's mesh only)" } };
+    expect(previewHandles(colliding, "v", { swing: 0 }, ["body"], { cageKeys: cages.keys() })).toEqual(want);
+    expect(measure(k, colliding, "v", {}, { previewHandles: true }).previewHandles).toEqual(want);
+    // The same part without the collisions entry shows the handle, in both.
+    const free = await decodedFile(swing, "v", { swing: 0 });
+    const freeCages = createPreviewCages(swing, "v", { swing: 0 }, free.meshes);
+    while (freeCages.verifyNext());
+    expect(previewHandles(swing, "v", { swing: 0 }, ["body"], { cageKeys: freeCages.keys() })).toEqual({ shown: ["arm"], hidden: {} });
+    expect(measure(k, swing, "v", {}, { previewHandles: true }).previewHandles).toEqual({ shown: ["arm"], hidden: {} });
+  }, 120_000);
+
+  test("a throw while proving one body's ties refuses that body alone: the other body and the rigid handle still show", async () => {
+    // Two swing arms and a slide that moves a box by placement alone.
+    const two = {
+      meta: { title: "Two arms", backend: "manifold" },
+      defaults: { swingA: 0, swingB: 0, slide: 0 },
+      handles: {
+        a: { point: () => [0, 0, 0], drag: "point", params: ["swingA"] },
+        b: { point: () => [0, 80, 0], drag: "point", params: ["swingB"] },
+        slide: { point: (p) => [p.slide, -60, 0], drag: "axis", direction: [1, 0, 0], params: ["slide"] },
+      },
+      views: { v: { label: "V" } },
+      parts: {
+        armA: { label: "A", views: ["v"], build: (kk, p) => kk.subdiv(armCage(kk.cage, p.swingA)) },
+        armB: { label: "B", views: { v: (s) => s.translate([0, 80, 0]) }, build: (kk, p) => kk.subdiv(armCage(kk.cage, p.swingB)) },
+        block: { label: "Block", views: { v: (s, p) => s.translate([p.slide, 0, 0]) }, build: (kk) => kk.box({ min: [-5, -65, -5], max: [5, -55, 5] }) },
+      },
+      parameters: [{ id: "pose", title: "Pose", controls: [
+        { key: "swingA", label: "A", min: 0, max: 90, step: 1 },
+        { key: "swingB", label: "B", min: 0, max: 90, step: 1 },
+        { key: "slide", label: "Slide", min: 0, max: 40, step: 1 },
+      ] }],
+    };
+    const p0 = { swingA: 0, swingB: 0, slide: 0 };
+    const file = await decodedFile(two, "v", p0, ["armA", "armB", "block"]);
+    // armA's positions throw when a drag copies them (after its ties have been read).
+    class Unsliceable extends Float32Array { slice() { throw new Error("boom"); } }
+    const a = file.meshes.find((m) => m.name === "armA");
+    a.positions = Unsliceable.from(a.positions);
+    const cages = createPreviewCages(two, "v", p0, file.meshes);
+    expect(cages.names().sort()).toEqual(["armA", "armB"]);
+    let steps = 0;
+    while (cages.verifyNext()) steps++;
+    expect(steps).toBe(2);
+    expect(cages.names()).toEqual(["armB"]);
+    expect(previewHandles(two, "v", p0, ["armA", "armB", "block"], { cageKeys: cages.keys() })).toEqual({
+      shown: ["b", "slide"], hidden: { a: "swingA rebuilds armA" },
+    });
   }, 120_000);
 });
