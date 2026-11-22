@@ -1025,7 +1025,8 @@ the installed package, so let the publish finish before bumping the dep there.
   `lastValidParams()`, and if the exact build after the drag still reports the body
   passing through itself the drag's keys go back to where it began. The drag's commit
   is held until that build answers. `npm run bench:cage-drag` times it in Node; in
-  Chromium (Metal) a move costs about 24 ms of JS on the cage hand.
+  Chromium (Metal) on the cage hand a later move costs about 24 ms of JS, and the first
+  move, which builds the drag state, about 95 ms.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these

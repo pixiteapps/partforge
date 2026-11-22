@@ -36,33 +36,48 @@ The bench and the spike (both below) changed the route. The owner chose it on 20
 
 Headless Chromium through Playwright on an Apple M1 Max, `cage-hand.html` on the dev
 server, 2026-11-22, with temporary timers (not committed). GL: ANGLE on Metal
-(`--use-angle=metal --enable-gpu --ignore-gpu-blocklist`). Median of each run, p90 in
-brackets.
+(`--use-angle=metal --enable-gpu --ignore-gpu-blocklist`). Re-measured on 0.201.0, after
+the drag state became something a drag builds at its first move and drops when it ends.
+Median, p90 in brackets.
 
-| Drag | Moves | (a) one drawn drag shape to the next | (b) JS per move |
+| Drag | Later moves: (a) one drawn shape to the next | Later moves: JS per move | First move: JS |
 | --- | --- | --- | --- |
-| `indexCurl` slider, an `input` event each animation frame, 20 → 90 → 0 → 45° | 205 | 28.1 ms (29.9) | 24.4 ms |
-| Index fingertip handle, in-page pointer events, one a frame | 60 | 31.1 ms (32.7) | 19.3 + 5.4 ms |
-| Index fingertip handle, Playwright `mouse.move` | 59 | 58.3 ms (59.0) | 19.8 + 5.8 ms |
+| `indexCurl` slider, an `input` event each animation frame, 20 → 70, pause, 70 → 0 → 45° (161 later moves) | 28.3 ms (30.6) | 24.6 ms | 93 ms, of it 46 ms building the drag state |
+| Index fingertip handle, in-page pointer events, one a frame (59 later moves) | 31.2 ms (33.6) | 19.3 + 5.3 ms | 24 + 40 ms, of it 33 ms building the drag state |
 
-(a) is the time between two `setSubVertices(…, { deformed: true })` calls. (b) is the
-skin controller's `deform()`; for a handle, plus the validity guard that runs before the
-pose is written (the second number). Inside a slider move: the build probe 1.8 ms, the
-through-itself check 3.1 ms, the deform 11.8 ms, and about 7.5 ms writing the mesh to the
-viewer. The Playwright mouse row is held back by the test driver's own pace (each
-`mouse.move` round trip is about 58 ms), not by the drag's work. No `generate` job was
-posted during any drag; exactly one went out after each release, and the exact mesh
-replaced the deformed one. The first changed slider value deformed.
+(a) is the time between two `setSubVertices(…, { deformed: true })` calls, without the
+first move. The JS is the skin controller's `deform()`; for a handle, plus the validity
+guard that runs before the pose is written (the second number), which is where a handle
+drag builds its state. A handle drag driven by Playwright's `mouse.move` is held back by
+the test driver's own pace (about 58 ms a move), not by the drag's work, so the table
+uses in-page pointer events. No `generate` job was posted while the pointer moved;
+exactly one went out after each release, the exact mesh replaced the deformed one, and
+each drag committed once.
 
-**Gate: passed.** The slider drag's (a) is 28.1 ms, under 33 ms. The JS per move is
-about 24 ms of that, so there is little room left on this machine.
+**Gate: passed for the later moves.** The slider's (a) is 28.3 ms, under 33 ms, and the
+handle's is 31.2 ms. The first move of a drag is not: it takes about 95 ms of JS on the
+slider (about 60 ms on the handle) and its shape lands about 35 ms after the next frame.
+The JS of a later move is about 24 ms of the 28, so there is little room left on this
+machine.
 
-On SwiftShader (`--use-angle=swiftshader`) the JS per move is the same (25.8 ms) but the
-draw sets the pace: the slider's (a) is 117 ms (p90 136), inside the 120 ms limit.
+**A pause mid-drag.** The slider was held still at 70° until the pause build landed
+(780 ms: the build takes longer in the browser than the 150 ms pause), then moved on. The
+first move after it rebuilt the drag state (26 ms) and took 54 ms of JS in all; after it
+the body followed every move (115 moves, 28.4 ms median). With a 300 ms pause the build
+lands during the moves that follow, and the drag goes on with one 73 ms gap.
 
-A copy of the hand with the curl range widened to 160° (a temporary page) confirmed the
-hold: with the pinky's knuckle at 90°, a slider drag up from 80° drew its last pose at
-92°, drew nothing more from 93° to 160°, and the value went back to 92 on release.
+**A pause where the build carries no ties stops the body.** At `indexCurl` 89° and 90°
+(the other params at their defaults) the preview build delivers no ties (checked in
+Node: 88° has them). A pause there forgets the cage base; for the rest of that drag no
+shape was drawn and no build was sent (135 moves), and the body moved only on release.
+
+On SwiftShader (`--use-angle=swiftshader`, measured on 0.199.0) the JS per move was the
+same (25.8 ms) but the draw set the pace: the slider's (a) was 117 ms (p90 136).
+
+On 0.199.0, a copy of the hand with the curl range widened to 160° (a temporary page)
+confirmed the hold: with the pinky's knuckle at 90°, a slider drag up from 80° drew its
+last pose at 92°, drew nothing more from 93° to 160°, and the value went back to 92 on
+release.
 
 ## Why
 
@@ -355,7 +370,7 @@ bends slightly during the drag. That is display only.
 
 ### Spike result (Task 10)
 
-`node scripts/spike-cage-weights.mjs` (removed in 0.199.0; it is in the git history)
+`node scripts/spike-cage-weights.mjs` (removed in 0.201.0; it is in the git history)
 (Apple M1 Max, Node v24.19.0, wall ms, median of
 20). The cage hand at level 4: 300 cage faces, 153,600 limit triangles, 76,802 limit
 vertices. Pose 0 is the defaults. Pose 1 curls the index, middle and ring fingers (knuckle

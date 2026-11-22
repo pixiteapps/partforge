@@ -21,7 +21,7 @@
 - The fast-path arithmetic is `applySubdivPlan` / `applySubdivPlanAt` (`src/framework/geometry/subdiv/surface.js`); do not write a second copy of the smoothing.
 - A cached plan is reused only after an exact compare of the cage's faces, not on the key alone.
 - Gate for PR 2: on the cage hand with its flat cut, 33 ms or less from one drawn drag shape to the next, in a browser on the bench machine. Between 33 and 120 ms it still ships.
-- The repo has no CHANGELOG file: the version goes in the commit subject and the notes in the body. PR 2 is 0.199.0, PR 3 is 0.200.0.
+- The repo has no CHANGELOG file: the version goes in the commit subject and the notes in the body. PR 2 is 0.201.0, PR 3 is 0.202.0 (main took 0.199.0 and 0.200.0 meanwhile; the cage hand PR is 0.200.1).
 - Docs follow the repo's plain-English rules (`AGENTS.md`). Commit after each task. Do not push.
 
 ## Review Focus
@@ -139,14 +139,14 @@
 ### Task 16: measure in a browser, docs, release (PR 2)
 
 **Files:**
-- Modify: `docs/domains/organic.md`, `docs/domains/kinematics.md` if it repeats the "rebuilds on each move" claim, the spec (measured numbers), `AGENTS.md` if it states the old behaviour, `package.json` + lockfile (0.199.0), `types/` if a `.d.ts` lists mesh payload fields
+- Modify: `docs/domains/organic.md`, `docs/domains/kinematics.md` if it repeats the "rebuilds on each move" claim, the spec (measured numbers), `AGENTS.md` if it states the old behaviour, `package.json` + lockfile (0.201.0), `types/` if a `.d.ts` lists mesh payload fields
 - Delete: `scripts/spike-cage-weights.mjs` (its result is in the spec)
 
 - [ ] **Step 1:** `npm run dev`, open `cage-hand.html`, and measure the time between drawn drag shapes for a fingertip handle drag and for an `indexCurl` slider drag (median of at least 30 moves; instrument temporarily, do not commit the instrumentation). Use a headless browser (Playwright is in the repo's dev dependencies) if no interactive browser is available, and say which was used. Record both numbers in the spec.
 - [ ] **Step 2: Gate.** 33 ms or less: done. Between 33 and 120: ship and note it. Over 120: stop and report.
 - [ ] **Step 3:** Rewrite the guide's two "rebuilds on each move" passages (Task 2 and its follow-up wrote them): a drag on a cage body follows the pointer; the body is not drawn in a pose that cuts through itself, and the handle stops there; what does not take the fast path (a change to the cage's faces, a creased cage, two cages in one sub-part, a piece unioned onto the body, `setParams`, animations, the print tier) rebuilds on each move. Under 15 lines.
 - [ ] **Step 4: Run** `npm test` and `npm run lint` in full. Expected: PASS.
-- [ ] **Step 5:** Version 0.199.0, commit. The controller pushes and opens PR 2.
+- [ ] **Step 5:** Version 0.201.0, commit. The controller pushes and opens PR 2.
 
 ---
 
@@ -180,10 +180,10 @@
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** every preview, measure and handle test, then `npm test` in full. Expected: PASS.
-- [ ] **Step 5:** Guide: one paragraph saying a cage body can be dragged on a cached preview. Version 0.200.0. Commit. The controller pushes and opens PR 3.
+- [ ] **Step 5:** Guide: one paragraph saying a cage body can be dragged on a cached preview. Version 0.202.0. Commit. The controller pushes and opens PR 3.
 
 ---
 
 ## After PR 3 (partforge-cloud, its own plan)
 
-Bump to 0.200.0, regenerate prompts, change the organic rule's "or a limb the user drags in Pose mode", add the floor notes, raise `MIN_PART_MESH_ENCODER_VERSION` to 7 and run the preview backfill, rerun the four organic eval cases.
+Bump to 0.202.0, regenerate prompts, change the organic rule's "or a limb the user drags in Pose mode", add the floor notes, raise `MIN_PART_MESH_ENCODER_VERSION` to 7 and run the preview backfill, rerun the four organic eval cases.
