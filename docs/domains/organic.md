@@ -834,9 +834,10 @@ no solid already built, so you can build, change and build again.
 - **A cage has at most 2,000 faces.**
 - **It shades smooth** and takes every ordinary `Solid` op afterwards. A flat to print
   on is an ordinary `cut` with a box.
-- **No pose drag.** A param that changes the cage (a `rotate` angle, an extrude
-  length) rebuilds the body, and the rebuild is
-  fast: the whale below rebuilds in well under a second at print quality.
+- **A change to the cage rebuilds the whole body.** A param that changes the cage (a
+  `rotate` angle, an extrude length) rebuilds it, and so does each move of a slider or
+  handle drag. The rebuild is fast for a small cage: the whale below rebuilds in well
+  under a second at print quality. A large cage, such as the hand below, takes longer.
 
 ```js
 const smoothBox = (segs) => k.subdiv(k.cage({ box: { size: [20, 20, 20], segs } })).boundingBox();
@@ -910,7 +911,8 @@ In the part: `derive: (p) => ({ tail: eel(cage, p).centroid("tail") })`,
 `build: (k, p) => k.subdiv(eel(k.cage, p))`, and a handle
 `{ point: (p, d) => d.tail, params: ["tail"], drag: "axis", direction: [1, 0, 0] }`.
 The smooth surface lies inside the cage, so the handle sits just off the skin. Every
-such drag is a shape drag: the cage is rebuilt and smoothed again as the handle moves.
+handle on a cage, this one and the limb-driven ones below, works the same way: each move
+of the drag builds the cage again and smooths it again.
 
 **A limb that bends, driven by a `limb`.** For a finger, a leg or a tail that bends at
 joints, let a `limb` from `partforge/kinematics` decide the angles, and give the cage
