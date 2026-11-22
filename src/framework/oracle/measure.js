@@ -310,7 +310,13 @@ function deviationFacts(kernel, solid, vol, b, ref, refName) {
   };
   if (typeof kernel._compareSolids !== "function") return { ...deviation, compareSkipped: "unsupported" };
   const tolerance = compareTolerance(b, { min: rb.min, max: rb.max });
-  const c = kernel._compareSolids(solid, ref, { tolerance, maxTriangles: COMPARE_MAX_TRIANGLES });
+  let c;
+  try {
+    c = kernel._compareSolids(solid, ref, { tolerance, maxTriangles: COMPARE_MAX_TRIANGLES });
+  } catch {
+    // The exact fields above stand; a failed comparison must not fail the measure.
+    return { ...deviation, compareSkipped: "error" };
+  }
   if (c.skipped) return { ...deviation, compareSkipped: c.skipped };
   return {
     ...deviation,

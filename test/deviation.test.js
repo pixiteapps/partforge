@@ -142,6 +142,15 @@ describe("deviation against a sub-part", () => {
     expect("regions" in d || "missingVolume" in d || "excessVolume" in d || "tolerance" in d).toBe(false);
   });
 
+  it("a throwing _compareSolids keeps the exact fields and reports compareSkipped: error", () => {
+    const boom = Object.create(kernel);
+    boom._compareSolids = () => { throw new Error("boom"); };
+    const d = measure(boom, posedPart(), "main").subparts.find((s) => s.name === "body").deviation;
+    expect(d.xorVolume).toBeCloseTo(400, 3);
+    expect(d.compareSkipped).toBe("error");
+    expect("regions" in d || "missingVolume" in d || "excessVolume" in d || "tolerance" in d).toBe(false);
+  });
+
   it("a refused comparison reports why and omits the new fields", () => {
     const tiny = Object.create(kernel);
     tiny._compareSolids = (a, b, o) => kernel._compareSolids(a, b, { ...o, maxTriangles: 1 });

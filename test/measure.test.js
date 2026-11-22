@@ -359,6 +359,22 @@ test("a sub-part and its reference sub-part may overlap", () => {
   expect(r.gaps.some((g) => [g.a, g.b].sort().join() === "body,ref")).toBe(false);
 });
 
+test("a reference sub-part near but not touching its body is absent from gaps; other near pairs stay", () => {
+  const r = measure(k, {
+    meta: { title: "NearRef", units: "mm" },
+    defaults: {},
+    views: { v: { label: "V" } },
+    parts: {
+      ref: { views: ["v"], exportable: false, build: (kk) => kk.box({ min: [12, 0, 0], max: [22, 10, 10] }) },
+      body: { views: ["v"], reference: "ref", build: (kk) => kk.box({ min: [0, 0, 0], max: [10, 10, 10] }) },
+      other: { views: ["v"], build: (kk) => kk.box({ min: [-12, 0, 0], max: [-2, 10, 10] }) },
+    },
+  }, "v");
+  const pairs = r.gaps.map((g) => [g.a, g.b].sort().join());
+  expect(pairs).toContain("body,other");
+  expect(pairs).not.toContain("body,ref");
+});
+
 test("a third sub-part overlapping the body is still reported", () => {
   const r = measure(k, refPairPart({
     bolt: { views: ["v"], build: (kk) => kk.box({ min: [5, 5, 5], max: [15, 15, 15] }) },
