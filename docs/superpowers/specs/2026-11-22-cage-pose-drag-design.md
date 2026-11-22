@@ -39,6 +39,10 @@ implicit hand. What is missing is speed, and a guide recipe.
 3. No new agent-facing API. The agent writes an ordinary cage, an ordinary `limb` and an
    ordinary handle.
 4. The guide teaches the limb-driven cage, and the worked hand uses it.
+5. A cage body can be dragged on a public forge page, from its cached preview, with no
+   worker (owner's decision, 2026-11-22).
+6. A drag stops at the last valid pose: the body never shows passing through itself
+   (owner's decision, 2026-11-22).
 
 ## Non-goals
 
@@ -46,7 +50,8 @@ implicit hand. What is missing is speed, and a guide recipe.
 - `contact`, surface detail or blends for a cage. Those stay with `k.implicit`.
 - A fast path for a change that adds, removes or reorders cage faces (an extrude count,
   a `steps` value, a crease). Those rebuild as today.
-- The print tier. The fast path is for the preview tier in the viewer.
+- The print tier. The fast path is for the preview tier, in the viewer and in a cached
+  preview.
 - Animations and `setParams` calls. They rebuild as today, as they do for implicit
   bodies.
 
@@ -124,7 +129,8 @@ with the same topology key:
 - **Reuse the structure** `fromSnapshot` and each `step` built (edge maps, child
   indices, sharp flags, crease regions). Only positions are recomputed.
 - **Reuse the quad diagonals** of the last full build.
-- **Skip the self-intersection check.**
+- **Run the drag validity check** (below) in place of the full self-intersection
+  check.
 - Everything after the surface runs as usual: the Manifold import, IDs and shading
   policy, and any `cut` or `union` the part applies. So a flat cut under the wrist is
   exact during the drag.
@@ -167,22 +173,53 @@ viewer starts such a hold live. The first drag build's own time then drives the
 existing `liveSlow` rule: if it runs past the limit, the part fades as today. (My
 call; the reply field's name and shape are the builder's.)
 
+### Stopping at the last valid pose
+
+The full self-intersection check is too slow to run on every move (commit messages give
+70 ms at level 5 on a 32-face cage). A drag build runs a **drag validity check**
+instead: the same edge-through-triangle test (`subdiv/self-intersect.js`) on the plan's
+surface at a coarser level, at most level 2, plus the zero-volume test. The builder
+picks the level so the check costs 5 ms or less on the cage hand, and the bench reports
+it.
+
+- **A pose that fails the check is not drawn.** The worker replies that the pose is
+  invalid, with the cage faces named. The shape on screen stays at the last valid pose.
+- **A handle drag stops there.** The viewer puts the handle's parameters back to the
+  last values that passed, the way a collision stops a dragged piece today, so the
+  handle does not run ahead of the body. Moving back into valid poses moves the body
+  again.
+- **A slider keeps moving but the body does not.** The panel owns the slider's thumb.
+  While the value is invalid the body holds the last valid pose. On release, or at the
+  pause build, the parameter returns to the last valid value and the panel shows it.
+  (My call: partforge cannot stop the panel's thumb mid-drag.)
+- **The coarse check can miss a fine crossing.** Release still runs the full check. If
+  that refuses the pose, the parameter returns to the last value whose full build
+  passed, and that mesh is shown.
+
+A pose `rotate` or `scale` refuses (an edge shorter than 1e-6) is treated the same way
+as a failed check.
+
 ### What the drag shape may differ in
 
 - **Level.** If the full build would pick another level at the new pose, the drag shape
   is coarser or finer by one level until release.
 - **Diagonals.** A quad split the other way moves the surface by less than the chord
   tolerance.
-- **Validity.** A drag can pass through a pose where the body cuts through itself. The
-  drag shape shows it. On release the full build throws or warns as today, and the
-  viewer's existing failed-build path applies.
+- **Validity.** The drag check is coarser than the full one, so a fine crossing can
+  show until release. See above.
 
 All three resolve on release.
 
-## Part 3: re-apply the weights in the viewer (only if Part 2 is not enough)
+## Part 3: re-apply the weights in the viewer
 
-If the Manifold import, the booleans or the worker round trip keep the hand above the
-goal, move the per-move work to the viewer, the way the implicit drag does.
+Required, because a public page has no worker (Part 4). The per-move work runs in the
+viewer, the way the implicit drag does. Whether the editor uses this path or Part 2's
+is decided by measurement once both exist: Part 2 keeps cuts exact, this path runs at
+display rate.
+
+**Spike first.** How per-corner weights ride through a Manifold `cut` and `union` is
+not known. The spike must show, on the cage hand with its flat cut, that every output
+corner can be placed from the smooth surface, before this part is planned.
 
 - **Recognise the case.** `pose-probe-core.js` gives a `subdiv` token a `shapeHash`
   equal to its topology key (today it equals the full hash, so it is never trusted). A
@@ -198,19 +235,35 @@ goal, move the per-move work to the viewer, the way the implicit drag does.
   recomputes normals, and calls `viewer.setSubVertices(name, …, { deformed: true })`.
   Edge lines are hidden while deformed, and captures read the last exact mesh, both as
   today.
+- **Validity.** The viewer runs the drag validity check on the coarse surface before
+  it draws, and stops at the last valid pose as in Part 2.
 - **Exact build.** After a 150 ms pause or on release, as the implicit drag does.
 
 In this part a vertex made by a `cut` moves with the surface it lies on, so a flat base
 bends slightly during the drag. That is display only.
 
-## Part 4: draggable on a public page (separate decision)
+## Part 4: dragging on a public page
 
-A cached preview (`mountPreview`) hides a handle whose parameter rebuilds a sub-part
-(`previewHandlesStepper`, `src/framework/preview-pose.js`), so a cage hand cannot be
-dragged on a forge page. Part 3's weights, stored in the preview file, would allow it.
-That means a new preview encoder version, which moves the host app's cache floor and
-needs a backfill there. It is out of this spec unless the owner asks for it; noted so
-Part 3's data shape does not rule it out.
+A cached preview (`mountPreview({ part })`) hides a handle whose parameter rebuilds a
+sub-part (`previewHandlesStepper`, `src/framework/preview-pose.js`). So today a cage
+hand cannot be dragged on a forge page.
+
+- **The preview file carries the weights.** The preview encoder stores Part 3's
+  per-corner weights for each sub-part whose build is drag-capable. This is a new
+  encoder version (7). A file without them plays as today.
+- **The preview shows the handle.** `previewHandlesStepper` accepts a handle when, at
+  every sample of its parameters, each sub-part is either rigidly placed (today's rule)
+  or is drag-capable with the file's topology key. `partforge measure` then lists it
+  under "preview handles".
+- **Per move.** The preview runs the part's cage code through the probe (pure
+  JavaScript, no kernel), builds the plan once, applies it, runs the drag validity
+  check, and places the corners. There is no exact build after it: a preview is display
+  only, and its file is not changed.
+- **Stopping.** A pose that fails the check is not drawn and the handle stops, as in
+  the editor.
+- **Host app.** partforge-cloud raises its cache floor to encoder 7 and runs its
+  preview backfill, as it did for encoders 4 and 6. Until a forge has a version 7
+  file, its cage handles stay hidden on its page.
 
 ## Docs, lint and the agent
 
@@ -232,8 +285,12 @@ Part 3's data shape does not rule it out.
    machine (worker build, mesh transfer and the viewer's upload together). The Node
    bench explains the number; it is not the gate. If it lands between 33 and 120 ms, it
    still ships (the hand then follows the pointer, more slowly) and Part 3 is planned.
-3. **PR 3: Part 3**, only if PR 2 misses 33 ms.
-4. **partforge-cloud:** bump, prompts, rule wording, evals.
+3. **PR 3: the Part 3 spike, then Part 3.** Gate: the spike places every corner of the
+   cut cage hand. Then the editor's drag is measured on both paths and the faster one
+   that keeps the anti-goals is used.
+4. **PR 4: Part 4**, encoder 7 and the preview drag.
+5. **partforge-cloud:** bump, prompts, rule wording, cache floor to 7, backfill,
+   evals.
 
 Each PR is useful without the next.
 
@@ -247,9 +304,12 @@ Each PR is useful without the next.
 - A release at the last drag pose is not answered from the cache.
 - A slider drag draws drag shapes and reports nothing to the host until the pause build
   lands; `setParams` and an animation take the ordinary path.
-- Release after a drag runs the self-intersection check: a pose that cuts through
-  itself draws during the drag and fails on release, and the previous exact mesh
-  returns.
+- A drag into a pose that cuts through itself does not draw it: the handle's
+  parameters return to the last valid values, and a slider's value returns on release.
+- A fine crossing the coarse check misses is refused by the release build, and the
+  parameter returns to the last value whose full build passed.
+- A preview with a version 7 file shows the cage hand's handles and drags them; with a
+  version 6 file it hides them.
 - A mirrored cage and a creased cage take the fast path.
 - The cage hand: every handle drags, and `partforge measure --drag` reaches a target
   within reach.
@@ -266,7 +326,3 @@ Each PR is useful without the next.
 
 1. **Is 33 ms the right target**, or is "under 120 ms, follows the pointer" enough to
    stop after PR 2?
-2. **Public pages (Part 4):** in scope later, or not wanted?
-3. **A self-cutting pose during a drag** is shown and then refused on release. The
-   alternative is to stop the drag at the last valid pose, which costs the check on
-   every move.
