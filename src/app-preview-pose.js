@@ -2,25 +2,30 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import robotArm from "./parts/robot-arm.js";
 import hand from "./parts/hand.js";
+import cageHand from "./parts/cage-hand.js";
 import { mount, mountPreview } from "./index.js";
 
 // Dev/CI-only app for Pose mode on a cached preview (mountPreview's `part` option). It
 // builds the part in an off-screen editor (mount), waits for its first build, encodes the
 // view with runtime.exportPreview(), disposes the editor, and mounts the file into #app
 // with the part module — so every drag below runs with no kernel and no worker.
-// `?part=hand` swaps the robot arm for the hand. Hooks for scripts/check-pose.mjs:
+// `?part=hand` swaps the robot arm for the hand, `?part=cage-hand` for the cage hand (whose
+// file carries its ties, so a fingertip drag re-poses the body with no kernel). Hooks for scripts/check-pose.mjs:
 // window.__pfPart (the part, for its defaults), window.__pfPreview (the preview handle),
 // window.__pfWorkersAfterPreview (Worker constructions after the preview mount — must
 // stay 0) and window.__pfDragEnds (every pose.onDragEnd payload).
-const which = new URLSearchParams(location.search).get("part") === "hand" ? "hand" : "robot-arm";
-const part = which === "hand" ? hand : robotArm;
+const asked = new URLSearchParams(location.search).get("part");
+const which = asked === "hand" || asked === "cage-hand" ? asked : "robot-arm";
+const part = which === "hand" ? hand : which === "cage-hand" ? cageHand : robotArm;
 window.__pfPart = part;
 window.__pfDragEnds = [];
 
 // The new Worker(new URL(...)) calls stay inline and literal, or Vite will not bundle them.
 const createWorker = (name) => (which === "hand"
   ? new Worker(new URL("./hand-worker.js", import.meta.url), { type: "module", name })
-  : new Worker(new URL("./robot-arm-worker.js", import.meta.url), { type: "module", name }));
+  : which === "cage-hand"
+    ? new Worker(new URL("./cage-hand-worker.js", import.meta.url), { type: "module", name })
+    : new Worker(new URL("./robot-arm-worker.js", import.meta.url), { type: "module", name }));
 
 async function start() {
   const editorEl = document.getElementById("editor");

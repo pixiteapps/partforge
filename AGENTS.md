@@ -479,7 +479,16 @@ the installed package, so let the publish finish before bumping the dep there.
   `PREVIEW_HANDLE_SAMPLES`; mount-preview steps it one handle per idle slice,
   `previewHandlesStepper`); `measure()` reports it as `previewHandles` only when
   asked (`previewHandles: true`, which the CLI's measure verb passes — the inspect
-  path never pays for it). While a baked animation plays, `getParams()` follows the
+  path never pays for it). Since 0.202.0 a version 7 file's tied cage body may be
+  re-posed too (`preview-cage.js`): the plan is rebuilt from the probe's snapshot at the
+  file params (in the cage's frame; `ties.pose` moves each deform into the decoded
+  frame), checked once in idle time with `tiesAgree(…, { tolerance, quantized: true })`
+  (tolerance from the decoder's `ties.step`), and `previewHandlesStepper`'s `cageKeys`
+  accepts a handle whose samples keep that body trusted, cagePosable, of the file's key
+  and shapeHash. A pose the deform cannot draw is invalid (no exact build follows), so
+  the guard stops the handle; the release leaves the last pose drawn. `measure()` learns
+  the keys by meshing each cagePosable canonical build with `ties: true`
+  (`previewTieKeys`), so its answer is for a file this version writes. While a baked animation plays, `getParams()` follows the
   player (the live params under its values); a press pauses it and writes them.
   Since 0.194.0 the file may bake ANY animation of its view, not only the autoplay
   one: `samplePreviewAnimation`'s `animation` option names it (undefined keeps the

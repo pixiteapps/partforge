@@ -85,12 +85,14 @@ export function makeCageBase(snapshot, ties) {
  * order than the worker's (a cage listing its faces differently at the same params, a
  * collision) passes the key and fails here. Run once per base, before its first deform.
  * @param {Float32Array} positions  the delivered positions, before anything wrote into them
+ * @param {{ tolerance?: number, quantized?: boolean }} [opts]  tiesHold's options, for ties
+ *   read from a preview file (preview-cage.js); omitted, the worker's own rule
  */
-export function tiesAgree(base, positions) {
+export function tiesAgree(base, positions, opts) {
   if (!base || positions.length !== 3 * base.ties.tri.length) return false;
   let L;
   try { L = applySubdivPlan(base.plan, base.snapshot.points); } catch { return false; }
-  return tiesHold(base.ties, positions, L.positions, base.plan.indices);
+  return tiesHold(base.ties, positions, L.positions, base.plan.indices, opts);
 }
 
 // Vertex normals of a triangle mesh, into `out`: each triangle adds its unit normal to

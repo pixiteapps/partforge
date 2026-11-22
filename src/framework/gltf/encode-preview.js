@@ -104,6 +104,7 @@
 import { Document, Logger, Node, Primitive, WebIO } from "@gltf-transform/core";
 import { EXTMeshoptCompression, KHRMeshQuantization } from "@gltf-transform/extensions";
 import { quantize, reorder, weld } from "@gltf-transform/functions";
+import { PREVIEW_POSITION_BITS } from "./preview-format.js";
 import { MeshoptEncoder } from "meshoptimizer/encoder";
 import { cadAppearance, DISPLAY_KEYS } from "../materials/resolve.js";
 import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
@@ -154,10 +155,10 @@ function paramsExtras(params) {
   return Object.keys(out).length ? out : null;
 }
 
-// quantize()'s default POSITION precision; one step of it over the mesh's widest
-// extent is the snapping tolerance — closer than that, quantization itself may
+// quantize()'s POSITION precision (preview-format.js); one step of it over the mesh's
+// widest extent is the snapping tolerance — closer than that, quantization itself may
 // put the two points on one grid value.
-const POSITION_BITS = 14;
+const POSITION_BITS = PREVIEW_POSITION_BITS;
 // quantize() compacts a primitive whose index count is under half its vertex
 // count — which would drop the appended endpoints no triangle references.
 const compactsAt = (indexCount, vertexCount) => indexCount < vertexCount / 2;
@@ -664,7 +665,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
   }
 
   for (const t of tied) t.count = t.surface.getAttribute("POSITION").getCount(); // endpoints appended
-  await doc.transform(quantize());
+  await doc.transform(quantize({ quantizePosition: POSITION_BITS }));
 
   // quantize() moves an animated node's mesh onto a new, unnamed child (the
   // dequantization must not ride the animated TRS). Name that child and give it

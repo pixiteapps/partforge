@@ -28,12 +28,13 @@
 // null when absent or empty (see paramsOf).
 //
 // A cage body's ties (encoder version 7) come back on its payload as `ties`
-// { key, level, pose, tri: Uint32Array(n), w: Float32Array(2n) }, one per payload
+// { key, level, pose, tri: Uint32Array(n), w: Float32Array(2n), step }, one per payload
 // vertex in the payload's order: the vertex sits at pose · (w0·A + w1·B +
 // (1 − w0 − w1)·C) on limit triangle `tri` of the cage's smooth surface at that
 // level, within the file's quantization: each position coordinate up to about 0.7 of
 // a step of 1/16383 of the mesh's widest extent (half a step of rounding, plus
-// gltf-transform's bit replication), weights to 1/65535. A payload without them has no `ties` key; so has one
+// gltf-transform's bit replication), weights to 1/65535. `step` is that step in mm,
+// read off the file's own dequantization (0 for unquantized positions). A payload without them has no `ties` key; so has one
 // whose ties are malformed (tiesOf), which a reader takes as "not re-posable".
 //
 // The baked animation (encoder version 4) comes back as `animation`, null for a
@@ -57,6 +58,7 @@
 import { Matrix3, Matrix4, Quaternion, Vector3 } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+import { PREVIEW_POSITION_BITS } from "./preview-format.js";
 
 // The writer's root rotation (−90° about X), inverted: glTF Y-up → model Z-up.
 const Y_UP_TO_Z_UP = new Matrix4().makeRotationX(Math.PI / 2);
@@ -204,9 +206,23 @@ function surfaceVertexCount(position, index) {
   return max + 1;
 }
 
+// One quantization step of a position attribute in the payload's frame (mm): the
+// largest scale `matrix` applies to an attribute axis over the signed integer range the
+// writer uses (preview-format.js; never finer than the attribute's own type). 0 for a
+// float attribute, which is not quantized.
+function positionStep(attr, matrix) {
+  const a = attr.array;
+  const typeBits = a instanceof Int16Array ? 16 : a instanceof Int8Array ? 8 : 0;
+  if (!attr.normalized || !typeBits) return 0;
+  const e = matrix.elements;
+  const scale = Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+  return scale / (2 ** (Math.min(PREVIEW_POSITION_BITS, typeBits) - 1) - 1);
+}
+
 // The ties of one surface (see the header), or null: the node's partforgeTies extra
-// plus its two attributes, cut to the payload's `count` vertices.
-function tiesOf(node, geometry, count) {
+// plus its two attributes, cut to the payload's `count` vertices. `step` is
+// positionStep's, carried so a reader can bound the quantization error.
+function tiesOf(node, geometry, count, step) {
   const extra = node.userData?.partforgeTies;
   const triAttr = geometry.getAttribute("_partforge_tie_tri");
   const wAttr = geometry.getAttribute("_partforge_tie_w");
@@ -222,7 +238,7 @@ function tiesOf(node, geometry, count) {
     w[2 * v] = wAttr.getX(v); // a normalized attribute: getX/getY denormalize
     w[2 * v + 1] = wAttr.getY(v);
   }
-  return { key, level, pose: pose.slice(), tri, w };
+  return { key, level, pose: pose.slice(), tri, w, step };
 }
 
 export async function decodePreviewGlb(bytes) {
@@ -266,7 +282,7 @@ export async function decodePreviewGlb(bytes) {
       edges: new Float32Array(0), // filled below from the node's LINES primitive, if any
       display: partforgeDisplay && typeof partforgeDisplay === "object" ? partforgeDisplay : null,
     };
-    const ties = tiesOf(node, geometry, count);
+    const ties = tiesOf(node, geometry, count, positionStep(position, toModel));
     if (ties) payload.ties = ties;
     meshes.push(payload);
     if (!meshByNode.has(node)) meshByNode.set(node, payload);
