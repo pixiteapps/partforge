@@ -6,8 +6,9 @@
 //
 // Authoring frame: the palm faces -Y, the fingers point to +Z, the thumb leaves the +X side.
 // One cage, no mirror. The palm is a box three rows tall: the two lower rows of the thumb's
-// side swell into the pad the thumb grows from, the top row thins toward the knuckles and
-// drops at the pinky side.
+// side push out into a pad, the thumb grows from the pad's top, and the top row thins
+// toward the knuckles and drops at the pinky side. The thumb's size and place were set
+// against photographs of an open hand.
 // Each finger is a limb of three joints (mcp, pip, and dip following pip by 0.75); the
 // thumb is a limb of two (mcp, and ip following it). A knuckle in the cage is three rings
 // centred on its joint, each turning a third of the joint's angle about the centre of the
@@ -32,11 +33,11 @@ const FINGERS = {
   pinky:  { col: 0, neck: 3, width: 0.8,  splay: 0,  lengths: [22, 16, 16] },
 };
 
-// The thumb's side: the two lower rows of the +X side push out `pad` mm and swing out
-// `padOut` degrees as one pad. The thumb grows from the pad's lower face: a root that
-// turns up and toward the palm side, a run to its first joint, and two segments. It curls
-// across the palm.
-const THUMB = { pad: 9, padOut: -26, root: 8, run: 10, lengths: [25, 22], up: -30, inward: -8, follow: 0.8 };
+// The thumb's side: the two lower rows of the +X side push out `pad` mm as one pad, which
+// swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
+// `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
+// by `neck`) and two segments. It curls across the palm.
+const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, lengths: [25, 20], follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 
@@ -46,9 +47,10 @@ const unit = (v) => v.map((x) => x / Math.hypot(...v));
 const squareTo = (v, n) => { const along = v[0] * n[0] + v[1] * n[1] + v[2] * n[2]; return unit(v.map((x, i) => x - along * n[i])); };
 
 // The curl stops at 80°: with every knuckle at 90°, a curl near 90° presses the pinky's tip
-// into the palm, and a cage may not pass through itself. Every pose within these ranges
-// builds, all of them at their max at once included.
-const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 60] };
+// into the palm, and a cage may not pass through itself. The thumb's stops at 50° for the
+// same reason: past it the thumb meets a curled index finger. Every pose within these
+// ranges builds, all of them at their max at once included.
+const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 // The flat under the wrist sits this far above the cage's lowest point (mm).
 const FLAT_ABOVE = 2.4;
@@ -70,7 +72,7 @@ export function cageHand(make, p, bends) {
   c.scale(c.faces("-z:"), [0.88, 1, 1]);
   c.move("-y:3,0", [0, -7, 0]);
   c.move("-y:0,0", [0, -3, 0]);
-  const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.74, 1.08, 1], id: "wrist" });
+  const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.78, 1.08, 1], id: "wrist" });
   c.extrude(w, { by: 24, scale: 1.04, id: "arm" });
   // One ring of a bend: extrude, then swing the new cap about the centre of the face it
   // grew from. The next extrude follows the turned cap.
@@ -105,20 +107,20 @@ export function cageHand(make, p, bends) {
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     if (bends) digit(neck, name, f.lengths, bends[name], PALMWARD);
   }
-  // The thumb's side of the palm: the two lower rows of the +X side push out as one pad,
-  // hinged on their top edge, so the pad is widest near the wrist and runs up to a web
-  // under the index finger. The thumb grows from the pad's lower face, hinged on the edge
-  // it shares with the web.
+  // The thumb's side of the palm. The two lower rows of the +X side push out as one pad as
+  // wide as the thumb, and the pad swings in about its top edge so it is narrow at the
+  // wrist. The thumb grows from the pad's top (the side of the pad that faces the
+  // fingers), leaning out about the edge it shares with the palm: that edge is the web.
   const row = PALM.size[2] / PALM.segs[2];
-  const top = (face) => c.centroid(face).map((v, i) => v + (i === 2 ? row / 2 : 0));
-  const padHinge = top("+x:0,1");
   const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
-  c.rotate(pad, { axis: "y", deg: THUMB.padOut, about: padHinge });
-  const web = top(pad[0]);
-  let t = c.extrude(pad[0], { by: THUMB.root, id: "thumbRoot" });
-  c.rotate(t, { axis: "y", deg: THUMB.up, about: web });
-  c.rotate(t, { axis: "z", deg: THUMB.inward });
-  t = c.extrude(t, { by: THUMB.run, scale: 0.9, id: "thumb1" });
+  const padTop = c.centroid(pad[1]).map((v, i) => v + (i === 2 ? row / 2 : 0));
+  c.rotate(pad, { axis: "y", deg: THUMB.tuck, about: padTop });
+  const shelf = c.faces("thenar.s").reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
+  const web = c.centroid(shelf).map((v, i) => v - (i === 0 ? THUMB.pad / 2 : 0));
+  c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: web });
+  const base = c.centroid(shelf);
+  const t = c.extrude(shelf, { by: THUMB.root, scale: THUMB.neck, id: "thumbRoot" });
+  c.rotate(t, { axis: "x", deg: THUMB.forward, about: base });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
   return c;
 }
@@ -133,7 +135,7 @@ const REST = (() => {
   };
   return {
     ...Object.fromEntries(Object.keys(FINGERS).map((n) => [n, base(`${n}Neck`, PALMWARD)])),
-    thumb: base("thumb1", THUMB_CURL),
+    thumb: base("thumbRoot", THUMB_CURL),
   };
 })();
 

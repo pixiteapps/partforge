@@ -32,7 +32,7 @@ describe("dragValidity on the cage hand", () => {
 
   test("is null across the hand's whole slider range, every corner of it included", () => {
     const corners = [];
-    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 30, 60]) corners.push([knuckle, curl, thumb]);
+    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb]);
     for (const [knuckle, curl, thumb] of corners) expect(dragValidity(plan, handCage(knuckle, curl, thumb).points), `${knuckle} ${curl} ${thumb}`).toBeNull();
     // The part's own params at its maxima, through its limbs.
     const max = Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max]));

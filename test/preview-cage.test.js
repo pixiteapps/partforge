@@ -81,7 +81,7 @@ const A = { ...hand.defaults };
 const THUMB = { ...hand.defaults, thumbCurl: 55 };
 const INDEX = { ...hand.defaults, indexKnuckle: 60, indexCurl: 70 };
 const FINGERS = Object.keys(hand.defaults).filter((key) => key !== "thumbCurl");
-const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 60 };
+const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 50 };
 
 // test/mount-cage-drag.test.js's swing arm: clear at 60°, back through itself at 140°.
 const armCage = (make, deg, x = 0) => {
