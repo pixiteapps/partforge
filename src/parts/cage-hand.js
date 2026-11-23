@@ -5,8 +5,9 @@
 // posed in derive, so Pose mode can drag a fingertip.
 //
 // Authoring frame: the palm faces -Y, the fingers point to +Z, the thumb leaves the +X side.
-// One cage, no mirror. The palm is a box three rows tall: the heel row carries the two
-// pads and the thumb, the top row thins toward the knuckles and drops at the pinky side.
+// One cage, no mirror. The palm is a box three rows tall: the two lower rows of the thumb's
+// side swell into the pad the thumb grows from, the top row thins toward the knuckles and
+// drops at the pinky side.
 // Each finger is a limb of three joints (mcp, pip, and dip following pip by 0.75); the
 // thumb is a limb of two (mcp, and ip following it). A knuckle in the cage is three rings
 // centred on its joint, each turning a third of the joint's angle about the centre of the
@@ -31,9 +32,11 @@ const FINGERS = {
   pinky:  { col: 0, neck: 3, width: 0.8,  splay: 0,  lengths: [22, 16, 16] },
 };
 
-// The thumb leaves the heel row's +X face, turns up and toward the palm side, runs
-// THUMB_RUN to its first joint, and has two segments. It curls across the palm.
-const THUMB = { root: 4, run: 14, lengths: [25, 22], up: -56, inward: -8, follow: 0.8 };
+// The thumb's side: the two lower rows of the +X side push out `pad` mm and swing out
+// `padOut` degrees as one pad. The thumb grows from the pad's lower face: a root that
+// turns up and toward the palm side, a run to its first joint, and two segments. It curls
+// across the palm.
+const THUMB = { pad: 9, padOut: -26, root: 8, run: 10, lengths: [25, 22], up: -30, inward: -8, follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 
@@ -102,13 +105,20 @@ export function cageHand(make, p, bends) {
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     if (bends) digit(neck, name, f.lengths, bends[name], PALMWARD);
   }
-  // The thumb's root swings up about the top edge of the face it grows from, so that edge
-  // stays on the palm and the lower edge swings out: the pad at the thumb's base.
-  const web = c.centroid("+x:0,0").map((v, i) => v + (i === 2 ? PALM.size[2] / PALM.segs[2] / 2 : 0));
-  let t = c.extrude("+x:0,0", { by: THUMB.root, scale: [1, 0.8, 1], id: "thumbRoot" });
+  // The thumb's side of the palm: the two lower rows of the +X side push out as one pad,
+  // hinged on their top edge, so the pad is widest near the wrist and runs up to a web
+  // under the index finger. The thumb grows from the pad's lower face, hinged on the edge
+  // it shares with the web.
+  const row = PALM.size[2] / PALM.segs[2];
+  const top = (face) => c.centroid(face).map((v, i) => v + (i === 2 ? row / 2 : 0));
+  const padHinge = top("+x:0,1");
+  const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
+  c.rotate(pad, { axis: "y", deg: THUMB.padOut, about: padHinge });
+  const web = top(pad[0]);
+  let t = c.extrude(pad[0], { by: THUMB.root, id: "thumbRoot" });
   c.rotate(t, { axis: "y", deg: THUMB.up, about: web });
   c.rotate(t, { axis: "z", deg: THUMB.inward });
-  t = c.extrude(t, { by: THUMB.run, scale: 0.88, id: "thumb1" });
+  t = c.extrude(t, { by: THUMB.run, scale: 0.9, id: "thumb1" });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
   return c;
 }

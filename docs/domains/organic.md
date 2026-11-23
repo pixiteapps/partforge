@@ -1122,8 +1122,7 @@ The points to copy:
 ### Worked example: a hand that curls
 
 `src/parts/cage-hand.js` builds a posable hand from one cage, no mirror: a palm with four
-faces across its top (one per finger), a wrist, and a thumb from the lowest face of the
-+X side. The palm faces -Y, the fingers point to +Z, and the thumb leaves the +X side.
+faces across its top (one per finger), a wrist, and a thumb from a pad on the +X side. The palm faces -Y, the fingers point to +Z, and the thumb leaves the +X side.
 Each digit's bends come from a `limb` posed in `derive`, the pattern in "Drag handles on
 a cage":
 
@@ -1149,9 +1148,11 @@ const FINGERS = {
   pinky:  { col: 0, neck: 3, width: 0.8,  splay: 0,  lengths: [22, 16, 16] },
 };
 
-// The thumb leaves the heel row's +X face, turns up and toward the palm side, runs
-// THUMB_RUN to its first joint, and has two segments. It curls across the palm.
-const THUMB = { root: 4, run: 14, lengths: [25, 22], up: -56, inward: -8, follow: 0.8 };
+// The thumb's side: the two lower rows of the +X side push out `pad` mm and swing out
+// `padOut` degrees as one pad. The thumb grows from the pad's lower face: a root that
+// turns up and toward the palm side, a run to its first joint, and two segments. It curls
+// across the palm.
+const THUMB = { pad: 9, padOut: -26, root: 8, run: 10, lengths: [25, 22], up: -30, inward: -8, follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 
@@ -1217,13 +1218,20 @@ function cageHand(make, p, bends) {
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     if (bends) digit(neck, name, f.lengths, bends[name], PALMWARD);
   }
-  // The thumb's root swings up about the top edge of the face it grows from, so that edge
-  // stays on the palm and the lower edge swings out: the pad at the thumb's base.
-  const web = c.centroid("+x:0,0").map((v, i) => v + (i === 2 ? PALM.size[2] / PALM.segs[2] / 2 : 0));
-  let t = c.extrude("+x:0,0", { by: THUMB.root, scale: [1, 0.8, 1], id: "thumbRoot" });
+  // The thumb's side of the palm: the two lower rows of the +X side push out as one pad,
+  // hinged on their top edge, so the pad is widest near the wrist and runs up to a web
+  // under the index finger. The thumb grows from the pad's lower face, hinged on the edge
+  // it shares with the web.
+  const row = PALM.size[2] / PALM.segs[2];
+  const top = (face) => c.centroid(face).map((v, i) => v + (i === 2 ? row / 2 : 0));
+  const padHinge = top("+x:0,1");
+  const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
+  c.rotate(pad, { axis: "y", deg: THUMB.padOut, about: padHinge });
+  const web = top(pad[0]);
+  let t = c.extrude(pad[0], { by: THUMB.root, id: "thumbRoot" });
   c.rotate(t, { axis: "y", deg: THUMB.up, about: web });
   c.rotate(t, { axis: "z", deg: THUMB.inward });
-  t = c.extrude(t, { by: THUMB.run, scale: 0.88, id: "thumb1" });
+  t = c.extrude(t, { by: THUMB.run, scale: 0.9, id: "thumb1" });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
   return c;
 }
@@ -1276,7 +1284,7 @@ const handParams = {
 const handDigits = poseDigits(handParams);
 handDigits.index.values;   // [10, 16, 12]
 const hand = cageHand(cage, handParams, bendsOf(handDigits));
-hand.faces().length;   // 326
+hand.faces().length;   // 332
 handDigits.index.report.tip;   // [45.624, -24.269, 171.225]
 hand.centroid("indexTip").map(Math.round);   // [46, -24, 171]
 ```
@@ -1311,18 +1319,23 @@ The points to copy:
 - **Shape the palm by moving and scaling box faces before anything grows from them.**
   The top row is scaled thinner, the pinky side's top face is moved down, and the two
   palm-side faces of the heel row are moved out to make the pads at the base of the thumb
-  and of the little finger. The thumb then grows from the widened heel.
+  and of the little finger.
+- **A limb needs a base as wide as the body it leaves.** A thumb extruded from one face
+  of the side joins the palm as a thin stalk. Here the two lower rows of the +X side are
+  extruded together and swung out about their top edge, which makes one pad: widest
+  near the wrist, and running up to a web under the index finger. The thumb grows from
+  the pad's lower face, so it joins the palm over two thirds of the palm's height.
 - **A knuckle is three short rings that share the bend.** Each ring swings about the
   centre of the face it grew from (`ring`), a third of the joint's angle each, so the
   inside of the bend does not fold. The rings are 5 mm long on fingers about 20 mm
   thick, a quarter of the thickness. On each digit's middle knuckle the first ring widens
   and the last narrows, which draws the joint.
-- **The thumb turns before it grows.** Its root is a short extrude out of the side,
+- **The thumb turns before it grows.** Its root is a short extrude out of the pad,
   turned up about Y and a little toward the palm about Z. The turn about Y is about the
   top edge of the face the root grew from, not the root's own centre: a big turn in
   place swings one edge of the cap back into the body and pinches the joint, while a
-  turn about the edge keeps that edge on the palm and makes the pad at the thumb's base. The extrudes after it follow
-  that direction, and each knuckle turns about the digit's direction × the way it curls
+  turn about the edge keeps that edge where it is, so the web runs smoothly into the
+  thumb. The extrudes after it follow that direction, and each knuckle turns about the digit's direction × the way it curls
   (`digit`), the axis its limb bends about.
 - **The limbs are placed from the cage, not by hand.** `cageHand` without `bends` stops
   before the digits: the palm with a cap where each one starts. `REST` reads each cap's
@@ -1331,7 +1344,7 @@ The points to copy:
   the cap's normal, and has the cage's segment lengths as its `lengths`. Reshape the
   palm and the limbs follow. At the defaults each digit's limb tip is within 1 mm of
   its cage tip, so the handle sits on the fingertip.
-- **A pose moves the cage's points, never its faces.** Every pose has the same 326
+- **A pose moves the cage's points, never its faces.** Every pose has the same 332
   faces and the same ids. Only the `rotate` angles change.
 - **It builds clean across every slider's range**, every param at its max at once
   included. The curl stops at 80°: with every knuckle at 90°, a curl near 90° presses the
