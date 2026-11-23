@@ -38,7 +38,7 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   ].sort());
   for (const f of FINGERS) {
     expect(CONTROLS.find((c) => c.key === `${f}Knuckle`)).toMatchObject({ min: -10, max: 90 });
-    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 90 });
+    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 80 });
   }
   expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 60 });
   expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());

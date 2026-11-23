@@ -10,10 +10,10 @@ import hand, { cageHand } from "../src/parts/cage-hand.js";
 
 const FINGERS = ["index", "middle", "ring", "pinky"];
 // The hand's cage with every finger at one knuckle and one curl (the tip joint follows at
-// 0.75), driven straight through cageHand so a bend past the part's range can be asked for.
+// 0.75, the thumb's at 0.8), driven straight through cageHand so a bend past the part's range can be asked for.
 const { p: P0 } = resolveParams(hand, hand.defaults);
 const handCage = (knuckle, curl, thumb) => cageHand(createCage, P0,
-  { ...Object.fromEntries(FINGERS.map((f) => [f, [knuckle, curl, 0.75 * curl]])), thumb: [thumb] }).snapshot();
+  { ...Object.fromEntries(FINGERS.map((f) => [f, [knuckle, curl, 0.75 * curl]])), thumb: [thumb, 0.8 * thumb] }).snapshot();
 const handAt = (params) => {
   const { p, d } = resolveParams(hand, { ...hand.defaults, ...params });
   return cageHand(createCage, p, Object.fromEntries([...FINGERS, "thumb"].map((n) => [n, d[n].values]))).snapshot();
@@ -32,11 +32,11 @@ describe("dragValidity on the cage hand", () => {
 
   test("is null across the hand's whole slider range, every corner of it included", () => {
     const corners = [];
-    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 45, 90]) for (const thumb of [0, 30, 60]) corners.push([knuckle, curl, thumb]);
+    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 30, 60]) corners.push([knuckle, curl, thumb]);
     for (const [knuckle, curl, thumb] of corners) expect(dragValidity(plan, handCage(knuckle, curl, thumb).points), `${knuckle} ${curl} ${thumb}`).toBeNull();
     // The part's own params at its maxima, through its limbs.
-    const max = Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 90], [`${f}Curl`, 90]]));
-    expect(dragValidity(plan, handAt({ ...max, thumbCurl: 60 }).points)).toBeNull();
+    const max = Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max]));
+    expect(dragValidity(plan, handAt(max).points)).toBeNull();
   });
 
   test("is null at 240 seeded random poses inside the slider ranges, every parameter varied together", () => {

@@ -81,13 +81,13 @@ describe("deformCage on the cage hand", () => {
   // Normal bound per pose: at the base's own pose the deformed normals are the delivered
   // ones. Away from it the plan keeps the base's quad diagonals for the whole drag while
   // the exact build re-picks them at B's points, and an unweighted vertex normal follows
-  // its triangle fan: 1.2° at the thumb pose, 2.3° with every digit at its max, at the
+  // its triangle fan: 1.2° at the thumb pose, 3.6° with every digit at its max, at the
   // knuckles of a finger turned 90°. That is the only difference (the positions agree
   // to 2e-5 mm), and the swap to the exact mesh on release shows nothing at that size.
   test.each([
     ["the defaults (the base's own pose)", A, 0.1],
     ["the thumb curled", THUMB, 2],
-    ["every finger and the thumb curled to the max", ALL_CURLED, 2.5],
+    ["every finger and the thumb curled to the max", ALL_CURLED, 4],
   ])("from the defaults to %s: skin positions within 1e-3 mm of the exact build, normals within the bound", async (label, B, bound) => {
     const live = entryAt(B).cages[0];
     const n = mesh.positions.length;

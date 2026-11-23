@@ -47,15 +47,15 @@
       {
         "name": "defaults",
         "params": {
-          "indexKnuckle": 15,
-          "indexCurl": 20,
-          "middleKnuckle": 15,
+          "indexKnuckle": 10,
+          "indexCurl": 16,
+          "middleKnuckle": 14,
           "middleCurl": 20,
-          "ringKnuckle": 15,
-          "ringCurl": 20,
-          "pinkyKnuckle": 15,
-          "pinkyCurl": 20,
-          "thumbCurl": 10
+          "ringKnuckle": 18,
+          "ringCurl": 24,
+          "pinkyKnuckle": 22,
+          "pinkyCurl": 28,
+          "thumbCurl": 12
         },
         "checks": [
           {
@@ -86,15 +86,15 @@
       {
         "name": "defaults",
         "params": {
-          "indexKnuckle": 15,
-          "indexCurl": 20,
-          "middleKnuckle": 15,
+          "indexKnuckle": 10,
+          "indexCurl": 16,
+          "middleKnuckle": 14,
           "middleCurl": 20,
-          "ringKnuckle": 15,
-          "ringCurl": 20,
-          "pinkyKnuckle": 15,
-          "pinkyCurl": 20,
-          "thumbCurl": 10
+          "ringKnuckle": 18,
+          "ringCurl": 24,
+          "pinkyKnuckle": 22,
+          "pinkyCurl": 28,
+          "thumbCurl": 12
         },
         "checks": [
           {

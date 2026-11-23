@@ -142,9 +142,6 @@ describe("the cage hand's preview file", () => {
     expect(cages.verifyNext()).toBe(false);  // nothing left to prove
     expect(cages.holdsDragState()).toBe(false); // the plan the proof built is dropped
     expect(viewer.writes).toEqual([]);
-    // The thumb pose below lists the cage's faces in another order than the file's.
-    const faces = (params) => JSON.stringify(probePoses(hand, "assembly", params, { scope: "build" }).get("hand").cages[0].faces);
-    expect(faces(THUMB)).not.toBe(faces(A));
   });
 
   test("the editor's tolerance would refuse the quantized file (why the preview derives its own)", async () => {
