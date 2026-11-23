@@ -1151,7 +1151,7 @@ const FINGERS = {
 
 // The thumb leaves the heel row's +X face, turns up and toward the palm side, runs
 // THUMB_RUN to its first joint, and has two segments. It curls across the palm.
-const THUMB = { root: 10, run: 16, lengths: [25, 22], up: -56, inward: -8, follow: 0.8 };
+const THUMB = { root: 4, run: 14, lengths: [25, 22], up: -56, inward: -8, follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 
@@ -1217,8 +1217,11 @@ function cageHand(make, p, bends) {
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     if (bends) digit(neck, name, f.lengths, bends[name], PALMWARD);
   }
+  // The thumb's root swings up about the top edge of the face it grows from, so that edge
+  // stays on the palm and the lower edge swings out: the pad at the thumb's base.
+  const web = c.centroid("+x:0,0").map((v, i) => v + (i === 2 ? PALM.size[2] / PALM.segs[2] / 2 : 0));
   let t = c.extrude("+x:0,0", { by: THUMB.root, scale: [1, 0.8, 1], id: "thumbRoot" });
-  c.rotate(t, { axis: "y", deg: THUMB.up });
+  c.rotate(t, { axis: "y", deg: THUMB.up, about: web });
   c.rotate(t, { axis: "z", deg: THUMB.inward });
   t = c.extrude(t, { by: THUMB.run, scale: 0.88, id: "thumb1" });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
@@ -1315,7 +1318,10 @@ The points to copy:
   thick, a quarter of the thickness. On each digit's middle knuckle the first ring widens
   and the last narrows, which draws the joint.
 - **The thumb turns before it grows.** Its root is a short extrude out of the side,
-  turned up about Y and a little toward the palm about Z. The extrudes after it follow
+  turned up about Y and a little toward the palm about Z. The turn about Y is about the
+  top edge of the face the root grew from, not the root's own centre: a big turn in
+  place swings one edge of the cap back into the body and pinches the joint, while a
+  turn about the edge keeps that edge on the palm and makes the pad at the thumb's base. The extrudes after it follow
   that direction, and each knuckle turns about the digit's direction × the way it curls
   (`digit`), the axis its limb bends about.
 - **The limbs are placed from the cage, not by hand.** `cageHand` without `bends` stops

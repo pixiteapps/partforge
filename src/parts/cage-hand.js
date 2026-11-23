@@ -33,7 +33,7 @@ const FINGERS = {
 
 // The thumb leaves the heel row's +X face, turns up and toward the palm side, runs
 // THUMB_RUN to its first joint, and has two segments. It curls across the palm.
-const THUMB = { root: 10, run: 16, lengths: [25, 22], up: -56, inward: -8, follow: 0.8 };
+const THUMB = { root: 4, run: 14, lengths: [25, 22], up: -56, inward: -8, follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 
@@ -102,8 +102,11 @@ export function cageHand(make, p, bends) {
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     if (bends) digit(neck, name, f.lengths, bends[name], PALMWARD);
   }
+  // The thumb's root swings up about the top edge of the face it grows from, so that edge
+  // stays on the palm and the lower edge swings out: the pad at the thumb's base.
+  const web = c.centroid("+x:0,0").map((v, i) => v + (i === 2 ? PALM.size[2] / PALM.segs[2] / 2 : 0));
   let t = c.extrude("+x:0,0", { by: THUMB.root, scale: [1, 0.8, 1], id: "thumbRoot" });
-  c.rotate(t, { axis: "y", deg: THUMB.up });
+  c.rotate(t, { axis: "y", deg: THUMB.up, about: web });
   c.rotate(t, { axis: "z", deg: THUMB.inward });
   t = c.extrude(t, { by: THUMB.run, scale: 0.88, id: "thumb1" });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
