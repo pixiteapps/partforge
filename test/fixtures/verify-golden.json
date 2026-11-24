@@ -56,7 +56,8 @@
           "pinkyKnuckle": 22,
           "pinkyCurl": 28,
           "thumbCurl": 12,
-          "thumbOppose": 0
+          "thumbOppose": 0,
+          "thumbAbduct": 0
         },
         "checks": [
           {
@@ -96,7 +97,8 @@
           "pinkyKnuckle": 22,
           "pinkyCurl": 28,
           "thumbCurl": 12,
-          "thumbOppose": 0
+          "thumbOppose": 0,
+          "thumbAbduct": 0
         },
         "checks": [
           {

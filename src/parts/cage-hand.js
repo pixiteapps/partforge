@@ -6,9 +6,10 @@
 //
 // Authoring frame: the palm faces -Y, the fingers point to +Z, the thumb leaves the +X side.
 // One cage, no mirror. The palm is a box three rows tall: the two lower rows of the thumb's
-// side push out into a pad, the thumb grows from the pad's top, and the top row thins
-// toward the knuckles and drops at the pinky side. The thumb's size and place were set
-// against photographs of an open hand.
+// side push out as a short web ring and then a pad, the thumb grows from the pad's top, and
+// the top row thins toward the knuckles and drops at the pinky side. The thumb's size and
+// place were set against photographs of an open hand, and its base against an X-ray: the
+// pad is the thumb's first bone, which pivots at the wrist.
 // Each finger is a limb of three joints (mcp, pip, and dip following pip by 0.75); the
 // thumb is a limb of two (mcp, and ip following it). A knuckle in the cage is three rings
 // centred on its joint, each turning a third of the joint's angle about the centre of the
@@ -33,23 +34,32 @@ const FINGERS = {
   pinky:  { col: 0, neck: 3, width: 0.8,  splay: 0,  lengths: [22, 16, 16] },
 };
 
-// The thumb's side: the two lower rows of the +X side push out `pad` mm as one pad, which
-// swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
-// `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
-// by `neck`) and two segments. It curls across the palm.
-// Opposition turns the thumb about the hand's long axis. The hinge sits `hinge` mm from
-// the middle of the pad's root ([toward the palm's middle, toward the palm side]), near
-// the palm's front edge, so the thumb swings from the palm's side round to its front and
-// across it. The pad is the bone under the ball of the thumb, which pivots at the wrist:
-// the thumb and the top of the pad take the whole turn, and `twist` is the share the pad's
-// wrist end and its middle take. The turn is spread up the pad, so no one edge folds.
-const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [2, 9], twist: [0.3, 0.7], lengths: [25, 20], follow: 0.8 };
+// The thumb's side: the two lower rows of the +X side push out `web` mm as a ring of soft
+// flesh and then on to `pad` mm as the pad, `thick` times the palm's thickness, which swings
+// in `tuck` degrees at the wrist. The pad is the thumb's first bone (its metacarpal), which
+// pivots at the wrist. The thumb grows from the pad's top: it leans out `lean` degrees and
+// toward the palm side `forward` degrees, then a short root (scaled by `neck`) and two
+// segments. It curls across the palm.
+// Opposition turns the bone and the thumb about the hand's long axis. The hinge sits
+// `hinge` mm from the middle of the pad's root ([toward the palm's middle, toward the palm
+// side]), near the palm's front edge, so the thumb swings from the palm's side round to its
+// front and across it. Abduction swings them forward out of the palm, about a line across
+// the hand through the wrist end of the pad (`cmc`: [toward the palm side, height], from
+// the hinge). Each motion is spread over the rings between the palm and the bone: `twist`
+// and `swing` are the share of the angle reached by the palm's edge under the thumb, by the
+// web's top edge and the pad's wrist end, and by the rest of the web.
+const THUMB = {
+  pad: 32, web: 10, thick: 1.05, tuck: 14, lean: 23, root: 5, neck: [1.1, 0.9, 1], forward: 10, lengths: [25, 20], follow: 0.8,
+  hinge: [2, 9], twist: [0.15, 0.3, 0.7], cmc: [0, 16], swing: [0, 0.1, 0.55],
+};
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
-// The way the thumb curls once it is opposed `deg` degrees: the same turn about Z.
-const thumbCurlAt = (deg) => {
-  const a = (-deg * Math.PI) / 180, [x, y] = THUMB_CURL;
-  return [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a), 0];
+// The way the thumb curls once it is opposed `deg` degrees and abducted `abduct`: the same
+// turn about Z, then the same swing about X.
+const thumbCurlAt = (deg, abduct) => {
+  const a = (-deg * Math.PI) / 180, b = (abduct * Math.PI) / 180, [x, y] = THUMB_CURL;
+  const turned = x * Math.sin(a) + y * Math.cos(a);
+  return [x * Math.cos(a) - y * Math.sin(a), turned * Math.cos(b), turned * Math.sin(b)];
 };
 
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -59,13 +69,15 @@ const squareTo = (v, n) => { const along = v[0] * n[0] + v[1] * n[1] + v[2] * n[
 
 // The curl stops at 80°: with every knuckle at 90°, a curl near 90° presses the pinky's tip
 // into the palm, and a cage may not pass through itself. The thumb's stops at 50° for the
-// same reason: past it the thumb meets a curled index finger. With the thumb not opposed,
-// every pose within these ranges builds, all of them at their max at once included.
-// Opposed, the thumb sits in front of the palm, where a closed fist's fingers go: an open
-// hand builds at any opposition, but a curled thumb can meet closed fingers, and past
-// about 100° of opposition a fully curled thumb presses its tip into the palm. A drag
-// stops at the last pose that builds.
-const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 120] };
+// same reason: past it the thumb meets a curled index finger. With the thumb neither opposed
+// nor abducted, every pose within these ranges builds, all of them at their max at once
+// included.
+// Opposed or abducted, the thumb sits in front of the palm, where a closed fist's fingers
+// go: an open hand builds at any opposition and abduction, but a curled thumb can meet
+// closed fingers, and fully opposed and fully curled its tip can press into the palm. A
+// drag stops at the last pose that builds. Abduction stops at 75°: a hand's own is about
+// 60°, and the rest stands in for the palm's cupping, which this palm does not do.
+const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 120], thumbAbduct: [0, 75] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 // The flat under the wrist sits this far above the cage's lowest point (mm).
 const FLAT_ABOVE = 2.4;
@@ -133,38 +145,58 @@ export function cageHand(make, p, bends) {
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     if (bends) digit(neck, name, f.lengths, bends[name], PALMWARD);
   }
-  // The thumb's side of the palm. The two lower rows of the +X side push out as one pad as
-  // wide as the thumb, and the pad swings in about its top edge so it is narrow at the
-  // wrist. The thumb grows from the pad's top (the side of the pad that faces the
-  // fingers), leaning out about the edge it shares with the palm: that edge is the web.
+  // The thumb's side of the palm. The two lower rows of the +X side push out twice: a short
+  // ring (the web, the flesh between the palm and the thumb's first bone) and then the pad,
+  // which is that bone. Both swing in about their top edges so the pad is narrow at the
+  // wrist. The thumb grows from the pad's top (the side that faces the fingers), leaning
+  // out about its inner edge.
   const row = PALM.size[2] / PALM.segs[2];
   const hinge = hingeOf(c);
-  const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
-  const padTop = c.centroid(pad[1]).map((v, i) => v + (i === 2 ? row / 2 : 0));
-  c.rotate(pad, { axis: "y", deg: THUMB.tuck, about: padTop });
+  const boneLength = THUMB.pad - THUMB.web;
+  const topOf = (face) => c.centroid(face).map((v, i) => v + (i === 2 ? row / 2 : 0));
+  const webCap = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.web, id: "thenarWeb" });
+  const webTopEdge = topOf(webCap[1]);
+  const webSides = c.faces("thenarWeb.s");
+  const pad = c.extrude(webCap, { by: boneLength, scale: [1, THUMB.thick, 1], id: "thenar" });
   const sides = c.faces("thenar.s");
-  const shelf = sides.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
-  // The pad's front and back sides above its middle: with the upper cap they name the
-  // pad's middle and top rings, palm edge included.
+  const tuckWeb = (THUMB.tuck * THUMB.web) / THUMB.pad;
+  c.rotate([...pad, ...sides], { axis: "y", deg: tuckWeb, about: webTopEdge });
+  c.rotate(pad, { axis: "y", deg: THUMB.tuck - tuckWeb, about: topOf(pad[1]) });
+  const topmost = (faces) => faces.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
+  const shelf = topmost(sides), webTop = topmost(webSides);
+  // The rings by name. A ring's front and back side faces above the pad's middle carry
+  // that ring's middle and top points and the next ring's.
   const padMid = (c.centroid(pad[0])[2] + c.centroid(pad[1])[2]) / 2;
-  const upper = sides.filter((f) => Math.abs(c.normal(f)[1]) > 0.6 && c.centroid(f)[2] > padMid);
-  const web = c.centroid(shelf).map((v, i) => v - (i === 0 ? THUMB.pad / 2 : 0));
-  c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: web });
+  const flank = (f) => Math.abs(c.normal(f)[1]) > 0.6;
+  const upper = sides.filter((f) => flank(f) && c.centroid(f)[2] > padMid);
+  const lower = sides.filter((f) => flank(f) && c.centroid(f)[2] <= padMid);
+  const webUpper = webSides.filter((f) => flank(f) && c.centroid(f)[2] > padMid);
+  const inner = c.centroid(shelf).map((v, i) => v - (i === 0 ? boneLength / 2 : 0));
+  c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: inner });
   const base = c.centroid(shelf);
   const t = c.extrude(shelf, { by: THUMB.root, scale: THUMB.neck, id: "thumbRoot" });
   c.rotate(t, { axis: "x", deg: THUMB.forward, about: base });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
   const oppose = p?.thumbOppose ?? 0;
-  if (oppose) {
-    // Three turns about the same line, each on fewer rings than the last, so the angle
-    // grows from the wrist up: the whole pad, then its middle and top, then its top with
-    // the thumb. The palm's own edge under the thumb turns with it, which is the web.
+  const abduct = p?.thumbAbduct ?? 0;
+  if (oppose || abduct) {
+    // Each motion is four rotations about one line, each on fewer points than the last, so
+    // the angle grows from the palm out and from the wrist up: the palm's edge under the
+    // thumb, the web's top edge and the wrist end of the pad, the middle and top of the
+    // web, and last the bone with the thumb. No one ring takes the whole angle, so none
+    // folds. `shares` is the angle each of the first three has reached, as a share.
     const thumb = c.faces("thumb");
-    const [low, mid] = THUMB.twist;
-    const turn = (faces, share) => c.rotate(faces, { axis: "z", deg: -oppose * share, about: hinge });
-    turn([...pad, ...upper, ...thumb], low);
-    turn([pad[1], ...upper, ...thumb], mid - low);
-    turn(thumb, 1 - mid);
+    const bone = [pad[1], ...thumb.filter((f) => !f.startsWith("thumbRoot.s"))];
+    const graded = (shares, last, rotate) => {
+      rotate([...webUpper, webTop, ...lower, ...upper, ...pad, ...thumb], shares[0]);
+      rotate([webTop, ...lower, ...upper, ...pad, ...thumb], shares[1] - shares[0]);
+      rotate([pad[1], ...upper, ...thumb], shares[2] - shares[1]);
+      rotate(last, 1 - shares[2]);
+    };
+    const about = (axis, deg, at) => (faces, share) => { if (share) c.rotate(faces, { axis, deg: deg * share, about: at }); };
+    // The twist leaves the thumb's root ring to stretch; the swing takes it whole.
+    if (oppose) graded(THUMB.twist, bone, about("z", -oppose, hinge));
+    if (abduct) graded(THUMB.swing, [pad[1], ...thumb], about("x", abduct, [hinge[0], hinge[1] + THUMB.cmc[0], THUMB.cmc[1]]));
   }
   return c;
 }
@@ -180,21 +212,28 @@ const REST = (() => {
   return Object.fromEntries(Object.keys(FINGERS).map((n) => [n, baseOf(c, `${n}Neck`, PALMWARD)]));
 })();
 
-// The thumb's base moves with its opposition, so it is read off a palm built at that angle:
-// the limb's base, and the middle of the thumb root's outer side, where the opposition
-// handle sits. That side takes the whole turn, so the handle moves on a circle about the
-// hinge.
+// The thumb's base moves with its opposition and abduction, so it is read off a palm built
+// at those angles: the limb's base, and where the two handles sit. Opposition's is the
+// middle of the thumb root's outer side and abduction's the middle of the pad's upper
+// outer face. Both take the whole of both motions, so each moves on a circle about its
+// handle's axis.
 const rootOuter = (c) => c.faces("thumbRoot.s").reduce((best, f) => (c.normal(f)[0] > c.normal(best)[0] ? f : best));
 const ROOT_OUTER = rootOuter(cageHand(cage, null, null));
 let lastThumb = null;
-const thumbRest = (oppose) => {
-  if (lastThumb?.oppose !== oppose) {
-    const c = cageHand(cage, { thumbOppose: oppose }, null);
-    lastThumb = { oppose, base: baseOf(c, "thumbRoot", thumbCurlAt(oppose)), grip: c.centroid(ROOT_OUTER) };
+const thumbRest = (oppose, abduct) => {
+  if (lastThumb?.oppose !== oppose || lastThumb.abduct !== abduct) {
+    const c = cageHand(cage, { thumbOppose: oppose, thumbAbduct: abduct }, null);
+    lastThumb = { oppose, abduct, base: baseOf(c, "thumbRoot", thumbCurlAt(oppose, abduct)), grip: c.centroid(ROOT_OUTER), pad: c.centroid("thenar:1") };
   }
   return lastThumb;
 };
 const HINGE = hingeOf(palm(cage));
+const CMC = [HINGE[0], HINGE[1] + THUMB.cmc[0], THUMB.cmc[1]];
+// Abduction swings the line the thumb opposes about along with the thumb.
+const opposeAxis = (abduct) => {
+  const b = (abduct * Math.PI) / 180, y = HINGE[1] - CMC[1], z = HINGE[2] - CMC[2];
+  return { origin: [HINGE[0], CMC[1] + y * Math.cos(b) - z * Math.sin(b), CMC[2] + y * Math.sin(b) + z * Math.cos(b)], direction: [0, Math.sin(b), -Math.cos(b)] };
+};
 
 /** Every digit posed: the four fingers on the palm's top, the thumb on its side. */
 function poseDigits(p) {
@@ -211,7 +250,7 @@ function poseDigits(p) {
     }).pose({ bend: { mcp: p[`${name}Knuckle`], pip: p[`${name}Curl`] } });
   }
   out.thumb = limb("thumb", {
-    ...thumbRest(p.thumbOppose).base,
+    ...thumbRest(p.thumbOppose, p.thumbAbduct).base,
     joints: [
       { name: "mcp", range: RANGE.thumbCurl },
       { name: "ip", range: [0, RANGE.thumbCurl[1] * THUMB.follow], follow: { joint: "mcp", ratio: THUMB.follow } },
@@ -234,6 +273,7 @@ export default {
     { id: "thumb", title: "Thumb", controls: [
       deg("thumbCurl", "Thumb curl", RANGE.thumbCurl, "The thumb's base joint, curling it across the palm; the tip joint follows at 0.8."),
       deg("thumbOppose", "Thumb opposition", RANGE.thumbOppose, "Swings the thumb from the side of the palm round to its front, to face the fingers."),
+      deg("thumbAbduct", "Thumb abduction", RANGE.thumbAbduct, "Swings the thumb's base forward out of the palm, pivoting at the wrist, to open the hand round an object."),
     ] },
   ],
   defaults: {
@@ -241,6 +281,7 @@ export default {
     ...Object.fromEntries(Object.keys(FINGERS).flatMap((f, i) => [[`${f}Knuckle`, 10 + 4 * i], [`${f}Curl`, 16 + 4 * i]])),
     thumbCurl: 12,
     thumbOppose: 0,
+    thumbAbduct: 0,
   },
   derive: (p) => poseDigits(p),
   parts: {
@@ -268,8 +309,13 @@ export default {
     // Opposition is not a joint of the thumb's limb, so it gets its own handle: a ring at
     // the thumb's root, turned about the line the thumb opposes on.
     oppose: {
-      point: (p) => thumbRest(p.thumbOppose).grip, drag: "rotary", params: ["thumbOppose"],
-      axis: { origin: HINGE, direction: [0, 0, -1] }, label: "Thumb opposition", showOn: "hand",
+      point: (p) => thumbRest(p.thumbOppose, p.thumbAbduct).grip, drag: "rotary", params: ["thumbOppose"],
+      axis: (p) => opposeAxis(p.thumbAbduct), label: "Thumb opposition", showOn: "hand",
+    },
+    // Abduction is the same: a ring on the pad, turned about the line across the wrist.
+    abduct: {
+      point: (p) => thumbRest(p.thumbOppose, p.thumbAbduct).pad, drag: "rotary", params: ["thumbAbduct"],
+      axis: { origin: CMC, direction: [1, 0, 0] }, label: "Thumb abduction", showOn: "hand",
     },
   },
   verify: { expect: { hand: { watertight: true } } },

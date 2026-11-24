@@ -304,7 +304,7 @@ test("the guide's hand builds clean open, at its defaults and as a fist, at prev
   const print = createManifoldKernel(wasm, { quality: "print" });
   const controls = cageHandPart.parameters.flatMap((g) => g.controls);
   const open = Object.fromEntries(controls.map((c) => [c.key, 0]));
-  const fist = { ...Object.fromEntries(controls.map((c) => [c.key, c.max])), thumbOppose: 0 };
+  const fist = { ...Object.fromEntries(controls.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 };
   for (const p of [open, cageHandPart.defaults, fist]) {
     const bends = scope.bendsOf(scope.poseDigits(p));
     k.takeBuildWarnings();
