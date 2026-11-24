@@ -33,8 +33,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     # A hang fails in minutes instead of GitHub's 6-hour default (see ci.yml).
-    # A healthy publish takes ~5 min; a failed one is re-run from the Actions tab.
-    timeout-minutes: 30
+    # The suite is most of a publish: 13-15 min in November 2026, so the limits
+    # match ci.yml's unit job (30 for the suite, 45 for the job). A failed publish
+    # is re-run from the Actions tab.
+    timeout-minutes: 45
     permissions:
       contents: write # push the release tag
       id-token: write # OIDC: authenticate to npm without a stored token
@@ -68,7 +70,7 @@ jobs:
         run: npm ci
       - if: steps.gate.outputs.publish == 'true'
         run: npm test
-        timeout-minutes: 15
+        timeout-minutes: 30
 
       # Tag before publishing, so a publish that fails still leaves a tag naming
       # exactly what was attempted — and the retry is a no-op rather than a
