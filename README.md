@@ -320,14 +320,27 @@ handle do this:
   `captureCurrent` does while a provisional stage is on screen. **The canvas is
   partforge's and is reused**: one canvas is kept for the output size last
   asked for, and the next call at that size draws over it. Consume it
-  (`new VideoFrame(canvas)`, `drawImage`) before you call again. Like `captureCurrent`, each call also asks
-  the live view to redraw.
+  (`new VideoFrame(canvas)`, `drawImage`) before you call again. That frame
+  set (target, readback buffer and canvas: about 50 MB at 1080²) is released
+  5 s after the last `renderCurrent` call, and on park and dispose; a canvas
+  you already received stays readable until your next call, which then simply
+  allocates again. Before it draws, the capture catches up the per-frame work
+  a live frame would have done — the cutaway's section outline and, in the
+  realistic look, the contact shadow at full resolution — so a frame taken
+  right after a seek is not drawn against stale state (`captureCurrent` does
+  the same). Measurement dimensions are the exception: they rebuild only in a
+  live frame, so with measure dimensions on screen wait for one `onRendered`
+  after `whenSettled()` before `renderCurrent` (the seek's own render request
+  guarantees that frame comes). Like `captureCurrent`, each call also asks the live view to redraw.
 - `runtime.animation.seek(t, { camera: true })` poses the part at `t` and jumps
   the camera to where the animation's camera cues put it at `t`, as if the
   animation had played from 0 starting at the camera the first such seek found.
-  That start is remembered until play, stop, another animation, a view change
-  or a user camera grab, so the same `t` always gives the same frame, in any
-  order. Without `{ camera: true }`, `seek` never moves the camera. `seek`
+  Every cue's pose is framed then too, on the geometry on screen at that first
+  camera seek, so a held cue does not creep as the part moves under it. The
+  start and the cue poses are remembered until play, stop, another animation,
+  a view change or a user camera grab, so the same `t` always gives the same
+  frame, in any order. A user camera grab mid-render therefore makes later
+  frames jump: block orbit input for the length of a render. Without `{ camera: true }`, `seek` never moves the camera. `seek`
   writes real params, so call `animation.stop()` when you are done to put the
   part's values back. `animation.state().duration` is the selected animation's
   length in seconds (0 with none selected), for working out the frame count.
@@ -336,13 +349,19 @@ handle do this:
   the live params, and `false` after a build error, while a provisional stage
   is on screen, or on dispose. It never rejects, and before the first build it
   waits for it. It reads `true` while a pose drag is holding the build back, so
-  do not capture during a drag. If a worker dies without replying it waits
-  until dispose, as `runtime.ready` does.
+  do not capture during a drag. It can wait indefinitely in two cases — a
+  worker that dies without replying (until dispose, as `runtime.ready` does),
+  and an imported model whose tessellation fails without reporting back — so
+  race it against a timeout.
 - `runtime.setCameraCue(cue)` and `runtime.setCamera({ pos, target })` jump the
   camera with no tween. `setCameraCue` takes a camera cue — a view name or an
   `{ azimuth, elevation, distance? }` orbit in degrees — which is what a host
-  stepping a turntable calls once per frame, with `getCameraCue()` for the
-  start angle. It leaves orthographic when the cue is not face-aligned, and a
+  stepping a turntable calls once per frame, with `getCameraCue().cue` for the
+  start angle (`getCameraCue()` returns `{ cue, panned }`). A cue always aims
+  at the part's centre, so a user's pan is lost on the first turntable frame:
+  restore it afterwards with `setCamera(saved)`. An autoplaying or playing
+  animation keeps moving the part during a turntable unless you
+  `animation.pause()` or `stop()` it first. It leaves orthographic when the cue is not face-aligned, and a
   jump while orthographic resets the orthographic zoom to 1. It does not count
   as a user camera grab, so an animation's remaining cues stay armed.
   `setCamera` takes the `{ pos, target }` that `getViewerState().camera`
@@ -355,11 +374,18 @@ handle do this:
 const anim = runtime.animation;
 const saved = runtime.getViewerState();
 const fps = 30, width = 1080, height = 1080;
-anim.play("open");                          // select it (the seek below pauses it)
+anim.play("open");                          // "open" is a placeholder: one of your part's animations
+                                            // (play selects it; the seek below pauses it)
 const frames = Math.max(2, Math.round(anim.state().duration * fps) + 1);
+const settled = () => Promise.race([       // whenSettled can wait forever (see above)
+  runtime.whenSettled(),
+  new Promise((resolve) => setTimeout(() => resolve(false), 30000)),
+]);
 for (let i = 0; i < frames; i++) {
+  // Ends on t = 1. For a `loop` animation use i / frames instead, or the
+  // last frame repeats the first pose.
   anim.seek(i / (frames - 1), { camera: true });
-  if (!(await runtime.whenSettled())) break; // a build failed
+  if (!(await settled())) break;            // a build failed or timed out
   const canvas = runtime.renderCurrent({ width, height });
   if (!canvas) break;                       // disposed, or nothing on screen
   const frame = new VideoFrame(canvas, { timestamp: (i * 1e6) / fps }); // consume it now
@@ -367,8 +393,22 @@ for (let i = 0; i < frames; i++) {
   frame.close();
 }
 anim.stop();                                // restore the part's own values
-runtime.setCamera(saved.camera);            // and the user's view
+if (saved.camera) runtime.setCamera(saved.camera); // and the user's view
 runtime.projection.set(saved.projection);
+```
+
+A turntable steps the camera, not the animation:
+
+```js
+const saved = runtime.getViewerState();
+runtime.animation.pause();                  // or stop(): a playing animation keeps moving the part
+const start = runtime.getCameraCue()?.cue;  // { azimuth, elevation, distance }
+for (let i = 0; start && i < frames; i++) {
+  runtime.setCameraCue({ ...start, azimuth: start.azimuth + (360 * i) / frames });
+  const canvas = runtime.renderCurrent({ width, height });
+  // …encode canvas as above…
+}
+if (saved.camera) runtime.setCamera(saved.camera); // puts back the user's pan too
 ```
 
 **Record the live canvas (0.204.0+).** `runtime.onRendered(cb)` calls `cb`
@@ -378,7 +418,9 @@ be read back reliably (`drawImage`, `new VideoFrame(liveCanvas)`); at any other
 time it may read blank. The viewer draws on demand, so an idle viewer calls
 nobody — calling `renderCurrent` from inside the callback keeps it drawing —
 and nothing fires while parked (`setActive(false)`). A callback that throws
-costs only itself.
+costs only itself. Pose handles are drawn in the live canvas, so a host
+recording it that does not want them calls `runtime.pose.setEnabled(false)`;
+turning picking off does not hide them.
 
 ## Authoring guide
 

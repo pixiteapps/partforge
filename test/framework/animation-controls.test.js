@@ -1717,6 +1717,71 @@ describe("seeking with the animation's camera", () => {
     }
   });
 
+  // A viewer whose cuePose frames on whatever is on screen NOW: every call after
+  // the first answers a pose shifted further along x, the way a moving part
+  // would move a re-framed cue.
+  function driftingViewer() {
+    const v = camViewer();
+    let calls = 0;
+    v.cuePose = vi.fn((view) => {
+      const base = POSES[view];
+      const shift = calls++;
+      return { position: [base.position[0] + shift, base.position[1], base.position[2]], target: [...base.target] };
+    });
+    return v;
+  }
+
+  test("a held cue's pose is fixed at the first camera seek: later seeks never re-frame it", () => {
+    const { ctl, viewer } = camSetup(driftingViewer());
+    ctl.runtime.play("intro");
+    ctl.runtime.stop();
+    // "intro": an intro cue "front" at 0, held until "top" fires at 0.5, so
+    // 0.1, 0.25 and 0.45 must all be one pose while the part moves under it.
+    ctl.runtime.seek(0.1, { camera: true });
+    ctl.runtime.seek(0.25, { camera: true });
+    ctl.runtime.seek(0.45, { camera: true });
+    const held = viewer.jumpCameraTo.mock.calls.map(([p]) => p);
+    expect(held).toHaveLength(3);
+    expect(held[1]).toEqual(held[0]);
+    expect(held[2]).toEqual(held[0]);
+  });
+
+  test("seeking 0.75, 0.2, 0.75 gives one pose even when the framing would drift", () => {
+    const { ctl, viewer } = camSetup(driftingViewer());
+    ctl.runtime.play("intro");
+    ctl.runtime.stop();
+    ctl.runtime.seek(0.75, { camera: true });
+    ctl.runtime.seek(0.2, { camera: true });
+    ctl.runtime.seek(0.75, { camera: true });
+    const calls = viewer.jumpCameraTo.mock.calls.map(([p]) => p);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual(calls[0]);
+  });
+
+  test("each reset trigger makes the next camera seek read the cue poses again", () => {
+    const triggers = {
+      grab: ({ viewer }) => viewer.orbit(),
+      play: ({ ctl }) => { ctl.runtime.play(); ctl.runtime.pause(); },
+      stop: ({ ctl }) => ctl.runtime.stop(),
+      another: ({ ctl }) => { ctl.runtime.play("late"); ctl.runtime.pause(); },
+      view: ({ switchView }) => { switchView("solo"); switchView("box"); },
+    };
+    for (const [name, trigger] of Object.entries(triggers)) {
+      const r = camSetup(driftingViewer());
+      r.ctl.runtime.play("intro");
+      r.ctl.runtime.stop();
+      r.ctl.runtime.seek(0.1, { camera: true });
+      r.ctl.runtime.seek(0.3, { camera: true });
+      const first = r.viewer.jumpCameraTo.mock.calls[0][0];
+      expect(r.viewer.jumpCameraTo.mock.calls[1][0], name).toEqual(first);
+      const before = r.viewer.cuePose.mock.calls.length;
+      trigger(r);
+      r.ctl.runtime.seek(0.3, { camera: true });
+      expect(r.viewer.cuePose.mock.calls.length, name).toBeGreaterThan(before);
+      expect(r.viewer.jumpCameraTo.mock.calls.at(-1)[0], name).not.toEqual(first);
+    }
+  });
+
   test("a plain seek keeps the remembered start", () => {
     const { ctl, viewer } = camSetup();
     ctl.runtime.seek(0.75, { camera: true });

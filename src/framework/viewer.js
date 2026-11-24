@@ -2844,12 +2844,28 @@ export function createViewer(container, part, {
   // renderCurrent's frame set (`output: "canvas"`, 8-bit path): a host pulling
   // video frames asks for the same size every frame, so one target, readback
   // buffer, canvas and ImageData are kept for that width × height and replaced
-  // when it changes. Released wherever _rt is (parking, dispose). The returned
-  // canvas is reused by the next call — the host consumes it before asking again.
+  // when it changes. Released wherever _rt is (parking, dispose), and
+  // FRAME_SET_IDLE_MS after the last renderCurrent (one timer, re-armed by each
+  // call), since at 1080² it is about 50 MB a finished render no longer needs.
+  // The returned canvas is reused by the next call — the host consumes it
+  // before asking again; after an idle release the next call allocates afresh.
+  const FRAME_SET_IDLE_MS = 5000;
   let _frameSet = null;
+  let frameSetTimer = null;
+  function clearFrameSetTimer() {
+    if (frameSetTimer != null) clearTimeout(frameSetTimer);
+    frameSetTimer = null;
+  }
   function releaseFrameSet() {
+    clearFrameSetTimer();
     _frameSet?.rt.dispose();
     _frameSet = null;
+  }
+  function armFrameSetRelease() {
+    clearFrameSetTimer();
+    if (!_frameSet) return;
+    frameSetTimer = setTimeout(() => { frameSetTimer = null; releaseFrameSet(); }, FRAME_SET_IDLE_MS);
+    frameSetTimer?.unref?.(); // never keeps a Node process (a test, a CLI) alive
   }
   function frameSetFor(width, height) {
     if (_frameSet && (_frameSet.width !== width || _frameSet.height !== height)) releaseFrameSet();
@@ -3212,12 +3228,17 @@ export function createViewer(container, part, {
   // is partforge's and the next call may draw over it (see frameSetFor).
   function renderCurrent(opts) {
     const { type: _type, quality: _quality, ...rest } = opts ?? {};
-    return captureLiveFraming({ ...rest, output: "canvas" });
+    try {
+      return captureLiveFraming({ ...rest, output: "canvas" });
+    } finally {
+      if (!disposed) armFrameSetRelease();
+    }
   }
   function captureLiveFraming(opts) {
     if (disposed) return null;
     const { renderMode: want, includeHidden = false, ...rest } = opts ?? {};
     if (!withRevealed(includeHidden, hasVisibleBounds)) return null;
+    catchUpForCapture(want);
     // Revealed inside the capture, so inside any borrowed look (revealEntries).
     const capture = () => withRevealed(includeHidden, () => currentFramingInCurrentLook(rest));
     if (want === "cad") return captureIn("cad", null, capture);
@@ -3227,6 +3248,26 @@ export function createViewer(container, part, {
       if (rig) return captureIn("realistic", rig, capture);
     }
     return capture();
+  }
+  // What a live frame refreshes and a capture would otherwise draw stale: a host
+  // rendering video seeks and captures with no live frame in between (a pose-only
+  // seek's whenSettled resolves in a microtask), so do the per-frame work here.
+  // The cutaway's section outline re-slices only for a camera
+  // (cutaway.updateForCamera, as renderFrame does), and the realistic contact
+  // shadow is a baked texture that renderFrame refreshes low-res while a part
+  // moves (updateMovingShadow): a pose it has not caught up with gets its
+  // full-resolution render now, which serves the live look as well, so the next
+  // frame need not render it again. Nothing runs with the cutaway off and no
+  // stale shadow — a CAD capture does exactly what it did. A parked viewer's
+  // borrowed-or-same realistic capture renders its shadow in captureIn already.
+  function catchUpForCapture(want) {
+    if (cutaway.isEnabled) cutaway.updateForCamera();
+    const inLiveLook = want == null || want === renderMode;
+    const captureInForces = !active && want === "realistic";
+    if (inLiveLook && !captureInForces && renderMode === "realistic" && realisticRig && shadowMovedAt != null) {
+      shadowMovedAt = null;
+      renderShadow(undefined, { force: true });
+    }
   }
   function currentFramingInCurrentLook(opts) {
     return captureCurrentFromScene(opts, {

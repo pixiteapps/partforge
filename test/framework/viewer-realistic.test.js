@@ -913,6 +913,60 @@ test("renderCurrent in realistic mode does not keep the half-float target", asyn
   v.dispose();
 });
 
+// No live frame runs between a host's seek and its renderCurrent, so a pose the
+// contact shadow has not caught up with (it is baked, and low-res while moving)
+// gets its full-resolution render inside the capture — once, and it serves the
+// live look too, so the next frame does not render it again.
+test("renderCurrent after a moved pose renders the shadow at full resolution first", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const render = lastRig().shadow.render;
+  render.mockClear();
+  v.setSubPose("body", new THREE.Matrix4().makeTranslation(0, 0, 1).toArray());
+  let shadowBeforeCapture = null;
+  const live = state.renderer.render.bind(state.renderer);
+  state.renderer.render = (...args) => { shadowBeforeCapture ??= render.mock.calls.length; return live(...args); };
+  expect(v.renderCurrent({ width: 64, height: 48 })).toBeInstanceOf(HTMLCanvasElement);
+  expect(render).toHaveBeenCalledTimes(1);
+  expect(render.mock.calls[0][2]).toEqual({ clippingPlanes: null }); // full resolution, not lowRes
+  expect(shadowBeforeCapture).toBe(1);
+  state.renderer.animationLoop();
+  expect(render).toHaveBeenCalledTimes(1); // the live look is caught up too
+  v.dispose();
+});
+
+test("renderCurrent with nothing moved, and captureCurrent in CAD, render no shadow", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const render = lastRig().shadow.render;
+  render.mockClear();
+  v.renderCurrent({ width: 64, height: 48 });
+  v.captureCurrent({ size: 64 });
+  expect(render).not.toHaveBeenCalled();
+  await v.setRenderMode("cad");
+  render.mockClear();
+  v.setSubPose("body", new THREE.Matrix4().makeTranslation(0, 0, 1).toArray());
+  v.captureCurrent({ size: 64 });
+  v.renderCurrent({ width: 64, height: 48 });
+  expect(render).not.toHaveBeenCalled();
+  v.dispose();
+});
+
+test("captureCurrent shares the shadow catch-up after a moved pose", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const render = lastRig().shadow.render;
+  render.mockClear();
+  v.setSubPose("body", new THREE.Matrix4().makeTranslation(0, 0, 1).toArray());
+  v.captureCurrent({ size: 64 });
+  expect(render).toHaveBeenCalledTimes(1);
+  expect(render.mock.calls[0][2]).toEqual({ clippingPlanes: null });
+  v.dispose();
+});
+
 test("captureCurrent in realistic mode captures the realistic look", async () => {
   stubCanvas();
   const v = shown();

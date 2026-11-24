@@ -5,7 +5,7 @@
 //
 //   1. runtime.renderCurrent({ width: 640, height: 360 }) is a 640 × 360 canvas with
 //      more than one distinct pixel colour.
-//   2. Inside an runtime.onRendered callback, drawImage of the live canvas into a 2-D
+//   2. Inside a runtime.onRendered callback, drawImage of the live canvas into a 2-D
 //      canvas gives more than one distinct colour (outside it the live canvas reads
 //      blank: the recorder rests on this).
 //   3. On the `assemble` animation (step cameras iso → left → iso): after
@@ -15,6 +15,10 @@
 //   4. Thirty frames of seek(i / 29, { camera: true }) → await whenSettled() (each true)
 //      → renderCurrent({ width: 1080, height: 1080 }) complete; the total milliseconds
 //      are printed (a planning number, not a threshold).
+//   6. On the `open` animation (one intro cue, "front", held the whole time while the
+//      lid swings): getViewerState().camera is the same (within 1e-9) after
+//      seek(t, { camera: true }) → whenSettled() at each of several t — a held cue's
+//      pose is fixed at the first camera seek, never re-framed on the moving part.
 //   5. With runtime.picking.setEnabled(false) a click on the model at the canvas centre
 //      calls no onPick (the app counts them in `window.__pfPicks`); enabled again, it does.
 //
@@ -41,6 +45,10 @@ const ENTRY = "hinged-box.html";
 const VIEWER_CANVAS = "#app > canvas:not(.pf-ink-canvas)";
 const ANIMATION = "assemble";
 const FRAMES = 30;
+// hinged-box's `open`: camera "front" (an intro cue held for the whole animation)
+// while lidAngle swings 0 → 110, so the part's bounds change under a held cue.
+const HELD_ANIMATION = "open";
+const HELD_TIMES = [0.1, 0.4, 0.7, 1, 0.4];
 // Degrees: two cues closer than this on every angle (and distance within 1%) are one pose.
 const ANGLE_TOLERANCE = 0.5;
 
@@ -236,6 +244,28 @@ async function run(page) {
   check(4, r4.rendered === FRAMES, `rendered ${r4.rendered} of ${FRAMES} frames`, r4);
   console.log(`  ${FRAMES} frames of seek → whenSettled → renderCurrent(1080 × 1080): ${Math.round(r4.ms)} ms total (${(r4.ms / FRAMES).toFixed(1)} ms/frame)`);
   summary.frames = { ms: Math.round(r4.ms), rendered: r4.rendered };
+
+  // 6. A held cue does not creep while the part moves under it.
+  const r6 = await page.evaluate(async ({ name, times }) => {
+    const rt = window.__pfRuntime;
+    const saved = rt.getViewerState().camera;
+    rt.animation.play(name);
+    const cams = [];
+    for (const t of times) {
+      rt.animation.seek(t, { camera: true });
+      const settled = await rt.whenSettled();
+      cams.push({ t, settled, camera: rt.getViewerState().camera });
+    }
+    rt.animation.stop();
+    if (saved) rt.setCamera(saved);
+    return cams;
+  }, { name: HELD_ANIMATION, times: HELD_TIMES });
+  const nearPose = (a, b) => ["pos", "target"].every((k) =>
+    a?.[k]?.length === 3 && b?.[k]?.length === 3 && a[k].every((v, i) => Math.abs(v - b[k][i]) <= 1e-9));
+  check(6, r6.every((c) => c.settled === true), "whenSettled() was not true at every held-cue seek", r6);
+  check(6, r6.every((c) => nearPose(c.camera, r6[0].camera)),
+    `the camera moved across seeks under ${HELD_ANIMATION}'s held cue`, r6.map((c) => ({ t: c.t, camera: c.camera })));
+  summary.heldCue = { animation: HELD_ANIMATION, times: HELD_TIMES, camera: r6[0].camera };
 
   // 5. The picking switch, through a real click on the model.
   await page.evaluate(() => window.__pfRuntime.setCameraCue("iso"));

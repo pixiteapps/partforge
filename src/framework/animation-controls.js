@@ -210,12 +210,17 @@ export function attachAnimationControls(viewer, part, {
   let current = animations[0] ?? null;
   let playback = current ? createPlayback(current) : null;
   let snapshot = null; // tracked-param values before this animation first drove them
-  // The camera a frame-by-frame render started from: taken at the first
-  // seek(t, { camera: true }) and reused by every later one, so the same t gives
-  // the same pose however the seeks were ordered. Anything that starts a new
-  // run or hands the camera to someone else forgets it (resetRenderStart).
+  // The camera a frame-by-frame render started from, and every cue's pose,
+  // both taken at the first seek(t, { camera: true }) and reused by every later
+  // one, so the same t gives the same pose however the seeks were ordered. The
+  // cue poses are fixed then for the same reason live playback fixes a cue's
+  // pose when its tween fires: re-framing on each seek would follow the part
+  // as it moves under a held cue, and for a rebuilding track would read the
+  // PREVIOUS frame's geometry. Anything that starts a new run or hands the
+  // camera to someone else forgets both (resetRenderStart).
   let renderStart = null;
-  const resetRenderStart = () => { renderStart = null; };
+  let renderPoses = null;
+  const resetRenderStart = () => { renderStart = null; renderPoses = null; };
 
   // Autoplay: at most one animation PER VIEW declares it (lint-enforced), and
   // each view's own gets its kick when that view becomes active. Armed until
@@ -578,8 +583,9 @@ export function attachAnimationControls(viewer, part, {
   }
 
   // seek(t, { camera: true })'s second half: put the camera where the cues have
-  // it at the playhead (cameraPoseAt). It leaves the camera alone when the
-  // animation has no cues, when a cue it needs has no pose (nothing on screen),
+  // it at the playhead (cameraPoseAt), every cue framed on the geometry on
+  // screen at the run's first camera seek. It leaves the camera alone when the
+  // animation has no cues, when any cue has no pose (nothing on screen),
   // or on a viewer without the camera reads — and, like every driver call, it
   // never lets a throw escape.
   function seekCamera() {
@@ -587,19 +593,20 @@ export function attachAnimationControls(viewer, part, {
     if (typeof viewer.cuePose !== "function" || typeof viewer.jumpCameraTo !== "function") return;
     try {
       const { t } = playback.state();
-      const poses = new Map();
-      for (const c of current.cues) {
-        if (c.t > t) break;
-        if (poses.has(c.view)) continue;
-        const pose = viewer.cuePose(c.view);
-        if (!pose) return;
-        poses.set(c.view, pose);
-      }
-      if (!renderStart) {
+      if (!renderStart || !renderPoses) {
+        const poses = new Map();
+        for (const c of current.cues) {
+          if (poses.has(c.view)) continue;
+          const pose = viewer.cuePose(c.view);
+          if (!pose) return;
+          poses.set(c.view, pose);
+        }
         const state = viewer.getCameraState?.();
         if (!state) return;
         renderStart = { position: [...state.pos], target: [...state.target] };
+        renderPoses = poses;
       }
+      const poses = renderPoses;
       const pose = cameraPoseAt(current, t, { poseFor: (view) => poses.get(view), start: renderStart });
       if (!pose) return;
       viewer.cancelCameraTween();

@@ -804,8 +804,12 @@ export interface AnimationRuntime {
    * `opts.camera` it never moves the camera. 0.204.0: with `{ camera: true }`
    * the camera jumps (no tween) to where the animation's camera cues put it at
    * `t`, as if it had played from 0 starting at the camera the FIRST such seek
-   * found. That start is remembered until play, stop, another animation, a view
-   * change or a user camera grab, so the same `t` always gives the same pose.
+   * found. Every cue's pose is framed then too, on the geometry on screen at
+   * that first camera seek, so a held cue does not creep while the part moves.
+   * The start and the cue poses are remembered until play, stop, another
+   * animation, a view change or a user camera grab, so the same `t` always
+   * gives the same pose — and a grab mid-render makes later frames jump, so
+   * block orbit input for the length of a render.
    * An animation with no cues leaves the camera alone either way.
    */
   seek(t: number, opts?: { camera?: boolean }): void;
@@ -851,7 +855,12 @@ export interface PartRuntime {
    * provisional stage is in view. The canvas is partforge's and is REUSED: one
    * is kept for the size last asked for and the next call at that size draws
    * over it, so consume it (`new VideoFrame(canvas)`, `drawImage`) before
-   * calling again. Like
+   * calling again. The frame set is released 5 s after the last call (and on
+   * park and dispose); the next call then allocates again. Before drawing, the
+   * capture catches up the cutaway's section outline and, in realistic, the
+   * contact shadow at full resolution (as `captureCurrent` does); measurement
+   * dimensions rebuild only in a live frame, so with them on screen wait for one
+   * `onRendered` after `whenSettled()` first. Like
    * `captureCurrent`, each call also asks the live view to redraw, so calling it
    * from `onRendered` keeps the live view drawing.
    */
@@ -862,7 +871,9 @@ export interface PartRuntime {
    * (`drawImage`, `new VideoFrame`); at any other time it may read blank. The
    * loop draws on demand, so an idle viewer calls nobody, and nothing fires
    * while parked (`setActive(false)`). A throwing callback costs only itself.
-   * Returns an unsubscribe.
+   * Pose handles are drawn in the live canvas: call `pose.setEnabled(false)` to
+   * record without them (picking off does not hide them). Returns an
+   * unsubscribe.
    */
   onRendered(cb: () => void): () => void;
   /**
@@ -870,8 +881,10 @@ export interface PartRuntime {
    * everything in the view on screen is built at the live params; `false` after
    * a build error, while a provisional stage is on screen, or on `dispose()`.
    * Never rejects. Before the first build it waits for it. Reads `true` while a
-   * pose drag is holding the build back — do not capture during a drag. If a
-   * worker dies without replying it waits until `dispose()`, as `ready` does.
+   * pose drag is holding the build back — do not capture during a drag. It can
+   * wait indefinitely in two cases — a worker that dies without replying (until
+   * `dispose()`, as `ready` does), and an import whose tessellation fails
+   * without reporting back — so race it against a timeout.
    */
   whenSettled(): Promise<boolean>;
   /** The active view (tab) name. Never null once mounted. */
@@ -911,7 +924,11 @@ export interface PartRuntime {
   /**
    * 0.204.0: jump the camera to a camera cue — a view name or a
    * `{ azimuth, elevation, distance? }` orbit in degrees — with no tween; what a
-   * host stepping a turntable calls once per frame. Leaves orthographic when the
+   * host stepping a turntable calls once per frame, starting from
+   * `getCameraCue().cue`. A cue aims at the part's centre, so the user's pan is
+   * lost on the first frame (put it back with `setCamera(saved)`), and an
+   * autoplaying or playing animation keeps moving the part unless paused or
+   * stopped first. Leaves orthographic when the
    * cue is not face-aligned; a jump while orthographic resets the ortho zoom to
    * 1. Not a user camera grab, so an animation's remaining cues stay armed.
    * `false`, with the camera untouched, for an invalid cue or with nothing on

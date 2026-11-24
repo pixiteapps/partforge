@@ -488,3 +488,65 @@ test("parking releases the reused frame target; renderCurrent still works while 
   expect(c.height).toBe(360);
   viewer.dispose();
 });
+
+// The reused frame set (about 50 MB at 1080²) is released 5 s after the last
+// renderCurrent — one timer, re-armed by each call, cleared by park and dispose.
+test("renderCurrent's frame set is released 5 s after the last call", () => {
+  vi.useFakeTimers();
+  try {
+    const viewer = builtViewer();
+    viewer.renderCurrent({ width: 640, height: 360 });
+    vi.advanceTimersByTime(4999);
+    expect(state.targets[0].disposed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(state.targets[0].disposed).toBe(true);
+    // The next call simply allocates again.
+    const c = viewer.renderCurrent({ width: 640, height: 360 });
+    expect(c.width).toBe(640);
+    expect(targetsCreated()).toBe(2);
+    viewer.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a renderCurrent inside the 5 s window re-arms the release", () => {
+  vi.useFakeTimers();
+  try {
+    const viewer = builtViewer();
+    const a = viewer.renderCurrent({ width: 640, height: 360 });
+    vi.advanceTimersByTime(4000);
+    const b = viewer.renderCurrent({ width: 640, height: 360 });
+    expect(b).toBe(a);
+    vi.advanceTimersByTime(4000);
+    expect(state.targets[0].disposed).toBe(false);
+    expect(targetsCreated()).toBe(1);
+    expect(vi.getTimerCount()).toBe(1); // one timer, not one per call
+    vi.advanceTimersByTime(1000);
+    expect(state.targets[0].disposed).toBe(true);
+    viewer.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("parking and dispose clear the frame-set release timer", () => {
+  vi.useFakeTimers();
+  try {
+    const parked = builtViewer();
+    parked.renderCurrent({ width: 640, height: 360 });
+    expect(vi.getTimerCount()).toBe(1);
+    parked.setActive(false);
+    expect(vi.getTimerCount()).toBe(0);
+    parked.dispose();
+
+    const gone = builtViewer();
+    gone.renderCurrent({ width: 640, height: 360 });
+    expect(vi.getTimerCount()).toBe(1);
+    gone.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
