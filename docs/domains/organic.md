@@ -937,7 +937,8 @@ armReport.faces["ring5.s0"];   // { follow: { arm: 1 } }
 **Checking the sizes.** `partforge measure` lists every posed limb under `limbs`. Each
 joint has its bone's length and the body's width and depth at that joint. Compare the
 lengths with the real thing, and check that the body is the size you meant at each joint.
-The width is measured along the joint's bend axis, and the depth across it.
+The width is measured along the joint's bend axis, and the depth across it. A joint
+inside a hollow body reads the innermost outline round it, which is the cavity's.
 
 **Errors.** Each names the limb, the joint or the face:
 
@@ -1034,7 +1035,10 @@ With `mirror`, the cage stays whole and symmetric through the plane:
   (`+y:0,0>~`). The far box side has no ids of its own: under `mirror: "xz"` there are
   no `-y:` ids (its faces are `+y:0,0~`, `+y:1,0~`, …), and on a side the plane cuts,
   the far half is named the same way (there is no `+x:0,0`; that face is `+x:1,0~`).
-  You can read a `~` id, but you cannot change one.
+  You can read a `~` id, but you cannot change one. So `faces` with `facing` can return
+  `~` ids: under `mirror: "yz"`, `facing: "-x"` returns only far-side faces. To change
+  one side, leave the `~` ids out first, with `.filter((id) => !id.endsWith("~"))`. The
+  mirror follows.
 - **`segs` across the plane must be even**, so the plane falls on a row of points.
 - **A point on the plane stays on it.** It keeps only the in-plane part of a move,
   scale or rotate. So a face with an edge on the plane does not turn rigidly: its plane
@@ -1418,17 +1422,18 @@ const FINGERS = {
 };
 // A cupping palm bone starts `z` mm up the hand; its fold is spread over `blend` mm.
 const CUP = { z: 30, blend: 44 };
-// Surface relief (mm). `head` raises the knuckle on the back of the hand over each finger and `mound`
-// the pad on the palm under it. `pad` pushes out the palm side of each finger bone, so the
-// joints between them show as creases; `nail` moves the tip cap toward the back, so the tip
-// is flat on the nail side and full on the pad side.
+// Surface relief (mm). `head` raises the knuckle on the back of the hand over each finger,
+// and `mound` the pad on the palm under it. `pad` pushes out the palm side of each finger
+// bone, so the joints between them show as creases; `nail` moves the tip cap toward the
+// back, so the tip is flat on the nail side and full on the pad side.
 const SHAPE = { head: 1, mound: 1.5, pad: [0.5, 0.5, 1.2], nail: 1.5 };
 
 // The thumb's side: the two lower rows of the +X side push out `web` mm as a ring of soft
 // flesh and then on to `pad` mm as the pad, `thick` times the palm's thickness, which swings
 // in `tuck` degrees at the wrist: the ball of the thumb is a wedge that runs from the wrist
-// out to the thumb's root in one slope, with no step where it meets the palm. The thumb grows from the pad's top: it leans out `lean` degrees and toward the palm side
-// `forward` degrees, then a short root (scaled by `neck`) and two segments.
+// out to the thumb's root in one slope, with no step where it meets the palm. The thumb
+// grows from the pad's top: it leans out `lean` degrees and toward the palm side `forward`
+// degrees, then a short root (scaled by `neck`) and two segments.
 // The thumb's limb starts at the wrist end of the pad, `hinge` mm from the middle of the
 // pad's root ([toward the palm's middle, toward the palm side]) and `cmc` mm up the palm,
 // where a thumb's first bone pivots. It has two joints there: abduction swings the thumb
@@ -1493,8 +1498,8 @@ const thumbPivot = (p0) => {
  */
 function cageHand(make, posed) {
   const c = palm(make);
+  // Where the thumb's limb starts, read before anything grows from the palm.
   const pivot = thumbPivot(c);
-  // The pad's root, before anything grows from it: where the thumb's limb starts.
   const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.72, 1.04, 1], id: "wrist" });
   c.extrude(w, { by: 24, scale: 1.06, id: "arm" });
   // A knuckle is one extrude in three short rings, so the surface has points to bend with.
@@ -1733,10 +1738,14 @@ The points to copy:
   grows from the pad's top: the side face of the extrusion that faces the fingers, found
   by its normal.
 - **Measure the bones, and the built body.** A cage's width is not the smooth body's, and
-  a limb's length is hard to judge by eye. The thumb's first bone was 64 mm from its pivot
-  to its middle joint until it was measured off the posed limb's joints; a hand's is about
-  46. The hand was 94 mm across the knuckles with fingers 18 mm wide, so the gaps between
-  the fingers were too wide, not the fingers too thin.
+  a limb's length is hard to judge by eye. `partforge measure` lists each posed limb under
+  `limbs`: each joint's position, its bone's length, and the built body's width and depth
+  at that joint. The thumb's first bone was 64 mm from its pivot to its middle joint until
+  it was measured. A hand's is about 46, and the report now gives 46.5. The hand was
+  94 mm across the knuckles with fingers 18 mm wide, so the gaps between the fingers were
+  too wide, not the fingers too thin. Now the index's base joint reads about 88 mm across.
+  `test/cage-hand.test.js` holds these numbers, so an edit that stretches the thumb or
+  widens the hand fails it.
 - **Relief is a few small moves.** A raised knuckle on the back of the hand over each
   finger, a pad on the palm under it, the palm side of each finger bone pushed out by
   0.5 to 1.2 mm so the joints show as creases, and each tip cap moved toward the back so
@@ -1757,7 +1766,10 @@ The points to copy:
   palm (opposed or abducted) can meet closed fingers: an open hand builds at any
   opposition, abduction and thumb curl, and a fist builds with the thumb at the palm's
   side, but an opposed, curled thumb can press into a fist. A drag stops at the last pose
-  that builds. At 38° of opposition, with the index bent, the thumb's tip meets the index
+  that builds. `partforge measure src/parts/cage-hand.js --ranges` lists the poses past
+  these limits. One is the ring knuckle at 90° with its neighbours at their defaults,
+  which passes through itself. A print-quality build can also fail where the preview only
+  warns, as it does with the middle knuckle at 90°. At 38° of opposition, with the index bent, the thumb's tip meets the index
   finger's (the OK sign), and opposed and abducted nearly all the way the hand closes round a bar of
   1.5 inch radius, the ring and little fingers bent a little less than the other two. With the fingers curled further and the thumb less abducted it wraps a
   bar of half that radius, seated in the palm. For fingers that must press into the palm, use an implicit tree.

@@ -5,7 +5,8 @@
 //
 // Authoring frame: the palm faces -Y, the fingers point to +Z, the thumb leaves the +X side.
 // One cage, no mirror, built straight: every digit at rest. A limb per digit is posed in
-// derive, and one cage.skin call makes the cage follow them. No face is turned by hand.
+// derive, and one cage.skin call makes the cage follow them. No face is turned by hand to
+// pose it.
 //
 // The palm is a box seven columns across: a column per finger and a narrow strip between
 // each pair, so two fingers never share a point and one can bend alone. Its top three
@@ -41,17 +42,18 @@ const FINGERS = {
 };
 // A cupping palm bone starts `z` mm up the hand; its fold is spread over `blend` mm.
 const CUP = { z: 30, blend: 44 };
-// Surface relief (mm). `head` raises the knuckle on the back of the hand over each finger and `mound`
-// the pad on the palm under it. `pad` pushes out the palm side of each finger bone, so the
-// joints between them show as creases; `nail` moves the tip cap toward the back, so the tip
-// is flat on the nail side and full on the pad side.
+// Surface relief (mm). `head` raises the knuckle on the back of the hand over each finger,
+// and `mound` the pad on the palm under it. `pad` pushes out the palm side of each finger
+// bone, so the joints between them show as creases; `nail` moves the tip cap toward the
+// back, so the tip is flat on the nail side and full on the pad side.
 const SHAPE = { head: 1, mound: 1.5, pad: [0.5, 0.5, 1.2], nail: 1.5 };
 
 // The thumb's side: the two lower rows of the +X side push out `web` mm as a ring of soft
 // flesh and then on to `pad` mm as the pad, `thick` times the palm's thickness, which swings
 // in `tuck` degrees at the wrist: the ball of the thumb is a wedge that runs from the wrist
-// out to the thumb's root in one slope, with no step where it meets the palm. The thumb grows from the pad's top: it leans out `lean` degrees and toward the palm side
-// `forward` degrees, then a short root (scaled by `neck`) and two segments.
+// out to the thumb's root in one slope, with no step where it meets the palm. The thumb
+// grows from the pad's top: it leans out `lean` degrees and toward the palm side `forward`
+// degrees, then a short root (scaled by `neck`) and two segments.
 // The thumb's limb starts at the wrist end of the pad, `hinge` mm from the middle of the
 // pad's root ([toward the palm's middle, toward the palm side]) and `cmc` mm up the palm,
 // where a thumb's first bone pivots. It has two joints there: abduction swings the thumb
@@ -116,8 +118,8 @@ const thumbPivot = (p0) => {
  */
 export function cageHand(make, posed) {
   const c = palm(make);
+  // Where the thumb's limb starts, read before anything grows from the palm.
   const pivot = thumbPivot(c);
-  // The pad's root, before anything grows from it: where the thumb's limb starts.
   const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.72, 1.04, 1], id: "wrist" });
   c.extrude(w, { by: 24, scale: 1.06, id: "arm" });
   // A knuckle is one extrude in three short rings, so the surface has points to bend with.

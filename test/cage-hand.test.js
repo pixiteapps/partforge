@@ -69,6 +69,23 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   }
 });
 
+// The measure report's limbs hold the hand's proportions: the thumb's bones, and the
+// hand's width across the knuckles at the index's base joint. An edit that stretches the
+// thumb or widens the hand fails here.
+test("the measure report's bone lengths and knuckle width are a hand's", () => {
+  const { limbs } = measure(k, part, "assembly", {});
+  const joint = (limbName, name) => limbs[limbName].joints.find((j) => j.name === `${limbName}.${name}`);
+  // abduct and oppose share the pivot, so the bone from the pivot is oppose's.
+  expect(joint("thumb", "abduct").length).toBe(0);
+  expect(joint("thumb", "oppose").length).toBeGreaterThan(43);
+  expect(joint("thumb", "oppose").length).toBeLessThan(47);
+  expect(joint("thumb", "mcp").length).toBeGreaterThan(28);
+  expect(joint("thumb", "mcp").length).toBeLessThan(32);
+  expect(joint("index", "mcp").part).toBe("hand");
+  expect(joint("index", "mcp").width).toBeGreaterThan(80);
+  expect(joint("index", "mcp").width).toBeLessThan(92);
+}, 60_000);
+
 test("is listed as an organic reference part", () => {
   expect(organic.referenceParts).toContain("src/parts/cage-hand.js");
 });
