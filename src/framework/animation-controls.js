@@ -10,7 +10,7 @@
 // itself in a view that declares none, and every view switch resets the
 // outgoing animation first (see viewChanged). The host owns which view is
 // active — getView() is the driver's only window onto it.
-import { viewAnimations, createPlayback, stepIndexAt } from "./animation.js";
+import { viewAnimations, createPlayback, stepIndexAt, cameraPoseAt } from "./animation.js";
 import { createInfoPopover, attachInfo } from "./controls.js";
 import { stageClearFor } from "./stage-clear.js";
 
@@ -210,6 +210,12 @@ export function attachAnimationControls(viewer, part, {
   let current = animations[0] ?? null;
   let playback = current ? createPlayback(current) : null;
   let snapshot = null; // tracked-param values before this animation first drove them
+  // The camera a frame-by-frame render started from: taken at the first
+  // seek(t, { camera: true }) and reused by every later one, so the same t gives
+  // the same pose however the seeks were ordered. Anything that starts a new
+  // run or hands the camera to someone else forgets it (resetRenderStart).
+  let renderStart = null;
+  const resetRenderStart = () => { renderStart = null; };
 
   // Autoplay: at most one animation PER VIEW declares it (lint-enforced), and
   // each view's own gets its kick when that view becomes active. Armed until
@@ -552,6 +558,7 @@ export function attachAnimationControls(viewer, part, {
     // Before the snapshot is re-applied: the rebuild that restores the user's
     // params is an ordinary placement, so the floor comes back to the part.
     viewer.holdGround?.(false, "animation");
+    resetRenderStart();
     playback?.reset();
     viewer.cancelCameraTween();
     viewer.clearSubPartOpacities?.();
@@ -570,12 +577,45 @@ export function attachAnimationControls(viewer, part, {
     syncUi();
   }
 
+  // seek(t, { camera: true })'s second half: put the camera where the cues have
+  // it at the playhead (cameraPoseAt). It leaves the camera alone when the
+  // animation has no cues, when a cue it needs has no pose (nothing on screen),
+  // or on a viewer without the camera reads — and, like every driver call, it
+  // never lets a throw escape.
+  function seekCamera() {
+    if (!playback || !current?.cues.length) return;
+    if (typeof viewer.cuePose !== "function" || typeof viewer.jumpCameraTo !== "function") return;
+    try {
+      const { t } = playback.state();
+      const poses = new Map();
+      for (const c of current.cues) {
+        if (c.t > t) break;
+        if (poses.has(c.view)) continue;
+        const pose = viewer.cuePose(c.view);
+        if (!pose) return;
+        poses.set(c.view, pose);
+      }
+      if (!renderStart) {
+        const state = viewer.getCameraState?.();
+        if (!state) return;
+        renderStart = { position: [...state.pos], target: [...state.target] };
+      }
+      const pose = cameraPoseAt(current, t, { poseFor: (view) => poses.get(view), start: renderStart });
+      if (!pose) return;
+      viewer.cancelCameraTween();
+      viewer.jumpCameraTo(pose);
+    } catch (err) {
+      warnFrameFailure(err);
+    }
+  }
+
   const offFrame = viewer.onFrame((dt) => guarded(() => playback.tick(dt)));
   // User orbit: the viewer has already cancelled any cue tween (its own
   // "start" handler); disarm the remaining cues, and if an intro tween was
   // gating playback, settle the gate — cancel() never fires onComplete, so
   // without this the machine would sit in "intro" forever.
   const offOrbit = viewer.onCameraStart(() => {
+    resetRenderStart(); // the user has the camera now
     if (!playback) return;
     playback.disarmCues();
     if (playback.state().status === "intro") guarded(() => playback.introDone());
@@ -584,6 +624,7 @@ export function attachAnimationControls(viewer, part, {
   const onPlayClick = () => {
     if (!current) return;
     disarmAutoplay();
+    resetRenderStart();
     const active = playback.state().status;
     if (active === "playing" || active === "intro") {
       viewer.cancelCameraTween();
@@ -804,6 +845,7 @@ export function attachAnimationControls(viewer, part, {
     // animation that exists in another view is not playable from here.
     play(name) {
       disarmAutoplay();
+      resetRenderStart();
       if (name != null && !animations.some((a) => a.name === name)) {
         console.warn(`partforge: unknown animation "${name}"`);
         return;
@@ -812,11 +854,18 @@ export function attachAnimationControls(viewer, part, {
       guarded(() => playback.play());
     },
     pause() { disarmAutoplay(); viewer.cancelCameraTween(); guarded(() => playback.pause()); },
-    seek(t) { disarmAutoplay(); guarded(() => playback.seek(t)); },
+    // With { camera: true } the camera follows to where the cues put it at t
+    // (seekCamera); without, it stays put, as it always has.
+    seek(t, opts) {
+      disarmAutoplay();
+      guarded(() => playback.seek(t));
+      if (opts?.camera === true) seekCamera();
+    },
     stop() { disarmAutoplay(); doReset(); },
     state: () => ({
       view: getView(),
       animation: current?.name ?? null,
+      duration: current ? current.totalDuration : 0, // seconds
       ...(playback ? playback.state() : { status: "idle", t: 0, stepIndex: 0 }),
     }),
   };
@@ -865,7 +914,7 @@ export function attachAnimationControls(viewer, part, {
       if (current !== target) selectAnimation(target.name);
       if (current !== target || !playback) return;
       const { status } = playback.state();
-      if (status !== "playing" && status !== "intro") guarded(() => playback.play());
+      if (status !== "playing" && status !== "intro") { resetRenderStart(); guarded(() => playback.play()); }
       if (opening === "waiting") opening = "playing";
     },
     // True while the opening view's autoplay is still to come (before the first

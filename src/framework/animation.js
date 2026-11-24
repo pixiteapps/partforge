@@ -132,6 +132,78 @@ export function stepIndexAt(anim, t) {
   return idx;
 }
 
+// The eased spherical interpolation a camera cue's tween performs, as a pure
+// function of the two poses and how far through the tween it is (0..1): the
+// orbit offset moves in spherical coordinates (radius, polar, azimuth — the
+// azimuth the short way round) about a linearly moving target, through the
+// ease-in-out curve. camera-tween.js's update() calls this every frame and
+// re-exports it, so the live tween and cameraPoseAt below cannot drift apart.
+// It lives here, not there, because this module must stay import-free (see the
+// header) and cameraPoseAt needs it; the arithmetic is three.js's Spherical /
+// Vector3 spelled out, operation for operation, so the result is unchanged.
+// The ends are returned exactly (copies), which is also what lands a "top" cue
+// on the pole to the last bit.
+const sphericalOf = (position, target) => {
+  const x = position[0] - target[0];
+  const y = position[1] - target[1];
+  const z = position[2] - target[2];
+  const radius = Math.sqrt(x * x + y * y + z * z);
+  if (radius === 0) return { radius, phi: 0, theta: 0 };
+  return { radius, theta: Math.atan2(x, z), phi: Math.acos(Math.max(-1, Math.min(1, y / radius))) };
+};
+const copyPose = (p) => ({ position: [...p.position], target: [...p.target] });
+
+export function tweenPoseAt(from, to, fraction) {
+  if (fraction >= 1) return copyPose(to);
+  if (!(fraction > 0)) return copyPose(from);
+  const a = sphericalOf(from.position, from.target);
+  const b = sphericalOf(to.position, to.target);
+  const d = b.theta - a.theta;
+  if (d > Math.PI) b.theta -= 2 * Math.PI;
+  if (d < -Math.PI) b.theta += 2 * Math.PI;
+  const u = EASINGS["ease-in-out"](fraction);
+  const lerp = (p, q) => p + (q - p) * u;
+  const radius = lerp(a.radius, b.radius);
+  const phi = lerp(a.phi, b.phi);
+  const theta = lerp(a.theta, b.theta);
+  const target = from.target.map((v, i) => v + (to.target[i] - v) * u);
+  const sinPhiRadius = Math.sin(phi) * radius;
+  const position = [
+    sinPhiRadius * Math.sin(theta) + target[0],
+    Math.cos(phi) * radius + target[1],
+    sinPhiRadius * Math.cos(theta) + target[2],
+  ];
+  return { position, target };
+}
+
+// The camera at t, as a viewer would have seen it had the animation played from
+// 0 untouched — what a host rendering frame by frame asks for, so it depends on
+// the cues and the camera the render started from (`start`), never on where the
+// camera happens to be. `poseFor(view)` maps a cue's view to a pose. Walking the
+// cues in order, holding the pose: an intro (a first cue at 0) lands outright,
+// since play() settles on it before params move; any other cue sweeps for its
+// own `sweep` seconds (0.6 when it has none) from the pose held when it fires,
+// measured up to t or the next cue, whichever comes first — a sweep the next cue
+// interrupts hands its partial pose on, as a restarted tween does. Reduced
+// motion does not apply: a host asking for the camera at a time wants the
+// authored motion. Null only when the animation has no cues.
+const DEFAULT_SWEEP_SECONDS = 0.6;
+export function cameraPoseAt(anim, t, { poseFor, start }) {
+  const cues = anim.cues;
+  if (!cues.length) return null;
+  let pose = start;
+  for (let i = 0; i < cues.length; i++) {
+    const c = cues[i];
+    if (c.t > t) break;
+    if (i === 0 && c.t === 0) { pose = poseFor(c.view); continue; }
+    const end = Math.min(t, cues[i + 1]?.t ?? Infinity);
+    const sweep = c.sweep ?? DEFAULT_SWEEP_SECONDS;
+    const fraction = sweep > 0 ? Math.max(0, Math.min(1, ((end - c.t) * anim.totalDuration) / sweep)) : 1;
+    pose = tweenPoseAt(pose, poseFor(c.view), fraction);
+  }
+  return pose;
+}
+
 // Most recent cue at or before t, or null. This is both the CLI's default
 // camera for a still and the cue play() honors when starting mid-timeline.
 export function cueAt(anim, t) {

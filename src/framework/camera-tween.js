@@ -1,5 +1,9 @@
-import * as THREE from "three";
-import { EASINGS } from "./animation.js";
+import { tweenPoseAt } from "./animation.js";
+
+// The interpolation itself is animation.js's tweenPoseAt (pure, three-free, so
+// cameraPoseAt can use it from that import-free module); re-exported here as the
+// tween's own math.
+export { tweenPoseAt };
 
 // Retargetable orbit-camera tween for animation camera cues and view-cube
 // clicks: eased spherical interpolation of {position, target} pairs about the
@@ -22,26 +26,17 @@ import { EASINGS } from "./animation.js";
 // atan2(0, 0) is 0 rather than NaN — which is also the azimuth the canonical
 // top/bottom poses ask for, so the roll OrbitControls derives there is exactly
 // the `up` view-angles.js names for them.
-function toSpherical(position, target) {
-  const off = new THREE.Vector3().fromArray(position).sub(new THREE.Vector3().fromArray(target));
-  return new THREE.Spherical().setFromVector3(off);
-}
 
 export function createCameraTween() {
-  let tw = null; // { fromSph, toSph, fromTarget, toTarget, duration, elapsed, onComplete }
+  let tw = null; // { from, to, duration, elapsed, onComplete }
 
   // `from` is always the CALLER's current pose, which is what makes a restart
   // mid-flight retarget smoothly: the new tween begins wherever the camera is.
+  // Both poses are copied, so a caller mutating its arrays cannot bend the arc.
   function start(from, to, { duration = 0.6, onComplete } = {}) {
-    const fromSph = toSpherical(from.position, from.target);
-    const toSph = toSpherical(to.position, to.target);
-    const d = toSph.theta - fromSph.theta;
-    if (d > Math.PI) toSph.theta -= 2 * Math.PI;
-    if (d < -Math.PI) toSph.theta += 2 * Math.PI;
     tw = {
-      fromSph, toSph,
-      fromTarget: new THREE.Vector3().fromArray(from.target),
-      toTarget: new THREE.Vector3().fromArray(to.target),
+      from: { position: [...from.position], target: [...from.target] },
+      to: { position: [...to.position], target: [...to.target] },
       duration, elapsed: 0, onComplete,
     };
   }
@@ -50,18 +45,10 @@ export function createCameraTween() {
     if (!tw) return null;
     tw.elapsed += dt;
     const done = tw.elapsed >= tw.duration;
-    const u = done ? 1 : EASINGS["ease-in-out"](tw.elapsed / tw.duration);
-    const lerp = (a, b) => a + (b - a) * u;
-    const sph = new THREE.Spherical(
-      lerp(tw.fromSph.radius, tw.toSph.radius),
-      lerp(tw.fromSph.phi, tw.toSph.phi),
-      lerp(tw.fromSph.theta, tw.toSph.theta),
-    );
-    const target = tw.fromTarget.clone().lerp(tw.toTarget, u);
-    const position = new THREE.Vector3().setFromSpherical(sph).add(target);
+    const { position, target } = tweenPoseAt(tw.from, tw.to, done ? 1 : tw.elapsed / tw.duration);
     const onComplete = tw.onComplete;
     if (done) tw = null;
-    const out = { position: position.toArray(), target: target.toArray(), done };
+    const out = { position, target, done };
     if (done) onComplete?.();
     return out;
   }
