@@ -40,6 +40,8 @@
 // it, so no wall is left on the plane; its sides are numbered from the positive edge that
 // leaves the plane, counter-clockwise seen from outside, and the far ones carry `~`.
 
+import { readSkinArgs, skinWeights, applySkin } from "./skin.js";
+
 export const MAX_CAGE_FACES = 2000;
 
 const MIN_EDGE = 1e-6;
@@ -204,6 +206,10 @@ function makeCage(state) {
   const mirrored = ax >= 0;
   const reflect = (p) => reflectPoint(p, ax, plane);
   const twinId = (id) => (id.endsWith("~") ? id.slice(0, -1) : `${id}~`);
+  // skin is the last change to a cage: its weights were worked out from the rest cage, so
+  // a change after it would leave them describing a cage that no longer exists.
+  let skinned = false;
+  const unlocked = (op) => { if (skinned) fail(`${op} after skin — skin is the last change to a cage`); };
 
   function resolve(id) {
     if (typeof id !== "string") fail(`a face is named by its id string, not ${JSON.stringify(id)}`);
@@ -270,6 +276,7 @@ function makeCage(state) {
   }
 
   function extrude(face, opts = {}) {
+    unlocked("extrude");
     const ids = faceList(face);
     const region = Array.isArray(face);
     const { by, scale = 1, steps = 1, id } = opts;
@@ -421,6 +428,7 @@ function makeCage(state) {
   }
 
   function move(face, offset) {
+    unlocked("move");
     const ids = faceList(face);
     if (!isVec3(offset)) fail(`move offset must be [x, y, z] finite numbers, not ${JSON.stringify(offset)}`);
     const next = withMirror(new Map(uniquePoints(ids).map((p) => [p, add(points[p], offset)])));
@@ -428,6 +436,7 @@ function makeCage(state) {
   }
 
   function scale(face, s, opts = {}) {
+    unlocked("scale");
     const ids = faceList(face);
     const f = vec3Scale(s, "scale");
     const pts = uniquePoints(ids);
@@ -452,6 +461,7 @@ function makeCage(state) {
   // (right-handed: a positive angle about +X turns +Y toward +Z).
   const AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
   function rotate(face, opts = {}) {
+    unlocked("rotate");
     const ids = faceList(face);
     const { axis, deg } = opts;
     const dir = typeof axis === "string" ? AXES[axis] : axis;
@@ -482,6 +492,7 @@ function makeCage(state) {
   // crease(face, other) marks only the edges the two share; `other` may name reflected
   // faces, which is how a crease is laid along the mirror plane.
   function crease(face, other) {
+    unlocked("crease");
     const ids = faceList(face);
     const directedOf = (list) => new Set(list.flatMap((f) => faces.get(f).map((a, k, v) => `${a}>${v[(k + 1) % 4]}`)));
     const border = [];
@@ -541,6 +552,24 @@ function makeCage(state) {
     return snap;
   }
 
+  // Pose the cage from posed limbs (skin.js). Points move, faces never do, so the drag and
+  // preview paths, which read only snapshot(), see a posed cage of the same shape. Every
+  // read after this (centroid, normal, size, bounds, snapshot) returns posed values.
+  function skin(limbs, options) {
+    unlocked("skin");
+    if (mirrored) throw new Error("skin: a mirrored cage cannot be skinned yet");
+    const { bones, blend, set } = readSkinArgs(limbs, options);
+    // The cage's own face check, so a face extruded away gets the cage's own error.
+    for (const e of set) for (const id of e.faces) resolve(id);
+    const live = livePoints();
+    const rest = snapshot();
+    const weights = skinWeights(rest, bones, { blend, set });
+    const posed = applySkin(rest.points.map((_, i) => points[live[i]]), weights, bones);
+    posed.forEach((q, i) => { points[live[i]] = q; });
+    skinned = true;
+    return JSON.parse(JSON.stringify(weights.report));
+  }
+
   function bounds() {
     const live = livePoints().map((p) => points[p]);
     const min = [0, 1, 2].map((a) => Math.min(...live.map((p) => p[a])));
@@ -555,6 +584,7 @@ function makeCage(state) {
     scale,
     rotate,
     crease,
+    skin,
     centroid: (id) => noNegZero(mean(ptsOf(resolve(id)))),
     normal: (id) => noNegZero(unit(newell(ptsOf(resolve(id))))),
     size,

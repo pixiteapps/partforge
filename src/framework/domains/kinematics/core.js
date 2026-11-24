@@ -133,6 +133,49 @@ export function limb(name, def) {
   // The limb with every joint at rest: what a link built in part coordinates was built at.
   const restOwn = buildFrames(tree, jointSteps(tree, tree.joints.map(restValue)));
 
+  // A limb with a parent cannot be resolved without its parent's frames. bones only needs
+  // `parent: true` to be right for such a limb (cage.skin refuses it), so its frames are
+  // resolved against a stand-in parent at the origin, which never throws.
+  const PARENT_STUB = tree.parent == null ? null : { [tree.parent]: { at: [0, 0, 0] } };
+  const resolveOwn = (set) => resolveFrames(PARENT_STUB == null ? set : { ...PARENT_STUB, ...set });
+  // The rest half of bones is the same for every pose of a limb with no parent: resolve it once.
+  const restBones = tree.parent == null ? bonesHalf(resolveOwn(restOwn)) : null;
+
+  /** Each joint's frame and the tip's origin from a resolved set, unrounded, as plain arrays. */
+  function bonesHalf(resolved) {
+    const frameOf = (M) => ({
+      origin: [M[9] + 0, M[10] + 0, M[11] + 0],
+      x: [M[0] + 0, M[3] + 0, M[6] + 0], y: [M[1] + 0, M[4] + 0, M[7] + 0], z: [M[2] + 0, M[5] + 0, M[8] + 0],
+    });
+    const T = resolved.get(tip).world;
+    return { joints: jointFrames.map((f) => frameOf(resolved.get(f).world)), tip: [T[9] + 0, T[10] + 0, T[11] + 0] };
+  }
+
+  /**
+   * The posed limb's bones, for cage.skin: plain data (the cage and the limb can come from two
+   * copies of this module), with each joint's frame at rest and posed, in part coordinates,
+   * unrounded (world() rounds to 0.001). Rest is every joint at 0 and no pose-level spread or
+   * twist.
+   */
+  function bonesOf(posedFrames, frames, restFrames, resolvePosed) {
+    const hasParent = frames != null && tree.parent != null && Object.hasOwn(frames, tree.parent);
+    let rest, posed;
+    if (tree.parent == null || hasParent) {
+      // The same set the report resolves, through the same memo: no second resolve.
+      posed = bonesHalf(resolvePosed(frames == null ? posedFrames : { ...frames, ...posedFrames }));
+      rest = restBones ?? bonesHalf(resolveFrames(restFrames));
+    } else {
+      posed = bonesHalf(resolveOwn(posedFrames));
+      rest = bonesHalf(resolveOwn(restOwn));
+    }
+    const copy = (f) => ({ origin: [...f.origin], x: [...f.x], y: [...f.y], z: [...f.z] });
+    return {
+      kind: "partforge.bones", name, parent: tree.parent != null, r: tree.r ? [...tree.r] : null,
+      joints: jointFrames.map((frame, i) => ({ name: frame, rest: copy(rest.joints[i]), posed: posed.joints[i] })),
+      tip: { rest: [...rest.tip], posed: posed.tip },
+    };
+  }
+
   function pose(opts = {}, parents) {
     if (opts == null || typeof opts !== "object") fail("", "pose needs an options object");
     for (const k of Object.keys(opts)) if (!POSE_KEYS.has(k)) fail(k, `unknown pose option "${k}"`);
@@ -196,7 +239,8 @@ export function limb(name, def) {
       if (!M) fail("", `ikForward: unknown joint ${JSON.stringify(at)}`);
       return { values: coupled, origin: [M[9], M[10], M[11]], x: [M[0], M[3], M[6]], y: [M[1], M[4], M[7]], z: [M[2], M[5], M[8]] };
     }
-    const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, ...adapters, ikForward };
+    const bones = bonesOf(posedFrames, frames, restFrames, resolvePosed);
+    const posed = { values, frames: posedFrames, joints: [...jointFrames], tip, report, bones, ...adapters, ikForward };
     CHAINS.set(posed, { all: frames == null ? { ...posedFrames } : { ...frames, ...posedFrames }, rest: restFrames });
     return posed;
   }
