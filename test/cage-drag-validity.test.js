@@ -34,7 +34,7 @@ describe("dragValidity on the cage hand", () => {
     const corners = [];
     for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb, 0]);
     // The thumb opposed: every corner of an open hand's range.
-    for (const knuckle of [-10, 40]) for (const curl of [0, 40]) for (const thumb of [0, 25, 50]) for (const oppose of [30, 60]) corners.push([knuckle, curl, thumb, oppose]);
+    for (const knuckle of [-10, 40]) for (const curl of [0, 40]) for (const thumb of [0, 25, 50]) for (const oppose of [45, 90]) corners.push([knuckle, curl, thumb, oppose]);
     for (const corner of corners) expect(dragValidity(plan, handCage(...corner).points), corner.join(" ")).toBeNull();
     // The part's own bends at their maxima, through its limbs.
     const max = { ...Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max])), thumbOppose: 0 };

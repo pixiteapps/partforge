@@ -291,13 +291,13 @@ describe("the cage hand's preview file", () => {
 });
 
 describe("which handles a preview shows", () => {
-  test("a version 7 file of the cage hand: all five, through previewHandles with its file keys", async () => {
+  test("a version 7 file of the cage hand: all six, through previewHandles with its file keys", async () => {
     const [mesh] = await gen(hand, "assembly", A);
     const file = await decodePreviewGlb(await encodePreviewGlb({ meshes: [mesh], part: hand, view: "assembly", params: A }));
     const cages = createPreviewCages(hand, "assembly", A, file.meshes);
     while (cages.verifyNext());
     expect(previewHandles(hand, "assembly", A, ["hand"], { cageKeys: cages.keys() })).toEqual({
-      shown: ["index", "middle", "ring", "pinky", "thumb"], hidden: {},
+      shown: ["index", "middle", "ring", "pinky", "thumb", "oppose"], hidden: {},
     });
   }, 120_000);
 
@@ -312,14 +312,14 @@ describe("which handles a preview shows", () => {
       shown: [],
       hidden: {
         index: "indexKnuckle rebuilds hand", middle: "middleKnuckle rebuilds hand", ring: "ringKnuckle rebuilds hand",
-        pinky: "pinkyKnuckle rebuilds hand", thumb: "thumbCurl rebuilds hand",
+        pinky: "pinkyKnuckle rebuilds hand", thumb: "thumbCurl rebuilds hand", oppose: "thumbOppose rebuilds hand",
       },
     });
   }, 120_000);
 
-  test("partforge measure lists the five under preview handles (a file this version writes)", () => {
+  test("partforge measure lists the six under preview handles (a file this version writes)", () => {
     const report = measure(k, hand, "assembly", {}, { previewHandles: true });
-    expect(report.previewHandles).toEqual({ shown: ["index", "middle", "ring", "pinky", "thumb"], hidden: {} });
+    expect(report.previewHandles).toEqual({ shown: ["index", "middle", "ring", "pinky", "thumb", "oppose"], hidden: {} });
   }, 120_000);
 
   // Snapshotted with the 0.201.0 stepper (before cage keys existed): with no cage keys, and
