@@ -129,8 +129,9 @@ about the line up the hand.
 - The base joint needs a `toward` (its own or the limb's) when its bone has no length.
   A later joint with no length takes the previous joint's aim.
 - `mirror` reflects the points and every `toward` and `bendToward`.
-- `reach` needs a straight limb from points: every joint on one line, with one aim. Pose
-  any other with `goals`. `goals`, `grip`, `place`, `flesh` and handles work on any limb.
+- `reach` needs a limb from points whose joints all have one aim, as a limb with a
+  `toward` does. Pose any other with `goals`. `goals`, `grip`, `place`, `flesh` and
+  handles work on any limb.
 
 ## Joints
 
@@ -307,8 +308,9 @@ the other: a pose cannot have both.
 - Rules: the limb needs a driven bend joint, every segment before the pitch joint must
   have length 0, and no joint may follow the pitch joint or the aiming spread joint.
   The `robot-finger` limb (mcp, pip, dip following pip) meets all three rules.
-- A limb from `points` must also be straight: every joint on one line, with one aim.
-  Pose a bent one with `goals: [{ at: "tip", position }]`.
+- A limb from `points` must also have one aim for every joint: give the limb a `toward`.
+  Its joints may sit off that line, as offsets do. Pose any other with
+  `goals: [{ at: "tip", position }]`.
 
 `report.reach` is `{ target, residual, status }`. `residual` is the distance from the
 tip to the target, in mm. `status` is one of:
@@ -1159,7 +1161,7 @@ limb "a".joints[0].toward: this joint's bone has no length, so it needs a toward
 limb "a".points: the last bone must lie along its joint's aim, and it is 26.6° off — move the tip onto that line, or give the last joint its own toward along the bone
 limb "a".joints[0].toward: a joint's own toward needs the limb's points
 limb "a".joints[1].bendToward: must not be parallel to this joint's aim
-limb "a": reach needs a straight limb (one aim, every joint on the line) — pose this one with goals: [{ at: "tip", position: [x, y, z] }]
+limb "a": reach needs a straight limb (every joint with one aim) — pose this one with goals: [{ at: "tip", position: [x, y, z] }]
 ```
 
 Other errors: `attach` without a `k`, `flesh` or `attach` on a limb with no segment

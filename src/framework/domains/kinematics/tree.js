@@ -211,7 +211,8 @@ export function buildTree(name, def) {
  * is its own toward, else the limb's, else its bone (point i to point i + 1), else the previous
  * joint's +Y; its bend is toward its own bendToward, else the limb's. Everything is built from
  * reflected vectors, so a mirrored limb's frames, turns and offsets are mirrored already.
- * Sets `tree.straight` when no joint turns from the one before and every joint is on the line.
+ * Sets `tree.straight` when no joint turns from the one before: every joint has one aim, as a
+ * limb written with `at`, `toward` and `lengths` does (its joints may still sit off the line).
  */
 function placeFromPoints(tree, def, reflect, fail) {
   const { joints } = tree, n = joints.length;
@@ -263,7 +264,6 @@ function placeFromPoints(tree, def, reflect, fail) {
       const o = [local[0], local[1] - j.length, local[2]].map((c) => (Math.abs(c) < BONE_EPS ? 0 : c + 0));
       const next = joints[i + 1];
       next.offset = o.every((c) => c === 0) ? null : o;
-      if (next.offset) straight = false;
       // The fixed turn from this joint's rest frame to the next one's: Fᵢᵀ · Fᵢ₊₁.
       const A = frameMatrix({ X: inFrame(frames[i], frames[i + 1].X), Y: inFrame(frames[i], frames[i + 1].Y), Z: inFrame(frames[i], frames[i + 1].Z) });
       next.aim = axisAngle(A);

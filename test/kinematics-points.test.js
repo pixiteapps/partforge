@@ -85,6 +85,38 @@ describe("limb from points", () => {
     expect(a[1]).toBeLessThan(pts[2][1] - 5);
   });
 
+  it("a mirrored thumb-shaped limb is the reflection of the plain one", () => {
+    const def = (extra) => ({
+      points: [[0, 0, 0], [0, 0, 0], [10, -3, 20], [16, -6, 30], [20, -8, 38]], bendToward: [-1, -1, 0],
+      joints: [
+        { name: "abduct", toward: [0, 0, 1], bendToward: [0, -1, 0] },
+        { name: "oppose", axis: "twist", toward: [0, 0, 1], range: [-90, 90] },
+        "mcp", "ip",
+      ],
+      ...extra,
+    });
+    const plain = limb("thumb", def({})), mirrored = limb("thumb", def({ mirror: "YZ" }));
+    for (const opts of [{}, { bend: { abduct: 30, oppose: 40, mcp: 20, ip: 10 } }]) {
+      const a = plain.pose(opts).bones, b = mirrored.pose(opts).bones;
+      for (const half of ["rest", "posed"]) {
+        origins(a, half).forEach((o, i) => near3(origins(b, half)[i], [-o[0], o[1], o[2]], 1e-9));
+      }
+    }
+  });
+
+  it("a re-aimed joint's hinge axis does not move with its own value", () => {
+    const L = bent();
+    const rest = L.pose({}), posed = L.pose({ bend: { j1: 40 } });
+    // j1 carries a fixed turn (its bone leaves j0's line); its axis is read from its own step.
+    const info = posed.ikInfo();
+    near3(info.axes.j1, rest.ikInfo().axes.j1, 1e-9);
+    near3(info.points.j2, posed.bones.joints[2].posed.origin, 1e-3);
+    near3(posed.ikForward({}, "j2").origin, posed.bones.joints[2].posed.origin, 1e-12);
+    near3(posed.ikForward({}, "tip").origin, posed.bones.tip.posed, 1e-12);
+    // ikForward with an override poses like pose itself.
+    near3(rest.ikForward({ j1: 40 }, "j2").origin, posed.bones.joints[2].posed.origin, 1e-12);
+  });
+
   it("a mirrored limb is the reflection of the plain one", () => {
     const plain = bent(), mirrored = bent({ mirror: "YZ" });
     for (const opts of [{}, { bend: [20, 30, 10] }]) {
@@ -145,7 +177,24 @@ describe("limb from points", () => {
     const g = L.pose({ goals: [{ at: "tip", position: [8, -6, 20] }] });
     expect(typeof g.report.goals[0].status).toBe("string");
     expect(Number.isFinite(g.report.goals[0].residual)).toBe(true);
-    expect(() => L.pose({ grip: { around: { kind: "sphere", r: 6, at: [6, -8, 16] }, r: [3, 3, 3, 3] } })).not.toThrow();
+    // A target the limb can reach (its own tip at another pose) is reached.
+    const target = L.pose({ bend: [20, 30, 10] }).bones.tip.posed;
+    const r = L.pose({ goals: [{ at: "tip", position: target }] }).report.goals[0];
+    expect(r.residual).toBeLessThan(0.01);
+    expect(r.status).toBe("reached");
+    const grip = L.pose({ grip: { around: { kind: "sphere", r: 6, at: [6, -8, 16] }, r: [3, 3, 3, 3] } }).report.grip;
+    expect(typeof grip.touching).toBe("boolean");
+    expect(Number.isFinite(grip.gap)).toBe(true);
+  });
+
+  it("reach works on a limb with one aim and a joint off the line, as with an offset", () => {
+    // The limb's frames have local x = −world x, so world x −2 is offset [2, 0, 0].
+    const P = limb("a", { points: [[0, 0, 0], [-2, 0, 10], [-2, 0, 18], [-2, 0, 23]], toward: [0, 0, 1], bendToward: [0, -1, 0], joints: ["j0", "j1", "j2"] });
+    const L = limb("a", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], joints: ["j0", { name: "j1", offset: [2, 0, 0] }, "j2"], lengths: [10, 8, 5] });
+    const target = L.pose({ bend: [25, 40, 15] }).bones.tip.posed;
+    const p = P.pose({ reach: target }), l = L.pose({ reach: target });
+    expect(p.report.reach.status).toBe("reached");
+    expect(p.report).toEqual(l.report);
   });
 
   it("reach still works on a straight limb from points", () => {
