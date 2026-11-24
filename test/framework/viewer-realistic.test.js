@@ -954,6 +954,25 @@ test("renderCurrent with nothing moved, and captureCurrent in CAD, render no sha
   v.dispose();
 });
 
+// Parked in the live realistic look, a pinned `renderMode: "realistic"` takes
+// the same live path as an omitted one (captureIn is only for a borrowed look),
+// so the catch-up must force the shadow there too — once per stale pose.
+test("a parked realistic viewer forces the stale shadow once, renderMode pinned or omitted", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  v.setActive(false);
+  const render = lastRig().shadow.render;
+  for (const [i, opts] of [{ renderMode: "realistic" }, {}].entries()) {
+    render.mockClear();
+    v.setSubPose("body", new THREE.Matrix4().makeTranslation(0, 0, i + 1).toArray());
+    expect(v.renderCurrent({ width: 64, height: 48, ...opts })).toBeInstanceOf(HTMLCanvasElement);
+    expect(render, JSON.stringify(opts)).toHaveBeenCalledTimes(1);
+    expect(render.mock.calls[0][2]).toEqual({ clippingPlanes: null });
+  }
+  v.dispose();
+});
+
 test("captureCurrent shares the shadow catch-up after a moved pose", async () => {
   stubCanvas();
   const v = shown();

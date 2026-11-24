@@ -15,12 +15,12 @@
 //   4. Thirty frames of seek(i / 29, { camera: true }) → await whenSettled() (each true)
 //      → renderCurrent({ width: 1080, height: 1080 }) complete; the total milliseconds
 //      are printed (a planning number, not a threshold).
+//   5. With runtime.picking.setEnabled(false) a click on the model at the canvas centre
+//      calls no onPick (the app counts them in `window.__pfPicks`); enabled again, it does.
 //   6. On the `open` animation (one intro cue, "front", held the whole time while the
 //      lid swings): getViewerState().camera is the same (within 1e-9) after
 //      seek(t, { camera: true }) → whenSettled() at each of several t — a held cue's
 //      pose is fixed at the first camera seek, never re-framed on the moving part.
-//   5. With runtime.picking.setEnabled(false) a click on the model at the canvas centre
-//      calls no onPick (the app counts them in `window.__pfPicks`); enabled again, it does.
 //
 // hinged-box.html is the page because its animations carry camera cues, it builds on
 // Manifold (fast), and its app exposes `window.__pfRuntime` and counts onPick.
@@ -245,28 +245,6 @@ async function run(page) {
   console.log(`  ${FRAMES} frames of seek → whenSettled → renderCurrent(1080 × 1080): ${Math.round(r4.ms)} ms total (${(r4.ms / FRAMES).toFixed(1)} ms/frame)`);
   summary.frames = { ms: Math.round(r4.ms), rendered: r4.rendered };
 
-  // 6. A held cue does not creep while the part moves under it.
-  const r6 = await page.evaluate(async ({ name, times }) => {
-    const rt = window.__pfRuntime;
-    const saved = rt.getViewerState().camera;
-    rt.animation.play(name);
-    const cams = [];
-    for (const t of times) {
-      rt.animation.seek(t, { camera: true });
-      const settled = await rt.whenSettled();
-      cams.push({ t, settled, camera: rt.getViewerState().camera });
-    }
-    rt.animation.stop();
-    if (saved) rt.setCamera(saved);
-    return cams;
-  }, { name: HELD_ANIMATION, times: HELD_TIMES });
-  const nearPose = (a, b) => ["pos", "target"].every((k) =>
-    a?.[k]?.length === 3 && b?.[k]?.length === 3 && a[k].every((v, i) => Math.abs(v - b[k][i]) <= 1e-9));
-  check(6, r6.every((c) => c.settled === true), "whenSettled() was not true at every held-cue seek", r6);
-  check(6, r6.every((c) => nearPose(c.camera, r6[0].camera)),
-    `the camera moved across seeks under ${HELD_ANIMATION}'s held cue`, r6.map((c) => ({ t: c.t, camera: c.camera })));
-  summary.heldCue = { animation: HELD_ANIMATION, times: HELD_TIMES, camera: r6[0].camera };
-
   // 5. The picking switch, through a real click on the model.
   await page.evaluate(() => window.__pfRuntime.setCameraCue("iso"));
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -295,6 +273,28 @@ async function run(page) {
   check(5, picksOff === 0, `a click with picking off called onPick ${picksOff} time(s)`);
   check(5, picksOn >= 1, "a click on the model at the canvas centre with picking on called no onPick");
   summary.picking = { picksOff, picksOn };
+
+  // 6. A held cue does not creep while the part moves under it.
+  const r6 = await page.evaluate(async ({ name, times }) => {
+    const rt = window.__pfRuntime;
+    const saved = rt.getViewerState().camera;
+    rt.animation.play(name);
+    const cams = [];
+    for (const t of times) {
+      rt.animation.seek(t, { camera: true });
+      const settled = await rt.whenSettled();
+      cams.push({ t, settled, camera: rt.getViewerState().camera });
+    }
+    rt.animation.stop();
+    if (saved) rt.setCamera(saved);
+    return cams;
+  }, { name: HELD_ANIMATION, times: HELD_TIMES });
+  const nearPose = (a, b) => ["pos", "target"].every((k) =>
+    a?.[k]?.length === 3 && b?.[k]?.length === 3 && a[k].every((v, i) => Math.abs(v - b[k][i]) <= 1e-9));
+  check(6, r6.every((c) => c.settled === true), "whenSettled() was not true at every held-cue seek", r6);
+  check(6, r6.every((c) => nearPose(c.camera, r6[0].camera)),
+    `the camera moved across seeks under ${HELD_ANIMATION}'s held cue`, r6.map((c) => ({ t: c.t, camera: c.camera })));
+  summary.heldCue = { animation: HELD_ANIMATION, times: HELD_TIMES, camera: r6[0].camera };
   return summary;
 }
 

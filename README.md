@@ -377,10 +377,11 @@ const fps = 30, width = 1080, height = 1080;
 anim.play("open");                          // "open" is a placeholder: one of your part's animations
                                             // (play selects it; the seek below pauses it)
 const frames = Math.max(2, Math.round(anim.state().duration * fps) + 1);
-const settled = () => Promise.race([       // whenSettled can wait forever (see above)
-  runtime.whenSettled(),
-  new Promise((resolve) => setTimeout(() => resolve(false), 30000)),
-]);
+const settled = () => {                   // whenSettled can wait forever (see above)
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(false), 30000); });
+  return Promise.race([runtime.whenSettled(), timeout]).finally(() => clearTimeout(timer));
+};
 for (let i = 0; i < frames; i++) {
   // Ends on t = 1. For a `loop` animation use i / frames instead, or the
   // last frame repeats the first pose.
@@ -397,7 +398,8 @@ if (saved.camera) runtime.setCamera(saved.camera); // and the user's view
 runtime.projection.set(saved.projection);
 ```
 
-A turntable steps the camera, not the animation:
+A turntable steps the camera, not the animation (`frames`, `width` and
+`height` as in the example above):
 
 ```js
 const saved = runtime.getViewerState();

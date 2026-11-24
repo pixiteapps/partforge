@@ -3258,13 +3258,13 @@ export function createViewer(container, part, {
   // moves (updateMovingShadow): a pose it has not caught up with gets its
   // full-resolution render now, which serves the live look as well, so the next
   // frame need not render it again. Nothing runs with the cutaway off and no
-  // stale shadow — a CAD capture does exactly what it did. A parked viewer's
-  // borrowed-or-same realistic capture renders its shadow in captureIn already.
+  // stale shadow — a CAD capture does exactly what it did. `force` lets it run
+  // while parked. It runs before withRevealed, so with `includeHidden: true` the
+  // revealed sub-parts are drawn without their section outline or shadow.
   function catchUpForCapture(want) {
     if (cutaway.isEnabled) cutaway.updateForCamera();
     const inLiveLook = want == null || want === renderMode;
-    const captureInForces = !active && want === "realistic";
-    if (inLiveLook && !captureInForces && renderMode === "realistic" && realisticRig && shadowMovedAt != null) {
+    if (inLiveLook && renderMode === "realistic" && realisticRig && shadowMovedAt != null) {
       shadowMovedAt = null;
       renderShadow(undefined, { force: true });
     }
