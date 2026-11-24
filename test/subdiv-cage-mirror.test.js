@@ -114,3 +114,15 @@ it("keeps a steps list symmetric, joined across the plane and copied across it",
   expect(c.faces("ridge.1.").length).toBeGreaterThan(0);
   expect(c.centroid("fin~")[1]).toBeCloseTo(-c.centroid("fin")[1], 9);
 });
+it("lists reflected faces by direction, and moves a number along the normal on both sides", () => {
+  const c = createCage({ box: { size: [40, 20, 20], segs: [2, 1, 1] }, mirror: "yz" });
+  const far = c.faces("", { facing: "-x" });
+  expect(far.length).toBeGreaterThan(0);
+  expect(far.every((id) => id.endsWith("~"))).toBe(true);
+  c.move("+y:1,0", 3);
+  expect(c.centroid("+y:1,0")[1]).toBeCloseTo(13, 9);
+  expect(c.centroid("+y:1,0~")[1]).toBeCloseTo(13, 9);
+  const pts = c.snapshot().points;
+  const reflectX = (ps) => ps.map(([x, y, z]) => [-x + 0, y, z].join()).sort();
+  expect(reflectX(pts)).toEqual(pts.map((p) => p.join()).sort());
+});

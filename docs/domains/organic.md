@@ -694,8 +694,14 @@ bar.faces("arm.1.");   // ["arm.1.s0", "arm.1.s1", "arm.1.s2", "arm.1.s3"]
 bar.faces("arm.s");   // ["arm.s0", "arm.s1", "arm.s2", "arm.s3"]
 ```
 
-Do not guess ids for faces deep in a model. Read them back with `faces(prefix)`, and
-pick by `normal` or `centroid` when you need "the side that faces +Y".
+Do not guess ids for faces deep in a model. Read them back with `faces(prefix)`. To get
+"the side that faces +Y", ask `faces` for it: `facing` keeps the faces that point that
+way, and `near` puts the face nearest a point first.
+
+```js
+bar.faces("arm.s", { facing: "+y" });   // ["arm.s2"]
+bar.faces("+z:0,0>:", { near: [30, 0, 15] });   // ["+z:0,0>:1", "+z:0,0>:0"]
+```
 
 ### Changing the cage
 
@@ -715,8 +721,11 @@ pick by `normal` or `centroid` when you need "the side that faces +Y".
   the same as three extrudes of a third of `by`, the first scaled 1.1 and the last 0.92.
   A list is never read as a scale, even with three entries. `scale` and a `steps` list
   together are an error.
-- **`move(face | faces, [x, y, z])`** moves the faces' points. A point shared with a
-  neighbour moves once, so the neighbours stretch to follow.
+- **`move(face | faces, [x, y, z] | distance)`** moves the faces' points. A point shared
+  with a neighbour moves once, so the neighbours stretch to follow. A number moves the
+  points that far along the faces' normal (their summed normal for a region), by the rule
+  `extrude` uses for a number `by`. Faces whose normals cancel out, such as two opposite
+  sides, need an `[x, y, z]` offset.
 - **`scale(face | faces, s, { about? })`** scales the faces' points by `s` (a number or
   `[sx, sy, sz]`) about the point `about`. Omitted (or `null`), it is the points' mean;
   under a mirror, for faces with an edge on the plane, the mean of the faces and their
@@ -740,7 +749,11 @@ The read methods change nothing:
   normal, pointing out.
 - **`size(id)`** is `[u, v]`: the face's extent along its first in-plane axis (the mean
   length of edges 1 and 3), then along its second (edges 0 and 2).
-- **`faces(prefix?)`** lists the ids that start with `prefix` (every id when omitted).
+- **`faces(prefix?, { facing?, near? })`** lists the ids that start with `prefix` (every
+  id when omitted). `facing` is `"+x"`, `"-x"`, `"+y"`, `"-y"`, `"+z"`, `"-z"` or an
+  `[x, y, z]` direction. It keeps only the faces whose normal is within 45° of it. `near`
+  is a point `[x, y, z]`. It orders the faces by the distance from each face's centroid,
+  nearest first. Either may be given alone. `faces` works after `skin` too.
 - **`bounds()`** is `{ min, max }` of the cage's points (the surface lies inside it).
 
 ```js
@@ -754,6 +767,8 @@ bar.rotate("arm", { axis: "y", deg: 90 });
 bar.normal("arm").map(Math.round);   // [0, 0, 1]
 bar.extrude("+y:0,0", { by: 6, steps: [1.1, 1, 0.92], id: "lug" });   // "lug"
 bar.faces("lug.2.");   // ["lug.2.s0", "lug.2.s1", "lug.2.s2", "lug.2.s3"]
+bar.move("lug", 2);
+bar.centroid("lug");   // [-10, 18, 0]
 ```
 
 ### Posing a cage with limbs: `skin`
@@ -1157,6 +1172,9 @@ smoothBox([2, 2, 2]).max[0];   // 10
 - **A knuckle or bulge** is a short extrude with `scale` above 1, followed by one with
   `scale` below 1.
 - **A tip** is a last short extrude with `scale` about 0.6.
+- **One face of a ring**, such as the back of one finger's column: ask for the ring's
+  sides that face that way, nearest the column's cap,
+  `c.faces("knuckle.2.s", { facing: "+y", near: c.centroid(cap) })[0]`.
 - **A flat for printing** is an ordinary boolean `cut` on the result.
 
 ### Drag handles on a cage
@@ -1252,6 +1270,10 @@ cage: rotate axis must be "x", "y", "z" or a non-zero [x, y, z], not "up"
 cage: box.segs[0] widths add up to 9, not the box's size 10
 cage: mirror "yz" needs box.segs[0] widths that read the same from both ends
 cage: extrude takes scale or a steps list, not both
+cage: extrude steps[1] 0 makes a ring edge shorter than 0.000001 mm; use a larger scale for that step
+cage: move by a number, but the faces' normal sums to zero length; give [x, y, z]
+cage: faces facing must be "+x", "-x", "+y", "-y", "+z", "-z" or a non-zero [x, y, z], not "up"
+cage: faces has no option "towards"
 ```
 
 `k.subdiv` throws or warns with `subdiv: ` messages:
@@ -1476,17 +1498,19 @@ function cageHand(make, posed) {
   // The base knuckles: the palm's top grows back as three rings across all seven columns.
   const top = Array.from({ length: PALM.segs[0].length }, (_, col) => `+z:${col},0`);
   const caps = c.extrude(top, { by: KNUCKLE.rows * RING, steps: KNUCKLE.rows, id: "knuckle" });
-  // A ring's side faces run round the palm: the front of column n is s(n + 1), its back s(15 - n).
+  // Each finger's head is the back of its column on the middle ring, and its mound the front
+  // on the lowest: the ring's face on that side nearest the column's cap.
   for (const f of Object.values(FINGERS)) {
-    c.move(`knuckle.2.s${15 - f.col}`, [0, SHAPE.head, 0]);
-    c.move(`knuckle.1.s${1 + f.col}`, [0, -SHAPE.mound, 0]);
+    const near = c.centroid(caps[f.col]);
+    c.move(c.faces("knuckle.2.s", { facing: "+y", near })[0], [0, SHAPE.head, 0]);
+    c.move(c.faces("knuckle.1.s", { facing: "-y", near })[0], [0, -SHAPE.mound, 0]);
   }
   for (const [name, f] of Object.entries(FINGERS)) {
     const hinge = c.centroid(caps[f.col]);
     const neck = c.extrude(caps[f.col], { by: f.neck, scale: [1, f.flat, 1], id: `${name}Neck` });
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     digit(neck, name, f.lengths, 1);
-    SHAPE.pad.forEach((d, i) => c.move(`${name}P${i}.s1`, [0, -d, 0]));
+    SHAPE.pad.forEach((d, i) => c.move(c.faces(`${name}P${i}.s`, { facing: "-y" })[0], [0, -d, 0]));
     c.move(`${name}Tip`, [0, SHAPE.nail, 0]);
   }
   // The thumb's side of the palm. The two lower rows of the +X side push out twice: a short
@@ -1504,8 +1528,8 @@ function cageHand(make, posed) {
   const tuckWeb = (THUMB.tuck * THUMB.web) / THUMB.pad;
   c.rotate([...pad, ...sides], { axis: "y", deg: tuckWeb, about: webTopEdge });
   c.rotate(pad, { axis: "y", deg: THUMB.tuck - tuckWeb, about: topOf(pad[1]) });
-  const topmost = (faces) => faces.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
-  const shelf = topmost(sides);
+  // The pad's top: its one side that faces up the hand.
+  const [shelf] = c.faces("thenar.s", { facing: "+z" });
   // The pad's top comes down and in, so the thumb's first bone is its real length. The web
   // then slopes from the palm down to the thumb's root, as the skin there does.
   c.move(shelf, [-THUMB.drop[0], 0, -THUMB.drop[1]]);
@@ -1674,9 +1698,9 @@ The points to copy:
   `pip`, which is back on the finger's own line (a joint `offset`, `steppedLimb`). So a
   knuckle bends the top of the palm with it.
 - **Each joint is in the middle of a ring.** A knuckle is one extrude with a `steps` list
-  of three short rings, and the limb's
-  joint sits in the middle of the middle ring (`MID`), so a ring of points lies on each
-  side of the line it bends on. A ring on that line creases.
+  of three short rings, and the limb's joint sits in the middle of the middle ring
+  (`MID`), so a ring of points lies on each side of the line it bends on. A ring on that
+  line creases.
 - **`blend` by kind of joint.** A base knuckle bends 90° about 5 mm from the palm's
   surface and takes 22 mm; a curl, deeper in the finger, takes 24 mm; the tip joint 18 mm.
   The thumb's two base joints take 60 mm, so the whole pad bends with them, from the

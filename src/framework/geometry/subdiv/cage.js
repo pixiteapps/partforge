@@ -31,6 +31,10 @@
 //               [sx, sy, sz]); without a list, the rings run evenly from the base to the
 //               cap that `scale` sizes. scale and a steps list together are an error.
 //
+// Reading ids back: faces(prefix, { facing, near }) keeps the faces whose normal is within
+// 45° of `facing` ("+x" … "-z" or [x, y, z]) and orders them nearest `near` first, by face
+// centroid. move(faces, distance) moves along the faces' summed normal, extrude's rule.
+//
 // Side order: side k sits on boundary edge k. Edge 0 is the edge whose midpoint is
 // smallest on the first in-plane axis (the two world axes least aligned with the face's
 // or region's normal, in x, y, z order); the rest follow counter-clockwise seen from
@@ -364,7 +368,7 @@ function makeCage(state) {
       for (let m = 1; m <= steps; m++) {
         const r = ringFrom(from, step, stepScales[m - 1]);
         if (shortEdge(capFaces, (p) => r.get(p)))
-          fail(`extrude steps[${m - 1}] ${JSON.stringify(stepsOpt[m - 1])} makes a ring edge shorter than ${MIN_EDGE} mm`);
+          fail(`extrude steps[${m - 1}] ${JSON.stringify(stepsOpt[m - 1])} makes a ring edge shorter than ${MIN_EDGE} mm; use a larger scale for that step`);
         ringPos[m] = r;
         from = (p) => r.get(p);
       }
@@ -488,11 +492,23 @@ function makeCage(state) {
     return loop;
   }
 
+  // A number moves along the faces' summed normal, by extrude's rule for a number `by`
+  // (a region touching the mirror plane is taken joined with its reflection).
   function move(face, offset) {
     unlocked("move");
     const ids = faceList(face);
-    if (!isVec3(offset)) fail(`move offset must be [x, y, z] finite numbers, not ${JSON.stringify(offset)}`);
-    const next = withMirror(new Map(uniquePoints(ids).map((p) => [p, add(points[p], offset)])));
+    if (!(isNum(offset) || isVec3(offset)))
+      fail(`move offset must be a finite number or [x, y, z] finite numbers, not ${JSON.stringify(offset)}`);
+    let delta = offset;
+    if (isNum(offset)) {
+      const all = mirrored && touchesPlane(ids) ? [...ids, ...ids.map(twinId)] : ids;
+      const nsum = all.reduce((n, f) => add(n, newell(ptsOf(faces.get(f)))), [0, 0, 0]);
+      const span = regionSpan(all);
+      if (len(nsum) <= ZERO_NORMAL_REL * span * span)
+        fail("move by a number, but the faces' normal sums to zero length; give [x, y, z]");
+      delta = unit(nsum).map((x) => x * offset);
+    }
+    const next = withMirror(new Map(uniquePoints(ids).map((p) => [p, add(points[p], delta)])));
     for (const [p, q] of next) points[p] = q;
   }
 
@@ -631,6 +647,33 @@ function makeCage(state) {
     return JSON.parse(JSON.stringify(weights.report));
   }
 
+  // A read, so it works after skin too. `facing` keeps faces whose normal is within 45° of
+  // it; `near` orders the result by distance from each face's middle, nearest first.
+  const FACINGS = { "+x": [1, 0, 0], "-x": [-1, 0, 0], "+y": [0, 1, 0], "-y": [0, -1, 0], "+z": [0, 0, 1], "-z": [0, 0, -1] };
+  function listFaces(prefix = "", opts = {}) {
+    if (typeof prefix !== "string") fail(`faces prefix must be a string, not ${JSON.stringify(prefix)}`);
+    if (opts === null || typeof opts !== "object" || Array.isArray(opts)) fail("faces options must be { facing?, near? }");
+    for (const key of Object.keys(opts))
+      if (key !== "facing" && key !== "near") fail(`faces has no option ${JSON.stringify(key)}`);
+    const { facing, near } = opts;
+    let dir;
+    if (facing !== undefined) {
+      dir = typeof facing === "string" ? FACINGS[facing] : isVec3(facing) && len(facing) > 0 ? unit(facing) : undefined;
+      if (!dir) fail(`faces facing must be "+x", "-x", "+y", "-y", "+z", "-z" or a non-zero [x, y, z], not ${JSON.stringify(facing)}`);
+    }
+    if (near !== undefined && !isVec3(near)) fail("faces near must be [x, y, z] finite numbers");
+    let out = [...faces.keys()].filter((id) => id.startsWith(prefix));
+    if (dir) out = out.filter((id) => {
+      const n = unit(newell(ptsOf(faces.get(id))));
+      return n[0] * dir[0] + n[1] * dir[1] + n[2] * dir[2] >= Math.SQRT1_2 - 1e-9;
+    });
+    if (near) {
+      const dist = new Map(out.map((id) => [id, len(sub(mean(ptsOf(faces.get(id))), near))]));
+      out = out.slice().sort((a, b) => dist.get(a) - dist.get(b));   // Array#sort is stable
+    }
+    return out;
+  }
+
   function bounds() {
     const live = livePoints().map((p) => points[p]);
     const min = [0, 1, 2].map((a) => Math.min(...live.map((p) => p[a])));
@@ -649,7 +692,7 @@ function makeCage(state) {
     centroid: (id) => noNegZero(mean(ptsOf(resolve(id)))),
     normal: (id) => noNegZero(unit(newell(ptsOf(resolve(id))))),
     size,
-    faces: (prefix = "") => [...faces.keys()].filter((id) => id.startsWith(prefix)),
+    faces: listFaces,
     bounds,
     snapshot,
   });

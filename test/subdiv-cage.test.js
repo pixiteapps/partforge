@@ -214,7 +214,46 @@ describe("cage: a scale per extrude step", () => {
   });
   it("refuses a step that collapses a ring", () => {
     const c = createCage({ box: { size: [4, 4, 4] } });
-    expect(() => c.extrude("+z:0,0", { by: 6, steps: [1, 0, 1] })).toThrow(/extrude steps\[1\]/);
+    expect(() => c.extrude("+z:0,0", { by: 6, steps: [1, 0, 1] }))
+      .toThrow("cage: extrude steps[1] 0 makes a ring edge shorter than 0.000001 mm; use a larger scale for that step");
     expect(c.faces().length).toBe(6);
+  });
+});
+
+describe("cage: move along the normal, and faces by direction", () => {
+  it("moves faces along their normal for a number", () => {
+    const c = createCage({ box: { size: [4, 4, 4], segs: [2, 1, 1] } });
+    c.move("+y:0,0", 1.5);
+    expect(c.centroid("+y:0,0")[1]).toBeGreaterThan(2.5);
+    const d = createCage({ box: { size: [4, 4, 4] } });
+    d.move("-x:0,0", 2);
+    expect(d.centroid("-x:0,0")).toEqual([-4, 0, 0]);
+  });
+  it("refuses a number when the faces' normal sums to nothing", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(() => c.move(["+x:0,0", "-x:0,0"], 1)).toThrow("cage: move by a number, but the faces' normal sums to zero length; give [x, y, z]");
+  });
+  it("lists faces by where they face", () => {
+    const c = createCage({ box: { size: [4, 4, 4], segs: [3, 1, 1] } });
+    const ring = c.extrude(["+z:0,0", "+z:1,0", "+z:2,0"], { by: 2, id: "r" });
+    expect(c.faces("r.s", { facing: "-y" }).length).toBe(3);
+    expect(c.faces("r.s", { facing: [0, -2, 0] })).toEqual(c.faces("r.s", { facing: "-y" }));
+    expect(c.faces("r.s", { facing: "+x" }).length).toBe(1);
+    expect(c.faces("", { facing: "+z" })).toEqual(ring);
+  });
+  it("orders faces nearest first", () => {
+    const c = createCage({ box: { size: [6, 2, 2], segs: [3, 1, 1] } });
+    expect(c.faces("+z:", { near: [3, 0, 1] })).toEqual(["+z:2,0", "+z:1,0", "+z:0,0"]);
+    expect(c.faces("", { facing: "+z", near: [-3, 0, 1] })[0]).toBe("+z:0,0");
+  });
+  it("refuses unknown faces options", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(() => c.faces("", { facing: "up" })).toThrow('cage: faces facing must be "+x", "-x", "+y", "-y", "+z", "-z" or a non-zero [x, y, z], not "up"');
+    expect(() => c.faces("", { near: 3 })).toThrow("cage: faces near must be [x, y, z] finite numbers");
+    expect(() => c.faces("", { towards: "+x" })).toThrow('cage: faces has no option "towards"');
+  });
+  it("refuses a bad move offset", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(() => c.move("+x:0,0", "far")).toThrow("cage: move offset must be a finite number or [x, y, z] finite numbers, not \"far\"");
   });
 });

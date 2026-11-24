@@ -88,7 +88,7 @@ beforeAll(async () => {
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(62);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(65);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -423,6 +423,10 @@ test("every quoted cage and subdiv error is the code's own", async () => {
     () => k.cage({ box: { size: [10, 2, 4], segs: [[1, 3, 5], 1, 2] } }),
     () => k.cage({ mirror: "yz", box: { size: [10, 2, 4], segs: [[1, 4, 3, 2], 1, 1] } }),
     () => bar().extrude("+z:0,0", { by: 6, steps: [1, 1], scale: 0.9 }),
+    () => bar().extrude("+z:0,0", { by: 6, steps: [1, 0, 1] }),
+    () => bar().move(["+y:0,0", "-y:0,0"], 1),
+    () => bar().faces("", { facing: "up" }),
+    () => bar().faces("", { towards: "+x" }),
   ];
   const message = (f) => { try { f(); } catch (e) { return e.message; } throw new Error(`no throw: ${f}`); };
   expect(cageTriggers.map(message)).toEqual(cageBlock);

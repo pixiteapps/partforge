@@ -138,17 +138,19 @@ export function cageHand(make, posed) {
   // The base knuckles: the palm's top grows back as three rings across all seven columns.
   const top = Array.from({ length: PALM.segs[0].length }, (_, col) => `+z:${col},0`);
   const caps = c.extrude(top, { by: KNUCKLE.rows * RING, steps: KNUCKLE.rows, id: "knuckle" });
-  // A ring's side faces run round the palm: the front of column n is s(n + 1), its back s(15 - n).
+  // Each finger's head is the back of its column on the middle ring, and its mound the front
+  // on the lowest: the ring's face on that side nearest the column's cap.
   for (const f of Object.values(FINGERS)) {
-    c.move(`knuckle.2.s${15 - f.col}`, [0, SHAPE.head, 0]);
-    c.move(`knuckle.1.s${1 + f.col}`, [0, -SHAPE.mound, 0]);
+    const near = c.centroid(caps[f.col]);
+    c.move(c.faces("knuckle.2.s", { facing: "+y", near })[0], [0, SHAPE.head, 0]);
+    c.move(c.faces("knuckle.1.s", { facing: "-y", near })[0], [0, -SHAPE.mound, 0]);
   }
   for (const [name, f] of Object.entries(FINGERS)) {
     const hinge = c.centroid(caps[f.col]);
     const neck = c.extrude(caps[f.col], { by: f.neck, scale: [1, f.flat, 1], id: `${name}Neck` });
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     digit(neck, name, f.lengths, 1);
-    SHAPE.pad.forEach((d, i) => c.move(`${name}P${i}.s1`, [0, -d, 0]));
+    SHAPE.pad.forEach((d, i) => c.move(c.faces(`${name}P${i}.s`, { facing: "-y" })[0], [0, -d, 0]));
     c.move(`${name}Tip`, [0, SHAPE.nail, 0]);
   }
   // The thumb's side of the palm. The two lower rows of the +X side push out twice: a short
@@ -166,8 +168,8 @@ export function cageHand(make, posed) {
   const tuckWeb = (THUMB.tuck * THUMB.web) / THUMB.pad;
   c.rotate([...pad, ...sides], { axis: "y", deg: tuckWeb, about: webTopEdge });
   c.rotate(pad, { axis: "y", deg: THUMB.tuck - tuckWeb, about: topOf(pad[1]) });
-  const topmost = (faces) => faces.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
-  const shelf = topmost(sides);
+  // The pad's top: its one side that faces up the hand.
+  const [shelf] = c.faces("thenar.s", { facing: "+z" });
   // The pad's top comes down and in, so the thumb's first bone is its real length. The web
   // then slopes from the palm down to the thumb's root, as the skin there does.
   c.move(shelf, [-THUMB.drop[0], 0, -THUMB.drop[1]]);
