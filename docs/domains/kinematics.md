@@ -559,8 +559,10 @@ pass `posed.values` (the joint angles in degrees, in joint order) to the cage's 
 `rotate` calls, and give each limb one angles-mode handle. Centre each knuckle's rings
 on the limb's joint and make the cage's segment lengths the limb's `lengths`, and the
 handle sits on the cage's tip. The recipe is in `docs/domains/organic.md`, "Drag handles
-on a cage", and the reference part is `src/parts/cage-hand.js`. A pose change rebuilds
-the whole cage body.
+on a cage", and the reference part is `src/parts/cage-hand.js`. A handle drag follows the
+pointer: the viewer re-poses the cage body from the moved cage with no build, stops at the
+last pose in which the body does not pass through itself, and builds exactly after a
+pause or on release.
 
 **Gripping an organic shape.** `grip.around` takes the plain shapes listed under "grip".
 For any other `k.implicit` node (a blended union, a warp, a `round`), pass

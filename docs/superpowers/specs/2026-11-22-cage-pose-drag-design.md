@@ -5,6 +5,100 @@ out ("Frames and skinned pose drag for subdivision bodies" is a non-goal there, 
 "a cage rebuild is tens of milliseconds"). That holds for a small cage. It does not hold
 for a hand.
 
+## Revision, 2026-11-22: the viewer-side route only
+
+The bench and the spike (both below) changed the route. The owner chose it on 2026-11-22.
+
+- **Part 2's worker drag build is dropped.** A worker drag build still runs the Manifold
+  import, the cut and the meshing: about 290 ms a move on the hand. Skipping the level
+  search and the self-intersection check cannot bring that under 120 ms. Part 2's text
+  below is kept as a record; only its "Measure first", "The topology key" and "Stopping
+  at the last valid pose" sections still apply.
+- **Part 3 is the one path**, for the editor and for public pages. The spike measured
+  8 to 9 ms a move plus 1.7 ms of cage code, with no visible error through the hand's
+  cut.
+- **It plugs into the existing skin drag controller** (`src/framework/skin/skin-drag.js`),
+  as a second kind of base. That controller already serves sliders and handle drags,
+  schedules the exact build after a 150 ms pause or on release, hides edge lines, and
+  restores the exact mesh before a capture. So sliders, handles and captures need no new
+  rule of their own.
+- **The topology key ignores face ids.** It hashes the quads and the creases only. Face
+  ids can swap inside a pose range (the hand's thumb) while the quads stay the same.
+- **Version 1 limits.** A sub-part takes the fast path only when its build smooths
+  exactly one cage with no creases, and every vertex of its delivered mesh is tied to
+  the smooth surface. A cut is fine. A piece unioned onto the body (eyes, nails) has
+  vertices that cannot be tied, so that sub-part rebuilds on each move as today. Moving
+  such pieces with the skin under them is a follow-up, not built here.
+- **Stopping at the last valid pose** runs in the viewer: the coarse check runs before a
+  pose is drawn.
+
+### Measured in a browser
+
+Headless Chromium through Playwright on an Apple M1 Max, `cage-hand.html` on the dev
+server, 2026-11-22, with temporary timers (not committed). GL: ANGLE on Metal
+(`--use-angle=metal --enable-gpu --ignore-gpu-blocklist`). Re-measured on 0.201.0, after
+the drag state became something a drag builds at its first move and drops when it ends.
+Median, p90 in brackets.
+
+| Drag | Later moves: (a) one drawn shape to the next | Later moves: JS per move | First move: JS |
+| --- | --- | --- | --- |
+| `indexCurl` slider, an `input` event each animation frame, 20 → 70, pause, 70 → 0 → 45° (161 later moves) | 28.3 ms (30.6) | 24.6 ms | 93 ms, of it 46 ms building the drag state |
+| Index fingertip handle, in-page pointer events, one a frame (59 later moves) | 31.2 ms (33.6) | 19.3 + 5.3 ms | 24 + 40 ms, of it 33 ms building the drag state |
+
+(a) is the time between two `setSubVertices(…, { deformed: true })` calls, without the
+first move. The JS is the skin controller's `deform()`; for a handle, plus the validity
+guard that runs before the pose is written (the second number), which is where a handle
+drag builds its state. A handle drag driven by Playwright's `mouse.move` is held back by
+the test driver's own pace (about 58 ms a move), not by the drag's work, so the table
+uses in-page pointer events. No `generate` job was posted while the pointer moved;
+exactly one went out after each release, the exact mesh replaced the deformed one, and
+each drag committed once.
+
+**Gate: passed for the later moves.** The slider's (a) is 28.3 ms, under 33 ms, and the
+handle's is 31.2 ms. The first move of a drag is not: it takes about 95 ms of JS on the
+slider (about 60 ms on the handle) and its shape lands about 35 ms after the next frame.
+The JS of a later move is about 24 ms of the 28, so there is little room left on this
+machine.
+
+**A pause mid-drag.** The slider was held still at 70° until the pause build landed
+(780 ms: the build takes longer in the browser than the 150 ms pause), then moved on. The
+first move after it rebuilt the drag state (26 ms) and took 54 ms of JS in all; after it
+the body followed every move (115 moves, 28.4 ms median). With a 300 ms pause the build
+lands during the moves that follow, and the drag goes on with one 73 ms gap.
+
+**A pause where the build carries no ties stops the body.** At `indexCurl` 89° and 90°
+(the other params at their defaults) the preview build delivers no ties (checked in
+Node: 88° has them). A pause there forgets the cage base; for the rest of that drag no
+shape was drawn and no build was sent (135 moves), and the body moved only on release.
+
+**Fixed after the measurement.** The ties were sound; the check was too tight. Every
+vertex was tied, and every vertex placed from its tie landed within 8e-6 mm of where it
+was delivered. The weight rule refused them: near the top of the curl range each
+fingertip has sliver limit triangles (one edge about 0.06 mm), and float32 rounding puts a
+vertex delivered at a corner of one up to 0.72 of a float32 step outside it (7.9e-6 mm at
+z = 136 mm). Across a height of about 0.015 mm, that is a weight about 1.1e-4 past [0, 1],
+over the 1e-4 slack. A vertex now also passes when it lies outside its triangle by no
+more than two float32 steps of its largest coordinate (`TIE_ROUNDING_ULPS`,
+`subdiv/ties.js`). A vertex that is really outside its triangle is still refused. A sweep of
+each digit's curl over its whole range in 1° steps (425 poses, the other params at their
+defaults) delivered ties at 415 poses before and 425 after, and the viewer's check
+(`tiesAgree`) took all 425. The worst vertex outside its triangle was 0.72 of a step
+(worker and viewer alike), against the limit of 2.
+
+The body that stopped moving followed the ordinary rule for a slider on a sub-part with
+no cage base: its build is debounced (180 ms). While input arrives every frame, no build
+goes out. The first build goes out 180 ms after the last input, released or not. Once the base was gone, the drag already fell back to that rule; nothing in the
+skin controller or in mount held a build back. `test/mount-cage-drag.test.js` pins it for a
+slider and for a live handle drag.
+
+On SwiftShader (`--use-angle=swiftshader`, measured on 0.199.0) the JS per move was the
+same (25.8 ms) but the draw set the pace: the slider's (a) was 117 ms (p90 136).
+
+On 0.199.0, a copy of the hand with the curl range widened to 160° (a temporary page)
+confirmed the hold: with the pinky's knuckle at 90°, a slider drag up from 80° drew its
+last pose at 92°, drew nothing more from 93° to 160°, and the value went back to 92 on
+release.
+
 ## Why
 
 The cage is now the first choice for sculpted bodies. A user who drags a fingertip on a
@@ -107,6 +201,27 @@ check and the level search (which builds one level past the chosen one) dominate
 
 The numbers decide how much of the rest is built. See "Order and gates".
 
+**Measured** (`npm run bench:cage-drag`, Apple M1 Max, Node v24.19.0, CPU ms, median of
+12, preview tier):
+
+| Stage | cage-hand | organic-whale |
+| --- | ---: | ---: |
+| Level, cage faces, triangles | 4, 300, 153,600 | 2, 132, 4,224 |
+| Cage code + `snapshot()` | 3.8 | 0.7 |
+| `levelFor` | 14.7 | 1.4 |
+| `subdivide` (reusing the search's mesh) | 3.8 | 0.1 |
+| `selfIntersections` | 215.6 | 4.6 |
+| Manifold import | 164.2 | 3.7 |
+| The part's `cut` | 96.1 | 3.1 |
+| `toMesh` (preview) | 27.5 | 0.8 |
+| Whole `build` + `toMesh` | 527.7 | 60.4 |
+| Cage code + Manifold import + cut + `toMesh` | 291.5 | 8.4 |
+
+The self-intersection check is the largest single stage on the hand, then the Manifold
+import. The whale's whole build is much more than its stages add up to, so something
+outside these stages (about 40 ms) is not yet accounted for.
+
+
 ### The topology key
 
 A cage snapshot is `{ points, faces, ids, creases }`. Its **topology key** is a hash of
@@ -199,6 +314,37 @@ it.
 A pose `rotate` or `scale` refuses (an edge shorter than 1e-6) is treated the same way
 as a failed check.
 
+**Built** (Task 15): the check runs at level 1 (`DRAG_CHECK_LEVEL`). On the cage hand level
+1 costs 3.0 ms a move and level 2 costs 12.3 ms (`npm run bench:cage-drag`, M1 Max), so
+level 2 is over the budget. Stepping every finger's curl past 90° in 0.5° steps, with every
+knuckle at 90° and the thumb at 60°, the full check and the drag check both refuse first
+at 92.5°. The check uses the drag plan's quad diagonals, which are picked at the base
+pose, so it can miss a crossing the full check sees with diagonals picked at the live
+pose: a 3 × 3 box whose middle top face is pushed down through the bottom is never
+refused at level 1 or 2, while the full build warns from 25 mm. The full build after
+release catches that case.
+
+A handle drag stops through the session's drag guard, the way a collision does: the skin
+wraps the collision guard (`validityGuard`), and a frame whose pose fails settles at the
+last clear values. When the full build after a drag is refused, it is not drawn. Only the
+keys the drag changed go back, to their values where the drag began (a handle drag's
+start, else the cage base's params). A drag that began from a pose that already passed
+through itself is not reverted. The commit of a slider or handle drag on a cage body waits
+for that build, so the host gets one `onParamsCommit` with the values shown. A part with no
+cage base commits exactly as before.
+
+A cage drag's commit waits for its exact build. A mount disposed before that build answers
+sends the commit from `dispose()`, in the panel's teardown, as the font picker sends its
+commit when its widget is disposed: the host sees it once, with the released values,
+while the mount is being disposed. So a host that mutes viewer commits around its own
+remount (an undo) drops it, as it drops the font picker's.
+
+A pause build refused during a slider drag reverts the same way but commits nothing: the
+release commits. Residual: if another edit comes before the build answers, the waiting
+commit goes out at once with the released values, and that build is discarded as stale,
+so the full check never answers for them. The host then has one commit with values that
+passed only the drag check. A later edit's build still shows the warning, as for any edit.
+
 ### What the drag shape may differ in
 
 - **Level.** If the full build would pick another level at the new pose, the drag shape
@@ -241,6 +387,79 @@ corner can be placed from the smooth surface, before this part is planned.
 
 In this part a vertex made by a `cut` moves with the surface it lies on, so a flat base
 bends slightly during the drag. That is display only.
+
+### Spike result (Task 10)
+
+`node scripts/spike-cage-weights.mjs` (removed in 0.201.0; it is in the git history)
+(Apple M1 Max, Node v24.19.0, wall ms, median of
+20). The cage hand at level 4: 300 cage faces, 153,600 limit triangles, 76,802 limit
+vertices. Pose 0 is the defaults. Pose 1 curls the index, middle and ring fingers (knuckle
++20 to +30°, curl +30 to +40°). The truth is the part's own kernel build at pose 1.
+
+**Result: it works.** Every output vertex could be tied to the smooth surface, through the
+part's cut and through a union. Two layouts were tried. Both work. Use layout A.
+
+- **Layout A, `faceID` (use this).** At the import, set `MeshGL.faceID` to the limit
+  triangle's index. Manifold keeps an input `faceID` on every output triangle, and it keeps
+  the edges between different `faceID`s, so it merges no skin triangles. Pick the skin
+  triangles by `runOriginalID`. A corner's weights are its position written in barycentric
+  coordinates of its source triangle at rest. This is exact, because a piece of a triangle
+  lies in the plane of that triangle. There are no extra vertex properties, and the mesh
+  keeps one vertex per position.
+- **Layout B, properties per corner.** Each triangle corner is its own property vertex with
+  `[triangle, w0, w1]`, and the positions are merged with `mergeFromVert`/`mergeToVert`. A
+  boolean interpolates the properties only inside one source triangle, so the triangle stays
+  an exact integer. This also works, but it has 6 times as many property vertices (457,604
+  against 76,479) and it costs 2 times as much per move.
+- **Cutter and tool vertices.** A cutter vertex on the seam loop (where the skin meets the
+  cutter) is also a vertex of a skin triangle. It moves with that tie. On the box cuts that
+  were tried, the cap had no inner vertices: all its vertices are on the seam. A union tool's
+  own vertices away from the seam cannot be tied. The spike keeps them at rest.
+
+Distance from each placed vertex to the true pose-1 surface (layout A; layout B is the same
+within 0.5 mm):
+
+| Case | Skin, max / mean | Seam / cap vertices, max / mean | Untied |
+| --- | --- | --- | --- |
+| Control: skin left at rest | 40.8 / 7.1 mm | | |
+| The part's wrist cut | 0.000015 / 0.000001 mm | 0.0000 / 0.0000 mm (272) | 0 |
+| Wrist cut + sphere r8 on the palm | 0.000015 / 0.000001 mm | 0.0000 mm (436) | 265 sphere vertices, error 0 (the palm does not move) |
+| Stress: a cut through the moving index finger (z > 128) | 1.03 / 0.0002 mm | 1.48 / 0.055 mm (662) | 0 |
+| Stress: sphere r6 on the index finger | 0.000015 / 0.000001 mm | 0.0001 mm (430) | 254 sphere vertices, 7.6 / 3.6 mm left behind |
+
+The skin errors are float32 rounding. Against the plan's own pose-1 surface, the skin error
+is under 0.00001 mm in every case. In the stress cut the true build cuts the curled finger
+at the same world plane, so the cap moves to another place on the finger. The placed cap
+moves with the skin. This is the bend that Part 3 accepts, and it is at most 1.5 mm for this
+curl. On the part's own cut the error is zero, because the finger curls do not move the
+wrist.
+
+**Cost per move** (main thread): 8 to 9 ms with layout A. That is `applySubdivPlan` 4.2 ms,
+placing the 76,479 vertices and computing area-weighted vertex normals 2.1 to 2.7 ms, and the
+remainder allocation. The part's cage code and `snapshot()` are another 1.7 ms. Layout B is
+16 to 23 ms. Reading the tie back (one barycentric per corner) runs once per exact build in
+the worker. The spike did not time it.
+
+**Constraints on the design:**
+
+1. **Union tools that are not skin do not follow the drag.** Their vertices must be kept at
+   rest (correct only when the skin under them does not move), or moved rigidly with a
+   nearby skin point, or the case must be refused. The design must choose one. Cut caps
+   with no inner vertices are fine.
+2. **The `topologyKey` is not stable over the hand's own thumb range.** `thumbCurl` 20 to 45
+   gives a key different from the default (10). `extrude` numbers its side faces from a
+   geometric first edge (`cage.js` `orderedSides`/`firstEdge`), so the `thumb2` side faces
+   change ids when the thumb turns. The quads are the same and the plan gives the correct
+   surface, but the gate in "Recognise the case" would refuse the drag. The spike leaves the
+   thumb at its default for this reason. Before Part 3, either number the sides from
+   topology only, or make the key ignore which side id a quad has.
+3. **The import must set `faceID`** (`manifoldFromWeldedMesh` does not today) and keep the
+   rest limit mesh beside the solid (`subdivSources` already holds it). A solid that was
+   transformed needs its run's `runTransform` undone before the weights are computed, as
+   `bindingRepair` does. A `label()` or other re-stamp that gives the run a new
+   `originalID` must map the old id (`idMaps`), or the skin is not found.
+4. **Level 4 is the ceiling for display rate:** 153,600 triangles cost about 9 ms per move.
+   A body at level 5 (4 times the triangles) would cost about 35 ms.
 
 ## Part 4: dragging on a public page
 

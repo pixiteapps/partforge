@@ -52,6 +52,8 @@ const THUMB_AXIS = [
 // itself. Every pose within these ranges builds, all of them at their max at once included.
 const RANGE = { knuckle: [-10, 90], curl: [0, 90], thumbCurl: [0, 60] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
+// The flat under the wrist sits this far above the cage's lowest point (mm).
+const FLAT_ABOVE = 2.4;
 const LABEL = { index: "Index", middle: "Middle", ring: "Ring", pinky: "Pinky", thumb: "Thumb" };
 
 /** Every digit posed: the four fingers on the palm's top, the thumb on its side. */
@@ -149,11 +151,15 @@ export default {
   parts: {
     hand: {
       label: "Hand",
-      // The smooth body, then an ordinary boolean: a flat under the wrist to stand on.
+      // The smooth body, then an ordinary boolean: a flat under the wrist to stand on. The
+      // flat is placed from the cage (its lowest point is the arm's end, which no slider
+      // moves) and never from the body's own bounding box, so the build asks its solid no
+      // question. The smooth surface lies inside the cage, so the flat sits FLAT_ABOVE
+      // above the cage's lowest point: it removes a slab about 1.5 mm thick.
       build: (k, p, d) => {
-        const body = k.subdiv(cageHand(k.cage, p, bendsOf(d)));
-        const { min, max } = body.boundingBox();
-        return body.cut(k.box({ min: [min[0] - 1, min[1] - 1, min[2] - 1], max: [max[0] + 1, max[1] + 1, min[2] + 1.5] }));
+        const c = cageHand(k.cage, p, bendsOf(d));
+        const flat = c.bounds().min[2] + FLAT_ABOVE;
+        return k.subdiv(c).cut(k.box({ min: [-200, -200, flat - 8], max: [200, 200, flat] }));
       },
       views: { assembly: true, print: true },
     },

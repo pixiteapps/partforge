@@ -68,6 +68,8 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
       return genVersion === paramsVersion;
     },
     version: () => paramsVersion,
+    // How many replies the in-flight dispatch cycle still owes (0: none in flight).
+    pendingJobs: () => pending,
     // A build is in flight and nothing has edited the params since it was sent —
     // the test a progressive batch (meshes-partial) must pass to be shown.
     isFresh: () => pending > 0 && genVersion === paramsVersion,

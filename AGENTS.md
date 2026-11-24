@@ -1012,6 +1012,21 @@ the installed package, so let the publish finish before bumping the dep there.
   `_takeProvisionalPieces`; mount never caches it and drops the stage during a drag or
   playback (`provisional: false`). While deformed, edge lines are hidden. `npm run
   bench:pose-drag` times it.
+  A `k.subdiv(cage)` body is the second kind of base (spec
+  `docs/superpowers/specs/2026-11-22-cage-pose-drag-design.md`): `skin/cage-deform.js`
+  re-poses the last exact mesh from the moved cage points through its `ties`
+  (`geometry/subdiv/ties.js`, delivered by the canonical preview `generate` job only
+  when every vertex is tied, so a piece unioned onto the body has none). The probe entry
+  must be trusted and `cagePosable` (one cage, no creases, the subdiv result itself or a
+  union/cut with plain solids, unposed) with an equal `shapeHash` (the build less the
+  cage's points) and the same cage topology; anything else rebuilds. Before a pose is
+  drawn `cagePoseValidity` (the coarse through-itself check) runs on it: a refused pose
+  is held, a handle stops there (`validityGuard`), a slider's value goes back to
+  `lastValidParams()`, and if the exact build after the drag still reports the body
+  passing through itself the drag's keys go back to where it began. The drag's commit
+  is held until that build answers. `npm run bench:cage-drag` times it in Node; in
+  Chromium (Metal) on the cage hand a later move costs about 24 ms of JS, and the first
+  move, which builds the drag state, about 95 ms.
 - **`src/testing/`** - the genuinely Node-only harness, and only that:
   `manifold.js` / `occt.js` (boot a WASM kernel from disk), `render.js` (write
   PNGs), `error-patterns.js` (read `docs/ERROR-PATTERNS.md`). Never import these
