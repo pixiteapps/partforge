@@ -683,6 +683,19 @@ function printMeasure(r) {
         `flat ${s.sheet.flat.map((n) => n.toFixed(1)).join(" × ")} mm, ${s.sheet.pieces} piece${s.sheet.pieces === 1 ? "" : "s"}`);
     }
   }
+  // Each posed limb's bones: a joint's bone length, then the body's size there (the
+  // sub-part, width along the bend axis × depth across it) when an outline goes round it.
+  if (r.limbs) {
+    console.log(`  limbs:`);
+    for (const [name, l] of Object.entries(r.limbs)) {
+      const joints = l.joints.map((j) => {
+        const short = j.name.startsWith(`${name}.`) ? j.name.slice(name.length + 1) : j.name;
+        const size = j.part ? `  (${j.part}: ${j.width.toFixed(1)} × ${j.depth.toFixed(1)})` : "";
+        return `${short} ${j.length.toFixed(1)} mm${size}`;
+      });
+      console.log(`    ${name}  ${joints.join("   ")}`);
+    }
+  }
   const a = r.aggregate;
   console.log(`  ── view  bbox ${a.bbox.map((n) => n.toFixed(1)).join("×")}  vol ${(a.volume / 1000).toFixed(2)}cm³  tris ${a.triangleCount}`);
   console.log(`  overlaps: ${r.overlaps.length

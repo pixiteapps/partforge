@@ -1111,6 +1111,11 @@ starts from the saved seed, and from the near side it can stop short of a far ta
 
 Numbers are rounded to 0.001.
 
+`partforge measure` and `measure()` also report `limbs` for every posed limb that
+`derive` returns. Read it to check each bone's length against the real thing, and the
+body's width and depth at each joint. The fields are in `docs/AUTHORING-PARTS.md`, beside
+the rest of the measure report.
+
 ## Edge cases
 
 - **A joint whose range excludes 0 is clamped even when you do not set it.** A joint

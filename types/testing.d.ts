@@ -9,6 +9,7 @@
 import type { GeometryKernel, Mesh, Point3, Solid } from "./kernel.js";
 import type { Derived, FontSource, PartDefinition, ResolvedParams } from "./part.js";
 import type { KitOptions } from "./index.js";
+import type { LimbFacts } from "./oracle.js";
 
 export type { Derived, GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid };
 // Declared in oracle.d.ts (its own surface); testing.js re-exports all of oracle.js.
@@ -19,6 +20,7 @@ export {
   type NormalizedAnimationStep, type NormalizedAnimationCue,
   dragHandle, type DragRequest, type DragResult,
   rangePoses, sweepRanges, type RangePose, type RangesResult,
+  limbFacts, sectionAt, type LimbFacts, type LimbJointFacts, type SectionFrame,
 } from "./oracle.js";
 
 // --- kernels ----------------------------------------------------------------
@@ -715,6 +717,12 @@ export interface MeasureReport {
    * folded into `ok` (`sweepContacts` gates it).
    */
   sweeps?: SweepRow[];
+  /**
+   * For each posed limb the part's `derive` returns (a limb with a parent is skipped), by
+   * name: each joint's posed position, its bone's length, and the body's cross-section size
+   * there. Absent when `derive` returns no posed limb.
+   */
+  limbs?: Record<string, LimbFacts>;
   /** Every sub-part watertight and nothing interpenetrating. Near misses never affect it. */
   ok: boolean;
 }

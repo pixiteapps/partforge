@@ -934,6 +934,11 @@ armReport.faces["ring5.s0"];   // { follow: { arm: 1 } }
 "-z:0,0" in armReport.faces;   // false
 ```
 
+**Checking the sizes.** `partforge measure` lists every posed limb under `limbs`. Each
+joint has its bone's length and the body's width and depth at that joint. Compare the
+lengths with the real thing, and check that the body is the size you meant at each joint.
+The width is measured along the joint's bend axis, and the depth across it.
+
 **Errors.** Each names the limb, the joint or the face:
 
 ```text

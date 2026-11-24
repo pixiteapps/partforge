@@ -5566,6 +5566,15 @@ and these pairs have no distance", which a declared `clearance` gate fails on.
 defeated and skipped, a `k.implicit` feature too thin for its grid, a shape clipped at
 the edge of its sampling box, a `k.subdiv` cage that cannot meet its quality's tolerance
 or (at preview) passes through itself. `partforge measure` prints them. They never gate `ok`.
+`limbs` is present when `derive` returns a posed limb (a value that carries `bones`, at
+the top level or in an array there). A limb with a `parent` is left out. Each limb is
+keyed by its name and holds `joints` and `tip`. Each joint has `name`, `at` (its posed
+position) and `length` (the distance to the next joint or to the tip). The plane through
+the joint, square to its bone, cuts the body. When an outline of that cut goes round the
+joint, the joint also has `part` (the sub-part that was cut), `width` (the outline's size
+along the joint's bend axis) and `depth` (its size across that axis). Numbers are rounded
+to 0.1 mm. `partforge measure` prints one line per limb. Read the lengths against the
+real thing, and the sizes to see how thick the body is at each joint.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

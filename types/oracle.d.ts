@@ -232,3 +232,51 @@ export function rangePoses(part: PartDefinition, opts?: { random?: number; seed?
  * a body passes through itself. Other build warnings are not failures.
  */
 export function sweepRanges(kernel: GeometryKernel, part: PartDefinition, view?: string, opts?: { random?: number; seed?: number }): RangesResult;
+
+/** One joint of a posed limb in the measure report's `limbs`. */
+export interface LimbJointFacts {
+  /** The joint's frame name, `<limb>.<joint>`. */
+  name: string;
+  /** The joint's posed position, in part coordinates. */
+  at: [number, number, number];
+  /** The distance to the next joint, or to the tip for the last joint. */
+  length: number;
+  /** The sub-part whose cross-section goes round the joint. Absent when none does. */
+  part?: string;
+  /** The cross-section's size along the joint's bend axis (frame X). */
+  width?: number;
+  /** The cross-section's size across the bend axis (frame Z). */
+  depth?: number;
+}
+
+/** One posed limb in the measure report's `limbs`. Numbers are rounded to 0.1. */
+export interface LimbFacts {
+  joints: LimbJointFacts[];
+  tip: [number, number, number];
+}
+
+/** A plain frame: an origin and three unit axes. */
+export interface SectionFrame {
+  origin: [number, number, number];
+  x: [number, number, number];
+  y: [number, number, number];
+  z: [number, number, number];
+}
+
+/**
+ * The size of a mesh's cross-section at a frame: the plane through `origin` square to `y`
+ * cuts the mesh, and the outline that goes round `origin` is measured along `x` (`width`)
+ * and `z` (`depth`). Null when no outline goes round it. Without `indices` the positions are a
+ * triangle soup, as a kernel mesh's are.
+ */
+export function sectionAt(mesh: { positions: ArrayLike<number>; indices?: ArrayLike<number> }, frame: SectionFrame): { width: number; depth: number } | null;
+
+/**
+ * The measure report's `limbs`: each posed limb in `d` (a value carrying `bones`, one level
+ * deep or in an array there; a limb with a parent is skipped), keyed by its name. Undefined
+ * when there is none. `matrix` is the sub-part's column-major display pose, or null.
+ */
+export function limbFacts(
+  d: unknown,
+  subparts: Array<{ name: string; mesh: { positions: ArrayLike<number>; indices?: ArrayLike<number> }; matrix: ArrayLike<number> | null }>,
+): Record<string, LimbFacts> | undefined;

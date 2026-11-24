@@ -25,6 +25,7 @@ import { runSweeps } from "./sweep.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { normalizeCollisions } from "../collide/declaration.js";
 import { compareTolerance, COMPARE_MAX_TRIANGLES } from "./compare.js";
+import { limbFacts } from "./limb-sections.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -712,6 +713,22 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     (g) => g.distance > CONTACT_EPS && g.distance < gapThreshold && !overlapping.has(pairKey(g.a, g.b)),
   );
 
+  // Bone lengths and body sizes (limb-sections.js), for a part whose derive returns posed
+  // limbs: read off the meshes already built, each sub-part's frame carried by its display
+  // pose. A sub-part whose pose the probe cannot trust is not read. Absent when derive
+  // returns no limb, so every other report is unchanged.
+  let limbs;
+  if (typeof part.derive === "function" && built.length) {
+    const { p, d } = domainParams ?? poseParams ?? sheetParams ?? resolveParams(part, params, undefined, reads);
+    const sections = [];
+    for (const { name, mesh } of built) {
+      const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d });
+      if (probe.trusted) sections.push({ name, mesh, matrix: probe.pose.length ? composePose(probe.pose) : null });
+    }
+    // Like handlesReport, a malformed `bones` never fails the measurement: it leaves this out.
+    try { limbs = limbFacts(d, sections); } catch { limbs = undefined; }
+  }
+
   const ub = subparts.length ? unionBounds(subBounds) : { min: [0, 0, 0], max: [0, 0, 0] };
   const weighted = subparts.filter((s) => s.centerOfMass !== null);
   const totalVol = weighted.reduce((a, s) => a + s.volume, 0);
@@ -768,6 +785,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     ...(handles ? { handles } : {}),
     ...(previewHandlesReport ? { previewHandles: previewHandlesReport } : {}),
     ...(sweeps ? { sweeps } : {}),
+    ...(limbs ? { limbs } : {}),
     ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };
 }

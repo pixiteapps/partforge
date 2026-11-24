@@ -100,6 +100,14 @@ test("CLI measure prints 'near-misses: none' on a clean part", () => {
   expect(out).toMatch(/near-misses: none/);
 });
 
+test("CLI measure prints each limb's bone lengths and the body's size at each joint", () => {
+  const out = run(["measure", "src/parts/cage-hand.js", "--no-verify"]);
+  expect(out).toMatch(/\n {2}limbs:\n/);
+  expect(out).toMatch(/\n {4}index {2}mcp \d+\.\d mm {2}\(hand: \d+\.\d × \d+\.\d\) {3}pip \d+\.\d mm/);
+  expect(out).toMatch(/\n {4}thumb {2}abduct /);
+  expect(run(["measure", "src/parts/demo.js"])).not.toMatch(/limbs:/);
+});
+
 test("--out writes the measure half even when a later verify throw crashes the run", () => {
   // unknown-metric-part.js's defect (a bad metric name in a *static* verify.expect)
   // is now caught statically by the `verify-unknown-metric` lint rule, before the
