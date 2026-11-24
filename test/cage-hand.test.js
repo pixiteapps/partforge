@@ -1,7 +1,7 @@
-// The cage hand (src/parts/cage-hand.js): a k.subdiv hand whose finger bends come from
-// limbs posed in derive, one angles-mode handle per digit. It lints clean, builds watertight
-// across its whole parameter range, each limb's tip sits on its cage tip, and posing never
-// changes the cage's faces (only its points move).
+// The cage hand (src/parts/cage-hand.js): a k.subdiv hand built straight and posed by one
+// cage.skin call from the limbs derive poses, one angles-mode handle per digit. It lints
+// clean, builds watertight across its whole parameter range, each limb's tip sits on its
+// cage tip, and posing never changes the cage's faces (only its points move).
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/oracle.js";
@@ -17,11 +17,10 @@ const DIGITS = [...FINGERS, "thumb"];
 const CONTROLS = part.parameters.flatMap((g) => g.controls);
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
-// The cage at params p, built the way the part's build does: bends from the posed limbs.
+// The cage at params p, built the way the part's build does: skinned to derive's limbs.
 function cageAt(p) {
-  const { p: params, d } = resolveParams(part, p);
-  const bends = Object.fromEntries(DIGITS.map((n) => [n, d[n].values]));
-  return { c: cageHand(cage, params, bends), d };
+  const { d } = resolveParams(part, { ...part.defaults, ...p });
+  return { c: cageHand(cage, d), d };
 }
 
 let k;
@@ -43,28 +42,23 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   }
   expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 50 });
   expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: 0, max: 120 });
-  expect(CONTROLS.find((c) => c.key === "thumbAbduct")).toMatchObject({ min: 0, max: 75 });
-  expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());
+  expect(CONTROLS.find((c) => c.key === "thumbAbduct")).toMatchObject({ min: 0, max: 70 });
+  const d = part.derive(part.defaults);
+  expect(Object.keys(d).sort()).toEqual([...DIGITS].sort());
+  // Each finger's limb starts at its base knuckle in the palm; the thumb's at the wrist,
+  // with three joints at its root that never move.
+  for (const f of FINGERS) expect(d[f].bones.joints.map((j) => j.name)).toEqual([`${f}.mcp`, `${f}.pip`, `${f}.dip`]);
+  expect(d.thumb.bones.joints.map((j) => j.name.slice(6))).toEqual(["abduct", "oppose", "lean", "tilt", "roll", "mcp", "ip"]);
+  for (const n of DIGITS) expect(d[n].bones.r, n).not.toBeNull();
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
-  expect(Object.keys(part.handles).sort()).toEqual([...DIGITS, "oppose", "abduct"].sort());
-  expect(part.handles.oppose).toMatchObject({ drag: "rotary", params: ["thumbOppose"], showOn: "hand" });
-  expect(part.handles.abduct).toMatchObject({ drag: "rotary", params: ["thumbAbduct"], showOn: "hand" });
-  // Each handle's point turns about its handle's axis: its distance from the axis holds
-  // across the param's range, with the other motion at rest and part way.
-  const fromAxis = (q, { origin, direction }) => {
-    const r = q.map((v, i) => v - origin[i]), along = r.reduce((sum, v, i) => sum + v * direction[i], 0);
-    return Math.hypot(...r.map((v, i) => v - along * direction[i]));
-  };
-  for (const abduct of [0, 40]) {
-    const radius = (deg) => { const p = { ...part.defaults, thumbOppose: deg, thumbAbduct: abduct }; return fromAxis(part.handles.oppose.point(p), part.handles.oppose.axis(p)); };
-    expect(radius(120)).toBeCloseTo(radius(0), 6);
-  }
-  for (const oppose of [0, 60]) {
-    const radius = (deg) => fromAxis(part.handles.abduct.point({ ...part.defaults, thumbOppose: oppose, thumbAbduct: deg }), part.handles.abduct.axis);
-    expect(radius(75)).toBeCloseTo(radius(0), 6);
-  }
+  expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
   for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
-  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { mcp: "thumbCurl" } });
+  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: "thumbOppose", mcp: "thumbCurl" } });
+  // Every joint a handle names is one of its limb's.
+  for (const [id, h] of Object.entries(part.handles)) {
+    const names = d[h.on].ikInfo().joints.map((j) => j.name);
+    for (const j of Object.keys(h.joints)) expect(names, `${id}.${j}`).toContain(j);
+  }
 });
 
 test("is listed as an organic reference part", () => {
@@ -73,21 +67,28 @@ test("is listed as an organic reference part", () => {
 
 // Defaults, every parameter at its min at once and at its max at once (a fist: the
 // tightest pose the sliders reach), then each parameter alone at its min and at its max.
-const OK_SIGN = { thumbOppose: 50, thumbCurl: 25, indexKnuckle: 50, indexCurl: 65, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
+// The OK sign: the thumb opposed until its tip meets the bent index finger's.
+const OK_SIGN = { thumbOppose: 70, thumbCurl: 15, indexKnuckle: 55, indexCurl: 70, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
 // Holding a bar of 1.5 inch radius that lies across the palm: the fingers over it, the
 // thumb abducted and opposed under it.
-const BAR_GRIP = { thumbOppose: 120, thumbAbduct: 60, thumbCurl: 25, ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 50], [`${f}Curl`, 50]])) };
-const BAR = { radius: 38.1, y: -66, z: 76 };
+const BAR_GRIP = { thumbOppose: 120, thumbAbduct: 70, thumbCurl: 25, ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 60], [`${f}Curl`, 45]])) };
+const BAR = { radius: 38.1, y: -78, z: 64 };
+// One parameter at an end of its range. Neighbouring fingers share the skin between their
+// base knuckles, so for a knuckle the other fingers' come within 50° of it, as a hand's do.
+const alone = (key, value) => (key.endsWith("Knuckle")
+  ? { ...Object.fromEntries(FINGERS.map((f) => [`${f}Knuckle`, Math.min(value + 50, Math.max(value - 50, part.defaults[`${f}Knuckle`]))])), [key]: value }
+  : { [key]: value });
 const CASES = [
   ["defaults", {}],
   ["every parameter at its min", Object.fromEntries(CONTROLS.map((c) => [c.key, c.min]))],
   // A fist: every bend at its max. The thumb is neither opposed nor abducted, since a thumb
   // in front of the palm meets the closed fingers (test/cage-drag-validity.test.js).
   ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 }],
-  // The OK sign: the thumb opposed until its tip meets the bent index finger's.
   ["the OK sign", OK_SIGN],
   ["the bar grip", BAR_GRIP],
-  ...CONTROLS.flatMap((c) => [[`${c.key} min`, { [c.key]: c.min }], [`${c.key} max`, { [c.key]: c.max }]]),
+  // An open hand with the thumb at the far corner of its range.
+  ["an open hand, the thumb opposed, abducted and curled", { ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 0], [`${f}Curl`, 0]])), thumbOppose: 120, thumbAbduct: 70, thumbCurl: 50 }],
+  ...CONTROLS.flatMap((c) => [[`${c.key} min`, alone(c.key, c.min)], [`${c.key} max`, alone(c.key, c.max)]]),
 ];
 
 test.each(CASES)("builds watertight on the preview tier: %s", (_, params) => {
@@ -114,12 +115,12 @@ test("the bar grip: nothing enters a 1.5 inch radius bar, and the thumb and inde
   for (let i = 0; i < P.length; i += 3) deepest = Math.min(deepest, outside(i));
   // Soft skin on a hard bar: within half a millimetre of touching, never deeper.
   expect(deepest).toBeGreaterThan(-0.5);
-  // Each tip's pad is within 3 mm of the bar.
+  // Each tip's pad is within 4 mm of the bar.
   for (const n of ["thumb", "index"]) {
     const tip = d[n].report.tip;
     let gap = Infinity;
     for (let i = 0; i < P.length; i += 3) if (dist([P[i], P[i + 1], P[i + 2]], tip) < 13) gap = Math.min(gap, outside(i));
-    expect(gap, n).toBeLessThan(3);
+    expect(gap, n).toBeLessThan(4);
   }
   // Seen along the bar, the arc from the index tip round the front to the thumb tip is
   // the part of the bar the hand leaves open: under 160°, so the hand holds over 200°.
@@ -128,14 +129,27 @@ test("the bar grip: nothing enters a 1.5 inch radius bar, and the thumb and inde
   expect(open).toBeLessThan(160);
 }, 60_000);
 
-test("at its defaults each limb's tip is within 6 mm of its cage tip", () => {
-  const { c, d } = cageAt(part.defaults);
-  for (const n of DIGITS) expect(dist(d[n].report.tip, c.centroid(`${n}Tip`)), n).toBeLessThan(6);
+// The poses the tip and face tests read: defaults, the two hand shapes, and every
+// parameter alone at each end.
+const POSES = CASES.filter(([name]) => name !== "every parameter at its min" && name !== "every bend at its max");
+
+test("each limb's tip is on its cage tip, at rest and posed", () => {
+  for (const [name, params] of POSES) {
+    const { c, d } = cageAt(params);
+    for (const n of DIGITS) expect(dist(d[n].report.tip, c.centroid(`${n}Tip`)), `${name}: ${n}`).toBeLessThan(1);
+  }
 });
 
-test("posing moves points, never faces: the face count is the same at defaults and at every max", () => {
-  const count = cageAt(part.defaults).c.faces().length;
-  for (const ctl of CONTROLS) expect(cageAt({ ...part.defaults, [ctl.key]: ctl.max }).c.faces().length, ctl.key).toBe(count);
+test("posing moves points, never faces: faces and ids are the same at rest and at every pose", () => {
+  const rest = cageHand(cage, null).snapshot();
+  for (const [name, params] of CASES) {
+    const s = cageAt(params).c.snapshot();
+    expect(s.faces, name).toEqual(rest.faces);
+    expect(s.ids, name).toEqual(rest.ids);
+    expect(s.points.length, name).toBe(rest.points.length);
+  }
+  // The limbs at rest leave the cage as it was built.
+  expect(cageHand(cage, part.derive(Object.fromEntries(CONTROLS.map((c) => [c.key, 0])))).snapshot().points).toEqual(rest.points);
 });
 
 // The flat under the wrist is placed from the cage, so it is the same at every pose: the

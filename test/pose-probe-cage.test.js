@@ -110,9 +110,8 @@ test("a mixed implicit and cage part keeps its old skinnable answer and shape", 
 // The reference hand: every slider at min, default and max.
 const handProbe = (params) => {
   const { p, d } = resolveParams(hand, params);
-  return { r: probeSubPartPose(hand.parts.hand, { view: "assembly", p, d }, { scope: "build" }), p, d };
+  return { r: probeSubPartPose(hand.parts.hand, { view: "assembly", p, d }, { scope: "build" }), d };
 };
-const DIGITS = ["index", "middle", "ring", "pinky", "thumb"];
 const controls = hand.parameters.flatMap((g) => g.controls);
 
 test("the cage hand is cage-posable, one shape across its whole slider range", () => {
@@ -120,11 +119,11 @@ test("the cage hand is cage-posable, one shape across its whole slider range", (
     Object.fromEntries(controls.map((c) => [c.key, c.min])), Object.fromEntries(controls.map((c) => [c.key, c.max]))];
   const base = handProbe({}).r;
   for (const params of settings) {
-    const { r, p, d } = handProbe(params);
+    const { r, d } = handProbe(params);
     expect(r.trusted).toBe(true);
     expect(r.cagePosable).toBe(true);
     expect(r.shapeHash).toBe(base.shapeHash);
-    const bends = Object.fromEntries(DIGITS.map((n) => [n, d[n].values]));
-    expect(r.cages[0].points).toEqual(cageHand(createCage, p, bends).snapshot().points);
+    // The probe's cage is the one the build skins from derive's limbs.
+    expect(r.cages[0].points).toEqual(cageHand(createCage, d).snapshot().points);
   }
 });

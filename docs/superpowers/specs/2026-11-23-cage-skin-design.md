@@ -49,8 +49,11 @@ return k.subdiv(c);
 
 - `limbs`: one posed limb or an array of them (`limb(…).pose(…)`, usually from `derive`).
   Each must be defined with `r`, the limb option that already holds its radii.
-- The cage must be built in the limbs' rest pose: every joint at 0. A limb's fixed tilt
-  belongs in its `toward`, not in a joint that is never 0.
+- The cage must be built in the limbs' rest pose: the pose a limb takes with no bends
+  asked, `limb.pose({})`. That is every joint at 0, except a joint whose range leaves 0
+  out, which rests at the nearest value it allows. So a limb can have a fixed tilt: a
+  joint with a range such as `[23, 23]` is a bend the limb always has, and the cage is
+  built with it.
 - `skin` is the last change to a cage. After it, `extrude`, `move`, `scale`, `rotate`,
   `crease` and a second `skin` throw. Reads (`centroid`, `normal`, `faces`, `bounds`,
   `snapshot`) return posed values.

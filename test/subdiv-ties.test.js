@@ -28,8 +28,7 @@ const gen = async (part, view, params = part.defaults, subparts = Object.keys(pa
   return msgs.find((m) => m.type === "meshes").meshes;
 };
 
-const bendsOf = (d) => Object.fromEntries(Object.keys(d).map((n) => [n, d[n].values]));
-const handSnapshot = (p) => cageHand(k.cage, p, bendsOf(resolveParams(hand, { ...hand.defaults, ...p }).d)).snapshot();
+const handSnapshot = (p) => cageHand(k.cage, resolveParams(hand, { ...hand.defaults, ...p }).d).snapshot();
 const previewLevel = (s) => levelFor(s, SUBDIV_TOLERANCE.preview, { maxTriangles: SUBDIV_MAX_TRIANGLES.preview }).level;
 
 // The worst distance between a vertex placed from its tie on the rest limit mesh of
@@ -41,7 +40,7 @@ const restError = (mesh, snapshot) => {
 
 // The hand with its build swapped (same params, derive, views).
 const handWith = (build, extra = {}) => ({ ...hand, parts: { hand: { ...hand.parts.hand, build, ...extra } } });
-const handCage = (kk, p, d) => cageHand(kk.cage, p, bendsOf(d));
+const handCage = (kk, p, d) => cageHand(kk.cage, d);
 const flatCut = (kk, c) => kk.box({ min: [-200, -200, c.bounds().min[2] - 8], max: [200, 200, c.bounds().min[2] + 3] });
 
 // A box cage, its +x side pulled out (a small k.subdiv body).
@@ -102,15 +101,16 @@ describe("the cage hand with its cut", () => {
 });
 
 // The hand's tie coverage: every digit's curl across its whole range (the others at their
-// defaults) delivers ties, and the viewer's check (tiesAgree) takes them. 89° and 90° on the
-// index were refused once: a sliver limit triangle at the fingertip (a 0.06 mm edge), whose
-// corner vertex float32 rounding put 7e-6 mm outside it, a weight 1.1e-4 past [0, 1].
+// defaults) delivers ties, and the viewer's check (tiesAgree) takes them, with the last few
+// degrees of each range stepped finely. An earlier hand's index at 89° and 90° was refused
+// once: a sliver limit triangle at the fingertip (a 0.06 mm edge), whose corner vertex
+// float32 rounding put 7e-6 mm outside it, a weight 1.1e-4 past [0, 1].
 describe("the cage hand's tie coverage", () => {
-  const curls = [0, 20, 40, 60, 75, 85, 88, 89, 90];
+  const curls = [0, 20, 40, 60, 70, 75, 78, 79, 80];
   const poses = [
     ...Object.keys(hand.defaults).filter((key) => key.endsWith("Curl") && key !== "thumbCurl")
       .flatMap((key) => curls.map((a) => [key, a])),
-    ...[0, 20, 40, 60].map((a) => ["thumbCurl", a]),
+    ...[0, 20, 40, 50].map((a) => ["thumbCurl", a]),
   ];
   test.each(poses)("%s %i° delivers ties the viewer takes", async (key, a) => {
     const p = { ...hand.defaults, [key]: a };

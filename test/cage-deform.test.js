@@ -5,7 +5,6 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import { probePoses } from "../src/framework/pose-probe.js";
-import { resolveParams } from "../src/framework/part-model.js";
 import { createCage } from "../src/framework/geometry/subdiv/cage.js";
 import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
 import { makeCageBase, deformCage, tiesAgree } from "../src/framework/skin/cage-deform.js";
@@ -27,9 +26,18 @@ const gen = async (part, view, params, subparts = Object.keys(part.parts)) => {
 const entryAt = (params, part = hand, name = "hand") => probePoses(part, "assembly", params, { scope: "build" }).get(name);
 
 const A = { ...hand.defaults };
-const THUMB = { ...hand.defaults, thumbCurl: 55 };
-const FINGERS = Object.keys(hand.defaults).filter((key) => !key.startsWith("thumb"));
-const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 50 };
+const THUMB = { ...hand.defaults, thumbCurl: 50 };
+const CONTROLS = hand.parameters.flatMap((g) => g.controls);
+// A fist: every bend at its max, the thumb neither opposed nor abducted.
+const ALL_CURLED = { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 };
+// The hand's cage at rest with one more extrude: a cage the base's plan does not fit. It
+// is the rest cage because a skinned cage takes no more changes.
+const grownCage = () => {
+  const c = cageHand(createCage, null);
+  const s0 = c.snapshot();
+  c.extrude(s0.ids[s0.ids.length - 1], { by: 3 });
+  return c.snapshot();
+};
 
 // Nearest delivered vertices on a hash grid: the indices within `r` mm of a point.
 function vertexGrid(P, cell = 0.25) {
@@ -81,8 +89,8 @@ describe("deformCage on the cage hand", () => {
   // Normal bound per pose: at the base's own pose the deformed normals are the delivered
   // ones. Away from it the plan keeps the base's quad diagonals for the whole drag while
   // the exact build re-picks them at B's points, and an unweighted vertex normal follows
-  // its triangle fan: 1.2° at the thumb pose, 3.6° with every digit at its max, at the
-  // knuckles of a finger turned 90°. That is the only difference (the positions agree
+  // its triangle fan: 1.6° at the thumb pose, 3.2° in a fist, at the knuckles
+  // of a finger turned far. That is the only difference (the positions agree
   // to 2e-5 mm), and the swap to the exact mesh on release shows nothing at that size.
   test.each([
     ["the defaults (the base's own pose)", A, 0.1],
@@ -115,25 +123,25 @@ describe("deformCage on the cage hand", () => {
     expect(worst.nearCut.angle).toBeLessThan(2);
   }, 120_000);
 
-  // A base at 90°, whose fingertip slivers have corners float32 rounding puts just outside
+  // A base at 80°, whose fingertip slivers have corners float32 rounding puts just outside
   // their triangles (subdiv/ties.js's TIE_ROUNDING_ULPS): re-posed back to the defaults, it
   // lands on the exact build there.
-  test("a base at indexCurl 90 re-posed to the defaults: within 1e-3 mm of the exact build", async () => {
-    const C = { ...A, indexCurl: 90 };
-    const [m90] = await gen(hand, "assembly", C);
-    expect(m90.ties).toBeTruthy();
-    const b90 = makeCageBase(entryAt(C).cages[0], m90.ties);
-    expect(tiesAgree(b90, m90.positions)).toBe(true);
-    const n = m90.positions.length;
+  test("a base at indexCurl 80 re-posed to the defaults: within 1e-3 mm of the exact build", async () => {
+    const C = { ...A, indexCurl: 80 };
+    const [mMax] = await gen(hand, "assembly", C);
+    expect(mMax.ties).toBeTruthy();
+    const bMax = makeCageBase(entryAt(C).cages[0], mMax.ties);
+    expect(tiesAgree(bMax, mMax.positions)).toBe(true);
+    const n = mMax.positions.length;
     const P = new Float32Array(n), N = new Float32Array(n);
-    expect(deformCage(b90, entryAt(A).cages[0], P, N)).toBe(true);
+    expect(deformCage(bMax, entryAt(A).cages[0], P, N)).toBe(true);
     const near = vertexGrid(mesh.positions);
     let worst = 0;
     for (let v = 0; v < n / 3; v++) worst = Math.max(worst, near(P[3 * v], P[3 * v + 1], P[3 * v + 2]).d);
     expect(worst).toBeLessThan(1e-3);
   }, 120_000);
 
-  test("the thumb pose lists the cage's faces in another order: the same topology, the base's plan", () => {
+  test("the thumb pose has the base's topology and takes the base's plan, in any face order", () => {
     const a = entryAt(A).cages[0], b = entryAt(THUMB).cages[0];
     const sameOrder = JSON.stringify(a.faces) === JSON.stringify(b.faces);
     console.log(`thumb pose: faces in the same order as the base: ${sameOrder}`);
@@ -145,11 +153,7 @@ describe("deformCage on the cage hand", () => {
   });
 
   test("Review Focus 2: a cage with an extra extrude is refused and nothing is written", () => {
-    const { p, d } = resolveParams(hand, A);
-    const c = cageHand(createCage, p, Object.fromEntries(Object.keys(d).map((nm) => [nm, d[nm].values])));
-    const s0 = c.snapshot();
-    c.extrude(s0.ids[s0.ids.length - 1], { by: 3 });
-    const grown = c.snapshot();
+    const grown = grownCage();
     const n = mesh.positions.length;
     const P = new Float32Array(n).fill(7), N = new Float32Array(n).fill(7);
     expect(deformCage(base, grown, P, N)).toBe(false);
@@ -275,11 +279,7 @@ describe("the skin controller with a cage base", () => {
       const map = probePoses(part, view, p, opts);
       if (p === params && version >= 2) {
         const e = map.get("hand");
-        const { p: rp, d } = resolveParams(hand, p);
-        const c = cageHand(createCage, rp, Object.fromEntries(Object.keys(d).map((nm) => [nm, d[nm].values])));
-        const s = c.snapshot();
-        c.extrude(s.ids[s.ids.length - 1], { by: 3 });
-        map.set("hand", { ...e, cages: [c.snapshot()] });
+        map.set("hand", { ...e, cages: [grownCage()] });
       }
       return map;
     };

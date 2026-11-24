@@ -61,7 +61,8 @@ function toScript(block) {
       out.push(`check(${JSON.stringify(m[1])}, () => (${m[1].slice(0, -1)}), ${JSON.stringify(valueText(m[2]))});`);
       continue;
     }
-    if (/^[^\s/].*;$/.test(line) && !/^(const|let) /.test(line) && /^\/\/ /.test(lines[i + 1] ?? "")) {
+    // A line that closes a statement (`}));`) is not a statement of its own.
+    if (/^[^\s/)}\]].*;$/.test(line) && !/^(const|let) /.test(line) && /^\/\/ /.test(lines[i + 1] ?? "")) {
       const parts = [];
       while (/^\/\/ /.test(lines[i + 1] ?? "")) parts.push(valueText(lines[++i].slice(3)));
       out.push(`check(${JSON.stringify(line)}, () => (${line.slice(0, -1)}), ${JSON.stringify(parts.join(" "))});`);
@@ -80,14 +81,14 @@ beforeAll(async () => {
     expect(plain(run()), src).toEqual(evalValue(text));
     checked.push(src);
   };
-  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage, cageHand, poseDigits, bendsOf };`;
+  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage, cageHand, poseDigits };`;
   scope = new Function("k", "limb", "implicitDistance", "check", ...Object.keys(organic), body)(k, limb, implicitDistance, check, ...Object.values(organic));
   scope.checked = checked;
 });
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(44);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(60);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -278,23 +279,39 @@ test("the whale's numbers in the guide are the code's", () => {
 
 test("the guide's hand is the reference part's, line for line", () => {
   const file = read("../src/parts/cage-hand.js");
-  const block = fences("js", section("Worked example: a hand that curls", "###"))[0];
-  const constants = /^import \{ limb \}[\s\S]*?\nconst DIGITS = .*;$/m.exec(file)[0];
-  expect(block).toContain(constants);
-  expect(block).toContain(/^(function poseDigits[\s\S]*?\n\})\n/m.exec(file)[1]);
-  expect(block).toContain(/^export (function cageHand[\s\S]*?\n\})\n/m.exec(file)[1]);
-  expect(block).toContain(/^const bendsOf = .*;$/m.exec(file)[0]);
+  const block = fences("js", section("Worked example: a hand that follows its limbs", "###"))[0];
+  // The file from its kinematics import to the end of poseDigits, with cageHand's export
+  // dropped (the guide's blocks run as one script).
+  const example = /^import \{ limb \}[\s\S]*?\nfunction poseDigits[\s\S]*?\n\}\n/m.exec(file)[0];
+  expect(example).toContain("export function cageHand(");
+  expect(block).toContain(example.replace(/^export function cageHand\(/m, "function cageHand("));
   // The guide's functions make the part's cage, and the shown params are its defaults.
   const handParams = /^const handParams = (\{[\s\S]*?\});$/m.exec(block)[1];
   expect(evalValue(handParams)).toEqual(cageHandPart.defaults);
   const d = cageHandPart.derive(cageHandPart.defaults);
-  const bends = Object.fromEntries(Object.entries(d).map(([n, posed]) => [n, posed.values]));
-  expect(scope.bendsOf(scope.poseDigits(cageHandPart.defaults))).toEqual(bends);
-  expect(scope.cageHand(k.cage, cageHandPart.defaults, bends).snapshot()).toEqual(cageHand(k.cage, cageHandPart.defaults, bends).snapshot());
+  expect(plain(scope.poseDigits(cageHandPart.defaults))).toEqual(plain(d));
+  expect(scope.cageHand(k.cage, d).snapshot()).toEqual(cageHand(k.cage, d).snapshot());
+  expect(scope.cageHand(k.cage, null).snapshot()).toEqual(cageHand(k.cage, null).snapshot());
   expect(organicManifest.referenceParts).toContain("src/parts/cage-hand.js");
-  // "within 1 mm of its cage tip" at the defaults.
-  const c = cageHand(k.cage, cageHandPart.defaults, bends);
+  // "within 1 mm of its cage tip" at the defaults, and "the same 370 faces" at every pose.
+  const c = cageHand(k.cage, d);
   for (const [n, posed] of Object.entries(d)) expect(Math.hypot(...posed.report.tip.map((v, i) => v - c.centroid(`${n}Tip`)[i])), n).toBeLessThan(1);
+  const text = section("Worked example: a hand that follows its limbs", "###");
+  expect(text).toContain(`the same ${c.faces().length} faces`);
+  // The ranges the prose gives are the part's.
+  const controls = Object.fromEntries(cageHandPart.parameters.flatMap((g) => g.controls).map((ctl) => [ctl.key, [ctl.min, ctl.max]]));
+  expect(controls.indexKnuckle).toEqual([-10, 90]);
+  expect(controls.indexCurl).toEqual([0, 80]);
+  expect(controls.thumbAbduct).toEqual([0, 70]);
+  expect(controls.thumbOppose).toEqual([0, 120]);
+  expect(controls.thumbCurl).toEqual([0, 50]);
+  expect(text).toContain("(`thumbAbduct`, 0° to 70°)");
+  expect(text).toContain("(`thumbOppose`, 0° to 120°)");
+  expect(text).toContain("(`thumbCurl`, 0° to 50°)");
+  // The handles the prose shows are the part's.
+  expect(cageHandPart.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: "thumbOppose", mcp: "thumbCurl" } });
+  expect(cageHandPart.handles.index).toEqual({ on: "index", drag: "angles", params: ["indexKnuckle", "indexCurl"], joints: { mcp: "indexKnuckle", pip: "indexCurl" } });
+  expect(d.thumb.bones.joints.map((j) => j.name)).toEqual(["abduct", "oppose", "lean", "tilt", "roll", "mcp", "ip"].map((j) => `thumb.${j}`));
 });
 
 test("the guide's hand builds clean open, at its defaults and as a fist, at preview and at print", async () => {
@@ -306,12 +323,12 @@ test("the guide's hand builds clean open, at its defaults and as a fist, at prev
   const open = Object.fromEntries(controls.map((c) => [c.key, 0]));
   const fist = { ...Object.fromEntries(controls.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 };
   for (const p of [open, cageHandPart.defaults, fist]) {
-    const bends = scope.bendsOf(scope.poseDigits(p));
+    const digits = scope.poseDigits(p);
     k.takeBuildWarnings();
-    expect(k.subdiv(scope.cageHand(k.cage, p, bends)).volume()).toBeGreaterThan(50000);
+    expect(k.subdiv(scope.cageHand(k.cage, digits)).volume()).toBeGreaterThan(50000);
     expect(k.takeBuildWarnings()).toEqual([]);
     print.takeBuildWarnings();
-    expect(print.subdiv(scope.cageHand(print.cage, p, bends)).volume()).toBeGreaterThan(50000);
+    expect(print.subdiv(scope.cageHand(print.cage, digits)).volume()).toBeGreaterThan(50000);
     expect(print.takeBuildWarnings()).toEqual([]);
   }
   // The recipe's rule, on a 20 mm thick limb bent 90° over three rings: rings a quarter
@@ -329,6 +346,47 @@ test("the guide's hand builds clean open, at its defaults and as a fist, at prev
   };
   expect(print.subdiv(bent(5)).volume()).toBeGreaterThan(0);
   expect(() => print.subdiv(bent(2))).toThrow(/^subdiv: the body passes through itself/);
+});
+
+test("every quoted skin error is the code's own", () => {
+  const text = section("Posing a cage with limbs: `skin`", "###");
+  const [quoted] = fences("text", text).map((b) => b.trim().split("\n"));
+  const message = (f) => { try { f(); } catch (e) { return e.message; } return "no error"; };
+  const { cage } = organic;
+  // The guide's own fixtures, built again here.
+  const stalk = () => {
+    const c = cage({ box: { size: [20, 20, 20] } });
+    let cur = "+z:0,0";
+    for (let i = 0; i < 10; i++) cur = c.extrude(cur, { by: 6, id: `ring${i}` });
+    c.extrude(cur, { by: 5, scale: 0.6, id: "end" });
+    return c;
+  };
+  const fork = () => {
+    const c = cage({ box: { size: [50, 20, 20], segs: [3, 1, 1] } });
+    for (const [name, col] of [["left", 0], ["right", 2]]) {
+      let cur = `+z:${col},0`;
+      for (let i = 0; i < 6; i++) cur = c.extrude(cur, { by: 6, id: `${name}${i}` });
+      c.extrude(cur, { by: 4, scale: 0.6, id: `${name}End` });
+    }
+    return c;
+  };
+  const straight = { toward: [0, 0, 1], bendToward: [0, -1, 0] };
+  const prongs = ["left", "right"].map((name, i) => limb(name, { ...straight, at: [i ? 50 / 3 : -50 / 3, 0, 19], joints: [{ name: "base", range: [0, 90] }], lengths: [31], r: [14, 12] }).pose({}));
+  const arm = limb("arm", { ...straight, at: [0, 0, 25], joints: ["elbow"], lengths: [50], r: [15, 15] }).pose({});
+  const palm = limb("palm", { ...straight, joints: ["wrist"], lengths: [40], r: [20, 20] });
+  const triggers = [
+    () => stalk().skin(limb("arm", { ...straight, at: [0, 0, 25], joints: ["elbow"], lengths: [50] }).pose({})),
+    () => stalk().skin(limb("arm", { ...straight, at: [0, 0, 125], joints: ["elbow"], lengths: [50], r: [12, 10] }).pose({})),
+    () => fork().skin(prongs, { set: [{ faces: ["+z:1,0"], follow: { lefft: 1 } }] }),
+    () => fork().skin(prongs, { set: [{ faces: ["+z:1,0"], follow: { left: 0.7, right: 0.6 } }] }),
+    () => fork().skin(prongs, { set: [{ faces: ["-z:0,0"], turn: { "left.bse": 1 } }] }),
+    () => fork().skin(prongs, { set: [{ faces: ["-z:0,0"], turn: { "left.base": 1 } }] }),
+    () => fork().skin(prongs, { blends: 3 }),
+    () => { const c = stalk(); c.skin(arm); c.extrude("end", { by: 3 }); },
+    () => cage({ box: { size: [20, 20, 20], segs: [2, 1, 1] }, mirror: "yz" }).skin(arm),
+    () => stalk().skin(limb("index", { ...straight, parent: "palm.tip", joints: ["mcp"], lengths: [30], r: [10, 9] }).pose({}, palm.pose({}))),
+  ];
+  expect(triggers.map(message)).toEqual(quoted);
 });
 
 test("the cage section's limits and tolerances are the code's", () => {

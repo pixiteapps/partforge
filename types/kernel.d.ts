@@ -603,6 +603,20 @@ export interface Cage {
   scale(faces: CageFaces, s: number | [number, number, number], opts?: { about?: [number, number, number] | null }): void;
   /** Turn the faces' points `deg` degrees (right-handed) about the line through `about` (omitted or null: the faces' own mean) along `axis`. Under a mirror the reflection turns the opposite way. */
   rotate(faces: CageFaces, opts: { axis: "x" | "y" | "z" | [number, number, number]; deg: number; about?: [number, number, number] | null }): void;
+  /**
+   * Pose the cage, built straight in the limbs' rest pose, from posed limbs (each defined
+   * with `r`): each point follows the limbs near it that it can see. The last change to a
+   * cage: every changing method throws after it, and reads return posed values.
+   */
+  skin(limbs: object | object[], opts?: {
+    blend?: number | Record<string, number>;
+    set?: { faces: CageFaces; follow?: Record<string, number>; turn?: Record<string, number> }[];
+  }): {
+    limbs: Record<string, { points: number; full: number }>;
+    shared: number;
+    still: number;
+    faces: Record<string, { follow: Record<string, number> }>;
+  };
   centroid(id: string): [number, number, number];
   normal(id: string): [number, number, number];
   size(id: string): [number, number];

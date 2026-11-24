@@ -37,7 +37,8 @@ it actually did, which includes clamps and misses.
    times as necessary.
 3. **Output.** The posed limb has `place(solid, joint, { from? })`, `world(joint)`,
    `frames`, `values` and `report`, and `flesh()` and `attach()` for a `k.implicit`
-   body (see "Organic bodies").
+   body (see "Organic bodies"). It also carries `bones`, the plain-data joint frames at
+   rest and posed that a subdivision cage's `skin` reads.
 
 ```js
 const index = limb("index", {
@@ -50,7 +51,7 @@ const index = limb("index", {
     { name: "dip", range: [0, 80], follow: { joint: "pip", ratio: 0.75 } },
   ],
   lengths: [42, 25, 22],     // each joint to the next joint, then the last joint to the tip
-  r: [9.5, 8.5, 7.4, 6.4],   // radius per joint, then the tip (needed only by grip)
+  r: [9.5, 8.5, 7.4, 6.4],   // radius per joint, then the tip (used by grip and cage.skin)
 });
 
 index.joints;                 // ["index.mcp", "index.pip", "index.dip"]
@@ -75,7 +76,7 @@ posed.world("pip");           // { origin: [-30, 122.997, -30.174], x: [1, 0, 0]
 | `bendToward` | The side a positive bend curls toward. Required unless you use `rotate`. |
 | `at` | The base joint's position, in the parent frame (or part coordinates). Default `[0, 0, 0]`. |
 | `parent` | The name of a frame the limb hangs from. Omit it for part coordinates. See "Limbs on a parent frame". |
-| `r` | Radii, one per joint and then the tip (`joints.length + 1` entries). Only `grip`, `flesh` and `attach` use them. |
+| `r` | Radii, one per joint and then the tip (`joints.length + 1` entries). Only `grip`, `flesh`, `attach` and a subdivision cage's `skin` use them. |
 | `mirror` | `"XY"`, `"XZ"` or `"YZ"`: reflects the limb. See "Mirroring". |
 | `rotate` | The escape hatch: raw rotate steps for the base frame, in place of `toward`/`bendToward`. |
 
@@ -431,7 +432,8 @@ because `from` must say so:
 | at its joint: **its own joint at the origin, running along +Y, with its bending side toward −Z** | nothing (`from: "joint"` is the default) | that joint's whole frame |
 
 **Built where it prints: `from: "rest"`.** Rest is every joint at 0, even when a range
-excludes 0. Do not move such a link into its joint frame by hand: the links then need
+excludes 0. (A subdivision cage's `skin` reads rest differently: as `pose({})` gives it,
+each joint at the value in its range nearest 0.) Do not move such a link into its joint frame by hand: the links then need
 no second statement of where each joint is. The limb's `at`, `toward`, lengths and
 offsets must describe the joints where the links print. For a limb on a parent limb,
 pass the parent's posed limb to `pose` (not its `frames`), so that rest is the whole
@@ -555,11 +557,12 @@ organic reference hand, `src/parts/organic-hand.js`, poses each digit with a lim
 knuckle, curl and spread.
 
 **A subdivision cage.** A `k.subdiv` body has no frames, but a limb can still pose it:
-pass `posed.values` (the joint angles in degrees, in joint order) to the cage's knuckle
-`rotate` calls, and give each limb one angles-mode handle. Centre each knuckle's rings
-on the limb's joint and make the cage's segment lengths the limb's `lengths`, and the
-handle sits on the cage's tip. The recipe is in `docs/domains/organic.md`, "Drag handles
-on a cage", and the reference part is `src/parts/cage-hand.js`. A handle drag follows the
+build the cage straight, in the limb's rest pose, and call `cage.skin(posed)` (or a list
+of posed limbs) last in the cage code. Each point of the cage follows the limbs near it.
+The limb needs `r`, which decides which points follow it. Give each limb one angles-mode
+handle, and make its tip the centre of the cage's last cap, so the handle sits on the
+cage's tip. The rules are in `docs/domains/organic.md`, "Posing a cage with limbs:
+`skin`" and "Drag handles on a cage", and the reference part is `src/parts/cage-hand.js`. A handle drag follows the
 pointer: the viewer re-poses the cage body from the moved cage with no build, stops at the
 last pose in which the body does not pass through itself, and builds exactly after a
 pause or on release.
