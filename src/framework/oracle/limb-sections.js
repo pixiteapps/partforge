@@ -175,9 +175,10 @@ function posedLimbs(d) {
  * `subparts` are the view's built sub-parts in declaration order, each `{ name, mesh, matrix }`
  * where `mesh` is in display coordinates and `matrix` (column-major, or null for none) carries
  * part coordinates to display. Each joint's section is read from the first sub-part whose
- * outline goes round it. Numbers are rounded to 0.1.
+ * outline goes round it. Numbers are rounded to 0.1. A second limb with a name already
+ * reported is left out and named through `warn(message)`, so it is never dropped silently.
  */
-export function limbFacts(d, subparts) {
+export function limbFacts(d, subparts, { warn } = {}) {
   const limbs = posedLimbs(d);
   if (!limbs.length) return undefined;
   const prepared = new Map();
@@ -188,7 +189,10 @@ export function limbFacts(d, subparts) {
   const out = {};
   for (const bones of limbs) {
     const name = String(bones.name);
-    if (Object.hasOwn(out, name)) continue;
+    if (Object.hasOwn(out, name)) {
+      warn?.(`two posed limbs are named "${name}": only the first is reported. Give each limb its own name`);
+      continue;
+    }
     const pts = bones.joints.map((j) => j.posed.origin).concat([bones.tip.posed]);
     const joints = bones.joints.map((j, i) => {
       const f = j.posed;

@@ -5574,7 +5574,10 @@ the joint, square to its bone, cuts the body. When an outline of that cut goes r
 joint, the joint also has `part` (the sub-part that was cut), `width` (the outline's size
 along the joint's bend axis) and `depth` (its size across that axis). Numbers are rounded
 to 0.1 mm. `partforge measure` prints one line per limb. Read the lengths against the
-real thing, and the sizes to see how thick the body is at each joint.
+real thing, and the sizes to see how thick the body is at each joint. A joint's position
+is in part coordinates, and its plane is carried into the body by the sub-part's `place()`.
+When two limbs have the same name, only the first is reported, and `warnings` gets an entry
+with `part: "limbs"` that names it. A limb that cannot be read gets one too.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

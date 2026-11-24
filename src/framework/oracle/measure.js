@@ -714,19 +714,27 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   );
 
   // Bone lengths and body sizes (limb-sections.js), for a part whose derive returns posed
-  // limbs: read off the meshes already built, each sub-part's frame carried by its display
-  // pose. A sub-part whose pose the probe cannot trust is not read. Absent when derive
-  // returns no limb, so every other report is unchanged.
+  // limbs, read off the meshes already built. Two spaces meet here. A limb's frames are in
+  // part coordinates: the space build() returns its result in, whatever rigid moves build()
+  // made itself. Each mesh is in display coordinates: build() and then place(). So a frame is
+  // carried by place() alone, which is the probe's "place" scope; a "full" probe would add
+  // build()'s own moves, which the mesh already carries. A sub-part whose place() pose the
+  // probe cannot trust is not read. Absent when derive returns no limb, so every other
+  // report is unchanged. What limbFacts cannot read becomes a warning, never a silent drop.
   let limbs;
+  const limbWarnings = [];
   if (typeof part.derive === "function" && built.length) {
     const { p, d } = domainParams ?? poseParams ?? sheetParams ?? resolveParams(part, params, undefined, reads);
     const sections = [];
     for (const { name, mesh } of built) {
-      const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d });
+      const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d }, { scope: "place" });
       if (probe.trusted) sections.push({ name, mesh, matrix: probe.pose.length ? composePose(probe.pose) : null });
     }
-    // Like handlesReport, a malformed `bones` never fails the measurement: it leaves this out.
-    try { limbs = limbFacts(d, sections); } catch { limbs = undefined; }
+    const warn = (message) => limbWarnings.push({ part: "limbs", message });
+    try { limbs = limbFacts(d, sections, { warn }); } catch (e) {
+      limbs = undefined;
+      warn(`limbs could not be read: ${String(e?.message || e).split("\n")[0].slice(0, 200)}`);
+    }
   }
 
   const ub = subparts.length ? unionBounds(subBounds) : { min: [0, 0, 0], max: [0, 0, 0] };
@@ -774,7 +782,8 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     subparts,
     // The kernel's build warnings, `{ part, message }` as the app's meshes message has them
     // (a caller-supplied build that carries none counts as none).
-    warnings: built.flatMap(({ name, warnings }) => (warnings ?? []).map((message) => ({ part: name, message }))),
+    // Then any limb that could not be read, as `{ part: "limbs", message }`.
+    warnings: [...built.flatMap(({ name, warnings }) => (warnings ?? []).map((message) => ({ part: name, message }))), ...limbWarnings],
     aggregate,
     overlaps,
     gaps,

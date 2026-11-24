@@ -686,7 +686,10 @@ export interface MeasureReport {
    */
   measuredPrintBboxes?: boolean;
   subparts: SubPartFacts[];
-  /** The kernel's build warnings (a thin implicit feature, a skipped fillet), per sub-part. */
+  /**
+   * The kernel's build warnings (a thin implicit feature, a skipped fillet), per sub-part,
+   * then `{ part: "limbs" }` entries for posed limbs `limbs` could not report.
+   */
   warnings: { part: string; message: string }[];
   aggregate: AggregateFacts;
   overlaps: Overlap[];

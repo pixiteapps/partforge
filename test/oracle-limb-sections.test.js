@@ -152,8 +152,69 @@ describe("measure's limbs", () => {
     expect(mcp.part).toBe("hand");
   }, 120_000);
 
+  // A limb along +Z: joints at z = 0 and 30, tip at 60. The body is a 20 × 10 box from
+  // z = 20 to 50, so only the second joint has a section.
+  const LIMB = limb("f", { toward: [0, 0, 1], bendToward: [1, 0, 0], joints: ["a", "b"], lengths: [30, 30] });
+  const boxPart = (build, extra = {}, derive = () => ({ f: LIMB.pose({}) })) => ({
+    meta: { title: "box", units: "mm", backend: "manifold" },
+    parameters: [], defaults: {}, derive,
+    parts: { body: { label: "Body", build, views: { v: true }, ...extra } },
+    views: { v: { label: "V" } },
+  });
+  const along = (u) => Math.abs(u[0]) * 20 + Math.abs(u[1]) * 10;
+  const rest = LIMB.pose({}).bones.joints;
+
+  it("reads a build moved inside build() at the same joint as one built in place", () => {
+    const direct = measure(k, boxPart((kk) => kk.box({ min: [-10, -5, 20], max: [10, 5, 50] })), undefined, {}, { handles: false });
+    const moved = measure(k, boxPart((kk) => kk.box({ min: [-10, -5, -15], max: [10, 5, 15] }).translate([0, 0, 35])), undefined, {}, { handles: false });
+    for (const r of [direct, moved]) {
+      const [a, b] = r.limbs.f.joints;
+      expect(a).not.toHaveProperty("part");
+      expect(b.part).toBe("body");
+      expect(b.width).toBeCloseTo(along(rest[1].posed.x), 6);
+      expect(b.depth).toBeCloseTo(along(rest[1].posed.z), 6);
+    }
+    expect(moved.limbs).toEqual(direct.limbs);
+  });
+
+  it("carries the joints by a sub-part's place() pose", () => {
+    const placed = measure(k, boxPart((kk) => kk.box({ min: [-10, -5, 20], max: [10, 5, 50] }),
+      { place: (s) => s.rotate(90, [0, 0, 0], [0, 0, 1]).translate([100, 0, 0]) }), undefined, {}, { handles: false });
+    const [a, b] = placed.limbs.f.joints;
+    // `at` stays in part coordinates; the section is the box's, read where place() put it.
+    expect(a.at).toEqual([0, 0, 0]);
+    expect(b.at).toEqual([0, 0, 30]);
+    expect(a).not.toHaveProperty("part");
+    expect(b.part).toBe("body");
+    expect(b.width).toBeCloseTo(along(rest[1].posed.x), 6);
+    expect(b.depth).toBeCloseTo(along(rest[1].posed.z), 6);
+  });
+
+  it("reads a sub-part whose build queries its own solid", () => {
+    const querying = measure(k, boxPart((kk) => {
+      const b = kk.box({ min: [-10, -5, 20], max: [10, 5, 50] });
+      return b.boundingBox().max[2] > 0 ? b : b.translate([0, 0, 1]);
+    }), undefined, {}, { handles: false });
+    expect(querying.limbs.f.joints[1].part).toBe("body");
+  });
+
+  it("warns, rather than dropping it, when two limbs share a name", () => {
+    const r = measure(k, boxPart((kk) => kk.box({ min: [-10, -5, 20], max: [10, 5, 50] }), {},
+      () => ({ f: LIMB.pose({}), g: LIMB.pose({ bend: { a: 10 } }) })), undefined, {}, { handles: false });
+    expect(Object.keys(r.limbs)).toEqual(["f"]);
+    expect(r.warnings).toContainEqual({ part: "limbs", message: expect.stringMatching(/two posed limbs are named "f"/) });
+  });
+
+  it("warns when the limbs cannot be read", () => {
+    const broken = { f: { bones: { name: "f", joints: [{ name: "f.a" }], tip: { posed: [0, 0, 1] } } } };
+    const r = measure(k, boxPart((kk) => kk.box({ min: [-10, -5, 20], max: [10, 5, 50] }), {}, () => broken), undefined, {}, { handles: false });
+    expect(r).not.toHaveProperty("limbs");
+    expect(r.warnings).toContainEqual({ part: "limbs", message: expect.stringMatching(/^limbs could not be read: /) });
+  });
+
   it("has no limbs key on a part whose derive returns no limb", () => {
     const r = measure(k, gapPart);
     expect(r).not.toHaveProperty("limbs");
+    expect(r.warnings.filter((w) => w.part === "limbs")).toEqual([]);
   });
 });

@@ -274,9 +274,11 @@ export function sectionAt(mesh: { positions: ArrayLike<number>; indices?: ArrayL
 /**
  * The measure report's `limbs`: each posed limb in `d` (a value carrying `bones`, one level
  * deep or in an array there; a limb with a parent is skipped), keyed by its name. Undefined
- * when there is none. `matrix` is the sub-part's column-major display pose, or null.
+ * when there is none. `matrix` is the sub-part's column-major place() pose (part to display
+ * coordinates), or null. A second limb with a name already reported is named through `warn`.
  */
 export function limbFacts(
   d: unknown,
   subparts: Array<{ name: string; mesh: { positions: ArrayLike<number>; indices?: ArrayLike<number> }; matrix: ArrayLike<number> | null }>,
+  opts?: { warn?: (message: string) => void },
 ): Record<string, LimbFacts> | undefined;
