@@ -174,6 +174,25 @@ describe("captureCurrentFromScene", () => {
     })).toThrow("GL lost");
     expect(grid.visible).toBe(true);
   });
+
+  // runtime.renderCurrent asks for the 2-D canvas instead of a data URL.
+  it("passes output through to the renderer", () => {
+    const { liveCamera, grid } = setup();
+    const renderOffscreen = vi.fn(() => "canvas-sentinel");
+    const out = captureCurrentFromScene({ width: 640, height: 360, output: "canvas" }, {
+      renderer: { renderOffscreen }, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    });
+    expect(out).toBe("canvas-sentinel");
+    expect(renderOffscreen.mock.calls[0][1]).toMatchObject({ width: 640, height: 360, output: "canvas" });
+  });
+
+  it("omits output by default", () => {
+    const { liveCamera, fakeRenderer, grid } = setup();
+    captureCurrentFromScene({}, {
+      renderer: fakeRenderer, liveCamera, target: [0, 0, 0], grid, maxTextureSize: 8192,
+    });
+    expect(fakeRenderer.renderOffscreen.mock.calls[0][1]).not.toHaveProperty("output");
+  });
 });
 
 // Render-target readback is in the linear working space (three only applies

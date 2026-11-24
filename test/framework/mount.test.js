@@ -3725,3 +3725,40 @@ test("describeKit reads the kit's sections at the live params; exportKit's reply
   expect(onDownload).not.toHaveBeenCalled();
   runtime.dispose();
 });
+
+// runtime.renderCurrent / runtime.onRendered: the frames-out pair a host turns into video.
+test("makeHandle forwards renderCurrent through beforeCapture's hold, with captureCurrent's recenter guard", () => {
+  const order = [];
+  const canvas = document.createElement("canvas");
+  const viewer = { renderCurrent: vi.fn((opts) => { order.push(["render", opts]); return canvas; }) };
+  const beforeCapture = () => { order.push("hold"); return () => order.push("release"); };
+  const pinned = { isEnabled: () => true, pinCount: () => 2 };
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {}, beforeCapture, measure: pinned });
+  expect(h.renderCurrent({ width: 640, height: 360 })).toBe(canvas);
+  expect(order).toEqual(["hold", ["render", { width: 640, height: 360 }], "release"]);
+  // With dimensions on screen a recentred frame could cut the labels off, so the
+  // user's exact framing is kept — the same guard captureCurrent applies.
+  h.renderCurrent({ width: 640, height: 360, recenter: true });
+  expect(viewer.renderCurrent.mock.calls.at(-1)[0]).toEqual({ width: 640, height: 360, recenter: false });
+  const unpinned = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  unpinned.renderCurrent({ recenter: true });
+  expect(viewer.renderCurrent.mock.calls.at(-1)[0]).toEqual({ recenter: true });
+});
+
+test("makeHandle forwards onRendered and returns its unsubscribe", () => {
+  const off = vi.fn();
+  const viewer = { onRendered: vi.fn(() => off) };
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  const cb = () => {};
+  const unsubscribe = h.onRendered(cb);
+  expect(viewer.onRendered).toHaveBeenCalledWith(cb);
+  expect(unsubscribe).toBe(off);
+});
+
+test("makeHandle stands in for renderCurrent and onRendered on a viewer without them", () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.renderCurrent({ width: 64, height: 48 })).toBeNull();
+  const unsubscribe = h.onRendered(() => {});
+  expect(typeof unsubscribe).toBe("function");
+  expect(() => unsubscribe()).not.toThrow();
+});

@@ -168,3 +168,54 @@ test("withRenderRequests wraps mutators, skips reads, and re-asks when a promise
   expect(api.camera).toBe("b"); // getters stay live
   expect(api.domElement).toBe("canvas");
 });
+
+// onRendered is the host's frame clock (runtime.onRendered): one call per frame
+// that actually drew, in the same task as the draw — none on an idle tick.
+test("onRendered fires once per drawn frame and not on an idle tick", () => {
+  const viewer = newViewer();
+  const cb = vi.fn(() => { expect(state.renderer.frames).toBeGreaterThan(0); });
+  const off = viewer.onRendered(cb);
+  tick(); // the first frame draws
+  const drawn = cb.mock.calls.length;
+  expect(drawn).toBe(1);
+  tick(); // nothing asked: no draw, no call
+  expect(cb.mock.calls.length).toBe(drawn);
+  viewer.requestRender();
+  tick();
+  expect(cb.mock.calls.length).toBe(drawn + 1);
+  off();
+  viewer.requestRender();
+  tick();
+  expect(cb.mock.calls.length).toBe(drawn + 1);
+  viewer.dispose();
+});
+
+test("onRendered never fires while parked", () => {
+  const viewer = newViewer();
+  const cb = vi.fn();
+  viewer.onRendered(cb);
+  viewer.setActive(false);
+  viewer.requestRender();
+  expect(state.renderer.animationLoop).toBeNull(); // the loop is stopped: no frame can draw
+  expect(cb).not.toHaveBeenCalled();
+  viewer.setActive(true);
+  tick();
+  expect(cb).toHaveBeenCalledTimes(1);
+  viewer.dispose();
+});
+
+test("an onRendered listener that throws costs that listener, not the loop", () => {
+  const viewer = newViewer();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const bad = vi.fn(() => { throw new Error("boom"); });
+  const good = vi.fn();
+  viewer.onRendered(bad);
+  viewer.onRendered(good);
+  tick();
+  viewer.requestRender();
+  tick();
+  expect(bad).toHaveBeenCalledTimes(2);
+  expect(good).toHaveBeenCalledTimes(2);
+  expect(warn).toHaveBeenCalled();
+  viewer.dispose();
+});

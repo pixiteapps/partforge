@@ -109,6 +109,15 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     return typeof release === "function" ? release : () => {};
   };
   const prepared = (capture) => { const release = prepare(); try { return capture(); } finally { release(); } };
+  // `recenter` reads the sub-part geometry only, so with measurements on
+  // screen the dimension labels — which sit beside the part, not on it —
+  // could land outside the centred window. A dimensioned capture therefore
+  // keeps the user's exact framing; a host wanting both re-frames first.
+  const framingFor = (opts) => (
+    opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
+      ? { ...opts, recenter: false }
+      : opts
+  );
   return {
     ready, dispose, setParams,
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
@@ -142,17 +151,19 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
         release();
       }
     },
-    // `recenter` reads the sub-part geometry only, so with measurements on
-    // screen the dimension labels — which sit beside the part, not on it —
-    // could land outside the centred window. A dimensioned capture therefore
-    // keeps the user's exact framing; a host wanting both re-frames first.
+    // Keeps the user's framing when dimensions are on screen (framingFor).
     // Follows the live render mode unless opts.renderMode pins one ("realistic"
     // only once the environment has loaded — see viewer.captureCurrent).
-    captureCurrent: (opts) => prepared(() => viewer.captureCurrent(
-      opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
-        ? { ...opts, recenter: false }
-        : opts,
-    )),
+    captureCurrent: (opts) => prepared(() => viewer.captureCurrent(framingFor(opts))),
+    // captureCurrent's capture as a 2-D canvas at an exact `width` × `height`,
+    // for a host encoding video frames. The canvas is partforge's: the next call
+    // may draw over it, so consume it (new VideoFrame(canvas), drawImage) first.
+    // Null when nothing is built or the viewer is gone.
+    renderCurrent: (opts) => prepared(() => viewer.renderCurrent?.(framingFor(opts)) ?? null),
+    // After a frame has drawn to the live canvas, in the same task as the draw
+    // (the loop draws on demand, so an idle tick calls nobody). Returns an
+    // unsubscribe. A throwing callback costs that callback, never the loop.
+    onRendered: (cb) => viewer.onRendered?.(cb) ?? (() => {}),
     // Everything about the CURRENT VIEW that a host would lose by remounting,
     // as one plain-JSON token: pass it back as mount()'s `viewerState` and the
     // remount comes up where the user left it. An embedder that applies edits
@@ -367,6 +378,10 @@ function createCleanupStack() {
 //                                         // framing (live camera pose + viewport aspect) at the
 //                                         // given long-edge resolution → JPEG data URL, or null
 //                                         // when disposed / nothing built yet
+//   runtime.renderCurrent({ width: 1280, height: 720 });  // the same capture as a 2-D canvas
+//                                         // at that exact size (a video frame), or null; the
+//                                         // canvas is reused by the next call — consume it first
+//   runtime.onRendered(() => {});         // after each frame drawn to the live canvas; → unsubscribe
 //   runtime.listExportableParts();        // [{ name, label, sheet? }] — every exportable sub-part,
 //                                         // independent of the active view (for an embedder-drawn export UI);
 //                                         // a sheet part's row adds sheet: { process, material, thickness, group }

@@ -889,6 +889,30 @@ test("CAD captures and checkpoint thumbnails keep the 8-bit path, even while rea
   v.dispose();
 });
 
+// renderCurrent's reused frame target is the 8-bit one only: an HDR capture
+// keeps allocating and releasing its half-float target per call, as captureCurrent does.
+test("renderCurrent in realistic mode does not keep the half-float target", async () => {
+  stubCanvas();
+  const v = shown();
+  await v.setRenderMode("realistic");
+  const bound = new Set();
+  state.renderer.setRenderTarget = (t) => { if (t && t.width === 64) bound.add(t); };
+  const disposed = new Set();
+  const dispose = THREE.WebGLRenderTarget.prototype.dispose;
+  vi.spyOn(THREE.WebGLRenderTarget.prototype, "dispose").mockImplementation(function () {
+    disposed.add(this);
+    return dispose.call(this);
+  });
+  expect(v.renderCurrent({ width: 64, height: 48 })).toBeInstanceOf(HTMLCanvasElement);
+  expect(v.renderCurrent({ width: 64, height: 48 })).toBeInstanceOf(HTMLCanvasElement);
+  expect(bound.size).toBe(2);
+  for (const t of bound) {
+    expect(t.texture.type).toBe(THREE.HalfFloatType);
+    expect(disposed.has(t)).toBe(true);
+  }
+  v.dispose();
+});
+
 test("captureCurrent in realistic mode captures the realistic look", async () => {
   stubCanvas();
   const v = shown();

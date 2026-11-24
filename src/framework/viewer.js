@@ -136,9 +136,10 @@ export function thumbnailBackground(background = THUMBNAIL_BG) {
 // size instead: the live framing cropped to cover it (coverRenderFrame), `size`
 // and `recenter` ignored, scaled down as a pair if either edge passes the texture
 // cap. `type` is the data URL's MIME type (default JPEG; `quality` applies to
-// the lossy ones).
+// the lossy ones). `output: "canvas"` (renderCurrent) asks the renderer for the
+// 2-D canvas instead of a data URL; omitted, the renderer is not told at all.
 export function captureCurrentFromScene(
-  { size = 2048, hideGrid = true, quality = 0.9, recenter = false, width: outWidth, height: outHeight, type = "image/jpeg" } = {},
+  { size = 2048, hideGrid = true, quality = 0.9, recenter = false, width: outWidth, height: outHeight, type = "image/jpeg", output } = {},
   { renderer, liveCamera, target, grid, maxTextureSize, projection = "perspective", orthoHalfH, meshes, sceneBounds },
 ) {
   const MIN_SIZE = 256;
@@ -170,7 +171,9 @@ export function captureCurrentFromScene(
   const gridWasVisible = grid?.visible;
   if (grid && hideGrid) grid.visible = false;
   try {
-    return renderer.renderOffscreen(pose, { ...frame, fov, quality, type, projection, orthoHalfH, sceneBounds });
+    return renderer.renderOffscreen(pose, {
+      ...frame, fov, quality, type, projection, orthoHalfH, sceneBounds, ...(output !== undefined && { output }),
+    });
   } finally {
     if (grid && hideGrid) grid.visible = gridWasVisible;
     liveCamera.position.copy(before); // belt-and-suspenders: never leak camera state
@@ -2803,6 +2806,31 @@ export function createViewer(container, part, {
   // the mask silently no-ops and every cap floods its whole plane with hatch —
   // no error, live view unaffected, wrong only in the capture.
   const RT_OPTIONS = { samples: 4, stencilBuffer: true };
+  // renderCurrent's frame set (`output: "canvas"`, 8-bit path): a host pulling
+  // video frames asks for the same size every frame, so one target, readback
+  // buffer, canvas and ImageData are kept for that width × height and replaced
+  // when it changes. Released wherever _rt is (parking, dispose). The returned
+  // canvas is reused by the next call — the host consumes it before asking again.
+  let _frameSet = null;
+  function releaseFrameSet() {
+    _frameSet?.rt.dispose();
+    _frameSet = null;
+  }
+  function frameSetFor(width, height) {
+    if (_frameSet && (_frameSet.width !== width || _frameSet.height !== height)) releaseFrameSet();
+    if (!_frameSet) {
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      const img = ctx.createImageData(width, height); // before the target: a throw here leaks nothing
+      _frameSet = {
+        width, height, canvas, ctx, img,
+        buf: new Uint8Array(width * height * 4),
+        rt: new THREE.WebGLRenderTarget(width, height, RT_OPTIONS),
+      };
+    }
+    return _frameSet;
+  }
   // Decided once per viewer, on the first realistic capture (see
   // halfFloatCaptureSupported). Two 1×1 probes, because a capture needs two
   // things of half-float: RENDERING into the exact target a capture uses (4×
@@ -2848,9 +2876,13 @@ export function createViewer(container, part, {
   // showcase capture (captureCurrentFromScene). The camera's aspect is then the
   // VIRTUAL frame's, so the projection is exactly the un-offset one and the
   // output is a pixel-exact crop of what the user framed.
+  //
+  // `output: "canvas"` returns the 2-D canvas instead of encoding it (renderCurrent);
+  // on the 8-bit path it is the reused frame set's (frameSetFor), on the HDR path a
+  // fresh one, its target allocated and disposed per call as for a data URL.
   function renderOffscreen(pose,
                            { width = _rtSize, height = _rtSize, fov = 45, quality = 0.9, type = "image/jpeg",
-                             projection = "perspective", orthoHalfH = 1, viewOffset, sceneBounds } = {},
+                             projection = "perspective", orthoHalfH = 1, viewOffset, sceneBounds, output } = {},
                            renderScene = scene) {
     // A realistic LIVE scene renders HDR into a half-float target and is tone
     // mapped here (three tone-maps only the canvas path). It is lit by its
@@ -2862,10 +2894,11 @@ export function createViewer(container, part, {
     // realistic sphere) is realistic too; renderMeshPayloads' never has one.
     const realistic = renderMode === "realistic" && (renderScene === scene || renderScene.environment != null);
     const hdr = realistic && hdrCaptureReadback();
-    const cachedSize = !hdr && width === _rtSize && height === _rtSize;
-    const rt = cachedSize
+    const frameSet = output === "canvas" && !hdr ? frameSetFor(width, height) : null;
+    const cachedSize = !frameSet && !hdr && width === _rtSize && height === _rtSize;
+    const rt = frameSet?.rt ?? (cachedSize
       ? (_rt = _rt ?? new THREE.WebGLRenderTarget(_rtSize, _rtSize, RT_OPTIONS))
-      : new THREE.WebGLRenderTarget(width, height, hdr ? { ...RT_OPTIONS, type: THREE.HalfFloatType } : RT_OPTIONS);
+      : new THREE.WebGLRenderTarget(width, height, hdr ? { ...RT_OPTIONS, type: THREE.HalfFloatType } : RT_OPTIONS));
     _capLights = _capLights ?? createCaptureLights();
     // Canonical captures never pass `projection`, so agent-facing renders and
     // the CLI stay perspective no matter what the user is looking at. Built
@@ -2880,7 +2913,7 @@ export function createViewer(container, part, {
     });
     if (viewOffset) cam.setViewOffset(viewOffset.fullWidth, viewOffset.fullHeight, viewOffset.x, viewOffset.y, width, height);
     const { position, up, target } = pose;
-    const buf = hdr ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4);
+    const buf = frameSet?.buf ?? (hdr ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4));
     // Swap the world-fixed key/fill for the camera-relative pair, for this one render
     // only. A DirectionalLight aims at its `target`, whose matrixWorld only updates
     // while it is in the scene graph, so both go in and both come back out.
@@ -2954,12 +2987,16 @@ export function createViewer(container, part, {
       for (const dot of reshowFlashDots) dot.visible = true;
       for (const { obj, own, hook } of lineHooks) { if (own) obj.onBeforeRender = hook; else delete obj.onBeforeRender; }
       for (const [m, res] of lineRes) m.resolution.copy(res);
-      if (!cachedSize) rt.dispose();
+      if (!cachedSize && !frameSet) rt.dispose();
     }
-    const canvas = document.createElement("canvas");
-    canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    const img = ctx.createImageData(width, height);
+    let canvas, ctx, img;
+    if (frameSet) ({ canvas, ctx, img } = frameSet);
+    else {
+      canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      ctx = canvas.getContext("2d");
+      img = ctx.createImageData(width, height);
+    }
     // Linear pixels → sRGB bytes: tone-mapped for a realistic capture, only
     // transfer-encoded for CAD (which renders LDR with no tone mapping).
     const encoded = realistic ? neutralToneMapToSrgb8(readbackToLinear(buf), renderer.toneMappingExposure) : srgbEncodeInPlace(buf);
@@ -2969,7 +3006,7 @@ export function createViewer(container, part, {
       img.data.set(encoded.subarray(src, src + width * 4), y * width * 4);
     }
     ctx.putImageData(img, 0, 0);
-    return canvas.toDataURL(type, quality);
+    return output === "canvas" ? canvas : canvas.toDataURL(type, quality);
   }
 
   // Pointer feedback excluded from EVERY offscreen render (renderOffscreen),
@@ -3130,6 +3167,19 @@ export function createViewer(container, part, {
   // `includeHidden: true` (build sight) renders the user's hidden and faded
   // sub-parts as if untouched; omitted, the capture is what the user sees.
   function captureCurrent(opts) {
+    // `output` is renderCurrent's; captureCurrent always answers a data URL.
+    const { output: _output, ...rest } = opts ?? {};
+    return captureLiveFraming(rest);
+  }
+  // renderCurrent: captureCurrent's capture (same look, framing, `width`/`height`
+  // and `includeHidden`), answered as a 2-D canvas instead of a data URL — the
+  // video-frame path. `type`/`quality` mean nothing without an encode. The canvas
+  // is partforge's and the next call may draw over it (see frameSetFor).
+  function renderCurrent(opts) {
+    const { type: _type, quality: _quality, ...rest } = opts ?? {};
+    return captureLiveFraming({ ...rest, output: "canvas" });
+  }
+  function captureLiveFraming(opts) {
     if (disposed) return null;
     const { renderMode: want, includeHidden = false, ...rest } = opts ?? {};
     if (!withRevealed(includeHidden, hasVisibleBounds)) return null;
@@ -3619,6 +3669,7 @@ export function createViewer(container, part, {
       // allocating per call regardless.
       _rt?.dispose();
       _rt = null;
+      releaseFrameSet(); // renderCurrent's reused target: the same kind of allocation
       return;
     }
     resize(); // rebuild the buffer at whatever size the container is now
@@ -3924,6 +3975,7 @@ export function createViewer(container, part, {
     grid.geometry.dispose();
     grid.material.dispose();
     _rt?.dispose();
+    releaseFrameSet();
     renderer.dispose();
     renderer.domElement.remove();
   }
@@ -3953,6 +4005,7 @@ export function createViewer(container, part, {
     frame,
     captureCanonicalViews,
     captureCurrent,
+    renderCurrent,
     renderMeshPayloads,
     renderViews,
     renderStyleThumbnail,
