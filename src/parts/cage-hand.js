@@ -37,10 +37,12 @@ const FINGERS = {
 // swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
 // `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
 // by `neck`) and two segments. It curls across the palm.
-// Opposition turns the pad and the thumb together about the hand's long axis, on a hinge
-// `hinge` mm toward the palm side of the pad's root: the thumb swings from the palm's side
-// round to its front, and the pad wraps the palm's edge.
-const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: 10, lengths: [25, 20], follow: 0.8 };
+// Opposition turns the pad and the thumb together about the hand's long axis. The hinge
+// sits `hinge` mm from the middle of the pad's root ([toward the palm's middle, toward the
+// palm side]), just inside the palm's front edge, so the thumb swings from the palm's side
+// round to its front and across it. The palm's front under the pad rises `ball` mm per
+// degree as it does, which is the ball of the thumb filling in beside the pad.
+const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [8, 13], ball: 0.2, lengths: [25, 20], follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 // The way the thumb curls once it is opposed `deg` degrees: the same turn about Z.
@@ -89,7 +91,7 @@ const palm = (make) => {
 // The point the thumb opposes about, read off a palm: the turn is about Z through it.
 const hingeOf = (c) => {
   const a = c.centroid("+x:0,0"), b = c.centroid("+x:0,1");
-  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 - THUMB.hinge, (a[2] + b[2]) / 2];
+  return [(a[0] + b[0]) / 2 - THUMB.hinge[0], (a[1] + b[1]) / 2 - THUMB.hinge[1], (a[2] + b[2]) / 2];
 };
 
 export function cageHand(make, p, bends) {
@@ -151,6 +153,8 @@ export function cageHand(make, p, bends) {
     // share an edge with the palm) stays and stretches.
     const turned = [...pad, ...c.faces("thumb").filter((f) => !f.startsWith("thumbRoot.s"))];
     c.rotate(turned, { axis: "z", deg: -oppose, about: hinge });
+    // The ball of the thumb: the palm's front under the pad comes forward with it.
+    c.move(["-y:3,0", "-y:3,1"], [0, -THUMB.ball * oppose, 0]);
   }
   return c;
 }

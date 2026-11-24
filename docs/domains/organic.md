@@ -1154,10 +1154,12 @@ const FINGERS = {
 // swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
 // `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
 // by `neck`) and two segments. It curls across the palm.
-// Opposition turns the pad and the thumb together about the hand's long axis, on a hinge
-// `hinge` mm toward the palm side of the pad's root: the thumb swings from the palm's side
-// round to its front, and the pad wraps the palm's edge.
-const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: 10, lengths: [25, 20], follow: 0.8 };
+// Opposition turns the pad and the thumb together about the hand's long axis. The hinge
+// sits `hinge` mm from the middle of the pad's root ([toward the palm's middle, toward the
+// palm side]), just inside the palm's front edge, so the thumb swings from the palm's side
+// round to its front and across it. The palm's front under the pad rises `ball` mm per
+// degree as it does, which is the ball of the thumb filling in beside the pad.
+const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [8, 13], ball: 0.2, lengths: [25, 20], follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 // The way the thumb curls once it is opposed `deg` degrees: the same turn about Z.
@@ -1206,7 +1208,7 @@ const palm = (make) => {
 // The point the thumb opposes about, read off a palm: the turn is about Z through it.
 const hingeOf = (c) => {
   const a = c.centroid("+x:0,0"), b = c.centroid("+x:0,1");
-  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 - THUMB.hinge, (a[2] + b[2]) / 2];
+  return [(a[0] + b[0]) / 2 - THUMB.hinge[0], (a[1] + b[1]) / 2 - THUMB.hinge[1], (a[2] + b[2]) / 2];
 };
 
 function cageHand(make, p, bends) {
@@ -1268,6 +1270,8 @@ function cageHand(make, p, bends) {
     // share an edge with the palm) stays and stretches.
     const turned = [...pad, ...c.faces("thumb").filter((f) => !f.startsWith("thumbRoot.s"))];
     c.rotate(turned, { axis: "z", deg: -oppose, about: hinge });
+    // The ball of the thumb: the palm's front under the pad comes forward with it.
+    c.move(["-y:3,0", "-y:3,1"], [0, -THUMB.ball * oppose, 0]);
   }
   return c;
 }
@@ -1398,10 +1402,16 @@ The points to copy:
   each knuckle turns about the digit's direction × the way it curls (`digit`), the axis
   its limb bends about.
 - **Opposition turns faces that are already built.** `thumbOppose` rotates the pad's
-  caps and every thumb face about Z, on a hinge near the palm's front edge, after the
-  thumb is made. The thumb root's own side faces are left out: they share an edge with
-  the palm, so that edge stays and the web stretches. Turning the thumb alone folds it
-  into its pad; turning the pad with it moves the whole base of the thumb forward.
+  caps and every thumb face about Z, after the thumb is made. The hinge sits just inside
+  the palm's front edge, 8 mm in from the pad's root, so the thumb swings round to the
+  front of the palm and across it; at 85° its tip meets a bent index finger's (the OK
+  sign). The thumb root's own side faces are left out: they share an edge with the palm,
+  so that edge stays and the web stretches. Turning the thumb alone folds it into its
+  pad; turning the pad with it moves the whole base of the thumb forward.
+- **A muscle that bulges is a face that moves.** The two palm-side faces under the pad
+  come forward 0.2 mm per degree of opposition. That is the ball of the thumb: it fills
+  the groove between the turned pad and the palm, so the two read as one mound. The
+  amount was set against photographs of a hand making the OK sign.
 - **The limbs are placed from the cage, not by hand.** `cageHand` without `bends` stops
   before the digits: the palm with a cap where each one starts. `REST` reads each cap's
   centre and normal off that cage once, and each limb starts one ring past its cap

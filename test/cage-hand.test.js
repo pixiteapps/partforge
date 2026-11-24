@@ -60,12 +60,15 @@ test("is listed as an organic reference part", () => {
 
 // Defaults, every parameter at its min at once and at its max at once (a fist: the
 // tightest pose the sliders reach), then each parameter alone at its min and at its max.
+const OK_SIGN = { thumbOppose: 85, thumbCurl: 30, indexKnuckle: 45, indexCurl: 70, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
 const CASES = [
   ["defaults", {}],
   ["every parameter at its min", Object.fromEntries(CONTROLS.map((c) => [c.key, c.min]))],
   // A fist: every bend at its max. The thumb is not opposed, since an opposed, curled thumb
   // meets the closed fingers (test/cage-drag-validity.test.js).
   ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0 }],
+  // The OK sign: the thumb opposed until its tip meets the bent index finger's.
+  ["the OK sign", OK_SIGN],
   ...CONTROLS.flatMap((c) => [[`${c.key} min`, { [c.key]: c.min }], [`${c.key} max`, { [c.key]: c.max }]]),
 ];
 
@@ -75,6 +78,13 @@ test.each(CASES)("builds watertight on the preview tier: %s", (_, params) => {
   expect(report.subparts.map((s) => s.watertight)).toEqual([true]);
   expect(report.warnings).toEqual([]);
 }, 60_000);
+
+test("the OK sign: the thumb's tip and the index finger's are a fingertip apart", () => {
+  const d = part.derive({ ...part.defaults, ...OK_SIGN });
+  const gap = Math.hypot(...d.thumb.report.tip.map((v, i) => v - d.index.report.tip[i]));
+  expect(gap).toBeGreaterThan(12);
+  expect(gap).toBeLessThan(17);
+});
 
 test("at its defaults each limb's tip is within 6 mm of its cage tip", () => {
   const { c, d } = cageAt(part.defaults);
