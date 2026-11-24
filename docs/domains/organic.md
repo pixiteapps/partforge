@@ -1322,11 +1322,14 @@ Each digit is a `limb` posed in `derive`:
 - each finger is a limb of three joints, `mcp`, `pip`, and `dip`, which follows `pip`
   at 0.75. `mcp` is the base knuckle, inside the palm. Its params are `<f>Knuckle` (the
   `mcp` angle, -10° to 90°) and `<f>Curl` (the `pip` angle, 0° to 80°), for `f` in
-  `index`, `middle`, `ring` and `pinky`;
+  `index`, `middle`, `ring` and `pinky`. The ring and little fingers have one more
+  joint, `cup`, low in the palm: it bends by a share of the knuckle's bend (0.07 and
+  0.2), so the palm folds on that side as the hand closes;
 - the thumb is a limb from the wrist end of the pad, with seven joints. `abduct`
   (`thumbAbduct`, 0° to 70°) swings the thumb forward out of the palm. `oppose`
-  (`thumbOppose`, 0° to 120°) turns it about the line up the hand, round to the palm's
-  front and across it. `lean`, `tilt` and `roll` are fixed joints that set the thumb's
+  (`thumbOppose`, -22° to 98°) turns it about the line up the hand, round to the palm's
+  front and across it. 0 is the thumb at rest, already 22° round toward the front as a
+  relaxed hand holds it; -22° lays it flat beside the palm. `lean`, `tilt` and `roll` are fixed joints that set the thumb's
   direction and the way it curls. `mcp` (`thumbCurl`, 0° to 50°) curls it, and `ip`
   follows `mcp` at 0.8.
 
@@ -1343,13 +1346,22 @@ const COLUMNS = [-44, -28, -23, -4, 1, 20, 25, 44];
 const KNUCKLE = { rows: 3, rise: 4, depth: 5 };
 // Per finger: its palm column, its neck out of the palm (mm; the necks draw the arc of the
 // finger webs), its splay about Y (degrees, positive toward the thumb side), its three
-// bones' lengths past the neck, and its limb's radii (at each joint, then the tip).
+// bones' lengths past the neck, and its limb's radii (at each joint, then the tip). The
+// lengths follow measured finger bones: knuckle to middle joint about 42, 46, 43 and 34 mm
+// (the knuckle is 11 mm inside the palm), then 24, 28, 27 and 19, then 23 to 24 to the tip.
+// `arch` moves its knuckle [toward the back of the hand, up] (mm): the knuckles sit on an
+// arc, the middle finger's highest and furthest back. `flat` is the finger's depth as a
+// share of the palm's, so a finger is a little wider than it is deep. `converge` turns the
+// way it curls toward the thumb side (degrees): curled fingers point at the base of the
+// thumb. `cup` is how far its palm bone folds forward, as a share of its knuckle's bend.
 const FINGERS = {
-  index:  { col: 6, neck: 6, splay: 3,  lengths: [29, 20, 17], r: [18, 18, 17, 17] },
-  middle: { col: 4, neck: 9, splay: 0,  lengths: [32, 22, 18], r: [18, 18, 17, 17] },
-  ring:   { col: 2, neck: 6, splay: -4, lengths: [29, 20, 17], r: [18, 18, 17, 17] },
-  pinky:  { col: 0, neck: 3, splay: 0,  lengths: [22, 16, 16], r: [16, 16, 15, 15] },
+  index:  { col: 6, neck: 6, splay: 3,  lengths: [17.5, 24, 25.5], r: [18, 18, 17, 17], arch: [0.5, 0],  flat: 0.86, converge: 0 },
+  middle: { col: 4, neck: 9, splay: 0,  lengths: [18.5, 28, 26.5], r: [18, 18, 17, 17], arch: [0, 0],    flat: 0.86, converge: 3 },
+  ring:   { col: 2, neck: 6, splay: -4, lengths: [18.5, 27, 26.5], r: [18, 18, 17, 17], arch: [-0.5, 0], flat: 0.84, converge: 6, cup: 0.07 },
+  pinky:  { col: 0, neck: 3, splay: 0,  lengths: [12.5, 19, 23.5], r: [16, 16, 15, 15], arch: [-3, -1],  flat: 0.76, converge: 5, cup: 0.2 },
 };
+// A cupping palm bone starts `z` mm up the hand; its fold is spread over `blend` mm.
+const CUP = { z: 30, blend: 44 };
 
 // The thumb's side: the two lower rows of the +X side push out `web` mm as a ring of soft
 // flesh and then on to `pad` mm as the pad, `thick` times the palm's thickness, which swings
@@ -1360,16 +1372,19 @@ const FINGERS = {
 // pad's root ([toward the palm's middle, toward the palm side]) and `cmc` mm up the palm,
 // where a thumb's first bone pivots. It has two joints there: abduction swings the thumb
 // forward out of the palm, and opposition turns it about its own direction, round to the
-// palm's front and across it.
+// palm's front and across it. The cage is built with the thumb already `rest` degrees round
+// toward the front, as a relaxed hand holds it, so the skin at its base stretches less at
+// the far end of its travel.
 const THUMB = {
   pad: 32, web: 10, thick: 1.05, tuck: 24, lean: 23, root: 5, neck: [1, 0.92, 1], forward: 10,
-  lengths: [25, 20], follow: 0.8, hinge: [2, 9], cmc: 16, r: [26, 26, 19, 19, 19, 19, 18, 18], base: 60
+  lengths: [30, 25], follow: 0.8, hinge: [2, 9], cmc: 16, rest: 22, r: [26, 26, 19, 19, 19, 19, 18, 18], base: 60
 };
 // How long each kind of joint's bend is spread along its digit (mm). A sharper bend needs
 // a longer stretch, or the skin on its inner side folds.
-const BLEND = { knuckle: 14, curl: 24, tip: 18 };
+const BLEND = { knuckle: 22, curl: 24, tip: 18 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
-const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
+// The thumb curls toward the palm's middle: this direction, turned with the thumb's rest.
+const THUMB_CURL = ((a) => [-0.75 * Math.cos(a) - Math.sin(a), 0.75 * Math.sin(a) - Math.cos(a), 0])((THUMB.rest * Math.PI) / 180);
 
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -1378,7 +1393,8 @@ const along = (p, n, d) => p.map((v, i) => v + d * n[i]);
 // The part of `v` square to the unit vector `n`: a limb's bendToward for a digit along n.
 const squareTo = (v, n) => unit(v.map((x, i) => x - dot(v, n) * n[i]));
 
-const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 120], thumbAbduct: [0, 70] };
+// Opposition is measured from the thumb's rest: negative lays it flat beside the palm.
+const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [-THUMB.rest, 120 - THUMB.rest], thumbAbduct: [0, 70] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 // The flat under the wrist sits this far above the cage's lowest point (mm).
 const FLAT_ABOVE = 2.4;
@@ -1401,10 +1417,19 @@ const palm = (make) => {
   c.move("+x:0,2", [0, 0, -2]);
   c.scale(c.faces("-z:"), [0.88, 1, 1]);
   c.move(["-y:5,0", "-y:6,0"], [0, -7, 0]);
-  c.move(["-y:0,0", "-y:1,0"], [0, -3, 0]);
+  // The heel of the hand, on the pinky side: forward and a little out.
+  c.move(["-y:0,0", "-y:1,0"], [0, -5, 0]);
+  c.move("-x:0,0", [-2.5, 0, 0]);
+  for (const f of Object.values(FINGERS)) c.move(`+z:${f.col},0`, [0, f.arch[0], f.arch[1]]);
   // The top comes down by the knuckle rings' height: cageHand grows them back as rings.
   c.move(c.faces("+z:"), [0, 0, -KNUCKLE.rows * RING]);
   return c;
+};
+
+// Where the thumb pivots, on a palm nothing has grown from yet.
+const thumbPivot = (p0) => {
+  const a = p0.centroid("+x:0,0"), b = p0.centroid("+x:0,1");
+  return [(a[0] + b[0]) / 2 - THUMB.hinge[0], (a[1] + b[1]) / 2 - THUMB.hinge[1], THUMB.cmc];
 };
 
 /**
@@ -1414,9 +1439,10 @@ const palm = (make) => {
  */
 function cageHand(make, posed) {
   const c = palm(make);
+  const pivot = thumbPivot(c);
   // The pad's root, before anything grows from it: where the thumb's limb starts.
-  const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.78, 1.08, 1], id: "wrist" });
-  c.extrude(w, { by: 24, scale: 1.04, id: "arm" });
+  const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.72, 1.04, 1], id: "wrist" });
+  c.extrude(w, { by: 24, scale: 1.06, id: "arm" });
   // A knuckle is three short rings, so the surface has points to bend with. Past a digit's
   // middle knuckle the first ring widens and the last narrows, which draws the joint.
   const knuckle = (cur, tag, wide) => {
@@ -1430,7 +1456,7 @@ function cageHand(make, posed) {
     lengths.forEach((L, i) => {
       if (i >= from) cur = knuckle(cur, `${name}K${i}`, i === 1);
       // From a knuckle's last ring to the next knuckle's first: L less a whole knuckle.
-      cur = c.extrude(cur, { by: i >= from ? L - 3 * RING : L, scale: 0.95, id: `${name}P${i}` });
+      cur = c.extrude(cur, { by: i >= from ? L - 3 * RING : L, scale: 0.94, id: `${name}P${i}` });
     });
     c.extrude(cur, { by: RING, scale: 0.55, id: `${name}Tip` });
   };
@@ -1439,7 +1465,7 @@ function cageHand(make, posed) {
   for (let r = 0; r < KNUCKLE.rows; r++) caps = c.extrude(caps, { by: RING, id: `knuckle${"abc"[r]}` });
   for (const [name, f] of Object.entries(FINGERS)) {
     const hinge = c.centroid(caps[f.col]);
-    const neck = c.extrude(caps[f.col], { by: f.neck, id: `${name}Neck` });
+    const neck = c.extrude(caps[f.col], { by: f.neck, scale: [1, f.flat, 1], id: `${name}Neck` });
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     digit(neck, name, f.lengths, 1);
   }
@@ -1466,6 +1492,12 @@ function cageHand(make, posed) {
   const t = c.extrude(shelf, { by: THUMB.root, scale: THUMB.neck, id: "thumbRoot" });
   c.rotate(t, { axis: "x", deg: THUMB.forward, about: base });
   digit(t, "thumb", THUMB.lengths);
+  // The thumb's rest: a turn about the line up the hand through the thumb's pivot. The
+  // web's outer ring goes half way, and the pad and the thumb the whole way.
+  const thumbFaces = c.faces("thumb");
+  const turn = (faces) => c.rotate([...pad, ...thumbFaces, ...faces], { axis: "z", deg: -THUMB.rest / 2, about: pivot });
+  turn(c.faces("thenar.s"));
+  turn([]);
   // The cage follows the limbs. A point follows a limb whose line it is near and can see,
   // so each finger takes its own column of the palm at its knuckle, and the thumb takes the
   // pad, the web and the front of the palm beside it: the ball of the thumb moves with it.
@@ -1473,7 +1505,7 @@ function cageHand(make, posed) {
     blend: {
       // The thumb's two base joints bend the whole pad, from the wrist up.
       "thumb.abduct": THUMB.base, "thumb.oppose": THUMB.base, "thumb.mcp": BLEND.curl, "thumb.ip": BLEND.tip,
-      ...Object.fromEntries(Object.keys(FINGERS).flatMap((f) => [[`${f}.mcp`, BLEND.knuckle], [`${f}.pip`, BLEND.curl], [`${f}.dip`, BLEND.tip]])),
+      ...Object.fromEntries(Object.keys(FINGERS).flatMap((f) => [...(FINGERS[f].cup ? [[`${f}.cup`, CUP.blend]] : []), [`${f}.mcp`, BLEND.knuckle], [`${f}.pip`, BLEND.curl], [`${f}.dip`, BLEND.tip]])),
     },
   });
   return c;
@@ -1500,22 +1532,28 @@ const steppedLimb = (name, def, index, stepOf) => {
   return shape([dot(step, frame.x), dot(step, frame.y), dot(step, frame.z)]);
 };
 // A finger's first joint is inside the palm, near its front face, and its middle joint is
-// back on the finger's own line. Its first bone runs between the two.
-const knuckleAt = (() => { const p0 = palm(cage); return [p0.centroid("-y:4,2")[1] + KNUCKLE.depth, p0.centroid("+z:4,0")[2] + KNUCKLE.rise]; })();
+// back on the finger's own line. Its first bone runs between the two. A finger whose palm
+// bone cups has one more joint before that, low in the palm. poseDigits bends it by a share
+// of the knuckle's bend: the palm folds as the finger closes.
+const P0 = palm(cage);
 const FINGER_LIMB = Object.fromEntries(Object.entries(FINGERS).map(([name, f]) => {
   const { toward, joint: pip } = restLine(name, f.lengths);
-  const onLine = along(pip, toward, -(pip[2] - knuckleAt[1]) / toward[2]);
-  const at = [onLine[0], knuckleAt[0], knuckleAt[1]];
-  const reach = dot(pip.map((v, i) => v - at[i]), toward);
+  const hinge = [P0.centroid(`-y:${f.col},2`)[1] + KNUCKLE.depth, P0.centroid(`+z:${f.col},0`)[2] + KNUCKLE.rise];
+  const onLine = along(pip, toward, -(pip[2] - hinge[1]) / toward[2]);
+  const mcp = [onLine[0], hinge[0], hinge[1]];
+  const reach = dot(pip.map((v, i) => v - mcp[i]), toward);
+  const bone = f.cup ? (mcp[2] - CUP.z) / toward[2] : 0;
+  const turn = (f.converge * Math.PI) / 180;
   return [name, steppedLimb(name, {
-    at, toward, bendToward: squareTo(PALMWARD, toward),
+    at: along(mcp, toward, -bone), toward, bendToward: squareTo([Math.sin(turn), -Math.cos(turn), 0], toward),
     joints: [
+      ...(f.cup ? [{ name: "cup", range: [RANGE.knuckle[0] * f.cup, RANGE.knuckle[1] * f.cup] }] : []),
       { name: "mcp", range: RANGE.knuckle },
       { name: "pip", range: RANGE.curl },
       { name: "dip", range: [0, RANGE.curl[1] * 0.75], follow: { joint: "pip", ratio: 0.75 } },
     ],
-    lengths: [reach, f.lengths[1], f.lengths[2] - MID], r: f.r,
-  }, 1, () => pip.map((v, i) => v - along(at, toward, reach)[i]))];
+    lengths: [...(f.cup ? [bone] : []), reach, f.lengths[1], f.lengths[2] - MID], r: [...(f.cup ? [f.r[0]] : []), ...f.r],
+  }, f.cup ? 2 : 1, () => pip.map((v, i) => v - along(mcp, toward, reach)[i]))];
 }));
 // The thumb's limb starts at the wrist end of the pad and runs straight up the hand, so
 // opposition (a turn about that line) carries the thumb round the palm's edge and abduction
@@ -1525,8 +1563,7 @@ const FINGER_LIMB = Object.fromEntries(Object.entries(FINGERS).map(([name, f]) =
 const DEG = 180 / Math.PI;
 const THUMB_LIMB = (() => {
   const { toward, joint: mcp } = restLine("thumb", THUMB.lengths);
-  const p0 = palm(cage), a = p0.centroid("+x:0,0"), b = p0.centroid("+x:0,1");
-  const at = [(a[0] + b[0]) / 2 - THUMB.hinge[0], (a[1] + b[1]) / 2 - THUMB.hinge[1], THUMB.cmc];
+  const at = thumbPivot(P0);
   const height = mcp[2] - at[2];
   const lean = Math.atan2(toward[0], toward[2]) * DEG, tilt = Math.asin(-toward[1]) * DEG;
   const fixed = (name, axis, deg) => ({ name, ...(axis ? { axis } : {}), range: [deg, deg] });
@@ -1534,7 +1571,7 @@ const THUMB_LIMB = (() => {
     at, toward: [0, 0, 1], bendToward: PALMWARD,
     joints: [
       { name: "abduct", range: RANGE.thumbAbduct },
-      { name: "oppose", axis: "twist", range: [-RANGE.thumbOppose[1], RANGE.thumbOppose[1]] },
+      { name: "oppose", axis: "twist", range: [-RANGE.thumbOppose[1], -RANGE.thumbOppose[0]] },
       fixed("lean", "spread", lean), fixed("tilt", null, tilt), fixed("roll", "twist", roll),
       { name: "mcp", range: RANGE.thumbCurl },
       { name: "ip", range: [0, RANGE.thumbCurl[1] * THUMB.follow], follow: { joint: "mcp", ratio: THUMB.follow } },
@@ -1553,7 +1590,10 @@ const THUMB_LIMB = (() => {
 /** Every digit posed: the four fingers from their knuckles in the palm, the thumb from the wrist. */
 function poseDigits(p) {
   const out = {};
-  for (const name of Object.keys(FINGERS)) out[name] = FINGER_LIMB[name].pose({ bend: { mcp: p[`${name}Knuckle`], pip: p[`${name}Curl`] } });
+  for (const name of Object.keys(FINGERS)) {
+    const f = FINGERS[name], mcp = p[`${name}Knuckle`];
+    out[name] = FINGER_LIMB[name].pose({ bend: { ...(f.cup ? { cup: mcp * f.cup } : {}), mcp, pip: p[`${name}Curl`] } });
+  }
   out.thumb = THUMB_LIMB.pose({ bend: { abduct: p.thumbAbduct, oppose: -p.thumbOppose, mcp: p.thumbCurl } });
   return out;
 }
@@ -1567,8 +1607,8 @@ const handDigits = poseDigits(handParams);
 handDigits.index.values;   // [10, 16, 12]
 const hand = cageHand(cage, handDigits);
 hand.faces().length;   // 370
-handDigits.index.report.tip;   // [47.645, -26.933, 172.475]
-hand.centroid("indexTip").map(Math.round);   // [48, -27, 172]
+handDigits.index.report.tip;   // [47.338, -31.601, 171.476]
+hand.centroid("indexTip").map(Math.round);   // [47, -32, 171]
 ```
 
 `handParams` is the part's defaults. In the part:
@@ -1580,7 +1620,8 @@ hand.centroid("indexTip").map(Math.round);   // [48, -27, 172]
   body lies inside the cage, so that removes a slab about 1.5 mm thick at every pose.
 - `handles` has one `angles` handle per digit: `{ on: "index", drag: "angles", params:
   ["indexKnuckle", "indexCurl"], joints: { mcp: "indexKnuckle", pip: "indexCurl" } }` for
-  each finger, and `{ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: {
+  each finger (the ring and little fingers add `cup: { param: "<f>Knuckle", scale: <share> }`,
+  so a drag solves the palm's fold with the knuckle), and `{ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: {
   abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } }` for the thumb. Drag
   a fingertip and the drag solves that finger's knuckle and curl. The `dip` joint is not
   a param: it follows `pip`, as the thumb's `ip` follows its `mcp`. `joints` gives each
@@ -1601,7 +1642,7 @@ The points to copy:
   step. Without limbs it returns the cage at rest.
 - **A strip between each pair of fingers.** The palm's seven columns are a finger, a
   strip, a finger, and so on, so two fingers never share a point and one can bend alone.
-  The strip stretches between them. Neighbouring base knuckles more than about 70° apart
+  The strip stretches between them. Neighbouring base knuckles more than about 50° apart
   fold the strip, as a hand's skin would not allow either.
 - **The base knuckles are inside the palm.** The palm's top grows back as three rings
   across all seven columns, and each finger's `mcp` joint sits in them, 5 mm behind the
@@ -1612,7 +1653,7 @@ The points to copy:
   joint sits in the middle of the middle ring (`MID`), so a ring of points lies on each
   side of the line it bends on. A ring on that line creases.
 - **`blend` by kind of joint.** A base knuckle bends 90° about 5 mm from the palm's
-  surface and takes 14 mm; a curl, deeper in the finger, takes 24 mm; the tip joint 18 mm.
+  surface and takes 22 mm; a curl, deeper in the finger, takes 24 mm; the tip joint 18 mm.
   The thumb's two base joints take 60 mm, so the whole pad bends with them, from the
   wrist up.
 - **The thumb's limb starts at the wrist.** It runs straight up the hand from the wrist
@@ -1621,6 +1662,20 @@ The points to copy:
   thumb itself leans away from that line, so three fixed joints at its root (ranges such
   as `[23, 23]`) lean it out, tilt it forward, and roll it to curl toward the palm's
   middle. The cage is built with them, in the limb's rest pose.
+- **Build a limb in the middle of its travel.** The thumb's rest is 22° of opposition,
+  not flat beside the palm, so the skin at its base stretches less at either end. A
+  larger rest turn left a ridge where the pad meets the palm.
+- **Take bone lengths from measurements.** Each finger's joints are spaced as measured
+  finger bones are: knuckle to middle joint about 42, 46, 43 and 34 mm for the index to
+  the little finger, with the knuckle 11 mm inside the palm, then 24, 28, 27 and 19 mm,
+  then about 23 mm to the tip. A first segment drawn by eye comes out too long, because
+  a third of that bone is hidden in the palm.
+- **A hand's shape is in small numbers.** The knuckles sit on an arc (`arch`), a finger
+  is a little wider than it is deep (`flat`) and narrows toward its tip, the heel has a
+  pad on the little finger's side, and the wrist is narrower than the palm. Curled
+  fingers point toward the base of the thumb (`converge` turns each finger's
+  `bendToward`). Two neighbours that converge by different amounts meet in a fist, so
+  the ring and little fingers turn nearly alike.
 - **A limb leaves the body from a pad, not from the body's side.** A thumb extruded
   straight out of a side face points sideways and joins the palm as a stalk. Here the
   two lower rows of the +X side are extruded together as one pad as wide as the thumb,
@@ -1639,11 +1694,11 @@ The points to copy:
 - **A pose moves the cage's points, never its faces.** Every pose has the same 370 faces
   and the same ids.
 - **It builds clean across the sliders' ranges**, with two limits. Neighbouring base
-  knuckles stay within about 70° of each other, as above. And a thumb in front of the
+  knuckles stay within about 50° of each other, as above. And a thumb in front of the
   palm (opposed or abducted) can meet closed fingers: an open hand builds at any
   opposition, abduction and thumb curl, and a fist builds with the thumb at the palm's
   side, but an opposed, curled thumb can press into a fist. A drag stops at the last pose
-  that builds. At 70° of opposition, with the index bent, the thumb's tip meets the index
+  that builds. At 32° of opposition, with the index bent, the thumb's tip meets the index
   finger's (the OK sign), and fully opposed and abducted the hand closes round a bar of
-  1.5 inch radius. With the fingers curled further and the thumb less abducted it wraps a
+  1.5 inch radius, the ring and little fingers bent a little less than the other two. With the fingers curled further and the thumb less abducted it wraps a
   bar of half that radius, seated in the palm. For fingers that must press into the palm, use an implicit tree.

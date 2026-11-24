@@ -16,7 +16,7 @@ const handAt = (params) => {
 };
 // Every finger at one knuckle and one curl (the tip joint follows at 0.75, the thumb's at
 // 0.8), and the thumb's three motions.
-const handCage = (knuckle, curl, thumb, oppose = 0, abduct = 0) => handAt({
+const handCage = (knuckle, curl, thumb, oppose = -22, abduct = 0) => handAt({
   ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, knuckle], [`${f}Curl`, curl]])),
   thumbCurl: thumb, thumbOppose: oppose, thumbAbduct: abduct,
 });
@@ -34,17 +34,17 @@ describe("dragValidity on the cage hand", () => {
 
   test("is null across the hand's whole slider range, every corner of it included", () => {
     const corners = [];
-    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb, 0]);
+    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb, -22]);
     // An open hand, the thumb anywhere in its range: opposed, abducted and curled.
-    for (const oppose of [0, 60, 120]) for (const abduct of [0, 35, 70]) for (const thumb of [0, 25, 50]) corners.push([0, 0, thumb, oppose, abduct]);
+    for (const oppose of [-22, 38, 98]) for (const abduct of [0, 35, 70]) for (const thumb of [0, 25, 50]) corners.push([0, 0, thumb, oppose, abduct]);
     for (const corner of corners) expect(dragValidity(plan, handCage(...corner).points), corner.join(" ")).toBeNull();
     // The part's own bends at their maxima, the thumb neither opposed nor abducted.
-    const max = { ...Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 };
+    const max = { ...Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max])), thumbOppose: -22, thumbAbduct: 0 };
     expect(dragValidity(plan, handAt(max).points)).toBeNull();
   });
 
   test("an opposed, curled thumb meets a closed fist: the pose is refused and names the thumb", () => {
-    const r = dragValidity(plan, handCage(90, 80, 40, 60).points, { ids: base.ids });
+    const r = dragValidity(plan, handCage(90, 80, 40, 38).points, { ids: base.ids });
     expect(r?.message).toMatch(/^subdiv: the body passes through itself between /);
     expect(r.message).toMatch(/thumb/);
   });
@@ -55,7 +55,7 @@ describe("dragValidity on the cage hand", () => {
     const controls = hand.parameters.flatMap((g) => g.controls);
     const refused = [];
     for (let i = 0; i < 240; i++) {
-      const params = { ...Object.fromEntries(controls.map((c) => [c.key, c.min + rand() * (c.max - c.min)])), thumbOppose: 0, thumbAbduct: 0 };
+      const params = { ...Object.fromEntries(controls.map((c) => [c.key, c.min + rand() * (c.max - c.min)])), thumbOppose: -22, thumbAbduct: 0 };
       // Neighbouring fingers share the skin between their base knuckles, so those stay
       // within 50° of each other, as a hand's do.
       FINGERS.forEach((f, j) => { if (j) params[`${f}Knuckle`] = Math.min(params[`${FINGERS[j - 1]}Knuckle`] + 50, Math.max(params[`${FINGERS[j - 1]}Knuckle`] - 50, params[`${f}Knuckle`])); });

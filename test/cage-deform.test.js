@@ -29,7 +29,7 @@ const A = { ...hand.defaults };
 const THUMB = { ...hand.defaults, thumbCurl: 50 };
 const CONTROLS = hand.parameters.flatMap((g) => g.controls);
 // A fist: every bend at its max, the thumb neither opposed nor abducted.
-const ALL_CURLED = { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 };
+const ALL_CURLED = { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: -22, thumbAbduct: 0 };
 // The hand's cage at rest with one more extrude: a cage the base's plan does not fit. It
 // is the rest cage because a skinned cage takes no more changes.
 const grownCage = () => {
@@ -89,13 +89,12 @@ describe("deformCage on the cage hand", () => {
   // Normal bound per pose: at the base's own pose the deformed normals are the delivered
   // ones. Away from it the plan keeps the base's quad diagonals for the whole drag while
   // the exact build re-picks them at B's points, and an unweighted vertex normal follows
-  // its triangle fan: 4.4° at the thumb's base once the thumb curls, and no more than
-  // that in a fist. That is the only difference (the positions agree
+  // its triangle fan: 4.4° at the thumb's base once the thumb curls, 6.2° in a fist. That is the only difference (the positions agree
   // to 2e-5 mm), and the swap to the exact mesh on release shows nothing at that size.
   test.each([
     ["the defaults (the base's own pose)", A, 0.1],
     ["the thumb curled", THUMB, 5],
-    ["every finger and the thumb curled to the max", ALL_CURLED, 5],
+    ["every finger and the thumb curled to the max", ALL_CURLED, 7],
   ])("from the defaults to %s: skin positions within 1e-3 mm of the exact build, normals within the bound", async (label, B, bound) => {
     const live = entryAt(B).cages[0];
     const n = mesh.positions.length;

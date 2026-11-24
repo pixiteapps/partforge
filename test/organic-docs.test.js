@@ -303,10 +303,10 @@ test("the guide's hand is the reference part's, line for line", () => {
   expect(controls.indexKnuckle).toEqual([-10, 90]);
   expect(controls.indexCurl).toEqual([0, 80]);
   expect(controls.thumbAbduct).toEqual([0, 70]);
-  expect(controls.thumbOppose).toEqual([0, 120]);
+  expect(controls.thumbOppose).toEqual([-22, 98]);
   expect(controls.thumbCurl).toEqual([0, 50]);
   expect(text).toContain("(`thumbAbduct`, 0° to 70°)");
-  expect(text).toContain("(`thumbOppose`, 0° to 120°)");
+  expect(text).toContain("(`thumbOppose`, -22° to 98°)");
   expect(text).toContain("(`thumbCurl`, 0° to 50°)");
   // The handles the prose shows are the part's.
   expect(cageHandPart.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
@@ -321,7 +321,7 @@ test("the guide's hand builds clean open, at its defaults and as a fist, at prev
   const print = createManifoldKernel(wasm, { quality: "print" });
   const controls = cageHandPart.parameters.flatMap((g) => g.controls);
   const open = Object.fromEntries(controls.map((c) => [c.key, 0]));
-  const fist = { ...Object.fromEntries(controls.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 };
+  const fist = { ...Object.fromEntries(controls.map((c) => [c.key, c.max])), thumbOppose: -22, thumbAbduct: 0 };
   for (const p of [open, cageHandPart.defaults, fist]) {
     const digits = scope.poseDigits(p);
     k.takeBuildWarnings();

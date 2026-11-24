@@ -41,18 +41,20 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
     expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 80 });
   }
   expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 50 });
-  expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: 0, max: 120 });
+  expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: -22, max: 98 });
   expect(CONTROLS.find((c) => c.key === "thumbAbduct")).toMatchObject({ min: 0, max: 70 });
   const d = part.derive(part.defaults);
   expect(Object.keys(d).sort()).toEqual([...DIGITS].sort());
   // Each finger's limb starts at its base knuckle in the palm; the thumb's at the wrist,
   // with three joints at its root that never move.
-  for (const f of FINGERS) expect(d[f].bones.joints.map((j) => j.name)).toEqual([`${f}.mcp`, `${f}.pip`, `${f}.dip`]);
+  // The ring and little fingers have one more joint low in the palm, which cups it.
+  for (const f of FINGERS) expect(d[f].bones.joints.map((j) => j.name)).toEqual([...(f === "ring" || f === "pinky" ? [`${f}.cup`] : []), `${f}.mcp`, `${f}.pip`, `${f}.dip`]);
   expect(d.thumb.bones.joints.map((j) => j.name.slice(6))).toEqual(["abduct", "oppose", "lean", "tilt", "roll", "mcp", "ip"]);
   for (const n of DIGITS) expect(d[n].bones.r, n).not.toBeNull();
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
-  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
+  const CUP = { ring: 0.07, pinky: 0.2 };
+  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { ...(CUP[f] ? { cup: { param: `${f}Knuckle`, scale: CUP[f] } } : {}), mcp: `${f}Knuckle`, pip: `${f}Curl` } });
   expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
   // Every joint a handle names is one of its limb's.
   for (const [id, h] of Object.entries(part.handles)) {
@@ -68,14 +70,14 @@ test("is listed as an organic reference part", () => {
 // Defaults, every parameter at its min at once and at its max at once (a fist: the
 // tightest pose the sliders reach), then each parameter alone at its min and at its max.
 // The OK sign: the thumb opposed until its tip meets the bent index finger's.
-const OK_SIGN = { thumbOppose: 70, thumbCurl: 15, indexKnuckle: 55, indexCurl: 70, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
+const OK_SIGN = { thumbOppose: 32, thumbCurl: 25, indexKnuckle: 40, indexCurl: 55, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
 // Holding a bar that lies across the palm. A wide one (1.5 inch radius): the fingers over
 // it, the thumb abducted and opposed under it. One of half the diameter: seated on the
 // palm, the fingers wrapped over it and the thumb closed round its front.
 const fingersAt = (knuckle, curl) => Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, knuckle], [`${f}Curl`, curl]]));
 const GRIPS = [
-  { name: "a 1.5 inch radius bar", pose: { thumbOppose: 120, thumbAbduct: 70, thumbCurl: 25, ...fingersAt(60, 45) }, bar: { radius: 38.1, y: -78, z: 64 }, deepest: -0.5, open: 160, tips: { thumb: 6, index: 6 } },
-  { name: "a 0.75 inch radius bar", pose: { thumbOppose: 105, thumbAbduct: 20, thumbCurl: 35, ...fingersAt(60, 70) }, bar: { radius: 19.05, y: -36, z: 80 }, deepest: -1.5, open: 60, palm: 3, tips: { thumb: 6, index: 10 } },
+  { name: "a 1.5 inch radius bar", pose: { thumbOppose: 98, thumbAbduct: 70, thumbCurl: 35, ...fingersAt(45, 50), ringKnuckle: 37, pinkyKnuckle: 27 }, bar: { radius: 38.1, y: -78, z: 68 }, deepest: -0.5, open: 160, tips: { thumb: 6, index: 6 } },
+  { name: "a 0.75 inch radius bar", pose: { thumbOppose: 68, thumbAbduct: 35, thumbCurl: 50, ...fingersAt(50, 55) }, bar: { radius: 19.05, y: -46, z: 80 }, deepest: -1.5, open: 70, palm: 3, tips: { thumb: 8, index: 10 } },
 ];
 // One parameter at an end of its range. Neighbouring fingers share the skin between their
 // base knuckles, so for a knuckle the other fingers' come within 50° of it, as a hand's do.
@@ -87,11 +89,11 @@ const CASES = [
   ["every parameter at its min", Object.fromEntries(CONTROLS.map((c) => [c.key, c.min]))],
   // A fist: every bend at its max. The thumb is neither opposed nor abducted, since a thumb
   // in front of the palm meets the closed fingers (test/cage-drag-validity.test.js).
-  ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 }],
+  ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: -22, thumbAbduct: 0 }],
   ["the OK sign", OK_SIGN],
   ...GRIPS.map((g) => [`holding ${g.name}`, g.pose]),
   // An open hand with the thumb at the far corner of its range.
-  ["an open hand, the thumb opposed, abducted and curled", { ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 0], [`${f}Curl`, 0]])), thumbOppose: 120, thumbAbduct: 70, thumbCurl: 50 }],
+  ["an open hand, the thumb opposed, abducted and curled", { ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 0], [`${f}Curl`, 0]])), thumbOppose: 98, thumbAbduct: 70, thumbCurl: 50 }],
   ...CONTROLS.flatMap((c) => [[`${c.key} min`, alone(c.key, c.min)], [`${c.key} max`, alone(c.key, c.max)]]),
 ];
 
