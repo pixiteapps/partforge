@@ -99,7 +99,7 @@ const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFin
 
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
+export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
@@ -123,6 +123,9 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
   );
   return {
     ready, dispose, setParams,
+    // Resolves once no build is pending for the live params: true when the view on
+    // screen is built at them, false after a build error or dispose. Never rejects.
+    whenSettled: whenSettled ?? (() => Promise.resolve(true)),
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
     // preview block). A GETTER, read live: a host that copies the handle object
     // freezes the value it had at that moment.
@@ -1476,6 +1479,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // the host sees: it counts as missing, and as unsettled to export and the floor.
     const isSettled = (n) => isCurrent(n) && !owed.has(n);
     const missingParts = () => viewSubParts(part, view(), params).filter((n) => !isSettled(n));
+    // What the loop is told is missing (the pose hold's answer), without the cage revert
+    // its kick runs first: whenSettled reads it too, and must change nothing.
+    const loopMissingParts = () => (!poseHold ? missingParts()
+      : liveRebuild ? viewSubParts(part, view(), params).filter((n) => !isCurrent(n)) : []);
 
     // The regenerate state machine (ready gating / debounce / stale-redo) lives in
     // regen-loop.js; this send callback is the one place a build job is dispatched.
@@ -1500,9 +1507,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // build never goes out at a pose the body cannot take (revertHeldCagePose).
       missingParts: () => {
         if (!poseHold) revertHeldCagePose();
-        return !poseHold ? missingParts()
-          : liveRebuild ? viewSubParts(part, view(), params).filter((n) => !isCurrent(n)) : [];
+        return loopMissingParts();
       },
+      onKick: () => settleIfIdle(),
       send: (missing) => {
         // Flagged at dispatch, read by this cycle's replies: the loop sends the next
         // cycle only after this one's last reply, so the flag travels with its jobs.
@@ -1541,6 +1548,30 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       },
     });
     cleanup.defer(() => loop.dispose());
+
+    // runtime.whenSettled(): resolves at the first moment the loop is idle (no reply owed,
+    // no kick armed) — true when nothing the loop would build is missing for the view on
+    // screen at the live params, false when it went idle with something missing (a build
+    // error) or the mount was disposed. settleIfIdle runs after every kick (the loop's
+    // onKick, a debounce's included) and after every worker message has been handled
+    // (so a stale reply's re-kick has already gone out). Two waits are not idle although
+    // the loop is: before the first build has an outcome (the kernel has not announced
+    // itself, so the loop has sent nothing), and while a STEP import's tessellation is
+    // outstanding (its import-meshes kicks the retry).
+    const settleWaiters = [];
+    function settleIfIdle() {
+      if (!settleWaiters.length || !loop.isIdle() || importMeshState === "requested") return;
+      const missing = loopMissingParts();
+      if (missing.length && !readySettled) return;
+      // A provisional stage still on screen is not exact geometry, whatever the loop says.
+      const exact = missing.length === 0 && !viewSubParts(part, view(), params).some((n) => provisional.has(n));
+      for (const resolve of settleWaiters.splice(0)) resolve(exact);
+    }
+    function whenSettled() {
+      if (cleanup.isDisposed()) return Promise.resolve(false);
+      return new Promise((resolve) => { settleWaiters.push(resolve); settleIfIdle(); });
+    }
+    cleanup.defer(() => { for (const resolve of settleWaiters.splice(0)) resolve(false); });
 
     // Pose fast path (Layer 0): a param edit that only re-poses a sub-part is
     // repaired synchronously in the viewer — no debounce, no worker job.
@@ -2285,6 +2316,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           break;
         }
       }
+      // Every branch has done its own handling, re-kick included.
+      settleIfIdle();
     }
 
     const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
@@ -2731,7 +2764,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     }
 
     return makeHandle({
-      ready, dispose, viewer, setParams,
+      ready, dispose, viewer, setParams, whenSettled,
       // No capture reads a pose drag's deformed mesh: the hold keeps a slider input
       // during an async capture from deforming it again. Nor a two-stage delivery's
       // provisional stage, which has no exact base to put back: the capture throws

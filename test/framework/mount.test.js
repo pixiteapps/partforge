@@ -3828,3 +3828,208 @@ test("makeHandle stands in for setCameraCue and setCamera on a viewer without ju
   expect(h.setCameraCue("front")).toBe(false);
   expect(h.setCamera({ pos: [0, 0, 1], target: [0, 0, 0] })).toBe(false);
 });
+
+// whenSettled: the capture loop's wait for the build a seek (or any edit) started.
+describe("whenSettled", () => {
+  const flushMicrotasks = () => new Promise((r) => queueMicrotask(r));
+  const track = (p) => {
+    const s = { done: false, value: undefined };
+    p.then((v) => { s.done = true; s.value = v; });
+    return s;
+  };
+  const generates = (workers, from = 0) => workers.manifold.postMessage.mock.calls.slice(from)
+    .map(([m]) => m).filter((m) => m.type === "generate");
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("makeHandle stands in with a promise of true", async () => {
+    const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+    expect(await h.whenSettled()).toBe(true);
+  });
+
+  test("resolves true at once when nothing is building", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("before the first build it waits for that build", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    const s = track(runtime.whenSettled()); // the kernel has not announced itself yet
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the first build is in flight
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("after a geometry edit it waits for the worker's reply", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.setParams({ h: 6 });
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the debounce is armed
+    vi.advanceTimersByTime(200);
+    expect(generates(workers, before)).toHaveLength(1);
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the reply is owed
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a pose-only edit waiting on the debounce settles true when the timer finds nothing to build", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.setParams({ tilt: 30 });
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    vi.advanceTimersByTime(200);
+    await flushMicrotasks();
+    expect(generates(workers, before)).toHaveLength(0);
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  const mountAnimated = (tracks) => {
+    const part = makePart();
+    part.views.main.animations = { go: { label: "Go", duration: 2, easing: "linear", tracks } };
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(part, { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    return { workers, runtime };
+  };
+
+  test("an animation seek that rebuilds geometry is waited for", async () => {
+    const { workers, runtime } = mountAnimated({ h: [[0, 4], [1, 10]] });
+    expect(await runtime.whenSettled()).toBe(true);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.animation.seek(1);
+    const s = track(runtime.whenSettled());
+    const sent = generates(workers, before);
+    expect(sent).toHaveLength(1); // no debounce: the seek dispatched at once
+    expect(sent[0].params.h).toBeGreaterThan(4);
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a pose-only animation seek resolves at once", async () => {
+    const { workers, runtime } = mountAnimated({ tilt: [[0, 0], [1, 60]] });
+    expect(await runtime.whenSettled()).toBe(true);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.animation.seek(1);
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(generates(workers, before)).toHaveLength(0);
+    expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("body", expect.any(Array));
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a stale reply does not settle: it waits for the rebuild the edit caused", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    runtime.setParams({ h: 6 });
+    vi.advanceTimersByTime(200); // build at h=6 in flight
+    const s = track(runtime.whenSettled());
+    runtime.setParams({ h: 8 }); // lands mid-build: the reply below is stale
+    vi.advanceTimersByTime(200); // the kick is absorbed (a reply is owed)
+    const before = workers.manifold.postMessage.mock.calls.length;
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    const redo = generates(workers, before);
+    expect(redo).toHaveLength(1);
+    expect(redo[0].params.h).toBe(8);
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a build error settles false; a later successful build settles true again", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    runtime.setParams({ h: 6 });
+    const s = track(runtime.whenSettled());
+    vi.advanceTimersByTime(200);
+    workers.manifold.onmessage({ data: { type: "error", message: "boom" } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: false });
+    // Still idle with the failed part missing: a new wait answers false at once.
+    expect(await runtime.whenSettled()).toBe(false);
+    runtime.setParams({ h: 7 });
+    const t = track(runtime.whenSettled());
+    vi.advanceTimersByTime(200);
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(t).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a first build that errors settles false", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    const s = track(runtime.whenSettled());
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    workers.manifold.onmessage({ data: { type: "error", message: "boom" } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: false });
+    await runtime.ready.catch(() => {});
+    runtime.dispose();
+  });
+
+  test("an outstanding import tessellation keeps the wait open until the retry lands", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    const s = track(runtime.whenSettled());
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    workers.manifold.onmessage({ data: { type: "needs-import-mesh" } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // idle, but the tessellation's retry is still coming
+    workers.occt.onmessage({ data: { type: "import-meshes", meshes: {} } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the retry is in flight
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("dispose settles every waiter false, and a call after dispose resolves false", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    runtime.setParams({ h: 6 });
+    const a = track(runtime.whenSettled());
+    vi.advanceTimersByTime(200);
+    const b = track(runtime.whenSettled());
+    runtime.dispose();
+    await flushMicrotasks();
+    expect(a).toEqual({ done: true, value: false });
+    expect(b).toEqual({ done: true, value: false });
+    expect(await runtime.whenSettled()).toBe(false);
+  });
+});
