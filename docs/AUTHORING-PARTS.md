@@ -3749,8 +3749,9 @@ What to look for:
 
 ### Which poses do not build
 
-`measure --ranges` builds the view at a list of poses and lists each pose that throws, with
-its error. It runs no lint, measure or verify.
+`measure --ranges` builds the view at a list of poses and lists each pose that does not
+build cleanly. A pose is listed when its build throws, or when it warns that a body passes
+through itself. It runs no lint, measure or verify.
 
 ```bash
 npx partforge measure src/parts/cage-hand.js --ranges                # 24 random poses, seed 1
@@ -3765,23 +3766,27 @@ same `--seed <n>` (default 1) gives the same random poses, so a run repeats. A r
 falls on the control's `step`, as a slider's would.
 
 ```
-random 7  indexKnuckle=71.3 ringKnuckle=12 ...  →  subdiv: the body passes through itself between knuckle:1 and knuckle.s14
-1 of 49 poses did not build (view assembly)
-faces  knuckle:1 ×1, knuckle.s14 ×1
+random 15  indexKnuckle=58.6 indexCurl=27.6 ... thumbAbduct=2.1  →  warning: subdiv: the body passes through itself: pinkyNeck.s2 folds through itself
+random 24  indexKnuckle=68.1 indexCurl=7.7 ... thumbAbduct=44  →  warning: subdiv: the body passes through itself between knuckle:1 and knuckle.s14; knuckle.s14 folds through itself
+5 of 49 poses did not build cleanly (view assembly): 0 threw, 5 passed through themselves
+faces  knuckle:3 ×2, knuckle.s12 ×2, pinkyNeck.s2 ×2, knuckle:1 ×2, knuckle.s14 ×2, middleNeck.s0 ×1, ringNeck.s2 ×1, knuckle.s13 ×1, and 11 more
 ```
 
-Each line gives the pose's name, the values it changes from the defaults, and the first
-line of the error. Then the count. When the errors name cage faces (a `subdiv:` body that
+Each line gives the pose's name, the values it changes from the defaults, its kind and the
+message. The kind is `error` when the build threw, and the message is the error's first
+line. The kind is `warning` when the build only warned that a body passes through itself,
+and the message is that warning. Other build warnings are not failures. Then the count,
+split into the poses that threw and the poses that passed through themselves. When the errors name cage faces (a `subdiv:` body that
 passes through itself), the last line lists the faces named, most often first, with the
 number of poses that name each one. A face many poses name is where to look first.
 
 A pose that does not build is a fact about the part. It is not always a fault. In Pose mode
 a drag stops at the last pose that builds, so a range whose far end does not build still
 works. It is a fault when the user can reach the pose: by a slider, or by a pose the panel
-sets. The poses are built at preview quality, as `measure` builds them. At preview a body
-that passes through itself is a build warning, so those poses are not listed. Build
-warnings are never failures here. `--json` and `--out` give the result as JSON:
-`{ view, poses, failed: [{ name, params, error }], faces: [{ id, count }] }`. `--drag`,
+sets. The poses are built at preview quality, as `measure` builds them. A print-quality export
+can still fail at a pose this run passes, because the preview mesh is coarser. `--json`
+and `--out` give the result as JSON:
+`{ view, poses, failed: [{ name, params, kind, error }], faces: [{ id, count }] }`. `--drag`,
 `--process`, `--no-verify` and `--no-lint` do not apply and are refused. It exits 0
 whenever the sweep ran, and 1 only when the part cannot be loaded. In code:
 `sweepRanges(kernel, part, view, { random, seed })` and `rangePoses(part, { random, seed })`
@@ -5062,8 +5067,8 @@ CI/agent gate. Add `--json` to also dump the report as JSON on stdout, or
 `--out report.json` to write it to a file (nothing is written otherwise).
 `--drag <handle>` (with `--to x,y,z` or `--turn <deg>`) plays a handle drag instead of
 measuring: see "Testing a drag" under Handles. `--ranges` (with `--random <n>` and
-`--seed <n>`) builds the view at a list of poses instead, and lists the ones that do not
-build: see "Which poses do not build" under Handles. (Manifold output is
+`--seed <n>`) builds the view at a list of poses instead, and lists the ones that throw or
+pass through themselves: see "Which poses do not build" under Handles. (Manifold output is
 manifold by construction, so `watertight` is mainly a build-sanity check for
 empty/degenerate results; `holes` is the informative topology number.)
 

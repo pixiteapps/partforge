@@ -1,5 +1,5 @@
 import { expect, test, afterAll } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { rmSync, existsSync, readFileSync } from "node:fs";
 
 const run = (args) => execFileSync("node", ["bin/cli.js", ...args], { encoding: "utf8" });
@@ -170,14 +170,22 @@ test("CLI measure --ranges lists the poses that do not build, with the faces nam
   const r = JSON.parse(run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "4", "--json"]));
   expect(r.view).toBe("main");
   expect(r.poses).toBe(1 + 2 * 2 + 2 + 4);
-  expect(r.failed.map((f) => f.name)).toEqual(expect.arrayContaining(["w=max", "all max"]));
+  expect(r.failed.map((f) => f.name)).toEqual(expect.arrayContaining(["w=max", "h=max", "all max"]));
   for (const f of r.failed) expect(f.error).toMatch(/passes through itself/);
-  expect(r.faces).toEqual([{ id: "top", count: r.failed.length }, { id: "side.s1", count: r.failed.length }]);
+  const threw = r.failed.filter((f) => f.kind === "error"), warned = r.failed.filter((f) => f.kind === "warning");
+  expect(threw.length + warned.length).toBe(r.failed.length);
+  expect(r.failed.find((f) => f.name === "h=max").kind).toBe("warning");
+  expect(r.failed.find((f) => f.name === "w=max").kind).toBe("error");
+  expect(r.faces).toEqual(expect.arrayContaining([{ id: "top", count: threw.length }, { id: "lid.s0", count: warned.length }]));
   expect(r.verify).toBeUndefined(); // no measure, no verify
-  const human = run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "4", "--out", `${OUT}/ranges.json`]);
-  expect(human).toMatch(/^w=max {2}w=50 {2}→ {2}subdiv: the body passes through itself/m);
-  expect(human).toMatch(new RegExp(`${r.failed.length} of 11 poses did not build`));
-  expect(human).toMatch(/faces {2}top ×\d+, side\.s1 ×\d+/);
+  const out = spawnSync("node", ["bin/cli.js", "measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "4", "--out", `${OUT}/ranges.json`], { encoding: "utf8" });
+  const human = out.stdout;
+  expect(out.status).toBe(0);
+  expect(out.stderr).not.toMatch(/passes through itself/); // reported, so not also printed
+  expect(human).toMatch(/^w=max {2}w=50 {2}→ {2}error: subdiv: the body passes through itself/m);
+  expect(human).toMatch(/^h=max {2}h=8 {2}→ {2}warning: subdiv: the body passes through itself: lid\.s0/m);
+  expect(human).toMatch(new RegExp(`${r.failed.length} of 11 poses did not build cleanly \\(view main\\): ${threw.length} threw, ${warned.length} passed through themselves`));
+  expect(human).toMatch(/faces {2}.*top ×\d+/);
   expect(JSON.parse(readFileSync(`${OUT}/ranges.json`, "utf8"))).toEqual(r);
 });
 
@@ -185,7 +193,7 @@ test("CLI measure --ranges repeats with one seed and says so when every pose bui
   const a = run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--seed", "5", "--json"]);
   expect(run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--seed", "5", "--json"])).toBe(a);
   const ok = run(["measure", "src/parts/demo.js", "--ranges", "--random", "2"]);
-  expect(ok).toMatch(/0 of \d+ poses did not build/);
+  expect(ok).toMatch(/0 of \d+ poses did not build cleanly \(view spacer\): 0 threw, 0 passed through themselves/);
 });
 
 test("CLI measure --ranges refuses the flags that do not apply", () => {

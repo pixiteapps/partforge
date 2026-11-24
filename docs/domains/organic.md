@@ -1143,12 +1143,13 @@ smoothBox([2, 2, 2]).max[0];   // 10
 - **Two faces lying exactly flat on each other are not detected.** Keep separate parts
   of the cage apart.
 - **To find the poses that do not build**, run `partforge measure <part> --ranges`. It
-  builds the part at its defaults, at each slider's ends, and at random poses, and lists
-  each pose that throws. Its last line counts the cage faces the errors name. Start with
-  the face named most often. A pose that does not build is not always a fault: a drag
-  stops at the last pose that builds. It builds at preview quality, where a body that
-  passes through itself is only a warning, so only bodies with no volume are listed. See
-  "Which poses do not build" in AUTHORING-PARTS.md.
+  builds the part at its defaults, at each slider's ends, and at random poses. It lists
+  each pose that throws, and each pose whose body passes through itself. Its last line
+  counts the cage faces those messages name. Start with the face named most often. A pose
+  that does not build is not always a fault: a drag stops at the last pose that builds.
+  It builds at preview quality. A print-quality export can still fail at a pose this run
+  passes, because the preview mesh is coarser. See "Which poses do not build" in
+  AUTHORING-PARTS.md.
 
 ### Recipes
 

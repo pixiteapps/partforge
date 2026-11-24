@@ -7,8 +7,15 @@
 // ranged control is one with a finite min and max. Every other control keeps its default.
 //
 // Each pose builds the view through the same buildView call measure makes, then frees the
-// kernel's objects. A pose that throws is listed with its error. Build warnings are not
-// failures. Nothing here runs lint, verify or measure.
+// kernel's objects. A pose that throws is listed with its error, `kind: "error"`. A pose
+// whose build warns that a body passes through itself (a preview subdiv build only warns
+// where a print-quality one throws) is listed too, `kind: "warning"`. The warnings come
+// from buildView's per-sub-part `warnings` (the kernel's takeBuildWarnings channel). Any
+// other build warning is not a failure. Nothing here runs lint, verify or measure.
+//
+// The backends also print each warning (`partforge: <message>`, console.warn). A warning
+// the sweep reports is in its result, so the sweep holds back its printed copy. Every other
+// printed line goes through unchanged.
 //
 // DOM-free, three-free and node:-free like the rest of the oracle.
 
@@ -86,8 +93,10 @@ export function rangePoses(part, { random = 24, seed = 1 } = {}) {
 // The cage faces a subdiv self-intersection message names (subdiv/index.js's
 // throughMessage): "… passes through itself between A and B; C and D; E folds through itself",
 // or "…: E folds through itself". Each face once per message.
+const THROUGH_RE = /^subdiv: the body passes through itself(?: between |: )(.*)$/;
+
 function facesNamed(message) {
-  const m = /^subdiv: the body passes through itself(?: between |: )(.*)$/.exec(message);
+  const m = THROUGH_RE.exec(message);
   if (!m) return [];
   const ids = [];
   for (const piece of m[1].split("; ")) {
@@ -100,23 +109,41 @@ function facesNamed(message) {
 }
 
 /**
- * Build `view` at every pose of rangePoses and report the ones that throw.
- * @returns {{ view: string, poses: number, failed: Array<{ name, params, error }>, faces: Array<{ id, count }> }}
- *   `faces`: the cage faces the errors name, most often first (each counted once per pose)
+ * Build `view` at every pose of rangePoses and report the ones that throw, or that warn
+ * that a body passes through itself.
+ * @returns {{ view: string, poses: number, failed: Array<{ name, params, kind: "error" | "warning", error }>, faces: Array<{ id, count }> }}
+ *   `error`: the thrown error's first line, or the first such warning
+ *   `faces`: the cage faces either kind names, most often first (each counted once per pose)
  */
 export function sweepRanges(kernel, part, view = Object.keys(part.views)[0], { random, seed } = {}) {
   const poses = rangePoses(part, { random, seed });
   const failed = [];
   const counts = new Map();
   for (const { name, params } of poses) {
+    const printed = [];
+    const warn = console.warn;
+    console.warn = (...args) => { printed.push(args); };
+    let entry = null;
+    let held = new Set();
     try {
-      buildView(kernel, part, view, params);
+      const built = buildView(kernel, part, view, params);
+      const through = built.flatMap((b) => b.warnings ?? []).map(String).filter((w) => THROUGH_RE.test(w));
+      if (through.length) {
+        entry = { name, params, kind: "warning", error: through[0], faces: [...new Set(through.flatMap(facesNamed))] };
+        held = new Set(through.map((w) => `partforge: ${w}`));
+      }
     } catch (e) {
       const error = firstLine(e);
-      failed.push({ name, params, error });
-      for (const id of facesNamed(error)) counts.set(id, (counts.get(id) ?? 0) + 1);
+      entry = { name, params, kind: "error", error, faces: facesNamed(error) };
     } finally {
+      console.warn = warn;
       kernel.cleanup?.();
+    }
+    for (const args of printed) if (!(args.length === 1 && held.has(String(args[0])))) console.warn(...args);
+    if (entry) {
+      const { faces: named, ...rest } = entry;
+      failed.push(rest);
+      for (const id of named) counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }
   // Most often first; ties keep the order the faces were first named in.

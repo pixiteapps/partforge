@@ -1,4 +1,4 @@
-// A box that refuses to build past w = 40: `measure --ranges` must list exactly the poses
+// A box that refuses to build past w = 40, and warns past h = 7.5: `measure --ranges` must list exactly the poses
 // past it and count the cage faces the error names (test/cli.test.js).
 export default {
   meta: { title: "Ranges fixture", units: "mm" },
@@ -10,6 +10,8 @@ export default {
   defaults: { w: 10, h: 4, lid: 0 },
   parts: { body: { label: "Body", build: (k, p) => {
     if (p.w > 40) throw new Error("subdiv: the body passes through itself between top and side.s1");
+    // A preview build only warns that a body passes through itself: --ranges reports that too.
+    if (p.h > 7.5) k._recordWarning("subdiv: the body passes through itself: lid.s0 folds through itself");
     return k.box({ min: [0, 0, 0], max: [p.w, 5, p.h] });
   }, views: { main: true } } },
   views: { main: { label: "Main" } },

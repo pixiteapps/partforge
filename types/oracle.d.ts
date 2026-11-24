@@ -212,8 +212,12 @@ export interface RangePose {
 export interface RangesResult {
   view: string;
   poses: number;
-  failed: Array<{ name: string; params: Record<string, ParamValue>; error: string }>;
-  /** The faces the errors name, most often first; each counted once per pose. */
+  /**
+   * `kind: "error"`: the build threw, and `error` is its first line. `kind: "warning"`: the
+   * build warned that a body passes through itself, and `error` is that warning.
+   */
+  failed: Array<{ name: string; params: Record<string, ParamValue>; kind: "error" | "warning"; error: string }>;
+  /** The faces either kind names, most often first; each counted once per pose. */
   faces: Array<{ id: string; count: number }>;
 }
 
@@ -223,5 +227,8 @@ export interface RangesResult {
  */
 export function rangePoses(part: PartDefinition, opts?: { random?: number; seed?: number }): RangePose[];
 
-/** Build `view` at every pose of `rangePoses` and list the ones that throw. Build warnings are not failures. */
+/**
+ * Build `view` at every pose of `rangePoses` and list the ones that throw, or that warn that
+ * a body passes through itself. Other build warnings are not failures.
+ */
 export function sweepRanges(kernel: GeometryKernel, part: PartDefinition, view?: string, opts?: { random?: number; seed?: number }): RangesResult;

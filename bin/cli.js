@@ -247,8 +247,10 @@ function printDrag(r, start) {
   }
 }
 
-// `measure --ranges`: oracle/ranges.js's sweepRanges, printed. Exit 0 whenever the sweep
-// ran: a pose that does not build is a fact about the part, not a failure of the command.
+// `measure --ranges`: oracle/ranges.js's sweepRanges, printed. A pose is listed when its
+// build throws ("error") or warns that the body passes through itself ("warning"). Exit 0
+// whenever the sweep ran: a pose that does not build is a fact about the part, not a
+// failure of the command.
 async function rangesCommand(part, view, flags, usage) {
   const count = (name, fallback) => {
     if (flags[name] === undefined) return fallback;
@@ -277,9 +279,10 @@ const RANGES_FACES_SHOWN = 8;
 function printRanges(r) {
   for (const f of r.failed) {
     const values = Object.entries(f.params).map(([k, v]) => `${k}=${v}`).join(" ");
-    console.log(`${f.name}  ${values ? `${values}  ` : ""}→  ${f.error}`);
+    console.log(`${f.name}  ${values ? `${values}  ` : ""}→  ${f.kind}: ${f.error}`);
   }
-  console.log(`${r.failed.length} of ${r.poses} poses did not build (view ${r.view})`);
+  const threw = r.failed.filter((f) => f.kind === "error").length;
+  console.log(`${r.failed.length} of ${r.poses} poses did not build cleanly (view ${r.view}): ${threw} threw, ${r.failed.length - threw} passed through themselves`);
   if (r.faces.length) {
     const shown = r.faces.slice(0, RANGES_FACES_SHOWN).map((f) => `${f.id} ×${f.count}`).join(", ");
     const more = r.faces.length > RANGES_FACES_SHOWN ? `, and ${r.faces.length - RANGES_FACES_SHOWN} more` : "";

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { rangePoses, sweepRanges } from "../src/framework/oracle/ranges.js";
 import * as testing from "../src/testing.js";
 import { bootManifoldKernel } from "../src/testing.js";
@@ -77,7 +77,7 @@ describe("sweepRanges", () => {
     expect(r.view).toBe("main");
     expect(r.poses).toBe(poses.length);
     expect(cleaned).toBe(poses.length);
-    expect(r.failed).toEqual(bad.map((q) => ({ name: q.name, params: q.params, error: THROUGH })));
+    expect(r.failed).toEqual(bad.map((q) => ({ name: q.name, params: q.params, kind: "error", error: THROUGH })));
     expect(r.faces).toEqual([{ id: "k.s1", count: bad.length }, { id: "k.s2", count: bad.length }]);
   });
 
@@ -85,6 +85,58 @@ describe("sweepRanges", () => {
     const r = sweepRanges({}, { ...stub, parts: { x: { build: () => { throw new Error("boom"); }, views: { main: true } } } }, "main", { random: 0 });
     expect(r.failed.length).toBe(FIRST.length);
     expect(r.failed[0].error).toBe("boom");
+    expect(r.failed[0].kind).toBe("error");
+    expect(r.faces).toEqual([]);
+  });
+
+  // A stand-in kernel with the build-warning channel buildView drains
+  // (kernel.takeBuildWarnings), whose recorder also prints, as the real backends do.
+  const warningKernel = () => {
+    let pending = [];
+    return {
+      record: (msg) => { pending.push(msg); console.warn(`partforge: ${msg}`); },
+      takeBuildWarnings: () => { const w = pending; pending = []; return w; },
+    };
+  };
+  const FOLD = "subdiv: the body passes through itself: k.s3 folds through itself";
+  const warner = {
+    ...part,
+    parts: { x: {
+      build: (k, p) => {
+        if (p.a > 8) throw new Error(THROUGH);
+        if (p.b < -4) k.record(FOLD);
+        k.record("fillet skipped: radius too large"); // an ordinary warning, never a failure
+        return { toMesh: () => ({ positions: new Float32Array(0), indices: new Uint32Array(0) }) };
+      },
+      views: { main: true },
+    } },
+    views: { main: {} },
+  };
+
+  it("reports a pose whose build warns that the body passes through itself, apart from one that throws", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = sweepRanges(warningKernel(), warner, "main", { random: 0 });
+      // b=min warns only. all min (a 0, b -5) warns too. a=max and all max throw.
+      expect(r.failed).toEqual([
+        { name: "a=max", params: { a: 10 }, kind: "error", error: THROUGH },
+        { name: "b=min", params: { b: -5 }, kind: "warning", error: FOLD },
+        { name: "all min", params: { a: 0, b: -5 }, kind: "warning", error: FOLD },
+        { name: "all max", params: { a: 10, b: 5 }, kind: "error", error: THROUGH },
+      ]);
+      expect(r.faces).toEqual([{ id: "k.s1", count: 2 }, { id: "k.s2", count: 2 }, { id: "k.s3", count: 2 }]);
+      // The reported warning is in the result, so the sweep does not also print it.
+      // An ordinary warning still prints.
+      const printed = spy.mock.calls.map((c) => String(c[0]));
+      expect(printed.some((m) => m.includes("passes through itself"))).toBe(false);
+      expect(printed.some((m) => m.includes("fillet skipped"))).toBe(true);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("reports nothing for a part that builds cleanly at every pose", () => {
+    const clean = { ...warner, parts: { x: { ...warner.parts.x, build: () => ({ toMesh: () => ({ positions: [], indices: [] }) }) } } };
+    const r = sweepRanges(warningKernel(), clean, "main", {});
+    expect(r.failed).toEqual([]);
     expect(r.faces).toEqual([]);
   });
 });
@@ -94,8 +146,13 @@ describe("sweepRanges on the cage hand", () => {
   beforeAll(async () => { k = await bootManifoldKernel(); }, 120000);
 
   it("builds every listed pose and the defaults build", () => {
-    const r = sweepRanges(k, cageHand, undefined, { random: 6 });
-    expect(r.poses).toBe(1 + 2 * 11 + 2 + 6);
-    expect(r.failed.map((f) => f.name)).not.toContain("defaults");
+    const spy = vi.spyOn(console, "warn");
+    try {
+      const r = sweepRanges(k, cageHand, undefined, { random: 6 });
+      expect(r.poses).toBe(1 + 2 * 11 + 2 + 6);
+      expect(r.failed.map((f) => f.name)).not.toContain("defaults");
+      for (const f of r.failed) expect(f.kind).toMatch(/^(error|warning)$/);
+      expect(spy.mock.calls.some((c) => String(c[0]).includes("passes through itself"))).toBe(false);
+    } finally { spy.mockRestore(); }
   }, 300000);
 });
