@@ -311,7 +311,7 @@ test("the guide's hand is the reference part's, line for line", () => {
   // The handles the prose shows are the part's.
   expect(cageHandPart.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
   expect(cageHandPart.handles.index).toEqual({ on: "index", drag: "angles", params: ["indexKnuckle", "indexCurl"], joints: { mcp: "indexKnuckle", pip: "indexCurl" } });
-  expect(d.thumb.bones.joints.map((j) => j.name)).toEqual(["abduct", "oppose", "lean", "tilt", "roll", "mcp", "ip"].map((j) => `thumb.${j}`));
+  expect(d.thumb.bones.joints.map((j) => j.name)).toEqual(["abduct", "oppose", "mcp", "ip"].map((j) => `thumb.${j}`));
 });
 
 test("the guide's hand builds clean open, at its defaults and as a fist, at preview and at print", async () => {

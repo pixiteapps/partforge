@@ -46,10 +46,10 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   const d = part.derive(part.defaults);
   expect(Object.keys(d).sort()).toEqual([...DIGITS].sort());
   // Each finger's limb starts at its base knuckle in the palm; the thumb's at the wrist,
-  // with three joints at its root that never move.
+  // with its two base joints there.
   // The ring and little fingers have one more joint low in the palm, which cups it.
   for (const f of FINGERS) expect(d[f].bones.joints.map((j) => j.name)).toEqual([...(f === "ring" || f === "pinky" ? [`${f}.cup`] : []), `${f}.mcp`, `${f}.pip`, `${f}.dip`]);
-  expect(d.thumb.bones.joints.map((j) => j.name.slice(6))).toEqual(["abduct", "oppose", "lean", "tilt", "roll", "mcp", "ip"]);
+  expect(d.thumb.bones.joints.map((j) => j.name.slice(6))).toEqual(["abduct", "oppose", "mcp", "ip"]);
   for (const n of DIGITS) expect(d[n].bones.r, n).not.toBeNull();
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
