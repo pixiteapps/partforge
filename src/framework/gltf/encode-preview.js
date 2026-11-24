@@ -74,8 +74,27 @@
 //    compaction / attribute.clone()), which would split a shared POSITION back
 //    into two arrays. Endpoints are mapped after weld+reorder (the final vertex
 //    order) and appended before quantize (so they are quantized with the rest).
+//  - a mesh with `ties` (a k.subdiv body's vertices tied to its smooth surface,
+//    geometry/subdiv/ties.js; version 7) adds, on its surface primitive, two
+//    application attributes in the FILE's vertex order (after weld + reorder):
+//      * _PARTFORGE_TIE_TRI, VEC2 UNSIGNED_SHORT: the limit triangle as
+//        (low 16 bits, high 16 bits) — glTF allows UNSIGNED_INT for indices only;
+//      * _PARTFORGE_TIE_W, VEC2 UNSIGNED_SHORT normalized: the weights of the
+//        triangle's corners A and B (C's is 1 − w0 − w1), clamped to [0, 1]
+//        and rounded to 1/65535;
+//    and the node extra partforgeTies = { key, level, pose }: the cage's topology
+//    key, the subdivision level, and `pose`, the column-major matrix from the
+//    cage's frame to the positions the file decodes to (a fast-path pose, times
+//    the animation's rest rel(0) on an animated node). Nothing else of the cage
+//    is stored: a reader with the part runs its cage code at partforgeParams and
+//    checks the key. A welded vertex takes the tie of the first input vertex
+//    with its exact position and normal (any of them lies on the same point of
+//    the surface); an appended edge endpoint, which no triangle draws, takes
+//    triangle 0 with weights 0. The attributes are added after quantize(), like
+//    the lines, so quantize() leaves them as written. A mesh without `ties`
+//    writes exactly what version 6 wrote.
 // Not encoded: textures, patterns. (Feature edges since version 2, shared
-// vertices since version 3.)
+// vertices since version 3, ties since version 7.)
 //
 // Runs in Node, a page and a Web Worker: no three.js, no DOM, no Blob
 // (test/gltf-layering.test.js). Deterministic: the same input writes the same
@@ -85,6 +104,7 @@
 import { Document, Logger, Node, Primitive, WebIO } from "@gltf-transform/core";
 import { EXTMeshoptCompression, KHRMeshQuantization } from "@gltf-transform/extensions";
 import { quantize, reorder, weld } from "@gltf-transform/functions";
+import { PREVIEW_POSITION_BITS } from "./preview-format.js";
 import { MeshoptEncoder } from "meshoptimizer/encoder";
 import { cadAppearance, DISPLAY_KEYS } from "../materials/resolve.js";
 import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
@@ -92,8 +112,8 @@ import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
 // 2: feature edges as a LINES primitive; 3: sharing the surface's vertices;
 // 4: animation channels + partforgeAnimation extras; 5: same format, but a forge
 // whose tracked param reaches build() only through derive now bakes its animation;
-// 6: partforgeParams extra — the params the meshes sit at
-export const PREVIEW_ENCODER_VERSION = 6;
+// 6: partforgeParams extra — the params the meshes sit at; 7: a cage body's ties
+export const PREVIEW_ENCODER_VERSION = 7;
 
 // −90° about X as [x, y, z, w]: model (x, y, z) → glTF (x, z, −y), the viewer's pivot.
 const Z_UP_TO_Y_UP = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
@@ -135,10 +155,10 @@ function paramsExtras(params) {
   return Object.keys(out).length ? out : null;
 }
 
-// quantize()'s default POSITION precision; one step of it over the mesh's widest
-// extent is the snapping tolerance — closer than that, quantization itself may
+// quantize()'s POSITION precision (preview-format.js); one step of it over the mesh's
+// widest extent is the snapping tolerance — closer than that, quantization itself may
 // put the two points on one grid value.
-const POSITION_BITS = 14;
+const POSITION_BITS = PREVIEW_POSITION_BITS;
 // quantize() compacts a primitive whose index count is under half its vertex
 // count — which would drop the appended endpoints no triangle references.
 const compactsAt = (indexCount, vertexCount) => indexCount < vertexCount / 2;
@@ -315,6 +335,7 @@ function checkMesh(m, seen) {
     }
     if (m.edges.length % 6 !== 0) throw new Error(`encodePreviewGlb: "${m.name}" edges are not whole segments`);
   }
+  if (m.ties != null) checkTies(m);
   if (indexed) {
     const vertexCount = m.positions.length / 3;
     for (let i = 0; i < m.indices.length; i++) {
@@ -323,6 +344,76 @@ function checkMesh(m, seen) {
       }
     }
   }
+}
+
+// ── Ties (version 7) ─────────────────────────────────────────────────────────
+
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+function checkTies(m) {
+  const { ties } = m;
+  const n = m.positions.length / 3;
+  const fail = (what) => { throw new TypeError(`encodePreviewGlb: "${m.name}" ties ${what}`); };
+  if (typeof ties !== "object") fail("must be an object");
+  if (typeof ties.key !== "string" || !ties.key) fail("need a topology key");
+  if (!Number.isInteger(ties.level) || ties.level < 0) fail("need a whole, non-negative level");
+  if (!(ties.tri instanceof Uint32Array) || ties.tri.length !== n) fail("need one Uint32 triangle per vertex");
+  if (!ArrayBuffer.isView(ties.w) || ties.w.length !== 2 * n) fail("need two weights per vertex");
+  if (ties.pose != null && !(ties.pose.length === 16 && Array.prototype.every.call(ties.pose, Number.isFinite))) fail("pose must be 16 finite numbers");
+}
+
+// Each vertex of the welded, reordered surface → the input vertex it came from:
+// the first with its exact position and normal bits (weld() merges only exact matches).
+function weldedSources(input, positions, normals) {
+  const n = input.positions.length / 3;
+  const width = input.normals?.length ? 6 : 3;
+  const keyOf = (pos, nor, v, out) => {
+    for (let a = 0; a < 3; a++) out[a] = bitsOf(pos[v * 3 + a]);
+    if (width === 6) for (let a = 0; a < 3; a++) out[3 + a] = bitsOf(nor[v * 3 + a]);
+    return out;
+  };
+  const size = (() => { let s = 16; while (s < n * 2) s *= 2; return s; })();
+  const keys = new Uint32Array(size * width);
+  const values = new Int32Array(size).fill(-1);
+  const k = new Uint32Array(width);
+  const slot = () => {
+    let h = 0;
+    for (let a = 0; a < width; a++) h = Math.imul(h ^ k[a], 2654435761);
+    return (h >>> 0) & (size - 1);
+  };
+  const matches = (s) => { for (let a = 0; a < width; a++) if (keys[s * width + a] !== k[a]) return false; return true; };
+  for (let v = 0; v < n; v++) {
+    keyOf(input.positions, input.normals, v, k);
+    let s = slot();
+    while (values[s] !== -1 && !matches(s)) s = (s + 1) & (size - 1);
+    if (values[s] === -1) { keys.set(k, s * width); values[s] = v; }
+  }
+  const count = positions.length / 3;
+  const sources = new Int32Array(count);
+  for (let v = 0; v < count; v++) {
+    keyOf(positions, normals, v, k);
+    let s = slot();
+    while (values[s] !== -1 && !matches(s)) s = (s + 1) & (size - 1);
+    if (values[s] === -1) throw new Error(`encodePreviewGlb: a welded vertex of "${input.name}" matches no input vertex`);
+    sources[v] = values[s];
+  }
+  return sources;
+}
+
+// The two tie attributes for `count` file vertices: the first sources.length from
+// their input vertex, the rest (appended edge endpoints) triangle 0, weights 0.
+function tieArrays({ tri, w }, sources, count) {
+  const triOut = new Uint16Array(2 * count);
+  const wOut = new Uint16Array(2 * count);
+  const q = (x) => Math.round(Math.min(1, Math.max(0, x)) * 65535);
+  for (let v = 0; v < sources.length; v++) {
+    const s = sources[v], t = tri[s];
+    triOut[2 * v] = t & 0xffff;
+    triOut[2 * v + 1] = t >>> 16;
+    wOut[2 * v] = q(w[2 * s]);
+    wOut[2 * v + 1] = q(w[2 * s + 1]);
+  }
+  return { triOut, wOut };
 }
 
 // ── The baked animation (version 4) ─────────────────────────────────────────
@@ -407,7 +498,7 @@ function animationTracks(animation, names) {
       rotations.push(q);
     }
     tracks.set(name, {
-      rest: { translation: [rels[0][12], rels[0][13], rels[0][14]], rotation: rotations[0] },
+      rest: { translation: [rels[0][12], rels[0][13], rels[0][14]], rotation: rotations[0], matrix: rels[0] },
       keys: moves ? { translations: rels.map((r) => [r[12], r[13], r[14]]), rotations } : null,
     });
   }
@@ -479,6 +570,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
   const fileParams = paramsExtras(params);
 
   const pending = []; // { mesh, surface, edges } — line primitives to add after quantize()
+  const tied = []; // { input, surface } — tie attributes to add after quantize()
   const nodesByName = new Map();
   for (const m of meshes) {
     if (m.positions.length === 0) continue; // glTF forbids a zero-count accessor
@@ -502,10 +594,20 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
     const mesh = doc.createMesh(m.name).addPrimitive(prim);
     if (m.edges?.length) pending.push({ mesh, surface: prim, edges: Float32Array.from(m.edges) });
     const extras = displayExtras(display);
+    const rest = tracks?.get(m.name)?.rest;
+    let tieExtras = null;
+    if (m.ties) {
+      tied.push({ input: m, surface: prim });
+      const pose = m.ties.pose ? Array.from(m.ties.pose) : IDENTITY;
+      tieExtras = { key: m.ties.key, level: m.ties.level, pose: rest ? mulMat4(rest.matrix, pose) : pose };
+    }
     const node = doc.createNode(m.name)
       .setMesh(mesh)
-      .setExtras(extras ? { partforgeSubPart: m.name, partforgeDisplay: extras } : { partforgeSubPart: m.name });
-    const rest = tracks?.get(m.name)?.rest;
+      .setExtras({
+        partforgeSubPart: m.name,
+        ...(extras ? { partforgeDisplay: extras } : {}),
+        ...(tieExtras ? { partforgeTies: tieExtras } : {}),
+      });
     if (rest) node.setTranslation(rest.translation).setRotation(rest.rotation); // before the fallback's `before` snapshot
     nodesByName.set(m.name, node);
     root.addChild(node);
@@ -523,6 +625,10 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
 
   // The surfaces alone through weld + reorder: their vertex arrays are final after this.
   await doc.transform(weld(), reorder({ encoder: MeshoptEncoder, target: "size" }));
+  // Each welded vertex's input vertex, read before any edge endpoint is appended.
+  for (const t of tied) {
+    t.sources = weldedSources(t.input, t.surface.getAttribute("POSITION").getArray(), t.surface.getAttribute("NORMAL")?.getArray());
+  }
 
   // Map each endpoint onto those vertices; append the ones on none. Then quantize
   // with the appended vertices in place, and only then add the line primitives.
@@ -558,7 +664,8 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
     shared.push({ mesh, surface, pairs, vertexCount });
   }
 
-  await doc.transform(quantize());
+  for (const t of tied) t.count = t.surface.getAttribute("POSITION").getCount(); // endpoints appended
+  await doc.transform(quantize({ quantizePosition: POSITION_BITS }));
 
   // quantize() moves an animated node's mesh onto a new, unnamed child (the
   // dequantization must not ride the animated TRS). Name that child and give it
@@ -596,6 +703,13 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
       .setAttribute("POSITION", position)
       .setIndices(doc.createAccessor().setType("SCALAR")
         .setArray(vertexCount < 65535 ? new Uint16Array(pairs) : pairs).setBuffer(buffer)));
+  }
+  for (const { input, surface, sources, count } of tied) {
+    // quantize() replaced the accessors but kept the order; any appended endpoints come last.
+    if (surface.getAttribute("POSITION").getCount() !== count) throw new Error("encodePreviewGlb: quantize() changed a surface's vertex count");
+    const { triOut, wOut } = tieArrays(input.ties, sources, count);
+    surface.setAttribute("_PARTFORGE_TIE_TRI", doc.createAccessor().setType("VEC2").setArray(triOut).setBuffer(buffer));
+    surface.setAttribute("_PARTFORGE_TIE_W", doc.createAccessor().setType("VEC2").setArray(wOut).setNormalized(true).setBuffer(buffer));
   }
   // meshopt({ level: "medium" })'s last step: compress every buffer view, attributes as quantized.
   doc.createExtension(EXTMeshoptCompression).setRequired(true)

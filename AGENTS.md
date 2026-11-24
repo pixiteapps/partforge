@@ -371,7 +371,14 @@ the installed package, so let the publish finish before bumping the dep there.
   them would get their own vertex array back. Empty or absent `edges` writes none
   and decodes to an EMPTY array, never undefined, which would make the viewer
   derive lines by angle. Materials from `cadAppearance`, the sub-part's `display`
-  block in node extras). Versions 1 and 2 still decode (`test/fixtures/preview-v1.glb`,
+  block in node extras). Since version 7 a k.subdiv body's `ties` ride along: two
+  application attributes (`_PARTFORGE_TIE_TRI`, two u16 halves of the limit triangle;
+  `_PARTFORGE_TIE_W`, two normalized u16 weights) in the file's own vertex order, mapped
+  after weld + reorder and added after quantize like the lines, plus the node extra
+  `partforgeTies` `{ key, level, pose }`. The cage's points are not stored: a reader with
+  the part runs its cage code at `partforgeParams` and checks the key. A mesh with no
+  ties writes version 6's bytes, the version digit apart (`test/fixtures/preview-v6*.glb`,
+  `test/gltf-encode-ties.test.js`). Versions 1 and 2 still decode (`test/fixtures/preview-v1.glb`,
   `preview-v2.glb`). It is
   worker-safe — no three.js, no DOM, no Blob (`test/gltf-layering.test.js`) — and
   deterministic; bump `PREVIEW_ENCODER_VERSION` whenever its bytes change, since
@@ -472,7 +479,20 @@ the installed package, so let the publish finish before bumping the dep there.
   `PREVIEW_HANDLE_SAMPLES`; mount-preview steps it one handle per idle slice,
   `previewHandlesStepper`); `measure()` reports it as `previewHandles` only when
   asked (`previewHandles: true`, which the CLI's measure verb passes — the inspect
-  path never pays for it). While a baked animation plays, `getParams()` follows the
+  path never pays for it). Since 0.202.0 a version 7 file's tied cage body may be
+  re-posed too (`preview-cage.js`): the plan is rebuilt from the probe's snapshot at the
+  file params (in the cage's frame; `ties.pose` moves each deform into the decoded
+  frame), checked once in idle time with `tiesAgree(…, { tolerance, quantized: true })`
+  (tolerance from the decoder's `ties.step`), and `previewHandlesStepper`'s `cageKeys`
+  accepts a handle whose samples keep that body trusted, cagePosable, of the file's key
+  and shapeHash. A pose the deform cannot draw is invalid (no exact build follows), so
+  the guard stops the handle; the release leaves the last pose drawn. A part whose
+  `collisions` keep pieces solid in Pose mode gets no re-posed cage body
+  (`collisionsCoverCages`): the collision index holds the file's meshes. The cage-base
+  entry rule is one export, `cagePosableEntry` (skin/cage-deform.js), for the editor and
+  the preview. `measure()` learns
+  the keys by meshing each cagePosable canonical build with `ties: true`
+  (`previewTieKeys`), so its answer is for a file this version writes. While a baked animation plays, `getParams()` follows the
   player (the live params under its values); a press pauses it and writes them.
   Since 0.194.0 the file may bake ANY animation of its view, not only the autoplay
   one: `samplePreviewAnimation`'s `animation` option names it (undefined keeps the

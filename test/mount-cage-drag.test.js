@@ -189,6 +189,7 @@ import { mount } from "../src/framework/mount.js";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import { probePoses } from "../src/framework/pose-probe.js";
 import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
+import { decodePreviewGlb } from "../src/framework/gltf/decode-preview.js";
 
 // A box with an arm out of +x; `swing` turns the arm's last segment about its hinge. At 60°
 // it is clear; at 140° it is back through the arm, and the drag check refuses it; at 120°
@@ -850,3 +851,33 @@ describe("the skin controller with a cage base", () => {
 
 const SKIN_PAUSE = 150;
 const DEBOUNCE = 180;
+
+describe("exportPreview with a cage body (encoder version 7)", () => {
+  // The fake viewer's export read, made to return what was delivered, as the real one does
+  // (getSubMeshPayload: the drawn geometry, posed, plus that pose).
+  const exportsDelivered = (v) => v.getSubMeshPayload.mockImplementation((name) => {
+    const p = v.setSubGeometry.mock.calls.filter(([n]) => n === name).at(-1)?.[1];
+    return p ? { name, positions: p.positions.slice(), normals: p.normals.slice(), edges: p.edges ?? new Float32Array(0), indices: null, triangles: p.positions.length / 9, pose: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] } : null;
+  });
+
+  test("the delivered ties ride in the file, with the cage's key and level", async () => {
+    const { runtime, v } = setup();
+    exportsDelivered(v);
+    vi.useRealTimers();
+    const [mesh] = (await decodePreviewGlb(await runtime.exportPreview())).meshes;
+    expect(mesh.ties).toBeTruthy();
+    expect(mesh.ties.key).toBe(built[0].ties.key);
+    expect(mesh.ties.level).toBe(built[0].ties.level);
+    expect(mesh.ties.tri.length).toBe(mesh.positions.length / 3);
+    runtime.dispose();
+  });
+
+  test("a part with no cage: no ties in the file", async () => {
+    const { runtime, v } = setup({ part: plainPart(), first: delivery("plain") });
+    exportsDelivered(v);
+    vi.useRealTimers();
+    const [mesh] = (await decodePreviewGlb(await runtime.exportPreview())).meshes;
+    expect(mesh).not.toHaveProperty("ties");
+    runtime.dispose();
+  });
+});

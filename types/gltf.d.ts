@@ -32,6 +32,15 @@ export interface PreviewMesh {
    * writes none, and decodes as "no feature edges".
    */
   edges?: Float32Array | null;
+  /**
+   * A k.subdiv body's ties (encoder version 7), as the worker's `meshes` reply delivers them:
+   * per vertex of `positions`, a limit triangle of the cage's smooth surface at `level` and the
+   * weights of its corners A and B. `key` is the cage's topology key. `pose` (column-major, the
+   * identity when absent) maps the cage's frame onto `positions`. Stored in the file's own vertex
+   * order as `_PARTFORGE_TIE_TRI` / `_PARTFORGE_TIE_W` and the node extra `partforgeTies`; the
+   * cage's points are not stored (a reader runs the part's cage code at `partforgeParams`).
+   */
+  ties?: { key: string; level: number; tri: Uint32Array; w: Float32Array; pose?: ArrayLike<number> | null } | null;
 }
 
 export interface EncodePreviewInput {
@@ -60,7 +69,7 @@ export interface EncodePreviewInput {
   animation?: PreviewAnimationInput | null;
 }
 
-/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras; 6: partforgeParams). */
+/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras; 6: partforgeParams; 7: a cage body's ties). */
 export const PREVIEW_ENCODER_VERSION: number;
 
 /** Encode one view's posed meshes as a welded, quantized, meshopt-compressed GLB (Y-up, millimetres). Deterministic. */

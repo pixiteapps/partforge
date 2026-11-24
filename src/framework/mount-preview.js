@@ -130,6 +130,12 @@
 // press stops a turntable as a camera grab does. `motion.restart()` puts the
 // params, and every mesh, back where the file put them first.
 //
+// A k.subdiv body whose file carries its ties (encoder version 7, 0.202.0) is re-posed
+// too: a handle that moves only its cage's points shows, and each move deforms the file's
+// mesh from the cage the part's code builds at the new params (preview-cage.js). A pose
+// the body cannot draw stops the handle (the drag guard), and the release leaves the last
+// pose drawn: a preview has no exact build. An older file keeps those handles hidden.
+//
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
@@ -146,6 +152,7 @@ import { createPreviewPlayer, animationPoses } from "./preview-player.js";
 import { attachPreviewPlayButton } from "./preview-play-button.js";
 import { NOOP_POSE } from "./pose/noop-pose.js";
 import { createFilePlacer, previewHandlesStepper } from "./preview-pose.js";
+import { createPreviewCages } from "./preview-cage.js";
 import { createPoseMode } from "./pose/pose-mode.js";
 import { attachPoseControls } from "./pose/pose-controls.js";
 import { attachDragReadout } from "./pose/drag-readout.js";
@@ -255,6 +262,11 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   const fileParams = Object.freeze({ ...params });
   const placer = createFilePlacer(part, view, fileParams, drawnNames);
   const live = (fn) => (...args) => (isDisposed() ? undefined : fn(...args));
+  // The cage bodies the file's ties let a drag re-pose (encoder version 7, preview-cage.js),
+  // none for an older file. A sub-part the baked animation moves is not one of them.
+  const cages = createPreviewCages(part, view, fileParams, decoded.meshes.filter((m) => drawnNames.includes(m.name)), {
+    animated: Object.keys(decoded.animation?.tracks ?? {}),
+  });
 
   // The params follow the player (spec §5). While the baked animation plays (or tweens
   // to its intro view) the meshes sit at the player's matrices, so getParams answers the
@@ -293,10 +305,20 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     Object.assign(params, atPlayer(t));
   });
   // The session snaps on release (and the chip wraps), so a write takes values as given.
+  // A cage body follows by deforming its file mesh (or holds its last valid pose: the drag
+  // guard below has already refused a pose it cannot draw).
   const write = live((values) => {
     Object.assign(params, values);
-    withDeriveMemo(() => placer.apply(viewer, params));
+    withDeriveMemo(() => {
+      placer.apply(viewer, params);
+      cages.show(viewer, params);
+    });
     viewer.requestRender();
+  });
+  // The chip's typed values: refused whole when a cage body could not draw them.
+  const writeTyped = live((values) => {
+    if (!cages.isClear(viewer, { ...params, ...values })) return;
+    write(values);
   });
   // `showOn`: the sub-part under the last pointermove, raycast when asked (once per point).
   let pointer = null, hovered = null;
@@ -318,11 +340,12 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     restore: write,
     // onDragEnd's listeners are pose mode's own; this only keeps the __lastDragEnd hook.
     commit: live((changed) => { lastDragEnd = { changed }; }),
-    staleSubParts: () => [], // nothing rebuilds: a shown handle is place-only
+    staleSubParts: () => [], // nothing rebuilds: a shown handle is place-only or re-poses a cage body
     ghost() {},
     unghost() {},
     hold,
-    collide: (args) => poseCollide?.guardFor(args) ?? null,
+    // A pose a cage body cannot draw stops the handle, as a collision does.
+    collide: (args) => cages.guard(viewer, getParams(), poseCollide?.guardFor(args) ?? null),
     onBlocked: live((pair) => poseCollide?.tint(pair)),
     visibleHandles: () => preview.visible?.shown ?? [],
     hoveredSubPart,
@@ -339,7 +362,8 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   }
   viewer.domElement.addEventListener("pointermove", onMove);
   cleanups.push(() => viewer.domElement.removeEventListener("pointermove", onMove));
-  cleanups.push(poseMode.onDragEnd((e) => { lastDragEnd = e; onDragEnd(e); }));
+  // A drag's cage plans go with it; the pose it left stays drawn.
+  cleanups.push(poseMode.onDragEnd((e) => { cages.endDrag(); lastDragEnd = e; onDragEnd(e); }));
   let readout = null;
   if (chrome) {
     const controls = attachPoseControls(viewer, poseMode, { viewbar: toolbar }, { tooltip });
@@ -347,7 +371,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     const pill = readout = attachDragReadout(poseMode, { viewbar: toolbar });
     cleanups.push(() => pill.detach());
   }
-  const chip = attachReadoutChip(viewer, poseMode, { stage: container }, { part, getParams, apply: (values) => write(values) });
+  const chip = attachReadoutChip(viewer, poseMode, { stage: container }, { part, getParams, apply: (values) => { writeTyped(values); cages.endDrag(); } });
   cleanups.push(() => chip.detach());
 
   // Every mesh the file draws is in its own canonical frame — the placer poses each by a
@@ -374,7 +398,10 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     if (isDisposed()) return;
     let done;
     try {
-      stepper ??= previewHandlesStepper(part, view, fileParams, drawnNames);
+      // First prove each cage body's ties against its rebuilt plan, one per slice, so a file
+      // whose ties disagree keeps that body's handles hidden.
+      if (cages.verifyNext()) { idle(slice); return; }
+      stepper ??= previewHandlesStepper(part, view, fileParams, drawnNames, { cageKeys: cages.keys() });
       do done = stepper.step(); while (!done && (deadline?.timeRemaining?.() ?? 0) > 2);
     } catch {
       stepper = null; done = true; // fails closed: no handle shows
@@ -386,7 +413,17 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   };
   drawn.then(() => idle(slice), () => {});
 
-  Object.assign(preview, { params, fileParams, placer, poseMode, poseCollide });
+  Object.assign(preview, {
+    params, fileParams, placer, cages, poseMode, poseCollide,
+    // Test hook (scripts/check-pose.mjs): a sum over a drawn sub-part's positions, as shown.
+    positionsSum: (name) => {
+      const p = viewer.getSubMeshPayload(name)?.positions;
+      if (!p) return null;
+      let s = 0;
+      for (let i = 0; i < p.length; i++) s += p[i] * ((i % 7) + 1);
+      return s;
+    },
+  });
   return {
     poseMode,
     getParams,
@@ -395,6 +432,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     resetParams: live(() => {
       if (poseMode.isDragging() || poseMode.session.isActive()) poseMode.session.cancel();
       write(fileParams);
+      cages.endDrag();
     }),
     dragReadout: () => readout?.text() ?? null,
     lastDragEnd: () => (lastDragEnd ? { ...lastDragEnd } : null),

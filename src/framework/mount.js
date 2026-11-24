@@ -2753,7 +2753,17 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // The file also carries the params its meshes sit at: the live ones, with the
     // BAKED animation's t = 0 values over them (openingParams) — a baked
     // animation's tracked meshes decode at its first frame; a still file, the live ones.
+    // A cage body's ties ride along (encoder version 7) when the mesh on screen is its
+    // last exact canonical delivery, not deformed by a drag, with one tie per vertex;
+    // with them goes the fast-path pose that maps their frame onto the positions.
     // The encoder loads on first use: a host that never exports never pays for it.
+    function withTies(payload) {
+      const exact = lastExact.get(payload.name);
+      const ties = exact?.ties;
+      if (!ties || exact.frame !== "canonical" || provisional.has(payload.name) || skin.isDeformed(payload.name)
+        || ties.tri?.length * 3 !== payload.positions.length) return payload;
+      return { ...payload, ties: { key: ties.key, level: ties.level, tri: ties.tri, w: ties.w, pose: payload.pose ?? null } };
+    }
     async function exportPreview({ view: wanted } = {}) {
       if (disposed) throw new Error("exportPreview: this mount is disposed");
       if (previewGate.isActive()) throw new Error("exportPreview: a cached preview is showing — wait for the first build");
@@ -2765,7 +2775,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       if (needed.length === 0 || missingParts().length > 0) {
         throw new Error("exportPreview: the view on screen is not fully built");
       }
-      const meshes = needed.map((name) => viewer.getSubMeshPayload(name)).filter(Boolean);
+      const meshes = needed.map((name) => viewer.getSubMeshPayload(name)).filter(Boolean).map(withTies);
       // The view's autoplay animation, sampled at the params the meshes above were
       // built at. Build reads come from the cache's stamps; null (no stamp, or an
       // every-param stamp) is unknown, so the animation is left out.

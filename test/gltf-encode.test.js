@@ -33,10 +33,6 @@ const meshes = () => [
 const nodeNamed = (doc, name) => doc.getRoot().listNodes().find((n) => n.getName() === name);
 const materialOf = (doc, name) => nodeNamed(doc, name).getMesh().listPrimitives()[0].getMaterial();
 
-test("PREVIEW_ENCODER_VERSION is 6 (the file carries the params its meshes sit at)", () => {
-  expect(PREVIEW_ENCODER_VERSION).toBe(6);
-});
-
 test("params ride along as partforgeParams, primitives only; omitted writes no extra", async () => {
   const font = new Uint8Array([1, 2, 3]);
   const withParams = await readGlb(await encodePreviewGlb({
