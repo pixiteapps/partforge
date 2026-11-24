@@ -369,8 +369,9 @@ index.pose({ reach: [-30, 160, -20] }).report;
   to joint), minus `clearance`, is ≤ 0.
 - **Closing.** Grip starts from the pose's own `bend`/`curl` values, clamped into range.
   Then each driven bend joint closes in turn, **base joint first**, toward its closing
-  end. Its followers move with it. A joint stops at the first contact (a scan, then a
-  40-step bisection, so it stops on the clear side). A joint that reaches its closing
+  end. Its followers move with it, and a follower that comes before it in the limb
+  moves its own segment too. A joint stops at the first contact on any segment it
+  moves (a scan, then a 40-step bisection, so it stops on the clear side). A joint that reaches its closing
   end with no contact stays there, with `touched: false`. Joints on other axes are not
   moved, and keep their `bend` values.
 - **Scan steps.** Each joint's scan has from 48 to 1024 even steps. The count is set so
@@ -395,8 +396,9 @@ index.pose({ reach: [-30, 160, -20] }).report;
     start value, and its `touched` is always false.
   - For a joint that closed (`skipped: false`), `touched` is read from the final pose,
     because a later joint can swing an earlier contact away. The joint is `touched` if
-    it made contact while it closed, and the limb from that joint to the tip is still
-    in contact.
+    it made contact while it closed, and the segments it moves are still in contact.
+    Those are the segments from that joint to the tip, and from an earlier follower of
+    it when it has one.
 
 ```js
 const rod = { kind: "cylinder", r: 8, h: 40, axis: "x", at: [-30, 130, -22] };

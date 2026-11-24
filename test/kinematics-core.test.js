@@ -235,7 +235,7 @@ describe("a follower of a later joint", () => {
   it("reach refuses a follower that follows an aim joint through another follower", () => {
     const l = limb("y", { toward: [0, 1, 0], bendToward: [0, 0, -1], lengths: [40, 25, 20],
       joints: ["mcp", { name: "pip", follow: { joint: "dip" } }, { name: "dip", follow: { joint: "mcp" } }] });
-    expect(() => l.pose({ reach: [0, 50, 0] })).toThrow('limb "y".joints[1].follow: reach sets "mcp" to aim the limb, so "pip" cannot follow it');
+    expect(() => l.pose({ reach: [0, 50, 0] })).toThrow('limb "y".joints[1].follow: reach sets "mcp" to aim the limb, so "pip" cannot follow it — follow a driven joint after the aim');
   });
   it("rest pose and curl couple a follower that comes before its leader", () => {
     const l = limb("f", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10, 10],
