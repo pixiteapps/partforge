@@ -72,6 +72,8 @@ const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} 
 // Same no-op-default stance as attachTooltips/setHostPane below, for a
 // makeHandle caller (or a direct test) that doesn't wire measure mode.
 const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
+// Without onPick nothing picks, so the host's switch reads off and moves nothing.
+const NOOP_PICKING = { isEnabled: () => false, setEnabled: () => {} };
 // Same stance as NOOP_MEASURE: the handle's annotate surface exists whether or
 // not this mount wired the mode (it wires only when the host passes
 // onAnnotationSend — without a sink, Send would have nowhere to go).
@@ -99,7 +101,7 @@ const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFin
 
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
+export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, picking, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
@@ -306,6 +308,11 @@ export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, lis
     // distance); clearPins() is the Clear button. Dimensions render in the scene, so a dimensioned capture is just
     // captureCurrent() taken while the mode is on.
     measure: measure ?? NOOP_MEASURE,
+    // Click-to-select switch: { isEnabled, setEnabled }, same shape as measure.
+    // Off, a click only orbits (no onPick, no popover, no background close) and the
+    // hover label stands down; an open popover stays until the host closes it.
+    // Not viewer state: a remount comes up on.
+    picking: picking ?? NOOP_PICKING,
     // Annotation-mode API (spec 2026-08-18): { isEnabled, setEnabled, clear,
     // strokeCount, send, onModeChange } — an embedder drives the mode without
     // the built-in pencil button. send() delivers to onAnnotationSend and
@@ -1345,8 +1352,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // while a pose dot is hovered or pressed — measure's highlight + dims take the
     // pointer; annotate's overlay canvas takes it entirely; a pose handle does while
     // the pointer is on it (between handles, the tooltip names the feature as ever).
+    // The host's picking switch (runtime.picking) stands it down too, the way
+    // measure does: with picking off a click does nothing, so the label's
+    // "Click to edit" would be wrong.
+    let pickingOn = true;
     const syncHoverSuppression = () =>
-      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.claimsHover() ?? false));
+      hover.setSuppressed(!pickingOn || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.claimsHover() ?? false));
     cleanup.defer(measureMode.onModeChange(syncHoverSuppression));
     if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncHoverSuppression));
     if (poseMode) cleanup.defer(poseMode.onHoverChange(syncHoverSuppression));
@@ -1383,7 +1394,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // A press that grabbed a pose handle claims its click (a pin toggle or the end
         // of a drag), so it never also picks: takeClick() answers once, and comes
         // first so the claim is spent on this click even when another guard is up.
-        suppressed: () => (poseMode?.takeClick() ?? false) || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
+        // The host's picking switch is OR'd in after it, and holds onMiss off too,
+        // so a background click leaves an open popover alone.
+        suppressed: () => (poseMode?.takeClick() ?? false) || !pickingOn || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
         // A click on the background, past the part, puts the selection away.
         onMiss: () => { if (selPopover?.isOpen()) selPopover.close("clear"); },
         onPick: (selection, anchor, hit) => {
@@ -2816,6 +2829,14 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       exportKit: (opts) => exportCtl.exportKit(opts),
       warmExportKernel: () => exportCtl.warmKernel(),
       animation: animCtl?.runtime ?? null,
+      picking: onPick ? {
+        isEnabled: () => pickingOn,
+        setEnabled: (on) => {
+          if (!!on === pickingOn) return;
+          pickingOn = !!on;
+          syncHoverSuppression();
+        },
+      } : null,
       measure: {
         isEnabled: measureMode.isEnabled,
         // Held off while a cached preview shows (no feature ids to dimension).

@@ -4033,3 +4033,140 @@ describe("whenSettled", () => {
     expect(await runtime.whenSettled()).toBe(false);
   });
 });
+
+// --- runtime.picking: the host's click-to-select switch ----------------------
+// attachPicker is mocked, so these clicks replay the real picker's guard
+// (selection/pick.js): a suppressed click calls neither onPick nor onMiss.
+const pickerOpts = () => attachPicker.mock.calls.at(-1)[1];
+const clickPart = () => {
+  const o = pickerOpts();
+  if (o.suppressed?.()) return;
+  o.onPick({ subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 40, y: 30 });
+};
+const clickBackground = () => {
+  const o = pickerOpts();
+  if (o.suppressed?.()) return;
+  o.onMiss?.();
+};
+
+test("picking is enabled by default with onPick, and reports it", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
+  expect(runtime.picking.isEnabled()).toBe(true);
+  expect(pickerOpts().suppressed()).toBe(false);
+  expect("picking" in runtime.getViewerState()).toBe(false);
+  runtime.dispose();
+});
+
+test("picking disabled: a click on the part does not call onPick or open the popover", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick, selectionPopover: { slot: true } });
+  runtime.picking.setEnabled(false);
+  expect(runtime.picking.isEnabled()).toBe(false);
+  clickPart();
+  expect(onPick).not.toHaveBeenCalled();
+  expect(runtime.selection.isOpen()).toBe(false);
+  expect(fakeViewers.at(-1).holdFlashPoint).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
+test("picking disabled: a background click leaves an open popover open, and disabling closes nothing", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  const reasons = [];
+  runtime.selection.onClose((e) => reasons.push(e.reason));
+  clickPart();
+  expect(runtime.selection.isOpen()).toBe(true);
+  runtime.picking.setEnabled(false);
+  expect(runtime.selection.isOpen()).toBe(true);
+  clickBackground();
+  expect(runtime.selection.isOpen()).toBe(true);
+  expect(viewer.releaseFlashPoints).not.toHaveBeenCalled();
+  expect(reasons).toEqual([]);
+  // Enabled again, the same background click puts it away as before.
+  runtime.picking.setEnabled(true);
+  clickBackground();
+  expect(runtime.selection.isOpen()).toBe(false);
+  expect(reasons).toEqual(["clear"]);
+  runtime.dispose();
+});
+
+test("picking disabled: the hover label is withheld; enabling brings it back", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  runtime.picking.setEnabled(false);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  const calls = hover.setSuppressed.mock.calls.length;
+  runtime.picking.setEnabled(false); // the same value again is a no-op
+  expect(hover.setSuppressed.mock.calls.length).toBe(calls);
+  runtime.picking.setEnabled(true);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  runtime.dispose();
+});
+
+test("picking re-enabled: the next click picks", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick, selectionPopover: { slot: true } });
+  runtime.picking.setEnabled(false);
+  clickPart();
+  runtime.picking.setEnabled(1); // coerced to a boolean
+  expect(runtime.picking.isEnabled()).toBe(true);
+  clickPart();
+  expect(onPick).toHaveBeenCalledTimes(1);
+  expect(runtime.selection.isOpen()).toBe(true);
+  runtime.dispose();
+});
+
+test("picking disabled still spends a pose press's claim on the click", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  runtime.picking.setEnabled(false);
+  pose.takeClick.mockReturnValueOnce(true);
+  expect(pickerOpts().suppressed()).toBe(true);
+  expect(pose.takeClick).toHaveBeenCalled();
+  runtime.picking.setEnabled(true);
+  expect(pickerOpts().suppressed()).toBe(false); // the claim was spent by the disabled click
+  runtime.dispose();
+});
+
+test("without onPick the picking stand-in reads false and setEnabled does nothing", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  expect(runtime.picking.isEnabled()).toBe(false);
+  runtime.picking.setEnabled(true);
+  expect(runtime.picking.isEnabled()).toBe(false);
+  runtime.dispose();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.picking.isEnabled()).toBe(false);
+  expect(() => h.picking.setEnabled(true)).not.toThrow();
+  expect(h.picking.isEnabled()).toBe(false);
+});
+
+test("measure mode on with picking enabled still suppresses (the guards OR together)", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick });
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  runtime.measure.setEnabled(true);
+  expect(runtime.picking.isEnabled()).toBe(true);
+  expect(pickerOpts().suppressed()).toBe(true);
+  clickPart();
+  expect(onPick).not.toHaveBeenCalled();
+  // Picking off, then measure off: the hover label stays withheld until both clear.
+  runtime.picking.setEnabled(false);
+  runtime.measure.setEnabled(false);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  expect(pickerOpts().suppressed()).toBe(true);
+  runtime.picking.setEnabled(true);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  expect(pickerOpts().suppressed()).toBe(false);
+  runtime.dispose();
+});
