@@ -5,7 +5,7 @@
 // their geometry helpers from "partforge/geometry".
 
 import type { BackendName } from "./kernel.js";
-import type { CameraOrbit, CanonicalView, ParamValue, PartDefinition } from "./part.js";
+import type { CameraCue, CameraOrbit, CanonicalView, ParamValue, PartDefinition } from "./part.js";
 
 export * from "./kernel.js";
 export * from "./part.js";
@@ -534,6 +534,46 @@ export interface CaptureCurrentOptions {
   renderMode?: RenderMode;
 }
 
+/**
+ * 0.204.0: `renderCurrent`'s options — `captureCurrent`'s look and framing
+ * options, an exact output size, and whether hidden sub-parts are drawn. No
+ * `quality`: nothing is encoded.
+ */
+export interface RenderCurrentOptions {
+  /** Long-edge resolution in px when `width`/`height` are not both given, as `captureCurrent`'s `size`. */
+  size?: number;
+  /** As `captureCurrent`'s `hideGrid`. Default true. */
+  hideGrid?: boolean;
+  /** As `captureCurrent`'s `recenter`. Default false. */
+  recenter?: boolean;
+  /** As `captureCurrent`'s `renderMode`. */
+  renderMode?: RenderMode;
+  /**
+   * Output width in px. With `height`, the canvas is exactly `width` × `height`:
+   * the live framing is cropped to cover that aspect. A size past the GPU's
+   * largest texture is scaled down, keeping the aspect.
+   */
+  width?: number;
+  /** Output height in px; see `width`. */
+  height?: number;
+  /** Draw sub-parts the user hid or faded in the appearance controls. Default false. */
+  includeHidden?: boolean;
+}
+
+/** 0.204.0: the host's click-to-select switch (`runtime.picking`). */
+export interface PickingRuntime {
+  /** True while a click picks. Defaults to true with `onPick`; always false without it (a stand-in). */
+  isEnabled(): boolean;
+  /**
+   * `false` switches picking off: a click neither picks, opens the selection
+   * popover, nor (on the background) closes an open one, and the hover label
+   * drops its "Click to edit" hint while still naming what is under the
+   * pointer. It closes nothing already open. Not carried in
+   * `getViewerState()`: a remount comes up on, so re-send it after each one.
+   */
+  setEnabled(on: boolean): void;
+}
+
 export interface CaptureViewOptions {
   /** Render width in px (the long edge). The style's aspect sets the height: `"thumbnail"` is 4:3 (640 → 640×480), `"cad"` is square. Default 640. */
   size?: number;
@@ -739,6 +779,8 @@ export interface AnimationState {
   t: number;
   /** Which step `t` falls in; 0 for a single-step animation. */
   stepIndex: number;
+  /** 0.204.0: the selected animation's total length in seconds; 0 with no selected animation. */
+  duration: number;
 }
 
 /**
@@ -757,8 +799,16 @@ export interface AnimationRuntime {
    */
   play(name?: string): void;
   pause(): void;
-  /** Jump to a position on the timeline, 0..1. Never moves the camera. */
-  seek(t: number): void;
+  /**
+   * Jump to a position on the timeline, 0..1, and pause there. Without
+   * `opts.camera` it never moves the camera. 0.204.0: with `{ camera: true }`
+   * the camera jumps (no tween) to where the animation's camera cues put it at
+   * `t`, as if it had played from 0 starting at the camera the FIRST such seek
+   * found. That start is remembered until play, stop, another animation, a view
+   * change or a user camera grab, so the same `t` always gives the same pose.
+   * An animation with no cues leaves the camera alone either way.
+   */
+  seek(t: number, opts?: { camera?: boolean }): void;
   /** Stop and restore the param values the animation started from. */
   stop(): void;
   state(): AnimationState;
@@ -794,6 +844,36 @@ export interface PartRuntime {
    * `opts.renderMode` pins one.
    */
   captureCurrent(opts?: CaptureCurrentOptions): string | null;
+  /**
+   * 0.204.0: `captureCurrent`'s capture as a 2-D canvas, at an exact
+   * `width` × `height` when both are given — a video frame. Returns `null` when
+   * disposed or nothing is built yet; throws as `captureCurrent` does while a
+   * provisional stage is in view. The canvas is partforge's and is REUSED: one
+   * is kept for the size last asked for and the next call at that size draws
+   * over it, so consume it (`new VideoFrame(canvas)`, `drawImage`) before
+   * calling again. Like
+   * `captureCurrent`, each call also asks the live view to redraw, so calling it
+   * from `onRendered` keeps the live view drawing.
+   */
+  renderCurrent(opts?: RenderCurrentOptions): HTMLCanvasElement | null;
+  /**
+   * 0.204.0: call `cb` after each frame has drawn to the live canvas, in the
+   * same task as the draw — the only time the live canvas reads back reliably
+   * (`drawImage`, `new VideoFrame`); at any other time it may read blank. The
+   * loop draws on demand, so an idle viewer calls nobody, and nothing fires
+   * while parked (`setActive(false)`). A throwing callback costs only itself.
+   * Returns an unsubscribe.
+   */
+  onRendered(cb: () => void): () => void;
+  /**
+   * 0.204.0: resolves once no build is pending or about to start. `true` when
+   * everything in the view on screen is built at the live params; `false` after
+   * a build error, while a provisional stage is on screen, or on `dispose()`.
+   * Never rejects. Before the first build it waits for it. Reads `true` while a
+   * pose drag is holding the build back — do not capture during a drag. If a
+   * worker dies without replying it waits until `dispose()`, as `ready` does.
+   */
+  whenSettled(): Promise<boolean>;
   /** The active view (tab) name. Never null once mounted. */
   getView(): string;
   /** Switch the active view; `false` if the part declares no such view. Persists per part for the session. */
@@ -828,6 +908,22 @@ export interface PartRuntime {
    * Null with nothing on screen. Safe after `dispose()`.
    */
   getCameraCue(): { cue: CameraOrbit; panned: number } | null;
+  /**
+   * 0.204.0: jump the camera to a camera cue — a view name or a
+   * `{ azimuth, elevation, distance? }` orbit in degrees — with no tween; what a
+   * host stepping a turntable calls once per frame. Leaves orthographic when the
+   * cue is not face-aligned; a jump while orthographic resets the ortho zoom to
+   * 1. Not a user camera grab, so an animation's remaining cues stay armed.
+   * `false`, with the camera untouched, for an invalid cue or with nothing on
+   * screen.
+   */
+  setCameraCue(cue: CameraCue): boolean;
+  /**
+   * 0.204.0: put the camera on a saved pose — the `{ pos, target }` that
+   * `getViewerState().camera` returns — with no tween. `false`, with the camera
+   * untouched, unless both are arrays of three finite numbers.
+   */
+  setCamera(state: { pos: [number, number, number]; target: [number, number, number] }): boolean;
   /**
    * True while the `preview` GLB is on screen: from the moment it decodes until a
    * build delivers the whole view (a build error leaves it on). Picking, hover
@@ -920,6 +1016,8 @@ export interface PartRuntime {
   annotate: AnnotateRuntime;
   /** Pose mode's runtime-controls API. Always present; a no-op stand-in for a part with no `handles`. */
   pose: PoseRuntime;
+  /** 0.204.0: switch click-to-select off and on. Always present; a stand-in (`isEnabled()` false) without `onPick`. */
+  picking: PickingRuntime;
   /** The pick marker's lifetime — hold it on screen and follow it across the canvas. Always present (a no-op stand-in outside `makeHandle` tests). */
   pickMarker: PickMarkerRuntime;
   /** The selection popover, or `null` without the `selectionPopover` option. */

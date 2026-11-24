@@ -87,6 +87,7 @@ const NOOP_ANNOTATE = {
 // A shape drag (spec 2026-11-02 §4) rebuilds live while it holds only on a part whose
 // last real build took under this many milliseconds; a slower one waits for release.
 export const LIVE_REBUILD_MS = 120;
+const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 // The STEP-on-Manifold import crossover's broken-state message (a second
 // needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
 // case below). One shared string so the status line, onBuild, and the ready
@@ -97,8 +98,6 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // from IMPORT_MESH_BROKEN_MESSAGE above (that one names a digest mismatch AFTER
 // a successful tessellation) — this one names the tessellation failure and
 // carries the worker's own error text. See the correlated "error" case below.
-const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
-
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
 export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, picking, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {

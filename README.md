@@ -274,10 +274,11 @@ playback engine (`null` otherwise). Animations are **view-owned**
 
 ```js
 runtime.animation.play("open");   // switch + play, within the ACTIVE view (camera cue and all)
-runtime.animation.seek(0.5);      // scrub, normalized 0..1 (pauses)
+runtime.animation.seek(0.5);      // scrub, normalized 0..1 (pauses); never moves the camera
+runtime.animation.seek(0.5, { camera: true }); // 0.204.0+: and jump the camera to its cue pose there
 runtime.animation.pause();
 runtime.animation.stop();         // reset + restore pre-animation params and clear opacity overrides
-runtime.animation.state();        // { view, animation, status, t, stepIndex }
+runtime.animation.state();        // { view, animation, status, t, stepIndex, duration } (duration in seconds, 0.204.0+)
 ```
 
 A view can mark at most one of its animations `autoplay: true` to start it
@@ -296,6 +297,88 @@ live); hover labels stay always-on, and gain a `pickHint` line under the name
 ("Click to edit" by default; pass your own wording, or `null` for none). Hover
 never tints the surface under the pointer — a per-face highlight read as "only
 this spot is clickable".
+
+`runtime.picking` (0.204.0+) switches click-to-select off and on:
+`picking.setEnabled(false)` makes a click pick nothing, open no selection
+popover and (on the background) close no open one, and the hover label drops
+its "Click to edit" hint while still naming what is under the pointer. It
+closes nothing that is already open. `picking.isEnabled()` reads the switch. It
+is not part of `getViewerState()`, so a remount comes up with picking on: send
+it again after each remount. Without `onPick` it is a stand-in whose
+`isEnabled()` is always false.
+
+**Render an animation to video frames (0.204.0+).** Four parts of the runtime
+handle do this:
+
+- `runtime.renderCurrent(opts)` is `captureCurrent`'s capture as an
+  `HTMLCanvasElement` instead of a JPEG data URL. It takes `captureCurrent`'s
+  `size`, `hideGrid`, `recenter` and `renderMode`, plus `width` and `height`
+  (together: an exact output size; the live framing is cropped to cover it, and
+  a size past the GPU's largest texture is scaled down, keeping the aspect) and
+  `includeHidden` (draw sub-parts the user hid). It has no `type` or `quality`.
+  It returns `null` when disposed or nothing is built, and throws as
+  `captureCurrent` does while a provisional stage is on screen. **The canvas is
+  partforge's and is reused**: one canvas is kept for the output size last
+  asked for, and the next call at that size draws over it. Consume it
+  (`new VideoFrame(canvas)`, `drawImage`) before you call again. Like `captureCurrent`, each call also asks
+  the live view to redraw.
+- `runtime.animation.seek(t, { camera: true })` poses the part at `t` and jumps
+  the camera to where the animation's camera cues put it at `t`, as if the
+  animation had played from 0 starting at the camera the first such seek found.
+  That start is remembered until play, stop, another animation, a view change
+  or a user camera grab, so the same `t` always gives the same frame, in any
+  order. Without `{ camera: true }`, `seek` never moves the camera. `seek`
+  writes real params, so call `animation.stop()` when you are done to put the
+  part's values back. `animation.state().duration` is the selected animation's
+  length in seconds (0 with none selected), for working out the frame count.
+- `await runtime.whenSettled()` waits until no build is pending or about to
+  start. It resolves `true` when everything in the view on screen is built at
+  the live params, and `false` after a build error, while a provisional stage
+  is on screen, or on dispose. It never rejects, and before the first build it
+  waits for it. It reads `true` while a pose drag is holding the build back, so
+  do not capture during a drag. If a worker dies without replying it waits
+  until dispose, as `runtime.ready` does.
+- `runtime.setCameraCue(cue)` and `runtime.setCamera({ pos, target })` jump the
+  camera with no tween. `setCameraCue` takes a camera cue — a view name or an
+  `{ azimuth, elevation, distance? }` orbit in degrees — which is what a host
+  stepping a turntable calls once per frame, with `getCameraCue()` for the
+  start angle. It leaves orthographic when the cue is not face-aligned, and a
+  jump while orthographic resets the orthographic zoom to 1. It does not count
+  as a user camera grab, so an animation's remaining cues stay armed.
+  `setCamera` takes the `{ pos, target }` that `getViewerState().camera`
+  returns, to put the user's view back afterwards. Both return `false`, and
+  leave the camera alone, for input they cannot use (an invalid cue, vectors
+  that are not three finite numbers) or, for `setCameraCue`, with nothing on
+  screen.
+
+```js
+const anim = runtime.animation;
+const saved = runtime.getViewerState();
+const fps = 30, width = 1080, height = 1080;
+anim.play("open");                          // select it (the seek below pauses it)
+const frames = Math.max(2, Math.round(anim.state().duration * fps) + 1);
+for (let i = 0; i < frames; i++) {
+  anim.seek(i / (frames - 1), { camera: true });
+  if (!(await runtime.whenSettled())) break; // a build failed
+  const canvas = runtime.renderCurrent({ width, height });
+  if (!canvas) break;                       // disposed, or nothing on screen
+  const frame = new VideoFrame(canvas, { timestamp: (i * 1e6) / fps }); // consume it now
+  encoder.encode(frame);                    // a WebCodecs VideoEncoder
+  frame.close();
+}
+anim.stop();                                // restore the part's own values
+runtime.setCamera(saved.camera);            // and the user's view
+runtime.projection.set(saved.projection);
+```
+
+**Record the live canvas (0.204.0+).** `runtime.onRendered(cb)` calls `cb`
+after each frame has drawn to the live canvas, in the same task as the draw,
+and returns an unsubscribe. That callback is the only time the live canvas can
+be read back reliably (`drawImage`, `new VideoFrame(liveCanvas)`); at any other
+time it may read blank. The viewer draws on demand, so an idle viewer calls
+nobody — calling `renderCurrent` from inside the callback keeps it drawing —
+and nothing fires while parked (`setActive(false)`). A callback that throws
+costs only itself.
 
 ## Authoring guide
 

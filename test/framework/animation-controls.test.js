@@ -1675,7 +1675,7 @@ describe("seeking with the animation's camera", () => {
     expect(viewer.cancelCameraTween).not.toHaveBeenCalled();
   });
 
-  test("seek(t, { camera: true }) jumps to cameraPoseAt and cancels a running tween", () => {
+  test("seek(t, { camera: true }) jumps to cameraPoseAt and cancels any camera tween", () => {
     const { ctl, viewer } = camSetup();
     ctl.runtime.play("intro");
     ctl.runtime.stop();
