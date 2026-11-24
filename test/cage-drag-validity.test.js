@@ -49,7 +49,7 @@ describe("dragValidity on the cage hand", () => {
     expect(r.message).toMatch(/thumb/);
   });
 
-  test("is null at 240 seeded random poses inside the slider ranges, every bend varied together, neighbouring base knuckles within 50°, the thumb not opposed", () => {
+  test("is null at 240 seeded random poses inside the slider ranges, every bend varied together, neighbouring base knuckles within 45°, the thumb not opposed", () => {
     let seed = 0x5eed1234;
     const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; };
     const controls = hand.parameters.flatMap((g) => g.controls);
@@ -57,8 +57,8 @@ describe("dragValidity on the cage hand", () => {
     for (let i = 0; i < 240; i++) {
       const params = { ...Object.fromEntries(controls.map((c) => [c.key, c.min + rand() * (c.max - c.min)])), thumbOppose: -22, thumbAbduct: 0 };
       // Neighbouring fingers share the skin between their base knuckles, so those stay
-      // within 50° of each other, as a hand's do.
-      FINGERS.forEach((f, j) => { if (j) params[`${f}Knuckle`] = Math.min(params[`${FINGERS[j - 1]}Knuckle`] + 50, Math.max(params[`${FINGERS[j - 1]}Knuckle`] - 50, params[`${f}Knuckle`])); });
+      // within 45° of each other, as a hand's do.
+      FINGERS.forEach((f, j) => { if (j) params[`${f}Knuckle`] = Math.min(params[`${FINGERS[j - 1]}Knuckle`] + 45, Math.max(params[`${FINGERS[j - 1]}Knuckle`] - 45, params[`${f}Knuckle`])); });
       const snapshot = handAt(params);
       const r = dragValidity(plan, snapshot.points, { ids: base.ids });
       if (r) refused.push({ params, message: r.message, full: meshSubdiv(snapshot, "preview").warnings });

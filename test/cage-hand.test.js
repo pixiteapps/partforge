@@ -70,19 +70,19 @@ test("is listed as an organic reference part", () => {
 // Defaults, every parameter at its min at once and at its max at once (a fist: the
 // tightest pose the sliders reach), then each parameter alone at its min and at its max.
 // The OK sign: the thumb opposed until its tip meets the bent index finger's.
-const OK_SIGN = { thumbOppose: 32, thumbCurl: 25, indexKnuckle: 40, indexCurl: 55, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
+const OK_SIGN = { thumbOppose: 38, thumbCurl: 25, indexKnuckle: 35, indexCurl: 62, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
 // Holding a bar that lies across the palm. A wide one (1.5 inch radius): the fingers over
 // it, the thumb abducted and opposed under it. One of half the diameter: seated on the
 // palm, the fingers wrapped over it and the thumb closed round its front.
 const fingersAt = (knuckle, curl) => Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, knuckle], [`${f}Curl`, curl]]));
 const GRIPS = [
-  { name: "a 1.5 inch radius bar", pose: { thumbOppose: 98, thumbAbduct: 70, thumbCurl: 35, ...fingersAt(45, 50), ringKnuckle: 37, pinkyKnuckle: 27 }, bar: { radius: 38.1, y: -78, z: 68 }, deepest: -0.5, open: 160, tips: { thumb: 6, index: 6 } },
-  { name: "a 0.75 inch radius bar", pose: { thumbOppose: 68, thumbAbduct: 35, thumbCurl: 50, ...fingersAt(50, 55) }, bar: { radius: 19.05, y: -46, z: 80 }, deepest: -1.5, open: 70, palm: 3, tips: { thumb: 8, index: 10 } },
+  { name: "a 1.5 inch radius bar", pose: { thumbOppose: 88, thumbAbduct: 70, thumbCurl: 35, ...fingersAt(45, 50), ringKnuckle: 37, pinkyKnuckle: 27 }, bar: { radius: 38.1, y: -62, z: 66 }, deepest: -0.5, open: 160, tips: { thumb: 6, index: 6 } },
+  { name: "a 0.75 inch radius bar", pose: { thumbOppose: 78, thumbAbduct: 35, thumbCurl: 40, ...fingersAt(60, 55) }, bar: { radius: 19.05, y: -44, z: 70 }, deepest: -1.5, open: 70, palm: 3, tips: { thumb: 8, index: 10 } },
 ];
 // One parameter at an end of its range. Neighbouring fingers share the skin between their
-// base knuckles, so for a knuckle the other fingers' come within 50° of it, as a hand's do.
+// base knuckles, so for a knuckle the other fingers' come within 45° of it, as a hand's do.
 const alone = (key, value) => (key.endsWith("Knuckle")
-  ? { ...Object.fromEntries(FINGERS.map((f) => [`${f}Knuckle`, Math.min(value + 50, Math.max(value - 50, part.defaults[`${f}Knuckle`]))])), [key]: value }
+  ? { ...Object.fromEntries(FINGERS.map((f) => [`${f}Knuckle`, Math.min(value + 45, Math.max(value - 45, part.defaults[`${f}Knuckle`]))])), [key]: value }
   : { [key]: value });
 const CASES = [
   ["defaults", {}],

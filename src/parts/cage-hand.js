@@ -16,9 +16,11 @@ import { limb } from "partforge/kinematics";
 import { cage } from "partforge/organic";
 
 const RING = 5;                     // a knuckle ring's length (mm); three per knuckle
-const PALM = { size: [88, 26, 90], center: [0, 0, 57], segs: [7, 1, 3] };
+const PALM = { size: [81, 26, 90], center: [0, 0, 57], segs: [7, 1, 3] };
 // The palm's columns, by the X of their edges: pinky, strip, ring, strip, middle, strip, index.
-const COLUMNS = [-44, -28, -23, -4, 1, 20, 25, 44];
+// The strips are 3 mm, so the hand is about 86 mm across the knuckles and the fingers lie
+// close together, as a hand's do.
+const COLUMNS = [-40.5, -25.5, -22.5, -4, -1, 18, 21, 40.5];
 // The base knuckles: the top `rows` rings of the palm. Each finger's joint is `rise` mm
 // above the lowest of them and `depth` mm behind the palm's front face, where a palm creases.
 const KNUCKLE = { rows: 3, rise: 4, depth: 5 };
@@ -35,11 +37,16 @@ const KNUCKLE = { rows: 3, rise: 4, depth: 5 };
 const FINGERS = {
   index:  { col: 6, neck: 6, splay: 3,  lengths: [17.5, 24, 25.5], r: [18, 18, 17, 17], arch: [0.5, 0],  flat: 0.86, converge: 0 },
   middle: { col: 4, neck: 9, splay: 0,  lengths: [18.5, 28, 26.5], r: [18, 18, 17, 17], arch: [0, 0],    flat: 0.86, converge: 3 },
-  ring:   { col: 2, neck: 6, splay: -4, lengths: [18.5, 27, 26.5], r: [18, 18, 17, 17], arch: [-0.5, 0], flat: 0.84, converge: 6, cup: 0.07 },
-  pinky:  { col: 0, neck: 3, splay: 0,  lengths: [12.5, 19, 23.5], r: [16, 16, 15, 15], arch: [-3, -1],  flat: 0.76, converge: 5, cup: 0.2 },
+  ring:   { col: 2, neck: 6, splay: -4, lengths: [18.5, 27, 26.5], r: [18, 18, 17, 17], arch: [-0.5, 0], flat: 0.84, converge: 7, cup: 0.07 },
+  pinky:  { col: 0, neck: 3, splay: -2,  lengths: [12.5, 19, 23.5], r: [16, 16, 15, 15], arch: [-3, -1],  flat: 0.76, converge: 2, cup: 0.2 },
 };
 // A cupping palm bone starts `z` mm up the hand; its fold is spread over `blend` mm.
 const CUP = { z: 30, blend: 44 };
+// Surface relief (mm). `head` raises the knuckle on the back of the hand over each finger and `mound`
+// the pad on the palm under it. `pad` pushes out the palm side of each finger bone, so the
+// joints between them show as creases; `nail` moves the tip cap toward the back, so the tip
+// is flat on the nail side and full on the pad side.
+const SHAPE = { head: 1, mound: 1.5, pad: [0.5, 0.5, 1.2], nail: 1.5 };
 
 // The thumb's side: the two lower rows of the +X side push out `web` mm as a ring of soft
 // flesh and then on to `pad` mm as the pad, `thick` times the palm's thickness, which swings
@@ -52,10 +59,11 @@ const CUP = { z: 30, blend: 44 };
 // forward out of the palm, and opposition turns it about its own direction, round to the
 // palm's front and across it. The cage is built with the thumb already `rest` degrees round
 // toward the front, as a relaxed hand holds it, so the skin at its base stretches less at
-// the far end of its travel.
+// the far end of its travel. `drop` brings the pad's top [in, down] (mm), which sets the
+// length of the thumb's first bone: about 45 mm from its pivot to its middle joint.
 const THUMB = {
   pad: 32, web: 10, thick: 1.05, tuck: 24, lean: 23, root: 5, neck: [1, 0.92, 1], forward: 10,
-  lengths: [30, 25], follow: 0.8, hinge: [2, 9], cmc: 16, rest: 22, r: [26, 26, 19, 19, 19, 19, 18, 18], base: 60
+  lengths: [30, 25], follow: 0.8, hinge: [2, 15], cmc: 22, drop: [7, 13], rest: 22, r: [26, 26, 19, 19, 19, 19, 18, 18], base: 60
 };
 // How long each kind of joint's bend is spread along its digit (mm). A sharper bend needs
 // a longer stretch, or the skin on its inner side folds.
@@ -141,11 +149,18 @@ export function cageHand(make, posed) {
   // The base knuckles: the palm's top grows back as three rings across all seven columns.
   let caps = Array.from({ length: PALM.segs[0] }, (_, col) => `+z:${col},0`);
   for (let r = 0; r < KNUCKLE.rows; r++) caps = c.extrude(caps, { by: RING, id: `knuckle${"abc"[r]}` });
+  // A ring's side faces run round the palm: the front of column n is s(n + 1), its back s(15 - n).
+  for (const f of Object.values(FINGERS)) {
+    c.move(`knuckleb.s${15 - f.col}`, [0, SHAPE.head, 0]);
+    c.move(`knucklea.s${1 + f.col}`, [0, -SHAPE.mound, 0]);
+  }
   for (const [name, f] of Object.entries(FINGERS)) {
     const hinge = c.centroid(caps[f.col]);
     const neck = c.extrude(caps[f.col], { by: f.neck, scale: [1, f.flat, 1], id: `${name}Neck` });
     if (f.splay) c.rotate(neck, { axis: "y", deg: f.splay, about: hinge });
     digit(neck, name, f.lengths, 1);
+    SHAPE.pad.forEach((d, i) => c.move(`${name}P${i}.s1`, [0, -d, 0]));
+    c.move(`${name}Tip`, [0, SHAPE.nail, 0]);
   }
   // The thumb's side of the palm. The two lower rows of the +X side push out twice: a short
   // ring (the web, the flesh between the palm and the thumb's first bone) and then the pad,
@@ -164,6 +179,9 @@ export function cageHand(make, posed) {
   c.rotate(pad, { axis: "y", deg: THUMB.tuck - tuckWeb, about: topOf(pad[1]) });
   const topmost = (faces) => faces.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
   const shelf = topmost(sides);
+  // The pad's top comes down and in, so the thumb's first bone is its real length. The web
+  // then slopes from the palm down to the thumb's root, as the skin there does.
+  c.move(shelf, [-THUMB.drop[0], 0, -THUMB.drop[1]]);
   const inner = c.centroid(shelf).map((v, i) => v - (i === 0 ? boneLength / 2 : 0));
   c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: inner });
   const base = c.centroid(shelf);
