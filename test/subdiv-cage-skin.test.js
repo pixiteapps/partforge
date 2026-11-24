@@ -310,4 +310,44 @@ describe("cage.skin", () => {
     for (const id of Object.keys(r2.faces)) expect(ids(second).has(id)).toBe(true);
     expect(r2.faces.P.follow).toEqual({ left: 1 });
   });
+
+  describe("a limb whose rest has a joint that is never 0", () => {
+    const leaning = () => limb("w", {
+      at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [0, 0, 0, 20], r: [8, 8, 8, 8, 8],
+      joints: [{ name: "a", range: [0, 75] }, { name: "lean", axis: "spread", range: [23, 23] }, { name: "tilt", range: [10, 10] }, { name: "m", range: [0, 50] }],
+    });
+    // A small box under the joints, its top extruded along the limb's resting direction.
+    const leaningCage = (L) => {
+      const tip = L.pose({}).bones.tip.rest;
+      const c = createCage({ box: { size: [8, 8, 4], center: [0, 0, -2] } });
+      c.extrude("+z:0,0", { by: tip.map((v) => v * 1.1), steps: 6, id: "w" });
+      return c;
+    };
+    it("moves no point at pose({})", () => {
+      const L = leaning();
+      const c = leaningCage(L);
+      const before = c.snapshot();
+      c.skin(L.pose({}));
+      expect(c.snapshot()).toEqual(before);
+    });
+    it("carries points well past joint m to the rigid place it gives", () => {
+      const L = leaning();
+      const c = leaningCage(L);
+      const rest = c.snapshot();
+      const posed = L.pose({ bend: { m: 40 } });
+      c.skin(posed);
+      const after = c.snapshot();
+      const j = posed.bones.joints[3];
+      const D = compose(matrixOf(j.posed), invert(matrixOf(j.rest)));
+      const tip = posed.bones.tip.rest, u = tip.map((v) => v / len(tip));
+      let past = 0, below = 0;
+      rest.points.forEach((p, i) => {
+        const along = p[0] * u[0] + p[1] * u[1] + p[2] * u[2];
+        if (along > 8) { near3(after.points[i], apply(D, p)); past++; }
+        if (along < -4) { expect(after.points[i]).toEqual(p); below++; }
+      });
+      expect(past).toBeGreaterThan(0);
+      expect(below).toBeGreaterThan(0);
+    });
+  });
 });

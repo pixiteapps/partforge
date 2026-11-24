@@ -139,7 +139,14 @@ export function limb(name, def) {
   const PARENT_STUB = tree.parent == null ? null : { [tree.parent]: { at: [0, 0, 0] } };
   const resolveOwn = (set) => resolveFrames(PARENT_STUB == null ? set : { ...PARENT_STUB, ...set });
   // The rest half of bones is the same for every pose of a limb with no parent: resolve it once.
-  const restBones = tree.parent == null ? bonesHalf(resolveOwn(restOwn)) : null;
+  // bones' own rest is not restOwn: it is the limb with nothing asked, the frames pose({})
+  // gives. Each driven joint sits at the value in its range nearest 0 (a ball's zero swing
+  // and twist kept in its cone), followers follow, and there is no pose-level spread or
+  // twist. A joint that is never 0 (a fixed tilt with range [23, 23]) is part of the shape
+  // a cage is built in, so a cage built along such a limb matches its rest. place's
+  // `from: "rest"` keeps restOwn, every joint at 0.
+  const bonesRestOwn = buildFrames(tree, jointSteps(tree, couple(tree, tree.joints.map(restValue)).values));
+  const restBones = tree.parent == null ? bonesHalf(resolveOwn(bonesRestOwn)) : null;
   // A limb with a parent: its rest frames sit among the parent chain's, which a pose rebuilds
   // as a new object each time but rarely changes. A memo by value (resolveMemo) answers with
   // the same resolve while they are unchanged, and the half read from it is kept with it.
@@ -166,8 +173,9 @@ export function limb(name, def) {
   /**
    * The posed limb's bones, for cage.skin: plain data (the cage and the limb can come from two
    * copies of this module), with each joint's frame at rest and posed, in part coordinates,
-   * unrounded (world() rounds to 0.001). Rest is every joint at 0 and no pose-level spread or
-   * twist.
+   * unrounded (world() rounds to 0.001). Rest is the limb with nothing asked: the frames
+   * pose({}) gives (each joint at the value in its range nearest 0, followers following, no
+   * pose-level spread or twist).
    */
   function bonesOf(posedFrames, frames, restFrames, resolvePosed) {
     const hasParent = frames != null && tree.parent != null && Object.hasOwn(frames, tree.parent);
@@ -175,10 +183,10 @@ export function limb(name, def) {
     if (tree.parent == null || hasParent) {
       // The same set the report resolves, through the same memo: no second resolve.
       posed = bonesHalf(resolvePosed(frames == null ? posedFrames : { ...frames, ...posedFrames }));
-      rest = restBones ?? restHalfOf(restFrames);
+      rest = restBones ?? restHalfOf({ ...restFrames, ...bonesRestOwn });
     } else {
       posed = bonesHalf(resolveStub(posedFrames));
-      rest = stubRestHalf ??= bonesHalf(resolveOwn(restOwn));
+      rest = stubRestHalf ??= bonesHalf(resolveOwn(bonesRestOwn));
     }
     const copy = (f) => ({ origin: [...f.origin], x: [...f.x], y: [...f.y], z: [...f.z] });
     return {

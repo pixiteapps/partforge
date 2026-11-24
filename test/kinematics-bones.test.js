@@ -56,4 +56,36 @@ describe("a posed limb's bones", () => {
     near3(child.pose({}, at(9)).bones.joints[0].rest.origin, [9, 0, 0]);
     near3(child.pose({}, at(5)).bones.joints[0].rest.origin, [5, 0, 0]);
   });
+
+  describe("rest is the limb with nothing asked", () => {
+    const leaning = () => limb("w", {
+      at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [0, 0, 0, 20],
+      joints: [{ name: "a", range: [0, 75] }, { name: "lean", axis: "spread", range: [23, 23] }, { name: "tilt", range: [10, 10] }, { name: "m", range: [0, 50] }],
+    });
+    it("holds a fixed joint at its fixed value, so pose({}) is the rest", () => {
+      const { bones } = leaning().pose({});
+      near3(bones.tip.posed, bones.tip.rest, 1e-12);
+      near3(bones.tip.rest, [7.696, -3.473, 18.13], 1e-3);
+      for (const j of bones.joints) expect(j.posed).toEqual(j.rest);
+    });
+    it("keeps the rest and the fixed joints while another joint bends", () => {
+      const L = leaning();
+      const rest = L.pose({}).bones;
+      const { bones } = L.pose({ bend: { m: 40 } });
+      expect(bones.joints.map((j) => j.rest)).toEqual(rest.joints.map((j) => j.rest));
+      expect(bones.tip.rest).toEqual(rest.tip.rest);
+      for (const n of ["w.lean", "w.tilt"]) {
+        const j = bones.joints.find((x) => x.name === n);
+        expect(j.posed).toEqual(j.rest);
+      }
+      expect(Math.hypot(...bones.tip.posed.map((v, i) => v - bones.tip.rest[i]))).toBeGreaterThan(1);
+    });
+    it("puts a joint whose range excludes 0 at the end nearest 0", () => {
+      const L = limb("g", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], joints: [{ name: "k", range: [10, 90] }], lengths: [20] });
+      const { bones } = L.pose({});
+      const t = 10 * Math.PI / 180;
+      near3(bones.tip.rest, [0, -20 * Math.sin(t), 20 * Math.cos(t)]);
+      expect(bones.joints[0].posed).toEqual(bones.joints[0].rest);
+    });
+  });
 });
