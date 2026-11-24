@@ -164,15 +164,50 @@ const ulp32 = (m) => {
  * TIE_ROUNDING_MAX_REACH. A vertex
  * genuinely outside its triangle can still reproduce the rest position (a vertex Manifold
  * left on a near-coplanar neighbour of its triangle) but would extrapolate at a new pose.
+ *
+ * Two options, for ties read back from a preview file (gltf/decode-preview.js), whose
+ * positions and weights were quantized. Omitted, the rule above is unchanged.
+ *  - `tolerance` (mm, default TIE_TOLERANCE): how far the placed vertex may be from its
+ *    position. A preview passes one derived from the file's own quantization step.
+ *  - `quantized: true`: the weights were clamped to [0, 1] and rounded to 1/65535 (the
+ *    encoder's u16 weights), and the positions are not float32 as delivered, so the
+ *    float32-rounding allowance cannot be read off them. w0 and w1 must lie in [0, 1];
+ *    w2 = 1 − w0 − w1 may be below 0 by quantizedSlack (below): what a tie the worker
+ *    sent can reach once clamping has moved the other two weights' excess onto it.
  */
-export function tiesHold(ties, positions, limitPositions, limitIndices) {
+export function tiesHold(ties, positions, limitPositions, limitIndices, { tolerance = TIE_TOLERANCE, quantized = false } = {}) {
   const { w } = ties, lo = -TIE_WEIGHT_SLACK, hi = 1 + TIE_WEIGHT_SLACK;
   for (let v = 0; v < ties.tri.length; v++) {
     const w0 = w[2 * v], w1 = w[2 * v + 1], w2 = 1 - w0 - w1;
+    if (quantized) {
+      if (!(w0 >= 0 && w0 <= 1 && w1 >= 0 && w1 <= 1)) return false;
+      if (w2 >= 0) continue;
+      if (!(-w2 <= quantizedSlack(ties.tri[v], limitPositions, limitIndices))) return false;
+      continue;
+    }
     if (w0 >= lo && w0 <= hi && w1 >= lo && w1 <= hi && w2 >= lo && w2 <= hi) continue;
     if (!withinRounding(ties.tri[v], [w0, w1, w2], positions, 3 * v, limitPositions, limitIndices)) return false;
   }
-  return tieError(ties, positions, limitPositions, limitIndices) <= TIE_TOLERANCE;
+  return tieError(ties, positions, limitPositions, limitIndices) <= tolerance;
+}
+
+// One u16 weight step (the preview encoder's normalized weights).
+const U16_WEIGHT_STEP = 1 / 65535;
+
+// How far below 0 a quantized tie's third weight may be, on limit triangle `s`. A tie the
+// worker sent has each weight's excess e within TIE_WEIGHT_SLACK, or within
+// TIE_ROUNDING_MAX_EXCESS with e × the longest rest edge within TIE_ROUNDING_MAX_REACH (the
+// rounding allowance): so e ≤ E = max(TIE_WEIGHT_SLACK, min(TIE_ROUNDING_MAX_EXCESS,
+// TIE_ROUNDING_MAX_REACH / longest)). Clamping w0 and w1 into [0, 1] moves their excess onto
+// w2, and rounding each to 1/65535 moves w2 by at most one step: 3E + 1/65535 in all. At a new
+// pose such a vertex lies outside its triangle by at most that times the posed longest edge.
+function quantizedSlack(s, P, I) {
+  const c = [3 * I[3 * s], 3 * I[3 * s + 1], 3 * I[3 * s + 2]];
+  const d = (i, j) => Math.hypot(P[c[j]] - P[c[i]], P[c[j] + 1] - P[c[i] + 1], P[c[j] + 2] - P[c[i] + 2]);
+  const longest = Math.max(d(0, 1), d(0, 2), d(1, 2));
+  if (!(longest > 0)) return 0;
+  const e = Math.max(TIE_WEIGHT_SLACK, Math.min(TIE_ROUNDING_MAX_EXCESS, TIE_ROUNDING_MAX_REACH / longest));
+  return 3 * e + U16_WEIGHT_STEP;
 }
 
 // Is a vertex with weights `ws` on limit triangle `s` outside it by float32 rounding at most?

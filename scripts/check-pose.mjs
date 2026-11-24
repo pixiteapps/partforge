@@ -83,8 +83,10 @@
 //     `?part=hand` entry makes checkHandContact's index-into-middle drag on the hand's file,
 //     whose contact is asserted while the pointer is down (the tint or "Stopped at" readout
 //     names a middle-finger piece in some sample); a drag that ends held names one in its
-//     `blocked.b`, and the pose has no overlap (checkPreviewContact). A PAGES entry
-//     may carry a `query`, appended to its URL.
+//     `blocked.b`, and the pose has no overlap (checkPreviewContact). The `?part=cage-hand`
+//     entry drags the cage hand's index fingertip on its version 7 file: the body's drawn
+//     vertices change, the pose stays after release, and no Worker is made
+//     (checkPreviewCage). A PAGES entry may carry a `query`, appended to its URL.
 //
 // What it observes, and how:
 //   - worker traffic: an init script wraps window.Worker before the app loads, logging
@@ -1351,6 +1353,44 @@ async function checkPreviewContact(page, url, errors) {
   return { heldMidDrag: heldAt, blocked, overlaps: overlaps?.length ?? null, workersAfterPreview: workers };
 }
 
+/**
+ * preview-pose.html?part=cage-hand (0.202.0): the cage hand's version 7 file, whose ties let
+ * a fingertip drag re-pose the subdivision body with no kernel. The index handle shows; a
+ * 20-move drag toward the palm changes the body's drawn vertices (`__preview.positionsSum`)
+ * and leaves the body deformed after release (a preview has no exact build, so the pose
+ * stays), with exactly one onDragEnd, a changed index param, and no Worker or `generate` job.
+ */
+async function checkPreviewCage(page, url, errors) {
+  const box = await openPreviewApp(page, url);
+  const shown = await page.evaluate(() => window.__pfPreview.__preview.visible?.shown ?? []);
+  if (!shown.includes("index")) { errors.push(`the cage hand's index handle is not shown on its preview (shown: ${JSON.stringify(shown)})`); return null; }
+  const start = await handlePoint(page, "index", PREVIEW);
+  if (!start) { errors.push("preview cage hand: no index handle point"); return null; }
+  const before = await page.evaluate(() => window.__pfPreview.__preview.positionsSum("hand"));
+  const t0 = await page.evaluate(() => performance.now());
+  // Down the screen from the fingertip: the finger curls toward the palm.
+  const from = { x: box.x + start.x, y: box.y + start.y };
+  const held = await dragPath(page, from, { x: from.x + 10, y: from.y + 120 }, 20,
+    () => page.evaluate(() => ({ deformed: window.__pfPreview.__preview.cages.isDeformed("hand"), sum: window.__pfPreview.__preview.positionsSum("hand") })));
+  const after = await page.evaluate(() => ({
+    deformed: window.__pfPreview.__preview.cages.isDeformed("hand"),
+    sum: window.__pfPreview.__preview.positionsSum("hand"),
+    dragState: window.__pfPreview.__preview.cages.holdsDragState(),
+    ends: window.__pfDragEnds,
+    params: window.__pfPreview.getParams(),
+    defaults: window.__pfPart.defaults,
+  }));
+  const workers = await checkNoKernel(page, t0, "the preview cage drag", errors);
+  if (!held?.deformed || held.sum === before) errors.push(`the cage body's vertices did not change during the drag (deformed ${held?.deformed}, sum ${before} -> ${held?.sum})`);
+  if (!after.deformed || after.sum === before) errors.push(`the cage body went back after release (deformed ${after.deformed}, sum ${before} -> ${after.sum}): the drawn pose must stay`);
+  // (The release snaps the params to their steps, so the release itself may re-pose a hair.)
+  if (after.dragState) errors.push("the cage drag's plan is still held after release");
+  if (after.ends.length !== 1) errors.push(`${after.ends.length} onDragEnd calls for the preview cage drag, expected exactly 1`);
+  const moved = ["indexKnuckle", "indexCurl"].filter((key) => !Object.is(after.params?.[key], after.defaults[key]));
+  if (!moved.length) errors.push("the preview cage drag changed neither indexKnuckle nor indexCurl");
+  return { moved, deformedAfterRelease: after.deformed, workersAfterPreview: workers };
+}
+
 const PAGES = [
   { entry: "pose-smoke.html", run: checkSmoke, required: true },
   { entry: "robot-arm.html", run: checkRobotArm, required: true },
@@ -1359,6 +1399,7 @@ const PAGES = [
   { entry: "drawer-box.html", run: checkDrawerBox, required: true },
   { entry: "preview-pose.html", run: checkPreviewPose, required: true },
   { entry: "preview-pose.html", query: "?part=hand", run: checkPreviewContact, required: true },
+  { entry: "preview-pose.html", query: "?part=cage-hand", run: checkPreviewCage, required: true },
 ];
 
 let failed = false;

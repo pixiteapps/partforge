@@ -23,6 +23,14 @@ import { subdivPlan, applySubdivPlan, topologyKey, sameTopology } from "../geome
 import { TIE_WEIGHTS, tiesHold } from "../geometry/subdiv/ties.js";
 import { dragValidity } from "../geometry/subdiv/index.js";
 
+/**
+ * The cage-base entry rule (a build-probe entry): trusted, cagePosable, exactly one cage, a
+ * defined shapeHash. The ONE spelling: the editor's skin controller (skin-drag.js), the
+ * preview's (preview-cage.js) and the preview's handle stepper (preview-pose.js) all ask it.
+ */
+export const cagePosableEntry = (e) => !!(e && e.trusted && e.cagePosable && Array.isArray(e.cages) && e.cages.length === 1
+  && e.shapeHash !== undefined);
+
 const sameFaces = (a, b) => {
   if (a === b) return true;
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
@@ -85,12 +93,14 @@ export function makeCageBase(snapshot, ties) {
  * order than the worker's (a cage listing its faces differently at the same params, a
  * collision) passes the key and fails here. Run once per base, before its first deform.
  * @param {Float32Array} positions  the delivered positions, before anything wrote into them
+ * @param {{ tolerance?: number, quantized?: boolean }} [opts]  tiesHold's options, for ties
+ *   read from a preview file (preview-cage.js); omitted, the worker's own rule
  */
-export function tiesAgree(base, positions) {
+export function tiesAgree(base, positions, opts) {
   if (!base || positions.length !== 3 * base.ties.tri.length) return false;
   let L;
   try { L = applySubdivPlan(base.plan, base.snapshot.points); } catch { return false; }
-  return tiesHold(base.ties, positions, L.positions, base.plan.indices);
+  return tiesHold(base.ties, positions, L.positions, base.plan.indices, opts);
 }
 
 // Vertex normals of a triangle mesh, into `out`: each triangle adds its unit normal to
