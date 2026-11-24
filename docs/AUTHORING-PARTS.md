@@ -3776,9 +3776,10 @@ Each line gives the pose's name, the values it changes from the defaults, its ki
 message. The kind is `error` when the build threw, and the message is the error's first
 line. The kind is `warning` when the build only warned that a body passes through itself,
 and the message is that warning. Other build warnings are not failures. Then the count,
-split into the poses that threw and the poses that passed through themselves. When the errors name cage faces (a `subdiv:` body that
-passes through itself), the last line lists the faces named, most often first, with the
-number of poses that name each one. A face many poses name is where to look first.
+split into the poses that threw and the poses that passed through themselves. When the
+errors or warnings name cage faces (a `subdiv:` body that passes through itself), the last
+line lists the faces named, most often first, with the number of poses that name each one.
+A face many poses name is where to look first.
 
 A pose that does not build is a fact about the part. It is not always a fault. In Pose mode
 a drag stops at the last pose that builds, so a range whose far end does not build still
@@ -3787,8 +3788,11 @@ sets. The poses are built at preview quality, as `measure` builds them. A print-
 can still fail at a pose this run passes, because the preview mesh is coarser. `--json`
 and `--out` give the result as JSON:
 `{ view, poses, failed: [{ name, params, kind, error }], faces: [{ id, count }] }`. `--drag`,
-`--process`, `--no-verify` and `--no-lint` do not apply and are refused. It exits 0
-whenever the sweep ran, and 1 only when the part cannot be loaded. In code:
+`--process`, `--no-verify` and `--no-lint` do not apply and are refused. A pose whose
+build needs the exact kernel (`NEEDS_OCCT`) is listed as an error, and is not retried on
+the OCCT backend as `measure` is. It exits 0 whenever the sweep ran. It exits 1 when the
+part cannot be loaded, and on a usage error such as a refused flag or an unknown view.
+In code:
 `sweepRanges(kernel, part, view, { random, seed })` and `rangePoses(part, { random, seed })`
 from `partforge/oracle` or `partforge/testing`.
 
@@ -5572,7 +5576,8 @@ keyed by its name and holds `joints` and `tip`. Each joint has `name`, `at` (its
 position) and `length` (the distance to the next joint or to the tip). The plane through
 the joint, square to its bone, cuts the body. When an outline of that cut goes round the
 joint, the joint also has `part` (the sub-part that was cut), `width` (the outline's size
-along the joint's bend axis) and `depth` (its size across that axis). Numbers are rounded
+along the joint's bend axis) and `depth` (its size across that axis). A joint inside a
+hollow body reads the innermost outline round it, which is the cavity's. Numbers are rounded
 to 0.1 mm. `partforge measure` prints one line per limb. Read the lengths against the
 real thing, and the sizes to see how thick the body is at each joint. A joint's position
 is in part coordinates, and its plane is carried into the body by the sub-part's `place()`.

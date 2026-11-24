@@ -313,7 +313,8 @@ the other: a pose cannot have both.
   have length 0, and no joint may follow the pitch joint or the aiming spread joint,
   directly or through another follower.
   The `robot-finger` limb (mcp, pip, dip following pip) meets all three rules.
-- A limb from `points` must also have one aim for every joint: give the limb a `toward`.
+- A limb from `points` must also have one aim for every joint: give the limb a `toward`,
+  and give no joint its own `toward` or `bendToward` that turns it from the joint before.
   Its joints may sit off that line, as offsets do. Pose any other with
   `goals: [{ at: "tip", position }]`.
 
@@ -376,7 +377,9 @@ index.pose({ reach: [-30, 160, -20] }).report;
   moved, and keep their `bend` values.
 - **Scan steps.** Each joint's scan has from 48 to 1024 even steps. The count is set so
   that, from one step to the next, no point of the limb beyond the joint moves more than
-  the smallest radius beyond the joint plus `clearance`, and never less than 0.25 mm. A
+  the smallest radius beyond the joint plus `clearance`, and never less than 0.25 mm. An
+  earlier follower of the closing joint moves too, but the count reads only the points
+  beyond the joint, so a point past that follower can move further in one step. A
   shape thinner than about the limb's radius can be stepped over only when a joint hits
   the 1024-step cap (a long limb, a wide range, or a thin limb).
 - **Stop.** The closing stops early when the first contact that a joint finds is on
