@@ -41,7 +41,7 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
     expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 80 });
   }
   expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 50 });
-  expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: 0, max: 90 });
+  expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: 0, max: 120 });
   expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS, "oppose"].sort());
@@ -49,7 +49,7 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   // The handle sits on the pad and turns with it about the hinge: its distance from the axis holds.
   const { origin } = part.handles.oppose.axis;
   const radius = (deg) => { const q = part.handles.oppose.point({ ...part.defaults, thumbOppose: deg }); return Math.hypot(q[0] - origin[0], q[1] - origin[1]); };
-  expect(radius(90)).toBeCloseTo(radius(0), 6);
+  expect(radius(120)).toBeCloseTo(radius(0), 6);
   for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
   expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { mcp: "thumbCurl" } });
 });

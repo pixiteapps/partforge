@@ -37,12 +37,13 @@ const FINGERS = {
 // swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
 // `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
 // by `neck`) and two segments. It curls across the palm.
-// Opposition turns the pad and the thumb together about the hand's long axis. The hinge
-// sits `hinge` mm from the middle of the pad's root ([toward the palm's middle, toward the
-// palm side]), just inside the palm's front edge, so the thumb swings from the palm's side
-// round to its front and across it. The palm's front under the pad rises `ball` mm per
-// degree as it does, which is the ball of the thumb filling in beside the pad.
-const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [8, 13], ball: 0.2, lengths: [25, 20], follow: 0.8 };
+// Opposition turns the thumb about the hand's long axis. The hinge sits `hinge` mm from
+// the middle of the pad's root ([toward the palm's middle, toward the palm side]), near
+// the palm's front edge, so the thumb swings from the palm's side round to its front and
+// across it. The pad is the bone under the ball of the thumb, which pivots at the wrist:
+// the thumb and the top of the pad take the whole turn, and `twist` is the share the pad's
+// wrist end and its middle take. The turn is spread up the pad, so no one edge folds.
+const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [2, 9], twist: [0.3, 0.7], lengths: [25, 20], follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 // The way the thumb curls once it is opposed `deg` degrees: the same turn about Z.
@@ -61,9 +62,10 @@ const squareTo = (v, n) => { const along = v[0] * n[0] + v[1] * n[1] + v[2] * n[
 // same reason: past it the thumb meets a curled index finger. With the thumb not opposed,
 // every pose within these ranges builds, all of them at their max at once included.
 // Opposed, the thumb sits in front of the palm, where a closed fist's fingers go: an open
-// hand builds at any opposition and thumb curl, but a curled thumb can meet closed
-// fingers. A drag stops at the last pose that builds.
-const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 90] };
+// hand builds at any opposition, but a curled thumb can meet closed fingers, and past
+// about 100° of opposition a fully curled thumb presses its tip into the palm. A drag
+// stops at the last pose that builds.
+const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 120] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 // The flat under the wrist sits this far above the cage's lowest point (mm).
 const FLAT_ABOVE = 2.4;
@@ -140,7 +142,12 @@ export function cageHand(make, p, bends) {
   const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
   const padTop = c.centroid(pad[1]).map((v, i) => v + (i === 2 ? row / 2 : 0));
   c.rotate(pad, { axis: "y", deg: THUMB.tuck, about: padTop });
-  const shelf = c.faces("thenar.s").reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
+  const sides = c.faces("thenar.s");
+  const shelf = sides.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
+  // The pad's front and back sides above its middle: with the upper cap they name the
+  // pad's middle and top rings, palm edge included.
+  const padMid = (c.centroid(pad[0])[2] + c.centroid(pad[1])[2]) / 2;
+  const upper = sides.filter((f) => Math.abs(c.normal(f)[1]) > 0.6 && c.centroid(f)[2] > padMid);
   const web = c.centroid(shelf).map((v, i) => v - (i === 0 ? THUMB.pad / 2 : 0));
   c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: web });
   const base = c.centroid(shelf);
@@ -149,12 +156,15 @@ export function cageHand(make, p, bends) {
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
   const oppose = p?.thumbOppose ?? 0;
   if (oppose) {
-    // Everything past the pad's root turns; the web (the thumb root's own sides, which
-    // share an edge with the palm) stays and stretches.
-    const turned = [...pad, ...c.faces("thumb").filter((f) => !f.startsWith("thumbRoot.s"))];
-    c.rotate(turned, { axis: "z", deg: -oppose, about: hinge });
-    // The ball of the thumb: the palm's front under the pad comes forward with it.
-    c.move(["-y:3,0", "-y:3,1"], [0, -THUMB.ball * oppose, 0]);
+    // Three turns about the same line, each on fewer rings than the last, so the angle
+    // grows from the wrist up: the whole pad, then its middle and top, then its top with
+    // the thumb. The palm's own edge under the thumb turns with it, which is the web.
+    const thumb = c.faces("thumb");
+    const [low, mid] = THUMB.twist;
+    const turn = (faces, share) => c.rotate(faces, { axis: "z", deg: -oppose * share, about: hinge });
+    turn([...pad, ...upper, ...thumb], low);
+    turn([pad[1], ...upper, ...thumb], mid - low);
+    turn(thumb, 1 - mid);
   }
   return c;
 }
@@ -171,12 +181,16 @@ const REST = (() => {
 })();
 
 // The thumb's base moves with its opposition, so it is read off a palm built at that angle:
-// the limb's base, and the middle of the pad's outer face, where the opposition handle sits.
+// the limb's base, and the middle of the thumb root's outer side, where the opposition
+// handle sits. That side takes the whole turn, so the handle moves on a circle about the
+// hinge.
+const rootOuter = (c) => c.faces("thumbRoot.s").reduce((best, f) => (c.normal(f)[0] > c.normal(best)[0] ? f : best));
+const ROOT_OUTER = rootOuter(cageHand(cage, null, null));
 let lastThumb = null;
 const thumbRest = (oppose) => {
   if (lastThumb?.oppose !== oppose) {
     const c = cageHand(cage, { thumbOppose: oppose }, null);
-    lastThumb = { oppose, base: baseOf(c, "thumbRoot", thumbCurlAt(oppose)), pad: c.centroid("thenar:0").map((v, i) => (v + c.centroid("thenar:1")[i]) / 2) };
+    lastThumb = { oppose, base: baseOf(c, "thumbRoot", thumbCurlAt(oppose)), grip: c.centroid(ROOT_OUTER) };
   }
   return lastThumb;
 };
@@ -251,10 +265,10 @@ export default {
   handles: {
     ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, { on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } }])),
     thumb: { on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { mcp: "thumbCurl" } },
-    // Opposition is not a joint of the thumb's limb, so it gets its own handle: a ring on
-    // the pad, turned about the line the pad hinges on.
+    // Opposition is not a joint of the thumb's limb, so it gets its own handle: a ring at
+    // the thumb's root, turned about the line the thumb opposes on.
     oppose: {
-      point: (p) => thumbRest(p.thumbOppose).pad, drag: "rotary", params: ["thumbOppose"],
+      point: (p) => thumbRest(p.thumbOppose).grip, drag: "rotary", params: ["thumbOppose"],
       axis: { origin: HINGE, direction: [0, 0, -1] }, label: "Thumb opposition", showOn: "hand",
     },
   },

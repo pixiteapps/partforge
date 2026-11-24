@@ -1131,8 +1131,8 @@ a cage":
   `pip` angle, 0° to 80°), for `f` in `index`, `middle`, `ring` and `pinky`;
 - the thumb is a limb of two joints, `mcp` and `ip`, which follows `mcp` at 0.8. Its
   param is `thumbCurl` (the `mcp` angle, 0° to 50°). A second param, `thumbOppose` (0° to
-  90°), is not a joint of the limb: it turns the thumb and its pad round to the front of
-  the palm, and the limb's base is read off a palm built at that angle.
+  120°), is not a joint of the limb: it turns the thumb and its pad round to the front of
+  the palm and across it, and the limb's base is read off a palm built at that angle.
 
 ```js
 import { limb } from "partforge/kinematics";
@@ -1154,12 +1154,13 @@ const FINGERS = {
 // swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
 // `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
 // by `neck`) and two segments. It curls across the palm.
-// Opposition turns the pad and the thumb together about the hand's long axis. The hinge
-// sits `hinge` mm from the middle of the pad's root ([toward the palm's middle, toward the
-// palm side]), just inside the palm's front edge, so the thumb swings from the palm's side
-// round to its front and across it. The palm's front under the pad rises `ball` mm per
-// degree as it does, which is the ball of the thumb filling in beside the pad.
-const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [8, 13], ball: 0.2, lengths: [25, 20], follow: 0.8 };
+// Opposition turns the thumb about the hand's long axis. The hinge sits `hinge` mm from
+// the middle of the pad's root ([toward the palm's middle, toward the palm side]), near
+// the palm's front edge, so the thumb swings from the palm's side round to its front and
+// across it. The pad is the bone under the ball of the thumb, which pivots at the wrist:
+// the thumb and the top of the pad take the whole turn, and `twist` is the share the pad's
+// wrist end and its middle take. The turn is spread up the pad, so no one edge folds.
+const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: [2, 9], twist: [0.3, 0.7], lengths: [25, 20], follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
 // The way the thumb curls once it is opposed `deg` degrees: the same turn about Z.
@@ -1178,9 +1179,10 @@ const squareTo = (v, n) => { const along = v[0] * n[0] + v[1] * n[1] + v[2] * n[
 // same reason: past it the thumb meets a curled index finger. With the thumb not opposed,
 // every pose within these ranges builds, all of them at their max at once included.
 // Opposed, the thumb sits in front of the palm, where a closed fist's fingers go: an open
-// hand builds at any opposition and thumb curl, but a curled thumb can meet closed
-// fingers. A drag stops at the last pose that builds.
-const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 90] };
+// hand builds at any opposition, but a curled thumb can meet closed fingers, and past
+// about 100° of opposition a fully curled thumb presses its tip into the palm. A drag
+// stops at the last pose that builds.
+const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 120] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 // The flat under the wrist sits this far above the cage's lowest point (mm).
 const FLAT_ABOVE = 2.4;
@@ -1257,7 +1259,12 @@ function cageHand(make, p, bends) {
   const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
   const padTop = c.centroid(pad[1]).map((v, i) => v + (i === 2 ? row / 2 : 0));
   c.rotate(pad, { axis: "y", deg: THUMB.tuck, about: padTop });
-  const shelf = c.faces("thenar.s").reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
+  const sides = c.faces("thenar.s");
+  const shelf = sides.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
+  // The pad's front and back sides above its middle: with the upper cap they name the
+  // pad's middle and top rings, palm edge included.
+  const padMid = (c.centroid(pad[0])[2] + c.centroid(pad[1])[2]) / 2;
+  const upper = sides.filter((f) => Math.abs(c.normal(f)[1]) > 0.6 && c.centroid(f)[2] > padMid);
   const web = c.centroid(shelf).map((v, i) => v - (i === 0 ? THUMB.pad / 2 : 0));
   c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: web });
   const base = c.centroid(shelf);
@@ -1266,12 +1273,15 @@ function cageHand(make, p, bends) {
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
   const oppose = p?.thumbOppose ?? 0;
   if (oppose) {
-    // Everything past the pad's root turns; the web (the thumb root's own sides, which
-    // share an edge with the palm) stays and stretches.
-    const turned = [...pad, ...c.faces("thumb").filter((f) => !f.startsWith("thumbRoot.s"))];
-    c.rotate(turned, { axis: "z", deg: -oppose, about: hinge });
-    // The ball of the thumb: the palm's front under the pad comes forward with it.
-    c.move(["-y:3,0", "-y:3,1"], [0, -THUMB.ball * oppose, 0]);
+    // Three turns about the same line, each on fewer rings than the last, so the angle
+    // grows from the wrist up: the whole pad, then its middle and top, then its top with
+    // the thumb. The palm's own edge under the thumb turns with it, which is the web.
+    const thumb = c.faces("thumb");
+    const [low, mid] = THUMB.twist;
+    const turn = (faces, share) => c.rotate(faces, { axis: "z", deg: -oppose * share, about: hinge });
+    turn([...pad, ...upper, ...thumb], low);
+    turn([pad[1], ...upper, ...thumb], mid - low);
+    turn(thumb, 1 - mid);
   }
   return c;
 }
@@ -1288,12 +1298,16 @@ const REST = (() => {
 })();
 
 // The thumb's base moves with its opposition, so it is read off a palm built at that angle:
-// the limb's base, and the middle of the pad's outer face, where the opposition handle sits.
+// the limb's base, and the middle of the thumb root's outer side, where the opposition
+// handle sits. That side takes the whole turn, so the handle moves on a circle about the
+// hinge.
+const rootOuter = (c) => c.faces("thumbRoot.s").reduce((best, f) => (c.normal(f)[0] > c.normal(best)[0] ? f : best));
+const ROOT_OUTER = rootOuter(cageHand(cage, null, null));
 let lastThumb = null;
 const thumbRest = (oppose) => {
   if (lastThumb?.oppose !== oppose) {
     const c = cageHand(cage, { thumbOppose: oppose }, null);
-    lastThumb = { oppose, base: baseOf(c, "thumbRoot", thumbCurlAt(oppose)), pad: c.centroid("thenar:0").map((v, i) => (v + c.centroid("thenar:1")[i]) / 2) };
+    lastThumb = { oppose, base: baseOf(c, "thumbRoot", thumbCurlAt(oppose)), grip: c.centroid(ROOT_OUTER) };
   }
   return lastThumb;
 };
@@ -1355,9 +1369,9 @@ hand.centroid("indexTip").map(Math.round);   // [46, -24, 171]
   the thumb. Drag a ring to turn that one joint and leave the others where they are.
 - Opposition is not a joint of the thumb's limb, so it has a sixth handle of its own:
   `{ point: (p) => …, drag: "rotary", params: ["thumbOppose"], axis: { origin, direction:
-  [0, 0, -1] }, showOn: "hand" }`. Its point is the middle of the pad's outer face, read
-  off a palm built at that angle, and its axis is the line the pad hinges on, which no
-  param moves. `showOn` keeps it hidden until the pointer is over the hand.
+  [0, 0, -1] }, showOn: "hand" }`. Its point is the middle of the thumb root's outer side, read
+  off a palm built at that angle: that side takes the whole turn, so the point moves on a
+  circle about the axis. Its axis is the line the thumb opposes on, which no param moves. `showOn` keeps it hidden until the pointer is over the hand.
 
 The points to copy:
 
@@ -1401,17 +1415,18 @@ The points to copy:
   tipped a little toward the palm side. The extrudes after it follow that direction, and
   each knuckle turns about the digit's direction × the way it curls (`digit`), the axis
   its limb bends about.
-- **Opposition turns faces that are already built.** `thumbOppose` rotates the pad's
-  caps and every thumb face about Z, after the thumb is made. The hinge sits just inside
-  the palm's front edge, 8 mm in from the pad's root, so the thumb swings round to the
-  front of the palm and across it; at 85° its tip meets a bent index finger's (the OK
-  sign). The thumb root's own side faces are left out: they share an edge with the palm,
-  so that edge stays and the web stretches. Turning the thumb alone folds it into its
-  pad; turning the pad with it moves the whole base of the thumb forward.
-- **A muscle that bulges is a face that moves.** The two palm-side faces under the pad
-  come forward 0.2 mm per degree of opposition. That is the ball of the thumb: it fills
-  the groove between the turned pad and the palm, so the two read as one mound. The
-  amount was set against photographs of a hand making the OK sign.
+- **Opposition turns faces that are already built.** `thumbOppose` rotates faces about
+  Z, after the thumb is made. The hinge sits near the palm's front edge, so the thumb
+  swings round to the front of the palm and across it; at 85° its tip meets a bent index
+  finger's (the OK sign).
+- **A big turn is spread over rings, never put on one edge.** The pad is the bone under
+  the ball of the thumb, which pivots at the wrist. So the turn is three `rotate` calls
+  about the same line, each on fewer rings than the last: the whole pad by 0.3 of the
+  angle, its middle and top by 0.4 more, and its top with the thumb by the last 0.3. The
+  angle grows from the wrist up, the ball of the thumb comes forward with it, and the
+  palm's own edge under the thumb turns too, which is the web stretching. Turning only
+  the thumb and the pad's caps, with the palm's edge left still, put the whole angle
+  across one 5 mm ring: it creased, and past 90° the body passed through itself.
 - **The limbs are placed from the cage, not by hand.** `cageHand` without `bends` stops
   before the digits: the palm with a cap where each one starts. `REST` reads each cap's
   centre and normal off that cage once, and each limb starts one ring past its cap

@@ -35,6 +35,8 @@ describe("dragValidity on the cage hand", () => {
     for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb, 0]);
     // The thumb opposed: every corner of an open hand's range.
     for (const knuckle of [-10, 40]) for (const curl of [0, 40]) for (const thumb of [0, 25, 50]) for (const oppose of [45, 90]) corners.push([knuckle, curl, thumb, oppose]);
+    // Fully opposed, the thumb lies across the palm: it builds up to half its curl.
+    for (const knuckle of [-10, 40]) for (const curl of [0, 40]) for (const thumb of [0, 25]) corners.push([knuckle, curl, thumb, 120]);
     for (const corner of corners) expect(dragValidity(plan, handCage(...corner).points), corner.join(" ")).toBeNull();
     // The part's own bends at their maxima, through its limbs.
     const max = { ...Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max])), thumbOppose: 0 };
@@ -43,6 +45,12 @@ describe("dragValidity on the cage hand", () => {
 
   test("an opposed, curled thumb meets a closed fist: the pose is refused and names the thumb", () => {
     const r = dragValidity(plan, handCage(90, 80, 40, 60).points, { ids: base.ids });
+    expect(r?.message).toMatch(/^subdiv: the body passes through itself between /);
+    expect(r.message).toMatch(/thumb/);
+  });
+
+  test("a fully opposed, fully curled thumb presses into the palm: the pose is refused and names the thumb", () => {
+    const r = dragValidity(plan, handCage(0, 0, 50, 120).points, { ids: base.ids });
     expect(r?.message).toMatch(/^subdiv: the body passes through itself between /);
     expect(r.message).toMatch(/thumb/);
   });
