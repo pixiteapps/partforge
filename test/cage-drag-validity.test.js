@@ -27,9 +27,9 @@ describe("dragValidity on the cage hand", () => {
   const base = handAt({});
   const plan = planOf(base);
 
-  test("checks at level 1 of the hand's level-4 plan", () => {
+  test("checks at level 1 of the hand's level-3 plan", () => {
     expect(DRAG_CHECK_LEVEL).toBe(1);
-    expect(plan.level).toBe(4);
+    expect(plan.level).toBe(3);
   });
 
   test("is null across the hand's whole slider range, every corner of it included", () => {

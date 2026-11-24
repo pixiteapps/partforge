@@ -309,7 +309,7 @@ test("the guide's hand is the reference part's, line for line", () => {
   expect(text).toContain("(`thumbOppose`, 0° to 120°)");
   expect(text).toContain("(`thumbCurl`, 0° to 50°)");
   // The handles the prose shows are the part's.
-  expect(cageHandPart.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: "thumbOppose", mcp: "thumbCurl" } });
+  expect(cageHandPart.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
   expect(cageHandPart.handles.index).toEqual({ on: "index", drag: "angles", params: ["indexKnuckle", "indexCurl"], joints: { mcp: "indexKnuckle", pip: "indexCurl" } });
   expect(d.thumb.bones.joints.map((j) => j.name)).toEqual(["abduct", "oppose", "lean", "tilt", "roll", "mcp", "ip"].map((j) => `thumb.${j}`));
 });

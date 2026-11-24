@@ -89,13 +89,13 @@ describe("deformCage on the cage hand", () => {
   // Normal bound per pose: at the base's own pose the deformed normals are the delivered
   // ones. Away from it the plan keeps the base's quad diagonals for the whole drag while
   // the exact build re-picks them at B's points, and an unweighted vertex normal follows
-  // its triangle fan: 1.6° at the thumb pose, 3.2° in a fist, at the knuckles
-  // of a finger turned far. That is the only difference (the positions agree
+  // its triangle fan: 4.4° at the thumb's base once the thumb curls, and no more than
+  // that in a fist. That is the only difference (the positions agree
   // to 2e-5 mm), and the swap to the exact mesh on release shows nothing at that size.
   test.each([
     ["the defaults (the base's own pose)", A, 0.1],
-    ["the thumb curled", THUMB, 2],
-    ["every finger and the thumb curled to the max", ALL_CURLED, 4],
+    ["the thumb curled", THUMB, 5],
+    ["every finger and the thumb curled to the max", ALL_CURLED, 5],
   ])("from the defaults to %s: skin positions within 1e-3 mm of the exact build, normals within the bound", async (label, B, bound) => {
     const live = entryAt(B).cages[0];
     const n = mesh.positions.length;
@@ -120,7 +120,7 @@ describe("deformCage on the cage hand", () => {
     expect(worst.skin.count).toBeGreaterThan(0);
     for (const b of bands) expect(worst[b].d).toBeLessThan(1e-3);
     expect(worst.skin.angle).toBeLessThan(bound);
-    expect(worst.nearCut.angle).toBeLessThan(2);
+    expect(worst.nearCut.angle).toBeLessThan(3);
   }, 120_000);
 
   // A base at 80°, whose fingertip slivers have corners float32 rounding puts just outside

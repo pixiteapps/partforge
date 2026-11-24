@@ -34,8 +34,8 @@ const FINGERS = {
 
 // The thumb's side: the two lower rows of the +X side push out `web` mm as a ring of soft
 // flesh and then on to `pad` mm as the pad, `thick` times the palm's thickness, which swings
-// in `tuck` degrees at the wrist and whose wrist end comes in and up by `foot` mm. The
-// thumb grows from the pad's top: it leans out `lean` degrees and toward the palm side
+// in `tuck` degrees at the wrist: the ball of the thumb is a wedge that runs from the wrist
+// out to the thumb's root in one slope, with no step where it meets the palm. The thumb grows from the pad's top: it leans out `lean` degrees and toward the palm side
 // `forward` degrees, then a short root (scaled by `neck`) and two segments.
 // The thumb's limb starts at the wrist end of the pad, `hinge` mm from the middle of the
 // pad's root ([toward the palm's middle, toward the palm side]) and `cmc` mm up the palm,
@@ -43,7 +43,7 @@ const FINGERS = {
 // forward out of the palm, and opposition turns it about its own direction, round to the
 // palm's front and across it.
 const THUMB = {
-  pad: 32, web: 10, thick: 1.05, tuck: 14, foot: [2, 6], lean: 23, root: 5, neck: [1, 0.92, 1], forward: 10,
+  pad: 32, web: 10, thick: 1.05, tuck: 24, lean: 23, root: 5, neck: [1, 0.92, 1], forward: 10,
   lengths: [25, 20], follow: 0.8, hinge: [2, 9], cmc: 16, r: [26, 26, 19, 19, 19, 19, 18, 18], base: 60
 };
 // How long each kind of joint's bend is spread along its digit (mm). A sharper bend needs
@@ -139,11 +139,7 @@ export function cageHand(make, posed) {
   const tuckWeb = (THUMB.tuck * THUMB.web) / THUMB.pad;
   c.rotate([...pad, ...sides], { axis: "y", deg: tuckWeb, about: webTopEdge });
   c.rotate(pad, { axis: "y", deg: THUMB.tuck - tuckWeb, about: topOf(pad[1]) });
-  // The pad's wrist end lifts and comes in, so the ball of the thumb runs into the wrist as
-  // a slope and not a step.
-  const lowest = (faces) => faces.reduce((best, f) => (c.normal(f)[2] < c.normal(best)[2] ? f : best));
   const topmost = (faces) => faces.reduce((best, f) => (c.normal(f)[2] > c.normal(best)[2] ? f : best));
-  c.move(lowest(sides), [-THUMB.foot[0], 0, THUMB.foot[1]]);
   const shelf = topmost(sides);
   const inner = c.centroid(shelf).map((v, i) => v - (i === 0 ? boneLength / 2 : 0));
   c.rotate(shelf, { axis: "y", deg: THUMB.lean, about: inner });
@@ -287,7 +283,7 @@ export default {
   // joints. `joints` gives each named joint its own rotate ring.
   handles: {
     ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, { on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } }])),
-    thumb: { on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: "thumbOppose", mcp: "thumbCurl" } },
+    thumb: { on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } },
   },
   verify: { expect: { hand: { watertight: true } } },
 };

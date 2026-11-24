@@ -53,7 +53,7 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
   for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
-  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: "thumbOppose", mcp: "thumbCurl" } });
+  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
   // Every joint a handle names is one of its limb's.
   for (const [id, h] of Object.entries(part.handles)) {
     const names = d[h.on].ikInfo().joints.map((j) => j.name);
@@ -69,10 +69,14 @@ test("is listed as an organic reference part", () => {
 // tightest pose the sliders reach), then each parameter alone at its min and at its max.
 // The OK sign: the thumb opposed until its tip meets the bent index finger's.
 const OK_SIGN = { thumbOppose: 70, thumbCurl: 15, indexKnuckle: 55, indexCurl: 70, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
-// Holding a bar of 1.5 inch radius that lies across the palm: the fingers over it, the
-// thumb abducted and opposed under it.
-const BAR_GRIP = { thumbOppose: 120, thumbAbduct: 70, thumbCurl: 25, ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 60], [`${f}Curl`, 45]])) };
-const BAR = { radius: 38.1, y: -78, z: 64 };
+// Holding a bar that lies across the palm. A wide one (1.5 inch radius): the fingers over
+// it, the thumb abducted and opposed under it. One of half the diameter: seated on the
+// palm, the fingers wrapped over it and the thumb closed round its front.
+const fingersAt = (knuckle, curl) => Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, knuckle], [`${f}Curl`, curl]]));
+const GRIPS = [
+  { name: "a 1.5 inch radius bar", pose: { thumbOppose: 120, thumbAbduct: 70, thumbCurl: 25, ...fingersAt(60, 45) }, bar: { radius: 38.1, y: -78, z: 64 }, deepest: -0.5, open: 160, tips: { thumb: 6, index: 6 } },
+  { name: "a 0.75 inch radius bar", pose: { thumbOppose: 105, thumbAbduct: 20, thumbCurl: 35, ...fingersAt(60, 70) }, bar: { radius: 19.05, y: -36, z: 80 }, deepest: -1.5, open: 60, palm: 3, tips: { thumb: 6, index: 10 } },
+];
 // One parameter at an end of its range. Neighbouring fingers share the skin between their
 // base knuckles, so for a knuckle the other fingers' come within 50° of it, as a hand's do.
 const alone = (key, value) => (key.endsWith("Knuckle")
@@ -85,7 +89,7 @@ const CASES = [
   // in front of the palm meets the closed fingers (test/cage-drag-validity.test.js).
   ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0, thumbAbduct: 0 }],
   ["the OK sign", OK_SIGN],
-  ["the bar grip", BAR_GRIP],
+  ...GRIPS.map((g) => [`holding ${g.name}`, g.pose]),
   // An open hand with the thumb at the far corner of its range.
   ["an open hand, the thumb opposed, abducted and curled", { ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 0], [`${f}Curl`, 0]])), thumbOppose: 120, thumbAbduct: 70, thumbCurl: 50 }],
   ...CONTROLS.flatMap((c) => [[`${c.key} min`, alone(c.key, c.min)], [`${c.key} max`, alone(c.key, c.max)]]),
@@ -105,28 +109,34 @@ test("the OK sign: the thumb's tip and the index finger's are a fingertip apart"
   expect(gap).toBeLessThan(17);
 });
 
-test("the bar grip: nothing enters a 1.5 inch radius bar, and the thumb and index finger close round more than half of it", () => {
-  const params = { ...part.defaults, ...BAR_GRIP };
+test.each(GRIPS)("holding $name: nothing enters the bar, and the thumb and index finger close round it", ({ pose, bar, deepest: limit, open: most, palm, tips }) => {
+  const params = { ...part.defaults, ...pose };
   const [{ mesh }] = buildView(k, part, "assembly", params);
   k.cleanup?.();
   const P = mesh.positions, d = part.derive(params);
-  const outside = (i) => Math.hypot(P[i + 1] - BAR.y, P[i + 2] - BAR.z) - BAR.radius;
+  const outside = (i) => Math.hypot(P[i + 1] - bar.y, P[i + 2] - bar.z) - bar.radius;
   let deepest = Infinity;
   for (let i = 0; i < P.length; i += 3) deepest = Math.min(deepest, outside(i));
-  // Soft skin on a hard bar: within half a millimetre of touching, never deeper.
-  expect(deepest).toBeGreaterThan(-0.5);
-  // Each tip's pad is within 4 mm of the bar.
+  // Soft skin on a hard bar: it may press in by this much (mm), never deeper.
+  expect(deepest).toBeGreaterThan(limit);
+  // Each tip's pad is near the bar. On the narrow bar the index finger wraps past it, so
+  // its tip is allowed further off.
   for (const n of ["thumb", "index"]) {
     const tip = d[n].report.tip;
     let gap = Infinity;
     for (let i = 0; i < P.length; i += 3) if (dist([P[i], P[i + 1], P[i + 2]], tip) < 13) gap = Math.min(gap, outside(i));
-    expect(gap, n).toBeLessThan(4);
+    expect(gap, n).toBeLessThan(tips[n]);
   }
   // Seen along the bar, the arc from the index tip round the front to the thumb tip is
-  // the part of the bar the hand leaves open: under 160°, so the hand holds over 200°.
-  const angle = (n) => Math.atan2(d[n].report.tip[2] - BAR.z, d[n].report.tip[1] - BAR.y) * (180 / Math.PI);
-  const open = (((angle("thumb") - angle("index")) % 360) + 360) % 360;
-  expect(open).toBeLessThan(160);
+  // the part of the bar the hand leaves open.
+  const angle = (n) => Math.atan2(d[n].report.tip[2] - bar.z, d[n].report.tip[1] - bar.y) * (180 / Math.PI);
+  expect((((angle("thumb") - angle("index")) % 360) + 360) % 360).toBeLessThan(most);
+  // The narrow bar is seated: the palm's front, below the knuckles, is within `palm` mm of it.
+  if (palm !== undefined) {
+    let seat = Infinity;
+    for (let i = 0; i < P.length; i += 3) if (P[i + 2] > 25 && P[i + 2] < 88 && Math.abs(P[i]) < 40 && P[i + 1] > -26) seat = Math.min(seat, outside(i));
+    expect(seat).toBeLessThan(palm);
+  }
 }, 60_000);
 
 // The poses the tip and face tests read: defaults, the two hand shapes, and every
