@@ -70,7 +70,7 @@ posed.world("pip");           // { origin: [-30, 122.997, -30.174], x: [1, 0, 0]
 
 | field | meaning |
 | --- | --- |
-| `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, type?, axis?, length?, offset?, range?, cone?, follow? }`. |
+| `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, type?, axis?, length?, offset?, range?, cone?, follow?, toward?, bendToward? }`. A joint's own `toward` and `bendToward` need `points`. |
 | `lengths` | One length per joint, in mm: from that joint to the next joint, and from the last joint to the tip. Alternatively, give each joint its own `length`. If you give both, they must agree. |
 | `toward` | The direction the straight limb points. Required unless you use `rotate` or `points`. |
 | `bendToward` | The side a positive bend curls toward. Required unless you use `rotate`. |

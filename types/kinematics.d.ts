@@ -22,18 +22,22 @@ export interface LimbJoint {
   name: string;
   /** Default "bend". Not on a ball joint. */
   axis?: LimbAxis;
-  /** Distance to the next joint (or the tip), mm; falls back to `lengths[i]`. */
+  /** Distance to the next joint (or the tip), mm; falls back to `lengths[i]`. Not with `points`. */
   length?: number;
   /** Allowed values, degrees. Not on a ball joint (it takes `cone`). */
   range?: [number, number];
-  /** Drive this joint from an earlier hinge: value = ratio * that joint + offset (degrees). Not on a ball joint. */
+  /** Drive this joint from another hinge of the limb, earlier or later: value = ratio * that joint + offset (degrees). Not on a ball joint. */
   follow?: { joint: string; ratio?: number; offset?: number };
   /** Default "hinge". A "ball" turns about any axis through its centre and is posed with a `LimbBallValue`. */
   type?: "hinge" | "ball";
   /** A ball joint's largest swing from rest, degrees (0 < cone ≤ 180, default 180). */
   cone?: number;
-  /** Where this joint sits, mm, in the previous joint's frame, added to the end of the previous segment ([0, length, 0]). Not on the base joint. */
+  /** Where this joint sits, mm, in the previous joint's frame, added to the end of the previous segment ([0, length, 0]). Not on the base joint. Not with `points`. */
   offset?: Point3;
+  /** This joint's own aim (+Y), with `points` only. Default: the limb's toward, else the joint's bone, else the previous joint's aim. */
+  toward?: Point3;
+  /** This joint's own bend direction, with `points` only. Default: the limb's bendToward. */
+  bendToward?: Point3;
 }
 
 /**
@@ -48,17 +52,19 @@ export interface LimbBallResult { bend: number; spread: number; twist: number }
 export interface LimbDefinition {
   /** Frame the limb hangs from; omit for part coordinates. */
   parent?: string;
-  /** Where the limb's base sits in its parent frame (or part coordinates), mm. */
+  /** Where the limb's base sits in its parent frame (or part coordinates), mm. Not with `points`. */
   at?: Point3;
+  /** Each joint's position, then the tip, in part coordinates, mm. Replaces `at`, `lengths` and joint `offset`. */
+  points?: Point3[];
   /** Direction the limb points at rest, and the direction its bends curl toward. */
   toward?: Point3;
   bendToward?: Point3;
   /** Escape hatch instead of toward/bendToward. */
   rotate?: RotateStep | RotateStep[];
-  /** Reflect the limb across a plane (needs toward/bendToward). */
+  /** Reflect the limb across a plane: its points and every toward and bendToward. Not with `rotate`. */
   mirror?: "XY" | "XZ" | "YZ";
   joints: Array<string | LimbJoint>;
-  /** Distance to the next joint (or the tip) per joint, mm. */
+  /** Distance to the next joint (or the tip) per joint, mm. Not with `points`. */
   lengths?: number[];
   /** Radius per joint, then the tip, mm. */
   r?: number[];

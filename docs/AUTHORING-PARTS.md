@@ -3761,9 +3761,10 @@ npx partforge measure src/parts/cage-hand.js --ranges --random 100 --seed 7
 The poses, in order: the defaults. Then each ranged control at its `min` and at its `max`,
 with the others at their defaults. Then every ranged control at `min` at once, and at `max`
 at once. Then `--random <n>` random poses (default 24). A ranged control is one with a
-finite `min` and `max`. Other controls, checkboxes for example, keep their defaults. The
-same `--seed <n>` (default 1) gives the same random poses, so a run repeats. A random value
-falls on the control's `step`, as a slider's would.
+finite `min` and `max`. Other controls, checkboxes for example, keep their defaults.
+A hidden control is not swept: it keeps its default too. The same `--seed <n>` (default 1)
+gives the same random poses, so a run repeats. A random value falls on the control's
+`step`, as a slider's would.
 
 ```
 random 15  indexKnuckle=58.6 indexCurl=27.6 ... thumbAbduct=2.1  →  warning: subdiv: the body passes through itself: pinkyNeck.s2 folds through itself
@@ -5574,7 +5575,8 @@ or (at preview) passes through itself. `partforge measure` prints them. They nev
 the top level or in an array there). A limb with a `parent` is left out. Each limb is
 keyed by its name and holds `joints` and `tip`. Each joint has `name`, `at` (its posed
 position) and `length` (the distance to the next joint or to the tip). The plane through
-the joint, square to its bone, cuts the body. When an outline of that cut goes round the
+the joint, square to the joint's aim, cuts the body. The aim is the bone's direction
+unless a `toward` aims the joint another way. When an outline of that cut goes round the
 joint, the joint also has `part` (the sub-part that was cut), `width` (the outline's size
 along the joint's bend axis) and `depth` (its size across that axis). A joint inside a
 hollow body reads the innermost outline round it, which is the cavity's. Numbers are rounded

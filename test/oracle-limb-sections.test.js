@@ -220,6 +220,23 @@ describe("measure's limbs", () => {
     expect(r.warnings).toContainEqual({ part: "limbs", message: expect.stringMatching(/^limbs could not be read: /) });
   });
 
+  it("has no limbs key, and probes no place(), when derive returns values but no limb", () => {
+    let places = 0;
+    const place = (solid) => { places++; return solid; };
+    const noLimb = boxPart((kk, p, d) => kk.box({ min: [-10, -5, 0], max: [10, 5, d.h] }), { place },
+      () => ({ h: 30, list: [1, 2], nested: { bones: null } }));
+    const plain = { ...noLimb, derive: undefined, parts: { body: { ...noLimb.parts.body, build: (kk) => kk.box({ min: [-10, -5, 0], max: [10, 5, 30] }) } } };
+    const base = measure(k, plain, undefined, {}, { handles: false });
+    const placesWithoutDerive = places;
+    places = 0;
+    const r = measure(k, noLimb, undefined, {}, { handles: false });
+    expect(r).not.toHaveProperty("limbs");
+    expect(r.warnings).toEqual(base.warnings);
+    // The limb pass returns before its place-scope probe: place() runs as often as it does
+    // for the same part with no derive at all.
+    expect(places).toBe(placesWithoutDerive);
+  });
+
   it("has no limbs key on a part whose derive returns no limb", () => {
     const r = measure(k, gapPart);
     expect(r).not.toHaveProperty("limbs");

@@ -45,6 +45,13 @@ describe("cage.skin", () => {
     expect(c.faces("+z:", { facing: "+z" })).toEqual([]);
     expect(c.faces("", { facing: "-y" })).toContain("+z:0,0");
     expect(c.faces("", { near: c.centroid("+z:0,0") })[0]).toBe("+z:0,0");
+    // Both options in one call: a point 20 mm above the tip cap. The arm now lies along -Y,
+    // so its old back faces (+y) face up, and the one at the tip is nearest. Facing -Y,
+    // only the tip cap is left, though a +y face is nearer to the point.
+    const above = c.centroid("+z:0,0").map((v, i) => v + (i === 2 ? 20 : 0));
+    expect(c.faces("", { near: above })[0]).toBe("+y:0,5");
+    expect(c.faces("+y:", { facing: "+z", near: above })[0]).toBe("+y:0,5");
+    expect(c.faces("", { facing: "-y", near: above })).toEqual(["+z:0,0"]);
   });
 
   it("moves no point at a rest pose, bit for bit", () => {

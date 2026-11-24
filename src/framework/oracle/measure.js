@@ -25,7 +25,7 @@ import { runSweeps } from "./sweep.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { normalizeCollisions } from "../collide/declaration.js";
 import { compareTolerance, COMPARE_MAX_TRIANGLES } from "./compare.js";
-import { limbFacts } from "./limb-sections.js";
+import { holdsLimbs, limbFacts } from "./limb-sections.js";
 
 const size = ({ min, max }) => [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
 const unionBounds = (list) => list.reduce(
@@ -723,8 +723,12 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // report is unchanged. What limbFacts cannot read becomes a warning, never a silent drop.
   let limbs;
   const limbWarnings = [];
-  if (typeof part.derive === "function" && built.length) {
-    const { p, d } = domainParams ?? poseParams ?? sheetParams ?? resolveParams(part, params, undefined, reads);
+  const limbParams = typeof part.derive === "function" && built.length
+    ? domainParams ?? poseParams ?? sheetParams ?? resolveParams(part, params, undefined, reads)
+    : null;
+  // A derive that returns no limb costs no probe.
+  if (limbParams && holdsLimbs(limbParams.d)) {
+    const { p, d } = limbParams;
     const sections = [];
     for (const { name, mesh } of built) {
       const probe = probeSubPartPose(part.parts[name], { view, purpose: "display", p, d }, { scope: "place" });

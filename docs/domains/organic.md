@@ -937,7 +937,8 @@ armReport.faces["ring5.s0"];   // { follow: { arm: 1 } }
 **Checking the sizes.** `partforge measure` lists every posed limb under `limbs`. Each
 joint has its bone's length and the body's width and depth at that joint. Compare the
 lengths with the real thing, and check that the body is the size you meant at each joint.
-The width is measured along the joint's bend axis, and the depth across it. A joint
+The cut is square to the joint's aim, which is the bone's direction unless a `toward` aims
+the joint another way. The width is measured along the joint's bend axis, and the depth across it. A joint
 inside a hollow body reads the innermost outline round it, which is the cavity's.
 
 **Errors.** Each names the limb, the joint or the face:
@@ -1766,10 +1767,12 @@ The points to copy:
   palm (opposed or abducted) can meet closed fingers: an open hand builds at any
   opposition, abduction and thumb curl, and a fist builds with the thumb at the palm's
   side, but an opposed, curled thumb can press into a fist. A drag stops at the last pose
-  that builds. `partforge measure src/parts/cage-hand.js --ranges` lists the poses past
-  these limits. One is the ring knuckle at 90° with its neighbours at their defaults,
-  which passes through itself. A print-quality build can also fail where the preview only
-  warns, as it does with the middle knuckle at 90°. At 38° of opposition, with the index bent, the thumb's tip meets the index
-  finger's (the OK sign), and opposed and abducted nearly all the way the hand closes round a bar of
-  1.5 inch radius, the ring and little fingers bent a little less than the other two. With the fingers curled further and the thumb less abducted it wraps a
-  bar of half that radius, seated in the palm. For fingers that must press into the palm, use an implicit tree.
+  that builds. `partforge measure src/parts/cage-hand.js --ranges` lists the poses whose
+  preview passes through itself. One is the ring knuckle at 90° with its neighbours at
+  their defaults. A print-quality build can also fail at a pose the sweep passes, as it
+  does with the middle knuckle at 90°. At 38° of opposition, with the index bent, the
+  thumb's tip meets the index finger's (the OK sign), and opposed and abducted nearly all
+  the way the hand closes round a bar of 1.5 inch radius, the ring and little fingers
+  bent a little less than the other two. With the fingers curled further and the thumb
+  less abducted it wraps a bar of half that radius, seated in the palm. For fingers that
+  must press into the palm, use an implicit tree.

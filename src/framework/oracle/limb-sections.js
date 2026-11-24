@@ -1,8 +1,9 @@
 // Bone lengths and body sizes for the measure report (`limbs`). For each posed limb a
 // part's `derive` returns, each joint's posed position, the distance to the next joint
 // (or the tip), and the size of the body's cross-section at the joint: the plane through
-// the joint square to its bone cuts a sub-part's mesh, and the outline that goes round
-// the joint is measured along the joint's frame X (its bend axis) and frame Z (across it).
+// the joint square to its aim (frame +Y: the bone, unless a toward aims it another way)
+// cuts a sub-part's mesh, and the outline that goes round the joint is measured along the
+// joint's frame X (its bend axis) and frame Z (across it).
 // Pure: it reads meshes measure already built and the plain-data `bones` a posed limb
 // carries (kinematics core.js bonesOf), so it needs no kernel and no second build.
 
@@ -168,6 +169,15 @@ function posedLimbs(d) {
     }
   }
   return found;
+}
+
+/**
+ * Whether derive's result `d` holds a value that carries `bones`, one level deep or in an
+ * array there: the cheap check measure makes before it reads any limb.
+ */
+export function holdsLimbs(d) {
+  if (d == null || typeof d !== "object") return false;
+  return Object.values(d).some((v) => (Array.isArray(v) ? v : [v]).some(isBones));
 }
 
 /**

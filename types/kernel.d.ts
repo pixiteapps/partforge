@@ -571,9 +571,11 @@ export interface ImplicitOptions {
   preview?: number;
 }
 
+/** One axis of a cage box's split: a count of even segments, or a list of widths (mm) that add up to the box's size on that axis. */
+export type CageSegs = number | number[];
 /** k.cage's start: a box, optionally split into segments and mirrored across a plane through its center. */
 export interface CageOptions {
-  box: { size: [number, number, number]; center?: [number, number, number]; segs?: [number, number, number] };
+  box: { size: [number, number, number]; center?: [number, number, number]; segs?: [CageSegs, CageSegs, CageSegs] };
   mirror?: "yz" | "xz" | "xy";
 }
 /** A face by id, or a region of faces by their ids. */
@@ -581,9 +583,16 @@ export type CageFaces = string | string[];
 /** Cage.extrude's options. `by` is required: a distance along the faces' normal, or an [x, y, z] offset. */
 export interface CageExtrudeOptions {
   by: number | [number, number, number];
+  /** Not with a `steps` list. */
   scale?: number | [number, number, number];
-  steps?: number;
+  /** A count of rings, or one scale per ring (a number or [sx, sy, sz]), each ring scaled about its own middle. */
+  steps?: number | Array<number | [number, number, number]>;
   id?: string;
+}
+/** Cage.faces' options: `facing` keeps faces whose normal is within 45° of it, `near` orders them nearest first by face middle. */
+export interface CageFacesOptions {
+  facing?: "+x" | "-x" | "+y" | "-y" | "+z" | "-z" | [number, number, number];
+  near?: [number, number, number];
 }
 /**
  * k.cage — a closed quad mesh, edited in place by face id. Every
@@ -596,7 +605,8 @@ export interface Cage {
   extrude(face: string, opts: CageExtrudeOptions): string;
   /** Pushes a region out and returns its caps' ids, one per listed face, in order (a list even with one face). */
   extrude(faces: string[], opts: CageExtrudeOptions): string[];
-  move(faces: CageFaces, offset: [number, number, number]): void;
+  /** An [x, y, z] offset, or a distance along the faces' normal (extrude's rule for a number `by`). */
+  move(faces: CageFaces, offset: number | [number, number, number]): void;
   /** Keep the border of the face or region as a hard edge of the smooth surface; with `other`, only the edges the two share (`other` may name reflected `~` faces). */
   crease(faces: CageFaces, other?: CageFaces): void;
   /** `about` omitted or null: the points' mean (on the plane, under a mirror, for faces with an edge on it). */
@@ -620,7 +630,7 @@ export interface Cage {
   centroid(id: string): [number, number, number];
   normal(id: string): [number, number, number];
   size(id: string): [number, number];
-  faces(prefix?: string): string[];
+  faces(prefix?: string, opts?: CageFacesOptions): string[];
   bounds(): { min: [number, number, number]; max: [number, number, number] };
   snapshot(): { points: number[][]; faces: number[][]; ids: string[]; creases?: [number, number][] };
 }
