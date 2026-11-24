@@ -6,6 +6,7 @@
 // oracle (`describe`) is its own closed package now — its types ship with it, and
 // the direction of this seam is what lets that package consume these helpers.
 import type { CameraCue, Easing, Keyframes, ParamValue, PartDefinition } from "./part.js";
+import type { GeometryKernel } from "./testing.js";
 export type { GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid } from "./testing.js";
 export {
   // measurement + verification
@@ -200,3 +201,27 @@ export interface DragResult {
  * browser. Never throws — a bad request or a failed solve returns `{ handle, error }`.
  */
 export function dragHandle(part: PartDefinition, request: DragRequest): DragResult | { handle: string; error: string };
+
+/** One pose `measure --ranges` builds: its name and the params it changes from the defaults. */
+export interface RangePose {
+  name: string;
+  params: Record<string, ParamValue>;
+}
+
+/** What `sweepRanges` found: the poses that threw, and the cage faces their errors name. */
+export interface RangesResult {
+  view: string;
+  poses: number;
+  failed: Array<{ name: string; params: Record<string, ParamValue>; error: string }>;
+  /** The faces the errors name, most often first; each counted once per pose. */
+  faces: Array<{ id: string; count: number }>;
+}
+
+/**
+ * The poses `measure --ranges` builds: the defaults, each ranged control at its min and max,
+ * all at min, all at max, then `random` seeded random poses (default 24, seed 1).
+ */
+export function rangePoses(part: PartDefinition, opts?: { random?: number; seed?: number }): RangePose[];
+
+/** Build `view` at every pose of `rangePoses` and list the ones that throw. Build warnings are not failures. */
+export function sweepRanges(kernel: GeometryKernel, part: PartDefinition, view?: string, opts?: { random?: number; seed?: number }): RangesResult;

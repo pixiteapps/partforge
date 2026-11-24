@@ -18,6 +18,7 @@ export {
   type PreviewAnimationInput, type PreviewAnimationSample, type NormalizedAnimation,
   type NormalizedAnimationStep, type NormalizedAnimationCue,
   dragHandle, type DragRequest, type DragResult,
+  rangePoses, sweepRanges, type RangePose, type RangesResult,
 } from "./oracle.js";
 
 // --- kernels ----------------------------------------------------------------

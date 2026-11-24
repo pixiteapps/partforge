@@ -165,3 +165,35 @@ test("CLI measure --drag exits 1 with the error on a bad request", () => {
   expect(JSON.parse(`${err.stdout}`).error).toMatch(/unknown handle/);
   expect(`${runFail(["measure", "src/parts/gearbox.js", "--turn", "90"]).stderr}`).toMatch(/require --drag/);
 });
+
+test("CLI measure --ranges lists the poses that do not build, with the faces named", () => {
+  const r = JSON.parse(run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "4", "--json"]));
+  expect(r.view).toBe("main");
+  expect(r.poses).toBe(1 + 2 * 2 + 2 + 4);
+  expect(r.failed.map((f) => f.name)).toEqual(expect.arrayContaining(["w=max", "all max"]));
+  for (const f of r.failed) expect(f.error).toMatch(/passes through itself/);
+  expect(r.faces).toEqual([{ id: "top", count: r.failed.length }, { id: "side.s1", count: r.failed.length }]);
+  expect(r.verify).toBeUndefined(); // no measure, no verify
+  const human = run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "4", "--out", `${OUT}/ranges.json`]);
+  expect(human).toMatch(/^w=max {2}w=50 {2}→ {2}subdiv: the body passes through itself/m);
+  expect(human).toMatch(new RegExp(`${r.failed.length} of 11 poses did not build`));
+  expect(human).toMatch(/faces {2}top ×\d+, side\.s1 ×\d+/);
+  expect(JSON.parse(readFileSync(`${OUT}/ranges.json`, "utf8"))).toEqual(r);
+});
+
+test("CLI measure --ranges repeats with one seed and says so when every pose builds", () => {
+  const a = run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--seed", "5", "--json"]);
+  expect(run(["measure", "test/fixtures/ranges-part.js", "--ranges", "--seed", "5", "--json"])).toBe(a);
+  const ok = run(["measure", "src/parts/demo.js", "--ranges", "--random", "2"]);
+  expect(ok).toMatch(/0 of \d+ poses did not build/);
+});
+
+test("CLI measure --ranges refuses the flags that do not apply", () => {
+  for (const extra of [["--process", "fdm-pla"], ["--no-verify"], ["--no-lint"], ["--drag", "x"]]) {
+    const err = runFail(["measure", "test/fixtures/ranges-part.js", "--ranges", ...extra]);
+    expect(`${err.stderr}`).toMatch(new RegExp(`${extra[0]}.*--ranges`));
+    expect(`${err.stderr}`).toMatch(/usage: partforge measure/);
+  }
+  expect(`${runFail(["measure", "test/fixtures/ranges-part.js", "--random", "3"]).stderr}`).toMatch(/require --ranges/);
+  expect(`${runFail(["measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "x"]).stderr}`).toMatch(/--random takes/);
+});

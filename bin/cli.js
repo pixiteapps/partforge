@@ -247,6 +247,46 @@ function printDrag(r, start) {
   }
 }
 
+// `measure --ranges`: oracle/ranges.js's sweepRanges, printed. Exit 0 whenever the sweep
+// ran: a pose that does not build is a fact about the part, not a failure of the command.
+async function rangesCommand(part, view, flags, usage) {
+  const count = (name, fallback) => {
+    if (flags[name] === undefined) return fallback;
+    const n = Number(flags[name]);
+    if (flags[name].trim() === "" || !Number.isInteger(n) || n < 0) die(`--${name} takes a whole number, 0 or more\n${usage}`);
+    return n;
+  };
+  const opts = { random: count("random", 24), seed: count("seed", 1) };
+  const views = Object.keys(part.views ?? {});
+  if (view !== undefined && !views.includes(view)) die(`no view "${view}"; the part's views are ${views.join(", ")}\n${usage}`);
+  const kernel = await bootKernel(part);
+  const { sweepRanges } = await import("../src/framework/oracle/ranges.js");
+  const result = sweepRanges(kernel, part, view, opts);
+  if (flags.out) {
+    mkdirSync(dirname(resolve(flags.out)), { recursive: true });
+    writeFileSync(flags.out, JSON.stringify(result, null, 2));
+  }
+  if (flags.json) console.log(JSON.stringify(result, null, 2));
+  else printRanges(result);
+  if (flags.out && !flags.json) console.log(`\nwrote ${flags.out}`);
+  process.exit(0);
+}
+
+const RANGES_FACES_SHOWN = 8;
+
+function printRanges(r) {
+  for (const f of r.failed) {
+    const values = Object.entries(f.params).map(([k, v]) => `${k}=${v}`).join(" ");
+    console.log(`${f.name}  ${values ? `${values}  ` : ""}→  ${f.error}`);
+  }
+  console.log(`${r.failed.length} of ${r.poses} poses did not build (view ${r.view})`);
+  if (r.faces.length) {
+    const shown = r.faces.slice(0, RANGES_FACES_SHOWN).map((f) => `${f.id} ×${f.count}`).join(", ");
+    const more = r.faces.length > RANGES_FACES_SHOWN ? `, and ${r.faces.length - RANGES_FACES_SHOWN} more` : "";
+    console.log(`faces  ${shown}${more}`);
+  }
+}
+
 const commands = {
   async lint(args) {
     const usage = "usage: partforge lint <part-module> [--params <json>] [--json] [--out <file>] [--strict]";
@@ -281,7 +321,8 @@ const commands = {
 
   async measure(args) {
     const usage = "usage: partforge measure <part-module> [view] [--process <profile>] [--no-verify] [--no-lint] [--json] [--out <file>]\n" +
-      "       partforge measure <part-module> [view] --drag <handle> (--to x,y,z | --turn <deg>) [--grab <joint>] [--params <json>] [--json] [--out <file>]";
+      "       partforge measure <part-module> [view] --drag <handle> (--to x,y,z | --turn <deg>) [--grab <joint>] [--params <json>] [--json] [--out <file>]\n" +
+      "       partforge measure <part-module> [view] --ranges [--random <n>] [--seed <n>] [--json] [--out <file>]";
     const { values: flags, positionals: [partPath, view] } = parse(args, {
       process: { type: "string" },
       "no-verify": { type: "boolean" },
@@ -293,7 +334,18 @@ const commands = {
       turn: { type: "string" },
       grab: { type: "string" },
       params: { type: "string" },
+      ranges: { type: "boolean" },
+      random: { type: "string" },
+      seed: { type: "string" },
     }, usage);
+    if (!flags.ranges && (flags.random !== undefined || flags.seed !== undefined)) {
+      die(`--random/--seed require --ranges\n${usage}`);
+    }
+    if (flags.ranges) {
+      for (const f of ["drag", "process", "no-verify", "no-lint"]) {
+        if (flags[f] !== undefined) die(`--${f} does not apply with --ranges (a ranges sweep only builds: no lint, measure or verify)\n${usage}`);
+      }
+    }
     if (flags.drag === undefined && (flags.to || flags.turn || flags.grab || flags.params)) {
       die(`--to/--turn/--grab/--params require --drag\n${usage}`);
     }
@@ -307,6 +359,9 @@ const commands = {
       // --drag: play one handle drag headlessly (derive only) and report it — no lint,
       // no kernel boot, no verify.
       if (flags.drag !== undefined) return dragCommand(part, view, flags, usage);
+      // --ranges: build the view at a list of poses and report the ones that throw — no
+      // lint, no measure, no verify.
+      if (flags.ranges) return rangesCommand(part, view, flags, usage);
       // Error-tier lint before the kernel boots: a statically broken part fails in
       // milliseconds with a precise message rather than after a WASM boot and a
       // downstream error that doesn't name the cause. Warnings never gate measure.
