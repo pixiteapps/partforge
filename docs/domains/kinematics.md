@@ -72,15 +72,65 @@ posed.world("pip");           // { origin: [-30, 122.997, -30.174], x: [1, 0, 0]
 | --- | --- |
 | `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, type?, axis?, length?, offset?, range?, cone?, follow? }`. |
 | `lengths` | One length per joint, in mm: from that joint to the next joint, and from the last joint to the tip. Alternatively, give each joint its own `length`. If you give both, they must agree. |
-| `toward` | The direction the straight limb points. Required unless you use `rotate`. |
+| `toward` | The direction the straight limb points. Required unless you use `rotate` or `points`. |
 | `bendToward` | The side a positive bend curls toward. Required unless you use `rotate`. |
 | `at` | The base joint's position, in the parent frame (or part coordinates). Default `[0, 0, 0]`. |
+| `points` | Each joint's position, then the tip's, in place of `at`, `lengths` and joint offsets. See "A limb from joint points". |
 | `parent` | The name of a frame the limb hangs from. Omit it for part coordinates. See "Limbs on a parent frame". |
 | `r` | Radii, one per joint and then the tip (`joints.length + 1` entries). Only `grip`, `flesh`, `attach` and a subdivision cage's `skin` use them. |
 | `mirror` | `"XY"`, `"XZ"` or `"YZ"`: reflects the limb. See "Mirroring". |
 | `rotate` | The escape hatch: raw rotate steps for the base frame, in place of `toward`/`bendToward`. |
 
 An unknown field is an error. This prevents a typo from being ignored.
+
+### A limb from joint points
+
+`points` places every joint at once: one `[x, y, z]` per joint, then the tip, in the
+parent frame (or part coordinates). Each joint sits on its point at rest. It replaces
+`at`, `lengths` and joint `offset`, so give none of them with it. It is the easy way to
+fit a limb to a body you already have, such as a cage at rest.
+
+Each joint's frame has its own aim. Its +Y is the first of these that is there:
+
+1. the joint's own `toward`;
+2. the limb's `toward`;
+3. the direction to the next point;
+4. the previous joint's +Y.
+
+It bends toward its own `bendToward`, else the limb's. The limb's `bendToward` is
+required. A joint entry may carry `toward` and `bendToward` only in a limb with `points`.
+
+```js
+const bentFinger = limb("bent", {
+  points: [[0, 0, 0], [0, 40, -2], [0, 64, -6], [0, 84, -12]],
+  bendToward: [0, 0, -1],
+  joints: ["mcp", "pip", "dip"],
+});
+bentFinger.pose({}).world("pip").origin;      // [0, 40, -2]
+bentFinger.pose({}).world("pip").y;           // [0, 0.986, -0.164]  along its own bone
+bentFinger.pose({}).report.tip;               // [0, 84, -12]
+bentFinger.pose({ bend: [0, 90, 0] }).report.tip;   // [0, 30, -46]
+const levelFinger = limb("level", {
+  points: [[0, 0, 0], [0, 40, -2], [0, 64, -6], [0, 84, -6]],
+  toward: [0, 1, 0], bendToward: [0, 0, -1],
+  joints: ["mcp", "pip", "dip"],
+});
+levelFinger.pose({}).frames["level.pip"];     // { parent: "level.mcp", at: [0, 40, -2] }
+```
+
+With no `toward`, each joint aims down its own bone and bends square to it. Give the
+limb a `toward` when the joints are off one line but should all bend square to that
+line, as a limb with offsets does: `levelFinger` is that limb, and its last bone runs
+along `toward`. Give a joint its own `toward` when its bone has no length (two joints at
+one point) or when it should turn about another line, such as a thumb's base turning
+about the line up the hand.
+
+- The last bone must lie along the last joint's aim, since the tip has no offset.
+- The base joint needs a `toward` (its own or the limb's) when its bone has no length.
+  A later joint with no length takes the previous joint's aim.
+- `mirror` reflects the points and every `toward` and `bendToward`.
+- `reach` needs a straight limb from points: every joint on one line, with one aim. Pose
+  any other with `goals`. `goals`, `grip`, `place`, `flesh` and handles work on any limb.
 
 ## Joints
 
@@ -142,6 +192,9 @@ knuckle.pose({ bend: [90, 0, 0] }).world("pip").origin;   // [0, -0.5, -35.4]  t
 
 `reach` and `grip` solve through offsets. `reach` still needs its aiming joint at the
 base, so the joints up to and including it take no offset.
+
+A limb whose joints all have a place to be is easier to give as `points` ("A limb from
+joint points"): each joint's position, with no step to work out.
 
 ### Ball joints
 
@@ -254,6 +307,8 @@ the other: a pose cannot have both.
 - Rules: the limb needs a driven bend joint, every segment before the pitch joint must
   have length 0, and no joint may follow the pitch joint or the aiming spread joint.
   The `robot-finger` limb (mcp, pip, dip following pip) meets all three rules.
+- A limb from `points` must also be straight: every joint on one line, with one aim.
+  Pose a bent one with `goals: [{ at: "tip", position }]`.
 
 `report.reach` is `{ target, residual, status }`. `residual` is the distance from the
 tip to the target, in mm. `status` is one of:
@@ -1097,6 +1152,14 @@ limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? } or { rotat
 limb "thumb".bend.ball.bend: use rotate or bend/spread/twist, not both
 limb "thumb".joints[0].range: a ball joint takes cone (its largest swing, in degrees), not range
 limb "index": place: from must be "joint" or "rest"
+limb "a".points: replaces at, lengths and joint offsets — remove at
+limb "a".points: expected 3 entries (one per joint, then the tip), got 2
+limb "a".joints[1].offset: points already place this joint — remove offset
+limb "a".joints[0].toward: this joint's bone has no length, so it needs a toward (its own, or the limb's)
+limb "a".points: the last bone must lie along its joint's aim, and it is 26.6° off — move the tip onto that line, or give the last joint its own toward along the bone
+limb "a".joints[0].toward: a joint's own toward needs the limb's points
+limb "a".joints[1].bendToward: must not be parallel to this joint's aim
+limb "a": reach needs a straight limb (one aim, every joint on the line) — pose this one with goals: [{ at: "tip", position: [x, y, z] }]
 ```
 
 Other errors: `attach` without a `k`, `flesh` or `attach` on a limb with no segment

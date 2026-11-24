@@ -46,6 +46,7 @@ const pointIn = (M, p) => { const o = [0, 0, 0]; xformPoint(o, invert(M), p[0], 
  */
 function aimJoints(tree, fail) {
   const { joints } = tree;
+  if (tree.fromPoints && !tree.straight) fail("", 'reach needs a straight limb (one aim, every joint on the line) — pose this one with goals: [{ at: "tip", position: [x, y, z] }]');
   const pitch = joints.findIndex((j) => !j.follow && j.axisKind === "bend");
   if (pitch < 0) fail("", "reach needs a driven bend joint to aim with");
   for (let i = 0; i < pitch; i++) if (joints[i].length !== 0 || joints[i + 1].offset?.some((c) => c !== 0)) fail("", "reach needs the limb's first bend joint at its base");
