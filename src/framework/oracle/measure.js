@@ -71,6 +71,32 @@ const shapeProbeFacts = (shape) => {
   });
 };
 
+// The topology key a preview file written now would carry for each sub-part with ties
+// (encode-preview.js, version 7): the worker delivers ties (jobs.js's generate) on a
+// canonical delivery of a k.subdiv body whose every vertex is tied, so this asks the same
+// question the same way — the build in its own frame, meshed at preview quality with
+// `ties: true` — for each sub-part whose place() is trusted and whose build probe is
+// cagePosable (cheap filters first). A sub-part with no ties is left out; a throw leaves
+// that sub-part out. Manifold only: another kernel delivers no ties.
+function previewTieKeys(kernel, part, view, params, names) {
+  const keys = new Map();
+  const { p, d } = resolveParams(part, params);
+  for (const name of names) {
+    const sp = part.parts[name];
+    try {
+      const e = probeSubPartPose(sp, { view, purpose: "display", p, d }, { scope: "build" });
+      if (!e.trusted || !e.cagePosable) continue;
+      if (probeSubPartPose(sp, { view, purpose: "display", p, d }, { scope: "place" }).trusted !== true) continue;
+      kernel.beginSubPart?.(`oracle:preview-ties:${name}`);
+      try {
+        const key = sp.build(kernel, p, d).toMesh({ quality: "preview", ties: true })?.ties?.key;
+        if (typeof key === "string") keys.set(name, key);
+      } finally { kernel.endSubPart?.(); }
+    } catch { /* no ties: its handles are judged as for an untied sub-part */ }
+  }
+  return keys;
+}
+
 function solidProbeFacts(solid) {
   const mesh = solid.toMesh();
   // Empty = the probe's boolean found nothing (a slab that misses the part).
@@ -609,14 +635,18 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   const handles = opts.handles !== false ? handlesReport(part, view, params) : undefined;
   // Which of those a kernel-free cached preview of this view would show (and why the
   // rest are hidden), against the sub-parts a GLB of this view would hold: the ones
-  // with triangles. OPT-IN (`opts.previewHandles: true`, the CLI's measure verb): it
+  // with triangles. The preview is one THIS version writes (encoder version 7): a cage
+  // body whose delivery carries ties stores them, so its handles may re-pose it
+  // (previewTieKeys). OPT-IN (`opts.previewHandles: true`, the CLI's measure verb): it
   // probes every handle's range, too slow for the worker's inspect path. Like
   // handlesReport it never fails the measurement — a throw leaves it out.
   let previewHandlesReport;
   if (handles && opts.previewHandles === true) {
     try {
-      previewHandlesReport = previewHandles(part, view, { ...part.defaults, ...params },
-        subparts.filter((s) => s.triangleCount > 0).map((s) => s.name));
+      const fileParams = { ...part.defaults, ...params };
+      const drawn = subparts.filter((s) => s.triangleCount > 0).map((s) => s.name);
+      previewHandlesReport = previewHandles(part, view, fileParams, drawn,
+        { cageKeys: previewTieKeys(kernel, part, view, fileParams, drawn) });
     } catch { previewHandlesReport = undefined; }
   }
 

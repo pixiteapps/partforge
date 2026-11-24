@@ -267,7 +267,7 @@ Each phase is one PR with its own version bump.
 | 4 | `partforge/wiring`: `harness`, fixed segments, planar `slack.js`, the three crossing helpers, its lint rules, `src/parts/cable-arm.js` | `domains/wiring/`, `lines/slack.js`, registry, `package.json` exports |
 | 5 | Out-of-plane slack, bundles, cut list in the kit | `lines/slack.js`, `export/kit/` |
 
-Phase 1 as built (0.201.0): `lines/taut.js` (open and closed lines, parallel axes),
+Phase 1 as built (0.203.0): `lines/taut.js` (open and closed lines, parallel axes),
 `lines/materials.js` (one sourced preset, `uhmwpe`), `capstan()` with `lineInfo()` and
 `report()`, the guide section, types and tests. Left for its own PR: the reference
 part `src/parts/capstan-joint.js`, and a public `partforge/lines` entry for

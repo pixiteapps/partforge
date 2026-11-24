@@ -77,3 +77,15 @@ test("posing moves points, never faces: the face count is the same at defaults a
   const count = cageAt(part.defaults).c.faces().length;
   for (const ctl of CONTROLS) expect(cageAt({ ...part.defaults, [ctl.key]: ctl.max }).c.faces().length, ctl.key).toBe(count);
 });
+
+// The flat under the wrist is placed from the cage, so it is the same at every pose: the
+// built body's lowest point is that flat, and it removes 0.5 to 3 mm of the smooth body.
+test.each(CASES.slice(0, 3))("the flat under the wrist is a real flat, 0.5 to 3 mm deep: %s", (_, params) => {
+  const { p, d } = resolveParams(part, params);
+  const built = part.parts.hand.build(k, p, d);
+  const smoothMin = k.subdiv(cageAt(params).c).boundingBox().min[2];
+  const flat = built.boundingBox().min[2];
+  expect(flat - smoothMin).toBeGreaterThanOrEqual(0.5);
+  expect(flat - smoothMin).toBeLessThanOrEqual(3);
+  expect(flat).toBeCloseTo(cageAt(params).c.bounds().min[2] + 2.4, 6);
+}, 60_000);

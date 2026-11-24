@@ -2259,7 +2259,9 @@ export function createViewer(container, part, {
   // would return. Copies: the caller (exportPreview → partforge/gltf) may keep or
   // transfer them. null when nothing has been delivered under that name. Its
   // `edges` are the lines shown on screen: the kernel's segments, or — when the
-  // delivery carried no edge data at all — the angle-derived fallback lines.
+  // delivery carried no edge data at all — the angle-derived fallback lines. Its
+  // `pose` is that fast-path pose (column-major, the identity when none), which
+  // exportPreview stores beside a cage body's ties (they live in the unposed frame).
   const _payloadV = new THREE.Vector3();
   const _payloadNormal = new THREE.Matrix3();
   function getSubMeshPayload(name) {
@@ -2293,6 +2295,7 @@ export function createViewer(container, part, {
       edges,
       indices: geo.index ? Uint32Array.from(geo.index.array) : null,
       triangles: geo.userData.triangles ?? (geo.index ? geo.index.count : pos.count) / 3,
+      pose: pose.toArray(),
     };
   }
 

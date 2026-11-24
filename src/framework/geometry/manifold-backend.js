@@ -13,6 +13,8 @@ import { implicitFrames } from "./implicit/frame-report.js";
 import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
 import { implicitShapeHash } from "./implicit/call-id.js";
 import { createCage, isCage, meshSubdiv } from "./subdiv/index.js";
+import { topologyKey } from "./subdiv/surface.js";
+import { tiesFor, tiesHold } from "./subdiv/ties.js";
 import { encodeBindingProps, decodeBindings, BIND_PROPS } from "./mesh-bindings.js";
 import { createSolidCache } from "./solid-cache.js";
 import { hoistCommonSuffix } from "./transform-hoist.js";
@@ -233,6 +235,11 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // A preview k.subdiv's limit mesh with each triangle's cage face, beside the cached
   // solid: what provenance.js matches a clicked triangle back to its cage face with.
   const subdivSources = new WeakMap();
+  // A preview k.subdiv body with no creases, by the originalID its one run carries (and,
+  // after a label(), the fresh id that run is re-stamped to): its rest limit mesh, the
+  // cage's topology key and the level built. What toMesh({ ties: true }) ties the
+  // delivered vertices to (subdiv/ties.js). Entries live as long as the cache entry.
+  const subdivSkins = new Map();
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
@@ -414,13 +421,15 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // Copy the mesh out into JS-owned arrays (so it survives cleanup) and free the
   // transient mesh handle.
   let activeProv = null; // provenance.js recorder, between beginProvenance/endProvenance
-  function meshOut(m, asStl) {
+  function meshOut(m, asStl, opts) {
     settle(m);
     const g = m.getMesh();
     const r = asStl ? stlFromMesh(g) : creasedNormals(g, { policies: oidPolicies, featureLabels, surfaces: blendSurfaces });
     if (!asStl) {
       const bindings = decodeBindings(g, implicitCalls, bindingRepair(g));
       if (bindings) r.bindings = bindings;
+      const ties = opts?.ties ? skinTies(g, r.positions) : null;
+      if (ties) r.ties = ties;
     }
     // Per-triangle param provenance, only while a build has provenance active.
     const o = !asStl && activeProv ? activeProv.originsFor(g) : null;
@@ -428,6 +437,48 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     g.delete?.();
     return r;
   }
+
+  // The delivered (non-indexed, triVerts-order) mesh's ties to one k.subdiv body's limit
+  // mesh: { key, level, tri, w } (subdiv/ties.js), or null. Null unless every skin run in
+  // the mesh is the SAME preview, crease-free k.subdiv body with no transform on it (a
+  // moved body would be placed in the wrong frame), and every vertex is tied — a unioned
+  // piece's own vertices are not, so it sends none. Last, every vertex placed from its tie
+  // on the rest limit mesh must land where it was delivered, inside its triangle (every
+  // weight in [0, 1], or outside by float32 rounding at most: tiesHold): a wrong tie is
+  // never sent.
+  function skinTies(g, positions) {
+    if (subdivSkins.size === 0) return null;
+    const roid = g.runOriginalID, ri = g.runIndex, rt = g.runTransform, fid = g.faceID;
+    const nTri = (g.triVerts.length / 3) | 0;
+    let skin = null;
+    for (let r = 0; r < roid.length; r++) {
+      const rec = subdivSkins.get(roid[r]);
+      if (!rec) continue;
+      if ((skin && skin !== rec) || !isIdentityAt(rt, r, roid.length)) return null;
+      skin = rec;
+    }
+    if (!skin || !fid || fid.length !== nTri || positions.length !== nTri * 9) return null;
+    const faceTri = new Int32Array(nTri).fill(-1);
+    for (let r = 0; r < roid.length; r++) {
+      if (subdivSkins.get(roid[r]) !== skin) continue;
+      for (let t = ri[r] / 3; t < ri[r + 1] / 3; t++) faceTri[t] = fid[t];
+    }
+    const t = tiesFor({ positions, faceTri, limitPositions: skin.positions, limitIndices: skin.indices });
+    if (t.untied !== 0) return null;
+    if (!tiesHold(t, positions, skin.positions, skin.indices)) return null;
+    return { key: skin.key, level: skin.level, tri: t.tri, w: t.w };
+  }
+  // Fails closed: a missing or short transform is not identity. The one exception is a
+  // mesh of ONE run with no transform array at all: Manifold gives a fresh original (an
+  // import no boolean has touched yet, such as a bare k.subdiv) an empty runTransform, and
+  // that run is in its own frame.
+  const isIdentityAt = (rt, r, runs) => {
+    if ((!rt || rt.length === 0) && runs === 1) return true;
+    if (!rt || rt.length < (r + 1) * 12) return false;
+    const M = affineAt(rt, r);
+    for (let i = 0; i < 12; i++) if (Math.abs(M[i] - IDENTITY[i]) > 1e-7) return false;
+    return true;
+  };
 
   // Raw indexed mesh (positions x,y,z per vertex + triangle indices) for 3MF.
   function indexedMeshOut(m) {
@@ -868,10 +919,12 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
           if (pol !== undefined) oidPolicies.set(newId, pol);
           const surf = blendSurfaces.get(oldId);
           if (surf) blendSurfaces.set(newId, surf);
+          const skin = subdivSkins.get(oldId);
+          if (skin) subdivSkins.set(newId, skin);
         }
         const newIds = [...idMap.values()];
         return { value: wrap(o, lh, undefined, { runs, idMap }), pin: o, dispose: () => {
-          for (const id2 of newIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); }
+          for (const id2 of newIds) { featureLabels.delete(id2); oidPolicies.delete(id2); blendSurfaces.delete(id2); subdivSkins.delete(id2); }
           o.delete?.();
         } };
       });
@@ -909,7 +962,8 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return wrap(T(b.translate(center)), h("scale", hash, factor, center), undefined,
         { runs: runsThrough(m, scaleAffine(factor, center)), idMap: idMaps.get(m) });
     },
-    toMesh: () => { S(); return meshOut(m, false); },
+    // `ties: true` adds a k.subdiv body's ties (skinTies) when it has them.
+    toMesh: (opts) => { S(); return meshOut(m, false, opts); },
     toSTL: () => { S(); return Promise.resolve(meshOut(m, true)); },
     toIndexedMesh: () => { S(); return indexedMeshOut(m); },
     });
@@ -1248,8 +1302,13 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         // parts is a same-surface edge).
         const regions = out.triRegion ? out.regions : 1;
         const id = wasm.Manifold.reserveIDs(regions), ids = Array.from({ length: regions }, (_, i) => id + i);
+        // A crease-free preview body is its own skin: each limit triangle is imported as
+        // its own face (faceID = its index), which is what ties a delivered vertex to it.
+        const skin = !out.triRegion && tier !== "print";
+        const faceID = skin ? Uint32Array.from({ length: out.indices.length / 3 }, (_, t) => t) : null;
         const m = T(out.triRegion ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triRegion, ids)
-          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, id));
+          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, id, null, null, null, faceID));
+        if (skin) subdivSkins.set(id, { positions: out.positions, indices: out.indices, key: topologyKey(snapshot), level: out.level });
         ids.forEach((oid, part) => {
           if (!out.triRegion) { oidPolicies.set(oid, ORGANIC); return; }
           const hard = new Set();
@@ -1259,7 +1318,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const value = wrap(m, key);
         subdivWarnings.set(value, out.warnings);
         if (tier !== "print") subdivSources.set(value, { positions: out.positions, indices: out.indices, triFace: out.triFace, ids: snapshot.ids });
-        return { value, pin: m, dispose: () => { for (const i of ids) oidPolicies.delete(i); m.delete?.(); } };
+        return { value, pin: m, dispose: () => { for (const i of ids) { oidPolicies.delete(i); subdivSkins.delete(i); } m.delete?.(); } };
       });
       for (const w of subdivWarnings.get(solid) ?? []) recordWarning(w);
       return solid;

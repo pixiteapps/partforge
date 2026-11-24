@@ -88,8 +88,15 @@ export function ringStackManifold(wasm, rings, { closed = false } = {}) {
 // (`numProp = 3 + per`; `data` holds nVert · per) — vertex properties Manifold carries
 // through every boolean, interpolating them at the vertices a cut creates (the pose
 // bindings, mesh-bindings.js).
-export function manifoldFromWeldedMesh(wasm, V, Tr, originalID, triOwner = null, ids = null, extra = null) {
+// `faceID` (optional, one per input triangle) becomes MeshGL.faceID: Manifold keeps it on
+// every piece of the triangle through every boolean, and keeps the edges between different
+// ids (k.subdiv's ties, subdiv/ties.js, give each limit triangle its own index).
+export function manifoldFromWeldedMesh(wasm, V, Tr, originalID, triOwner = null, ids = null, extra = null, faceID = null) {
   const opts = { numProp: 3, vertProperties: Float32Array.from(V), triVerts: Uint32Array.from(Tr) };
+  if (faceID) {
+    if (faceID.length !== Tr.length / 3) throw new Error(`manifoldFromWeldedMesh: faceID has ${faceID.length} entries, want ${Tr.length / 3}`);
+    opts.faceID = Uint32Array.from(faceID);
+  }
   if (extra && extra.per > 0) {
     const per = extra.per, np = 3 + per, nV = (V.length / 3) | 0, vp = new Float32Array(nV * np), d = extra.data;
     if (d.length !== nV * per) throw new Error(`manifoldFromWeldedMesh: extra.data has ${d.length} floats, want ${nV * per}`);
@@ -105,12 +112,15 @@ export function manifoldFromWeldedMesh(wasm, V, Tr, originalID, triOwner = null,
     const nTri = Tr.length / 3, order = Uint32Array.from({ length: nTri }, (_, t) => t);
     order.sort((a, b) => triOwner[a] - triOwner[b] || a - b);   // stable: ties keep triangle order
     const sorted = new Uint32Array(Tr.length), runIndex = [0], runIds = [];
+    const sortedFace = opts.faceID ? new Uint32Array(nTri) : null;
     order.forEach((t, i) => {
       sorted.set(opts.triVerts.subarray(3 * t, 3 * t + 3), 3 * i);
+      if (sortedFace) sortedFace[i] = opts.faceID[t];
       if (i === 0 || triOwner[t] !== triOwner[order[i - 1]]) { if (i) runIndex.push(3 * i); runIds.push(ids[triOwner[t]]); }
     });
     runIndex.push(Tr.length);
     opts.triVerts = sorted;
+    if (sortedFace) opts.faceID = sortedFace;
     opts.runIndex = Uint32Array.from(runIndex);
     opts.runOriginalID = Uint32Array.from(runIds);
   } else if (originalID !== undefined) {

@@ -296,6 +296,9 @@ A whole body moved rigidly by a `views` placement does not.
 
 ### Dragging a pose
 
+This section is about `k.implicit` bodies. A `k.subdiv` body's drag is under "The
+surface: `k.subdiv`".
+
 While you drag a slider, the app does not rebuild the body on every move. It bends the
 last exact mesh instead, at display rate, and rebuilds exactly when you let go or pause.
 A handle drag in Pose mode bends it the same way (pose the body's frames with limbs and
@@ -630,8 +633,9 @@ it. It builds on Manifold only (see "Backend: Manifold only").
 - **Use an implicit tree for pieces that press together, blend where they meet, or pose
   by frames**: fingers that close against the palm, toes that fan and merge, a body with
   crease detail. The cage has none of these: it has no frames, no `contact`, no detail,
-  and a cage that passes through itself is an error. A pose drag on a cage rebuilds the
-  whole body.
+  and a cage that passes through itself is an error. A pose drag on a cage follows the
+  pointer (see "The surface: `k.subdiv`"), but it stops where the body would pass through
+  itself.
 - The two join each other only by ordinary booleans (`union`, `cut`), which leave a
   sharp seam where they meet. Do not plan on a smooth join between a cage and a tree.
 
@@ -834,10 +838,48 @@ no solid already built, so you can build, change and build again.
 - **A cage has at most 2,000 faces.**
 - **It shades smooth** and takes every ordinary `Solid` op afterwards. A flat to print
   on is an ordinary `cut` with a box.
-- **A change to the cage rebuilds the whole body.** A param that changes the cage (a
-  `rotate` angle, an extrude length) rebuilds it, and so does each move of a slider or
-  handle drag. The rebuild is fast for a small cage: the whale below rebuilds in well
+- **A drag that moves the cage's points follows the pointer.** While a slider or a
+  Pose-mode handle drag changes only where the cage's points are (a `rotate` angle, an
+  extrude length), the viewer re-poses the last exact mesh from the moved points, with
+  no build. The exact build replaces it after a 150 ms pause or on release, and the
+  drag's commit is reported once, after that build. This needs a build that smooths
+  exactly one cage with no creases and asks no geometry question of a solid (reading the
+  cage is fine), and a `place()`, if any, that only moves the body. A `cut` is fine
+  while its numbers stay the same during the drag. A cut placed from a cage value that
+  moves with the pose changes the build's shape, so every move rebuilds. During the drag
+  a cut face is not recut (its rim rides the skin), and shading at a sharply bent joint
+  can differ slightly, until the exact build lands. This is not the approximate bend of a
+  `k.implicit` drag ("Dragging a pose"): the re-posed skin lies on the smooth surface of
+  the moved cage.
+- **The same drag works on a cached preview** (`mountPreview({ glb, part })`, a public
+  forge page). A preview file written by partforge 0.202.0 or later stores, for a body
+  that takes this fast path, where each vertex sits on the smooth surface. A Pose-mode
+  handle that moves only the cage's points then shows on the preview and re-poses the
+  body there, with no kernel and the same limits: it stops at the last pose in which the
+  body does not pass through itself. A preview has no exact build, so the last pose drawn
+  stays on screen after release. The re-posed body is drawn without its edge lines until
+  it returns to the pose the file was built at. The handles stay hidden on a preview file
+  from an older version, and on a part with a `collisions` block that keeps pieces solid
+  in Pose mode (the preview checks collisions against the file's mesh only).
+  `partforge measure` answers for a file this version writes. So it lists such handles
+  under `preview handles:` as shown, unless the part's collisions hide them.
+- **Anything else rebuilds the whole body on each move**: a piece unioned onto the body
+  (eyes, nails), a fillet or chamfer on it, a creased cage, two cages in one sub-part, a
+  change to the cage's faces (an extrude count, `steps`), `setParams`, an animation and
+  the print tier. The rebuild is fast for a small cage: the whale below rebuilds in well
   under a second at print quality. A large cage, such as the hand below, takes longer.
+
+To keep a drag fast:
+
+1. Place a print flat from the cage or from constants, not from the solid's
+   `boundingBox()`, and keep its numbers the same at every pose.
+2. Bend and reshape with moves of points (`rotate`, `move`, `scale`) that the slider
+   drives. A parameter that changes the number of faces (an extrude count, `steps`)
+   rebuilds on each move.
+3. Keep the body one cage with no pieces unioned onto it. Make eyes, nails or other
+   added pieces their own sub-part: each sub-part is checked alone, so the body still
+   follows the pointer (the added piece rebuilds when the drag changes it). Or accept a
+   rebuild on each move.
 
 ```js
 const smoothBox = (segs) => k.subdiv(k.cage({ box: { size: [20, 20, 20], segs } })).boundingBox();
@@ -851,6 +893,11 @@ smoothBox([2, 2, 2]).max[0];   // 10
   limbs crossing) is an error at print quality and a build warning at preview. Both
   name the cage faces that cross, so you can find them. A face whose own surface
   crosses is named once, as `-y:1,0 folds through itself`.
+- **A drag never draws a pose that passes through itself.** A handle stops at the last
+  valid pose. A panel slider's thumb can move past it, but the body holds, and the value
+  returns to the last valid one. The drag's check is coarser than the build's, so the
+  exact build after the drag is the final word: if it refuses the pose, the params the
+  drag changed go back to where the drag began.
 - **A body with no volume throws** at both qualities, and so does one turned inside out.
   When it also passes through itself, the error names the crossing instead.
 - **Two faces lying exactly flat on each other are not detected.** Keep separate parts
@@ -911,8 +958,9 @@ In the part: `derive: (p) => ({ tail: eel(cage, p).centroid("tail") })`,
 `build: (k, p) => k.subdiv(eel(k.cage, p))`, and a handle
 `{ point: (p, d) => d.tail, params: ["tail"], drag: "axis", direction: [1, 0, 0] }`.
 The smooth surface lies inside the cage, so the handle sits just off the skin. Every
-handle on a cage, this one and the limb-driven ones below, works the same way: each move
-of the drag builds the cage again and smooths it again.
+handle on a cage, this one and the limb-driven ones below, follows the pointer as a
+slider does (see "The surface: `k.subdiv`"), and stops at the last pose in which the body
+does not pass through itself.
 
 **A limb that bends, driven by a `limb`.** For a finger, a leg or a tail that bends at
 joints, let a `limb` from `partforge/kinematics` decide the angles, and give the cage
@@ -1218,7 +1266,9 @@ hand.centroid("indexTip").map(Math.round);   // [32, -42, 183]
 
 - `derive: (p) => poseDigits(p)` poses every digit.
 - `build: (k, p, d) => k.subdiv(cageHand(k.cage, p, bendsOf(d)))`, then an ordinary
-  `cut` with a box under the wrist for a flat to stand on.
+  `cut` with a box under the wrist for a flat to stand on. The box's top is the cage's
+  lowest point (`cage.bounds().min[2]`, the arm's end) plus 2.4 mm. The smooth body lies
+  inside the cage, so that removes a slab about 1.5 mm thick at every pose.
 - `handles` has one `angles` handle per digit: `{ on: "index", drag: "angles", params:
   ["indexKnuckle", "indexCurl"] }` for each finger, and `{ on: "thumb", drag: "angles",
   params: ["thumbCurl"] }`. Drag a fingertip and the drag solves that finger's knuckle
@@ -1226,6 +1276,13 @@ hand.centroid("indexTip").map(Math.round);   // [32, -42, 183]
 
 The points to copy:
 
+- **Place a print flat from the cage or from constants, not from the solid's
+  `boundingBox()`** (rule 1 of "To keep a drag fast", under "The surface: `k.subdiv`").
+  The viewer re-poses the body during a drag only when it can trust the build without
+  running it. A build that measures its own solid cannot be trusted that way, so each move
+  of a drag would rebuild the whole hand: about 460 ms a move at the preview tier, in Node
+  on an Apple M1 Max. Reading the cage (`cage.bounds()`) is fine, and the hand's flat
+  keeps its numbers at every pose because the arm's end never moves.
 - **One top face per finger.** `segs: [4, 1, 2]` gives the palm four faces across X on
   its top and one face through its thickness, so its edge is round. Each finger starts
   with a short narrower neck, which keeps the fingers separate.

@@ -12,6 +12,8 @@
 //
 // All levels lie on the same limit surface; a level changes only the facet size.
 
+import { h } from "../solid-hash.js";
+
 export const MIN_SUBDIV_LEVEL = 1;
 export const MAX_SUBDIV_LEVEL = 5;
 // The most triangles a quality tier's level may have (levelFor's limit per tier). Preview
@@ -104,11 +106,16 @@ function edgeFacesOf({ F, E, faceEdges }, check) {
   return edgeFaces;
 }
 
-// One Catmull-Clark step.
+// One Catmull-Clark step: the next level's mesh, positions and topology.
 function step(m) {
-  const { V, F, E, pos, faceVerts, faceEdges, edgeVerts, edgeFaces, sharp } = m;
-  const nV = V + F + E, nF = 4 * F, nE = 2 * E + 4 * F;
-  const out = new Float64Array(3 * nV);
+  return { ...stepTopology(m), pos: stepPositions(m, m.pos) };
+}
+
+// The next level's positions from this level's topology and `pos` (this level's
+// positions, which need not be m.pos: a plan applies the topology to new points).
+function stepPositions(m, pos) {
+  const { V, F, E, faceVerts, edgeVerts, edgeFaces, sharp } = m;
+  const out = new Float64Array(3 * (V + F + E));
 
   // Face points.
   for (let f = 0; f < F; f++) {
@@ -148,7 +155,14 @@ function step(m) {
     const w = (n - 2) / n, s = 1 / (n * n);
     for (let c = 0; c < 3; c++) out[3 * v + c] = w * pos[3 * v + c] + s * acc[3 * v + c];
   }
-  if (sharp) creasePoints(m, out, 0.75, 0.125);
+  if (sharp) creasePoints(m, pos, out, 0.75, 0.125);
+  return out;
+}
+
+// The next level's topology, with no positions.
+function stepTopology(m) {
+  const { V, F, E, faceVerts, faceEdges, edgeVerts, sharp } = m;
+  const nV = V + F + E, nF = 4 * F, nE = 2 * E + 4 * F;
 
   // Topology. Old edge e splits into 2e (from its first end) and 2e + 1 (to its second);
   // face f adds the inner edges 2E + 4f + k, from its point to the point of its edge k.
@@ -177,7 +191,7 @@ function step(m) {
       nFaceEdges[q + 3] = edgeVerts[2 * ep] === v ? 2 * ep : 2 * ep + 1;
     }
   }
-  const next = { V: nV, F: nF, E: nE, pos: out, faceVerts: nFaceVerts, faceEdges: nFaceEdges, edgeVerts: nEdgeVerts };
+  const next = { V: nV, F: nF, E: nE, faceVerts: nFaceVerts, faceEdges: nFaceEdges, edgeVerts: nEdgeVerts };
   if (sharp) {
     next.sharp = new Uint8Array(nE);
     for (let e = 0; e < E; e++) next.sharp[2 * e] = next.sharp[2 * e + 1] = sharp[e];
@@ -188,7 +202,7 @@ function step(m) {
 
 // Overwrite, in `out`, the points on sharp edges: on exactly two, wv · v + wn · (a + b)
 // with a, b the far ends of those edges; on three or more, v itself.
-function creasePoints({ V, E, pos, edgeVerts, sharp }, out, wv, wn) {
+function creasePoints({ V, E, edgeVerts, sharp }, pos, out, wv, wn) {
   const count = new Uint8Array(V);
   const sum = new Float64Array(3 * V);
   for (let e = 0; e < E; e++) {
@@ -207,7 +221,12 @@ function creasePoints({ V, E, pos, edgeVerts, sharp }, out, wv, wn) {
 // Limit positions: (n² v + 4 Σ edge neighbours + Σ face-diagonal neighbours) / (n (n + 5)).
 // For valence 4 this is the bicubic B-spline mask 16, 4, 1 over 36.
 function limit(m) {
-  const { V, F, E, pos, faceVerts, edgeVerts } = m;
+  return limitPositions(m, m.pos);
+}
+
+// Limit positions from this level's topology and `pos` (as stepPositions).
+function limitPositions(m, pos) {
+  const { V, F, E, faceVerts, edgeVerts } = m;
   const valence = new Uint32Array(V);
   const edgeSum = new Float64Array(3 * V);
   const diagSum = new Float64Array(3 * V);
@@ -227,7 +246,7 @@ function limit(m) {
     const n = valence[v], s = 1 / (n * (n + 5));
     for (let c = 0; c < 3; c++) out[3 * v + c] = (n * n * pos[3 * v + c] + 4 * edgeSum[3 * v + c] + diagSum[3 * v + c]) * s;
   }
-  if (m.sharp) creasePoints(m, out, 2 / 3, 1 / 6);
+  if (m.sharp) creasePoints(m, pos, out, 2 / 3, 1 / 6);
   return out;
 }
 
@@ -284,10 +303,15 @@ export function subdivide(snapshot, levels, built = null) {
   let m = built ?? cage;
   if (!built) for (let l = 0; l < levels; l++) m = step(m);
   const positions = limit(m);
-  const { F, faceVerts } = m;
+  return withParts({ positions, ...triangulate(m, positions, levels) }, parts);
+}
+
+// A level-`level` mesh's two triangles per quad, each quad split along its shorter
+// diagonal on `positions` (ties to a-c), and each triangle's cage face.
+function triangulate({ F, faceVerts }, positions, level) {
   const indices = new Uint32Array(6 * F);
   const triFace = new Uint32Array(2 * F);
-  const shift = 2 * levels;
+  const shift = 2 * level;
   for (let f = 0; f < F; f++) {
     const a = faceVerts[4 * f], b = faceVerts[4 * f + 1], c = faceVerts[4 * f + 2], d = faceVerts[4 * f + 3];
     const o = 6 * f;
@@ -300,9 +324,94 @@ export function subdivide(snapshot, levels, built = null) {
     }
     triFace[2 * f] = triFace[2 * f + 1] = f >>> shift;
   }
-  if (!parts || parts.count < 2) return { positions, indices, triFace };
-  // Creases split the skin into parts: each triangle's part and the creased pairs, for shading.
-  return { positions, indices, triFace, triRegion: triFace.map((f) => parts.of[f]), regions: parts.count, creasePairs: parts.pairs };
+  return { indices, triFace };
+}
+
+// Creases split the skin into parts: each triangle's part and the creased pairs, for
+// shading. Added to `mesh` only when there are two parts or more.
+function withParts(mesh, parts) {
+  if (!parts || parts.count < 2) return mesh;
+  return { ...mesh, triRegion: mesh.triFace.map((f) => parts.of[f]), regions: parts.count, creasePairs: parts.pairs };
+}
+
+// The plan: everything subdivide computes that does not depend on the cage's points, so a
+// pose drag (which moves points and keeps the faces) re-runs only the position arithmetic.
+//
+// topologyKey names a snapshot's topology: its quads and creases, never its points, never
+// its face ids and never the order or start corner the cage happened to list them in.
+// extrude numbers a side face's slot from a geometric first edge, so a pose can reorder
+// faces while the same quads (by point index) remain; the plan is built from one snapshot
+// and applied to points by index, so only the quad set matters. Each quad is rotated to
+// start at its lowest point index (winding kept, never reversed) and the quads are sorted;
+// creases are [low, high] pairs, sorted. Two snapshots with one key have the same surface
+// for the same points, though a plan's triangle order follows its own snapshot's faces.
+function canonicalTopology(snapshot) {
+  const { points, faces, creases } = snapshot ?? {};
+  const quads = (faces ?? []).map((f) => {
+    const m = f.indexOf(Math.min(...f));
+    return [...f.slice(m), ...f.slice(0, m)];
+  }).sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3]);
+  const pairs = (creases ?? []).map(([a, b]) => (a < b ? [a, b] : [b, a]))
+    .sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  return { n: points?.length ?? 0, quads, creases: pairs };
+}
+
+export function topologyKey(snapshot) {
+  const { n, quads, creases } = canonicalTopology(snapshot);
+  return h("subdiv-topology", n, quads, creases);
+}
+
+// sameTopology: true exactly when the two canonical forms are equal (the same point count
+// and the same quads up to rotation, in any order, and the same creases), compared
+// exactly rather than by hash.
+export function sameTopology(a, b) {
+  return JSON.stringify(canonicalTopology(a)) === JSON.stringify(canonicalTopology(b));
+}
+
+// Plan: { key, level, pointCount, levels, indices, triFace, triRegion?, regions?,
+// creasePairs? }. levels[L] is level L's topology (no positions) for L = 0 .. level, and
+// for L >= 1 also its `indices` and `triFace`. The diagonals are the ones subdivide picks
+// at this snapshot's points; applying the plan to other points keeps them, so a dragged
+// pose keeps one triangulation (and one triangle order) for the whole drag.
+export function subdivPlan(snapshot, level) {
+  checkLevel(level);
+  const cage = fromSnapshot(snapshot);
+  const parts = cage.sharp ? partsOf(cage) : null;
+  let pos = cage.pos;
+  const { pos: _, ...base } = cage;
+  const levels = [base];
+  for (let l = 1; l <= level; l++) {
+    pos = stepPositions(levels[l - 1], pos);
+    const m = stepTopology(levels[l - 1]);
+    Object.assign(m, triangulate(m, limitPositions(m, pos), l));
+    levels.push(m);
+  }
+  const { indices, triFace } = levels[level];
+  return withParts({ key: topologyKey(snapshot), level, pointCount: snapshot.points.length, levels, indices, triFace }, parts);
+}
+
+// Limit positions at `level` (1 .. plan.level) for `points`, the cage's points in the
+// snapshot's order. The level's triangles are plan.levels[level].indices.
+export function applySubdivPlanAt(plan, points, level) {
+  if (!Number.isInteger(level) || level < MIN_SUBDIV_LEVEL || level > plan.level) {
+    fail(`level must be an integer from ${MIN_SUBDIV_LEVEL} to ${plan.level}, got ${level}`);
+  }
+  if (!Array.isArray(points) || points.length !== plan.pointCount) fail("plan does not match the cage");
+  let pos = new Float64Array(3 * points.length);
+  points.forEach((p, i) => {
+    if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite)) fail(`point ${i} is not [x, y, z]`);
+    pos.set(p, 3 * i);
+  });
+  for (let l = 0; l < level; l++) pos = stepPositions(plan.levels[l], pos);
+  return limitPositions(plan.levels[level], pos);
+}
+
+// subdivide's mesh for `points` at plan.level. Everything but `positions` is the plan's
+// own arrays, not copies: callers must not change them.
+export function applySubdivPlan(plan, points) {
+  const positions = applySubdivPlanAt(plan, points, plan.level);
+  const { indices, triFace, triRegion, regions, creasePairs } = plan;
+  return triRegion ? { positions, indices, triFace, triRegion, regions, creasePairs } : { positions, indices, triFace };
 }
 
 // The chord error estimate at level L: how far the level-L triangles sit from the limit

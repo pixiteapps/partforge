@@ -3577,10 +3577,14 @@ without a kernel. A handle shows there when it would show in the editor AND ever
 it writes only moves pieces by their placement — the sub-parts it touches keep the same
 geometry over the parameter's range. A handle that reshapes anything (the drawer box's
 corner handle, which writes `width` and `depth`) is hidden in the preview, never shown
-half-working. `partforge measure` prints a `preview handles:` line naming which show and why
-the rest are hidden. IK handles pass as long as their links are placed by `d.<limb>.place`;
-collisions and pins work as in the editor. A drag edits the preview's own copy of the
-parameters, never the part.
+half-working. One exception: a `k.subdiv` body whose drag follows the pointer in the editor
+(see the organic guide, "The surface: `k.subdiv`") can be re-posed on a preview file
+written by partforge 0.202.0 or later, so a handle that moves only its cage's points shows
+there too. An older file keeps it hidden, and so does a part whose `collisions` keep pieces
+solid in Pose mode. `partforge measure` prints a `preview handles:` line naming which show
+and why the rest are hidden. IK handles pass as long as their links are placed by
+`d.<limb>.place`; collisions and pins work as in the editor. A drag edits the preview's own
+copy of the parameters, never the part.
 
 ### Handle groups
 

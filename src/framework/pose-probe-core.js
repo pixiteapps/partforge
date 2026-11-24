@@ -23,6 +23,7 @@ import { addSugar } from "./geometry/solid-sugar.js";
 import { SOLID_OPS, SOLID_OPTIONAL_OPS, SHAPE2D_OPS, OCCT_ONLY_OPS } from "./geometry/kernel.js";
 import { MAX_PROBE_OPS, ProbeRunawayError } from "./geometry/probe.js";
 import { createCage, isCage } from "./geometry/subdiv/cage.js";
+import { topologyKey } from "./geometry/subdiv/surface.js";
 
 // The fixed hash a place-scope probe starts from; a rigid place() leaves it unchanged.
 export const CANONICAL = h("canonical");
@@ -30,7 +31,7 @@ export const CANONICAL = h("canonical");
 const NAN3 = () => [NaN, NaN, NaN];
 
 function makeProbeSession() {
-  const state = { count: 0, queried: false, unhashable: false, implicitSpecs: [] };
+  const state = { count: 0, queried: false, unhashable: false, implicitSpecs: [], cages: [] };
   const tick = () => { if (++state.count > MAX_PROBE_OPS) throw new ProbeRunawayError(`pose probe exceeded ${MAX_PROBE_OPS} ops`); };
 
   // Queries return dummies AND poison trust (see module comment).
@@ -67,54 +68,80 @@ function makeProbeSession() {
 
   // Skinning flags (tokens only; never hashed): `_implicit` — derived from any k.implicit
   // result; `_specSpace` — the token is still exactly what k.implicit-spec space describes
-  // (an implicit result, or a union of such unposed results and plain solids).
+  // (an implicit result, or a union of such unposed results and plain solids). A subdivision
+  // body is a plain solid to these two.
+  // Cage flags, the same idea for k.subdiv(cage): `_cage` — derived from any k.subdiv result;
+  // `_cageSpace` — the token is still the cage's smooth surface where the cage put it: the
+  // subdiv result itself, or a union with plain solids, or the result cut by plain solids.
+  // Plain means neither an implicit nor a cage result. Kept apart from `_specSpace` so a cage
+  // changes no answer the implicit path gave before cages had one.
   const tokensIn = (args) => args.flat(1).filter((a) => a && a.__poseToken);
+  const plain = (o) => !o._implicit && !o._cage;
+  const inCageSpace = (o) => o._cageSpace && o._pose.length === 0;
   const flagsFor = (op, operands) => {
     const _implicit = operands.some((o) => o._implicit);
     const _specSpace = op === "union" && operands.every((o) => (o._specSpace && o._pose.length === 0) || !o._implicit);
-    return { _implicit, _specSpace };
+    const _cage = operands.some((o) => o._cage);
+    const _cageSpace = _cage && (op === "union"
+      ? operands.every((o) => inCageSpace(o) || plain(o))
+      : (op === "cut" || op === "cutAll") && inCageSpace(operands[0]) && operands.slice(1).every(plain));
+    return { _implicit, _specSpace, _cage, _cageSpace };
   };
 
   // The SHAPE hash rides beside the hash: built identically, except a k.implicit call's spec
   // is hashed without its `frames` (stripFrames), so it is stable across a frames-only drag
   // and moves with anything else the build made. Functions already poison trust via argKey.
-  const shapeKey = (a) => {
-    if (a && a.__poseToken) return a.__foldedShape();
-    if (typeof a === "function") return "fn";
-    if (Array.isArray(a)) return a.map(shapeKey);
-    if (a && typeof a === "object") return Object.fromEntries(Object.keys(a).map((k) => [k, shapeKey(a[k])]));
-    return a;
+  // The CAGE SHAPE hash is a second one for cage bodies: built identically, except a
+  // k.subdiv(cage) call is hashed by the cage's faces (topologyKey) and not its points, so
+  // it is stable across a drag that moves only cage points. Two hashes, not one, because
+  // the implicit path treats a cage as a plain solid whose points are part of its shape.
+  const keyBy = (fold) => {
+    const key = (a) => {
+      if (a && a.__poseToken) return a[fold]();
+      if (typeof a === "function") return "fn";
+      if (Array.isArray(a)) return a.map(key);
+      if (a && typeof a === "object") return Object.fromEntries(Object.keys(a).map((k) => [k, key(a[k])]));
+      return a;
+    };
+    return key;
   };
+  const shapeKey = keyBy("__foldedShape");
+  const cageShapeKey = keyBy("__foldedCageShape");
 
-  function token(hash, pose, flags = {}, shape = hash) {
+  function token(hash, pose, flags = {}, shape = hash, cageShape = shape) {
     const folded = () => (pose.length ? h("posed", hash, pose) : hash);
     const foldedShape = () => (pose.length ? h("posed", shape, pose) : shape);
+    const foldedCageShape = () => (pose.length ? h("posed", cageShape, pose) : cageShape);
     const foldOp = (op) => (...args) => {
       tick();
       return token(h(op, folded(), ...args.map(argKey)), [], flagsFor(op, [t, ...tokensIn(args)]),
-        h(op, foldedShape(), ...args.map(shapeKey)));
+        h(op, foldedShape(), ...args.map(shapeKey)), h(op, foldedCageShape(), ...args.map(cageShapeKey)));
     };
     const t = {
       __poseToken: true,
       __folded: folded,
       __foldedShape: foldedShape,
+      __foldedCageShape: foldedCageShape,
       _shape: shape,
+      _cageShape: cageShape,
       _hash: hash,
       _pose: pose,
       _implicit: !!flags._implicit,
       _specSpace: !!flags._specSpace,
+      _cage: !!flags._cage,
+      _cageSpace: !!flags._cageSpace,
       // The rigid vocabulary stays out of the hash: recorded as pending steps,
       // exactly like the OCCT backend's pose-lazy wrap. All transform sugar
       // (rotateAbout/along/at/rotateX…) composes onto these via addSugar.
-      translate: (v) => { tick(); return token(hash, [...pose, { t: "translate", v }], flags, shape); },
-      rotate: (deg, center, axis) => { tick(); return token(hash, [...pose, { t: "rotate", deg, center, axis }], flags, shape); },
+      translate: (v) => { tick(); return token(hash, [...pose, { t: "translate", v }], flags, shape, cageShape); },
+      rotate: (deg, center, axis) => { tick(); return token(hash, [...pose, { t: "rotate", deg, center, axis }], flags, shape, cageShape); },
       clone: () => t, // tokens are immutable — sharing is safe
       // regions() is a data-returning query in disguise: on a real backend the
       // scission ARRAY LENGTH is param-dependent data, so a build branching on
       // `regions().length` could hold baseHash stable while geometry changed.
       // It therefore poisons trust like any other query; the single token is
       // still returned so op chains on regions()[0] don't crash mid-probe.
-      regions: () => { tick(); state.queried = true; return [token(h("regions", folded()), [], { _implicit: t._implicit }, h("regions", foldedShape()))]; },
+      regions: () => { tick(); state.queried = true; return [token(h("regions", folded()), [], { _implicit: t._implicit, _cage: t._cage }, h("regions", foldedShape()), h("regions", foldedCageShape()))]; },
     };
     for (const [op, dummy] of Object.entries(QUERY_DUMMIES))
       t[op] = (...a) => { tick(); state.queried = true; return dummy(...a); };
@@ -144,17 +171,20 @@ function makeProbeSession() {
         if (key === "subdiv" && isCage(args[0])) {
           // The cage's state at the call, not the cage object (whose methods would read as
           // unhashable functions). A non-cage argument hashes as usual below; the real build
-          // reports it. No _implicit flag: a subdivision body has nothing to skin.
-          const cageHash = h(key, args[0].snapshot());
-          return token(cageHash, [], {}, cageHash);
+          // reports it. No _implicit flag: a subdivision body has nothing to skin. The
+          // snapshot is a fresh copy, so later edits to the cage in this build leave it be.
+          const snap = args[0].snapshot();
+          state.cages.push(snap);
+          const cageHash = h(key, snap);
+          return token(cageHash, [], { _cage: true, _cageSpace: true }, cageHash, h(key, topologyKey(snap)));
         }
         const hash = h(key, ...args.map(argKey));
         if (key === "implicit") {
           state.implicitSpecs.push(args[0]);
           const shape = h(key, shapeKey(stripFrames(args[0])), ...args.slice(1).map(shapeKey));
-          return token(hash, [], { _implicit: true, _specSpace: true }, shape);
+          return token(hash, [], { _implicit: true, _specSpace: true }, shape, h(key, ...args.map(cageShapeKey)));
         }
-        return token(hash, [], flagsFor(key, tokensIn(args)), h(key, ...args.map(shapeKey)));
+        return token(hash, [], flagsFor(key, tokensIn(args)), h(key, ...args.map(shapeKey)), h(key, ...args.map(cageShapeKey)));
       };
     },
   });
@@ -171,11 +201,19 @@ const stepsFinite = (steps) => steps.every((st) =>
 // Probe ONE sub-part at explicit params/purpose. The shared primitive under
 // probePoses (pose-probe.js) and the lint place/animation rules — kept free of
 // jobs.js imports so the lint import closure stays pure (test/lint-purity.test.js).
-// Never throws; a failing/queried/weird sub-part yields { trusted: false }.
+// Never throws; a failing/queried/weird sub-part yields { trusted: false }, and one whose
+// build or place() threw (the catch below) also carries `threw: true`.
 // scope: "full" (build then place), "build" (build only), "place" (place() on a
 // canonical token; no build runs, so a querying build is irrelevant). In place
 // scope a readable but reshaping place() (scale/mirror/union) returns
 // { trusted: false, baseHash, pose } with baseHash !== CANONICAL — see Ruling A.
+//
+// Outside place scope the result also carries: implicitSpecs and skinnable (the implicit
+// skin drag), cages (each k.subdiv call's cage snapshot, in call order) and cagePosable
+// (the build result is the one cage's smooth surface where the cage put it: in cage space,
+// unposed, one cage, no creases, no k.implicit), and shapeHash, the build less what a pose
+// drag moves: every spec's frames for an implicit build, the cage's points for any other.
+// baseHash always holds everything, cage points included.
 export function probeSubPartPose(sp, { view, purpose = "display", p, d }, { scope = "full" } = {}) {
   try {
     const { kernel, state, token } = makeProbeSession(); // fresh op budget + trust per subpart
@@ -191,11 +229,18 @@ export function probeSubPartPose(sp, { view, purpose = "display", p, d }, { scop
     // Skinnable is judged on the BUILD result, before place() moves it.
     const implicitSpecs = state.implicitSpecs;
     const skinnable = !!(s && s.__poseToken && s._specSpace && s._pose.length === 0 && implicitSpecs.length > 0);
-    const shapeHash = s && s.__poseToken ? s._shape : undefined;
+    const { cages } = state;
+    const cagePosable = !!(s && s.__poseToken && s._cageSpace && s._pose.length === 0
+      && cages.length === 1 && implicitSpecs.length === 0 && !cages[0].creases?.length);
+    const shapeHash = s && s.__poseToken ? (implicitSpecs.length > 0 ? s._shape : s._cageShape) : undefined;
     if (scope === "full" && place) s = place(s, { view, purpose, p, d });
     const ok = s && s.__poseToken && !state.queried && !state.unhashable && stepsFinite(s._pose);
-    return ok ? { trusted: true, baseHash: s._hash, pose: s._pose, implicitSpecs, skinnable, shapeHash } : { trusted: false, implicitSpecs, skinnable, shapeHash };
+    const found = { implicitSpecs, skinnable, cages, cagePosable, shapeHash };
+    return ok ? { trusted: true, baseHash: s._hash, pose: s._pose, ...found } : { trusted: false, ...found };
   } catch {
-    return { trusted: false, implicitSpecs: [], skinnable: false, shapeHash: undefined };
+    // `threw`: this is the one untrusted answer that means the build failed at these params
+    // (the cage drag holds such a pose as invalid; any other untrusted answer only means the
+    // probe cannot follow the change).
+    return { trusted: false, threw: true, implicitSpecs: [], skinnable: false, cages: [], cagePosable: false, shapeHash: undefined };
   }
 }

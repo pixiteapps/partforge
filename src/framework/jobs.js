@@ -176,7 +176,7 @@ async function scoreMatchTargets(built, targets, onProgress) {
 const PROGRESSIVE_BATCH_MS = 300;
 const transferOf = (meshes) => meshes.flatMap((m) =>
   [m.positions.buffer, m.normals?.buffer, m.indices?.buffer, m.edges?.buffer, m.featureIds?.buffer, m.originIds?.buffer,
-    m.bindings?.frameA.buffer, m.bindings?.frameB.buffer, m.bindings?.weight.buffer].filter(Boolean));
+    m.bindings?.frameA.buffer, m.bindings?.frameB.buffer, m.bindings?.weight.buffer, m.ties?.tri.buffer, m.ties?.w.buffer].filter(Boolean));
 
 // The nudged derive attribution for one generate job (ranks piece keys; never
 // gates). Run once per job, lazily, and shared by its sub-parts; null when the
@@ -530,11 +530,14 @@ async function runJob(kernel, part, msg, post, opts) {
               const stage = [{ name, ...concatMeshPayloads(pieces.map((pc) => pc.toMesh({ quality: "preview" }))), reads, frame, provisional: true }];
               post({ type: "meshes-provisional", meshes: stage }, transferOf(stage));
             }
-            const m = solid.toMesh({ quality: "preview" });
+            // Ties (a k.subdiv body's vertices on its smooth surface, subdiv/ties.js) only for
+            // a canonical delivery: a posed mesh's vertices are not in the cage's frame.
+            const m = solid.toMesh({ quality: "preview", ties: frame === "canonical" });
             // `bindings` (a preview k.implicit's pose bindings, mesh-bindings.js) is undefined
-            // when the backend gave none.
+            // when the backend gave none; `ties` is absent when it gave none.
             meshes.push({ name, positions: m.positions, normals: m.normals, indices: m.indices, triangles: m.triangles, edges: m.edges, featureIds: m.featureIds, features: m.features,
-              ...(m.originIds ? { originIds: m.originIds, origins: m.origins } : {}), reads, pieceKeys, frame, bindings: m.bindings });
+              ...(m.originIds ? { originIds: m.originIds, origins: m.origins } : {}), reads, pieceKeys, frame, bindings: m.bindings,
+              ...(m.ties ? { ties: m.ties } : {}) });
           } finally {
             kernel.endProvenance?.();
             for (const message of kernel.takeBuildWarnings?.() ?? []) warnings.push({ part: name, message });
