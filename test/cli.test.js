@@ -212,4 +212,7 @@ test("CLI measure --ranges refuses the flags that do not apply", () => {
   }
   expect(`${runFail(["measure", "test/fixtures/ranges-part.js", "--random", "3"]).stderr}`).toMatch(/require --ranges/);
   expect(`${runFail(["measure", "test/fixtures/ranges-part.js", "--ranges", "--random", "x"]).stderr}`).toMatch(/--random takes/);
+  const view = runFail(["measure", "test/fixtures/ranges-part.js", "nope", "--ranges"]);
+  expect(view.status).toBe(1);
+  expect(`${view.stderr}`).toMatch(/no view "nope"; the part's views are main/);
 });

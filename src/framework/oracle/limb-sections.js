@@ -175,8 +175,9 @@ function posedLimbs(d) {
  * `subparts` are the view's built sub-parts in declaration order, each `{ name, mesh, matrix }`
  * where `mesh` is in display coordinates and `matrix` (column-major, or null for none) carries
  * part coordinates to display. Each joint's section is read from the first sub-part whose
- * outline goes round it. Numbers are rounded to 0.1. A second limb with a name already
- * reported is left out and named through `warn(message)`, so it is never dropped silently.
+ * outline goes round it. Numbers are rounded to 0.1. The same limb found twice is read once.
+ * A second limb with a name already reported is left out and named through `warn(message)`,
+ * so it is never dropped silently.
  */
 export function limbFacts(d, subparts, { warn } = {}) {
   const limbs = posedLimbs(d);
@@ -187,7 +188,12 @@ export function limbFacts(d, subparts, { warn } = {}) {
     return prepared.get(s);
   };
   const out = {};
+  // A limb derive returns twice (`{ f, all: [f] }`) is one limb: read it once, before the
+  // name check, so it is never taken for two limbs that share a name.
+  const seen = new Set();
   for (const bones of limbs) {
+    if (seen.has(bones)) continue;
+    seen.add(bones);
     const name = String(bones.name);
     if (Object.hasOwn(out, name)) {
       warn?.(`two posed limbs are named "${name}": only the first is reported. Give each limb its own name`);

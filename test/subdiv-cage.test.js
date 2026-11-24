@@ -246,6 +246,18 @@ describe("cage: move along the normal, and faces by direction", () => {
     expect(c.faces("+z:", { near: [3, 0, 1] })).toEqual(["+z:2,0", "+z:1,0", "+z:0,0"]);
     expect(c.faces("", { facing: "+z", near: [-3, 0, 1] })[0]).toBe("+z:0,0");
   });
+  it("keeps a face exactly 45° from facing, and drops one just past it", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(c.faces("", { facing: [1, 1, 0] }).sort()).toEqual(["+x:0,0", "+y:0,0"]);
+    expect(c.faces("", { facing: [1, 1.01, 0] })).toEqual(["+y:0,0"]);
+  });
+  it("keeps the listed order for faces at the same distance from near", () => {
+    const c = createCage({ box: { size: [6, 2, 2], segs: [3, 1, 1] } });
+    const listed = c.faces("+z:");
+    const tied = listed.filter((id) => id !== "+z:1,0");
+    expect(c.faces("+z:", { near: [0, 0, 1] })).toEqual(["+z:1,0", ...tied]);
+    expect(c.faces("+z:", { near: [0, 0, 5] })).toEqual(["+z:1,0", ...tied]);
+  });
   it("refuses unknown faces options", () => {
     const c = createCage({ box: { size: [4, 4, 4] } });
     expect(() => c.faces("", { facing: "up" })).toThrow('cage: faces facing must be "+x", "-x", "+y", "-y", "+z", "-z" or a non-zero [x, y, z], not "up"');

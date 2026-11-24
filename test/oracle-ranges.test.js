@@ -39,6 +39,32 @@ describe("rangePoses", () => {
     }
   });
 
+  it("leaves a hidden ranged control at its default", () => {
+    const hidden = { ...part, parameters: [{ id: "s", title: "S", controls: [
+      { key: "a", label: "A", min: 0, max: 10 },
+      { key: "h", label: "H", min: 0, max: 10, hidden: true },
+    ] }], defaults: { a: 2, h: 3 } };
+    const poses = rangePoses(hidden);
+    expect(poses.map((q) => q.name).slice(0, 5)).toEqual(["defaults", "a=min", "a=max", "all min", "all max"]);
+    for (const q of poses) expect(q.params).not.toHaveProperty("h");
+  });
+
+  it("puts each random value on the control's step", () => {
+    const stepped = { ...part, parameters: [{ id: "s", title: "S", controls: [
+      { key: "a", label: "A", min: 1, max: 9, step: 0.5 },
+      { key: "b", label: "B", min: -5, max: 5, step: 2 },
+    ] }], defaults: { a: 3, b: 1 } };
+    const random = rangePoses(stepped, { random: 40 }).filter((q) => q.name.startsWith("random"));
+    expect(random).toHaveLength(40);
+    for (const q of random) {
+      const v = { ...stepped.defaults, ...q.params };
+      expect(Number.isInteger((v.a - 1) / 0.5), `a ${v.a}`).toBe(true);
+      expect(Number.isInteger((v.b + 5) / 2), `b ${v.b}`).toBe(true);
+      expect(v.a).toBeGreaterThanOrEqual(1); expect(v.a).toBeLessThanOrEqual(9);
+      expect(v.b).toBeGreaterThanOrEqual(-5); expect(v.b).toBeLessThanOrEqual(5);
+    }
+  });
+
   it("repeats with one seed and changes with another", () => {
     expect(rangePoses(part, { seed: 7 })).toEqual(rangePoses(part, { seed: 7 }));
     expect(rangePoses(part, { seed: 7 })).not.toEqual(rangePoses(part, { seed: 8 }));

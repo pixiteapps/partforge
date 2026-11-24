@@ -37,6 +37,16 @@ describe("cage.skin", () => {
     expect(typeof organicCage({ box: { size: [1, 1, 1] } }).skin).toBe("function");
   });
 
+  it("lists faces by facing and near after skin, from the posed points", () => {
+    const c = armCage();
+    expect(c.faces("+z:", { facing: "+z" })).toEqual(["+z:0,0"]);
+    c.skin(arm().pose({ bend: { mcp: 90 } }));
+    // The tip cap turned with the bend: it now faces the palm side, not up.
+    expect(c.faces("+z:", { facing: "+z" })).toEqual([]);
+    expect(c.faces("", { facing: "-y" })).toContain("+z:0,0");
+    expect(c.faces("", { near: c.centroid("+z:0,0") })[0]).toBe("+z:0,0");
+  });
+
   it("moves no point at a rest pose, bit for bit", () => {
     const c = armCage();
     const before = c.snapshot();

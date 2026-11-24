@@ -102,6 +102,14 @@ describe("limbFacts", () => {
     expect(f.finger.joints).toHaveLength(3);
   });
 
+  it("reports a limb derive returns twice (as itself and in a list) once, with no warning", () => {
+    const f = straight();
+    const warned = [];
+    const r = limbFacts({ f, all: [f] }, [{ name: "rod", mesh: rod, matrix: null }], { warn: (m) => warned.push(m) });
+    expect(Object.keys(r)).toEqual(["finger"]);
+    expect(warned).toEqual([]);
+  });
+
   it("carries the frame into a sub-part's display pose", () => {
     const moved = prism(20, 10, [-5, 65], [100, 0]);
     // column-major translation by [100, 0, 0]
