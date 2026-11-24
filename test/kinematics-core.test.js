@@ -198,6 +198,53 @@ describe("limb structure and pose", () => {
   });
 });
 
+describe("a follower of a later joint", () => {
+  it("lets a joint follow a later joint", () => {
+    const l = limb("f", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10, 10],
+      joints: [{ name: "cup", range: [-2, 18], follow: { joint: "mcp", ratio: 0.2 } }, { name: "mcp", range: [-10, 90] }, "pip"] });
+    expect(l.pose({ bend: { mcp: 50, pip: 10 } }).report.bend).toEqual([10, 50, 10]);
+    expect(l.pose({ bend: [50, 10] }).report.bend).toEqual([10, 50, 10]);
+    expect(l.pose({ bend: { mcp: 200 } }).report.bend[0]).toBe(18);
+  });
+  it("lets a follower follow a follower", () => {
+    const l = limb("f", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10, 10],
+      joints: [{ name: "a", follow: { joint: "b", ratio: 0.5 } }, { name: "b", follow: { joint: "c", ratio: 0.5 } }, "c"] });
+    expect(l.pose({ bend: { c: 80 } }).report.bend).toEqual([20, 40, 80]);
+  });
+  it("refuses a loop of followers", () => {
+    expect(() => limb("f", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10],
+      joints: [{ name: "a", follow: { joint: "b" } }, { name: "b", follow: { joint: "a" } }] }))
+      .toThrow('limb "f".joints[0].follow.joint: a follows b, which follows a — one of them must be driven');
+  });
+  it("names a longer loop from its first joint in declaration order", () => {
+    expect(() => limb("f", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10, 10, 10],
+      joints: ["d", { name: "a", follow: { joint: "c" } }, { name: "b", follow: { joint: "a" } }, { name: "c", follow: { joint: "b" } }] }))
+      .toThrow('limb "f".joints[1].follow.joint: a follows c, which follows b, which follows a — one of them must be driven');
+  });
+  it("refuses a joint that follows itself or an unknown joint", () => {
+    const def = (j) => ({ at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10], joints: [j, "b"] });
+    expect(() => limb("f", def({ name: "a", follow: { joint: "a" } }))).toThrow(/follow\.joint/);
+    expect(() => limb("f", def({ name: "a", follow: { joint: "zz" } }))).toThrow('unknown joint "zz"');
+  });
+  it("goals count a chain of followers before its leader as moving", () => {
+    // a follows b follows c: all three move, so reach is measured from a, the base (30 mm).
+    const l = limb("f", { toward: [0, 1, 0], bendToward: [0, 0, -1], lengths: [10, 10, 10],
+      joints: [{ name: "a", range: [0, 0], follow: { joint: "b" } }, { name: "b", range: [0, 0], follow: { joint: "c" } }, { name: "c", range: [0, 0] }] });
+    expect(l.pose({ goals: [{ at: "tip", position: [0, -12, 0] }] }).report.goals[0].status).toBe("out-of-range");
+  });
+  it("reach refuses a follower that follows an aim joint through another follower", () => {
+    const l = limb("y", { toward: [0, 1, 0], bendToward: [0, 0, -1], lengths: [40, 25, 20],
+      joints: ["mcp", { name: "pip", follow: { joint: "dip" } }, { name: "dip", follow: { joint: "mcp" } }] });
+    expect(() => l.pose({ reach: [0, 50, 0] })).toThrow('limb "y".joints[1].follow: reach sets "mcp" to aim the limb, so "pip" cannot follow it');
+  });
+  it("rest pose and curl couple a follower that comes before its leader", () => {
+    const l = limb("f", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], lengths: [10, 10, 10],
+      joints: [{ name: "cup", range: [0, 18], follow: { joint: "mcp", ratio: 0.2 } }, { name: "mcp", range: [0, 90] }, "pip"] });
+    expect(l.pose({ curl: 1 }).report.bend[0]).toBeCloseTo(18, 12);
+    expect(l.pose({}).report.bend).toEqual([0, 0, 0]);
+  });
+});
+
 describe("limb errors", () => {
   const base = { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["mcp", "pip", "dip"], lengths: [10, 10, 10] };
   const make = (over) => () => limb("index", { ...base, ...over });
@@ -213,8 +260,7 @@ describe("limb errors", () => {
     ["use bend or curl, not both", () => limb("index", base).pose({ bend: { pip: 2 }, curl: 0.5 })],
     ["use reach or grip, not both", () => limb("index", base).pose({ reach: [0, 0, 0], grip: {} })],
     ["joints[2].name: duplicate joint \"pip\"", make({ joints: ["mcp", "pip", "pip"] })],
-    ["joints[2].follow.joint: unknown or later joint \"tip2\"", make({ joints: ["mcp", "pip", { name: "dip", follow: { joint: "tip2" } }] })],
-    ["joints[1].follow.joint: unknown or later joint \"dip\"", make({ joints: ["mcp", { name: "pip", follow: { joint: "dip" } }, "dip"] })],
+    ["joints[2].follow.joint: unknown joint \"tip2\"", make({ joints: ["mcp", "pip", { name: "dip", follow: { joint: "tip2" } }] })],
     ["bend.dip: dip follows pip and takes no value", () => limb("index", { ...base, joints: ["mcp", "pip", { name: "dip", follow: { joint: "pip" } }] }).pose({ bend: { dip: 3 } })],
     ["joints[0].axis: must be \"bend\", \"spread\", \"twist\" or a non-zero [x, y, z]", make({ joints: [{ name: "mcp", axis: "q" }, "pip", "dip"] })],
     ["joints[0].axis: must be \"bend\", \"spread\", \"twist\" or a non-zero [x, y, z]", make({ joints: [{ name: "mcp", axis: [0, 0, 0] }, "pip", "dip"] })],

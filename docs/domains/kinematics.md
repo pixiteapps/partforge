@@ -145,8 +145,12 @@ about the line up the hand.
 - **`follow: { joint, ratio = 1, offset = 0 }`**: makes this joint a follower (a
   tendon coupling, URDF's mimic). Its value is `ratio × leader + offset`, where the
   leader's value has already been clamped. The follower then clamps to its own range.
-  `joint` must name an EARLIER joint of the same limb. A follower takes no pose value
-  of its own.
+  `joint` may name any other hinge of the same limb, earlier or later. A follower may
+  follow another follower. It then takes that follower's final value, and applies its
+  own ratio, offset and range to it. Every chain of followers must start at a driven
+  joint. A loop, where `a` follows `b` and `b` follows `a`, is an error. A follower takes
+  no pose value of its own, and a `bend` array skips it. On the joints `cup, mcp, pip`
+  with `cup` following `mcp`, `bend: [50, 10]` sets `mcp` to 50 and `pip` to 10.
 - **`offset: [x, y, z]`**: moves this joint off the straight line, in mm. The joint
   sits at the end of the previous segment (`[0, length, 0]` in the previous joint's
   frame) plus `offset`, in that same frame, so the offset turns with the previous
@@ -306,7 +310,8 @@ the other: a pose cannot have both.
   ends bracket the target's distance. Couplings always hold.
 - Joints on other axes keep the values you give in `bend`.
 - Rules: the limb needs a driven bend joint, every segment before the pitch joint must
-  have length 0, and no joint may follow the pitch joint or the aiming spread joint.
+  have length 0, and no joint may follow the pitch joint or the aiming spread joint,
+  directly or through another follower.
   The `robot-finger` limb (mcp, pip, dip following pip) meets all three rules.
 - A limb from `points` must also have one aim for every joint: give the limb a `toward`.
   Its joints may sit off that line, as offsets do. Pose any other with
@@ -1162,12 +1167,13 @@ limb "a".points: the last bone must lie along its joint's aim, and it is 26.6° 
 limb "a".joints[0].toward: a joint's own toward needs the limb's points
 limb "a".joints[1].bendToward: must not be parallel to this joint's aim
 limb "a": reach needs a straight limb (every joint with one aim) — pose this one with goals: [{ at: "tip", position: [x, y, z] }]
+limb "f".joints[0].follow.joint: a follows b, which follows a — one of them must be driven
 ```
 
 Other errors: `attach` without a `k`, `flesh` or `attach` on a limb with no segment
 longer than zero, `lengths`, `r` or a `bend` array of the wrong length, a `range` that is not
 `[min, max]` with `min ≤ max`, a zero-length `toward` or `bendToward`, a duplicate joint
-name, a `follow` that names an unknown or later joint, an `axis` that is not `"bend"`,
+name, a `follow` that names an unknown joint or the joint itself, an `axis` that is not `"bend"`,
 `"spread"`, `"twist"` or a non-zero vector, an unknown `parent` when frames are passed,
 a `cone` on a hinge, a `follow` on or of a ball joint, an unknown key in a ball value,
 `pose` frames that are not an object, a posed limb or an array of them, and an unknown

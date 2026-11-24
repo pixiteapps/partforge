@@ -42,7 +42,8 @@ const pointIn = (M, p) => { const o = [0, 0, 0]; xformPoint(o, invert(M), p[0], 
  * The aim joints: the first driven bend joint (the pitch) and the first driven
  * spread joint before it, if any. Every segment before the pitch must have length 0 (and
  * every joint up to it no offset), and
- * no joint may follow an aim joint — its value would move with the aim.
+ * no joint may follow an aim joint, directly or through other followers — its value would
+ * move with the aim.
  */
 function aimJoints(tree, fail) {
   const { joints } = tree;
@@ -53,8 +54,12 @@ function aimJoints(tree, fail) {
   const spreadJoint = joints.findIndex((j, i) => i < pitch && !j.follow && j.axisKind === "spread");
   const aims = new Set([pitch, spreadJoint]);
   joints.forEach((j, i) => {
-    if (j.follow && aims.has(j.follow.index)) {
-      fail(`joints[${i}].follow`, `reach sets "${joints[j.follow.index].name}" to aim the limb, so "${j.name}" cannot follow it — follow a later joint`);
+    if (!j.follow) return;
+    // The driven joint at the head of the chain: a follower of a follower moves with it too.
+    let lead = j.follow.index;
+    while (joints[lead].follow) lead = joints[lead].follow.index;
+    if (aims.has(lead)) {
+      fail(`joints[${i}].follow`, `reach sets "${joints[lead].name}" to aim the limb, so "${j.name}" cannot follow it — follow a later joint`);
     }
   });
   const distal = [];

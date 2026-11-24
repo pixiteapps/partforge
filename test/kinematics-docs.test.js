@@ -105,6 +105,7 @@ test("every error message in the guide is the code's own, a SpecError with code 
     () => limb("a", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "j0", toward: [0, 1, 0] }], lengths: [10] }),
     () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [0, 20, 0]], bendToward: [0, 0, -1], joints: ["j0", { name: "j1", bendToward: [0, 1, 0] }] }),
     () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [0, 20, -5]], bendToward: [0, 0, -1], joints: ["j0", "j1"] }).pose({ reach: [0, 15, -5] }),
+    () => limb("f", { toward: [0, 0, 1], bendToward: [0, -1, 0], joints: [{ name: "a", follow: { joint: "b" } }, { name: "b", follow: { joint: "a" } }], lengths: [10, 10] }),
   ];
   const produced = triggers.map((f) => {
     try { f(); } catch (e) {

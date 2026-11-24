@@ -211,8 +211,8 @@ const restLine = (name, lengths) => {
 };
 // A finger's first joint is inside the palm, near its front face, and its middle joint is
 // back on the finger's own line. Its first bone runs between the two. A finger whose palm
-// bone cups has one more joint before that, low in the palm. poseDigits bends it by a share
-// of the knuckle's bend: the palm folds as the finger closes. The limb's toward is the
+// bone cups has one more joint before that, low in the palm. It follows the knuckle by a
+// share of its bend: the palm folds as the finger closes. The limb's toward is the
 // finger's line, so every joint bends square to it.
 const P0 = palm(cage);
 const FINGER_LIMB = Object.fromEntries(Object.entries(FINGERS).map(([name, f]) => {
@@ -227,7 +227,7 @@ const FINGER_LIMB = Object.fromEntries(Object.entries(FINGERS).map(([name, f]) =
     points: [...cup, mcp, pip, dip, along(dip, toward, f.lengths[2] - MID)],
     toward, bendToward: squareTo([Math.sin(turn), -Math.cos(turn), 0], toward),
     joints: [
-      ...(f.cup ? [{ name: "cup", range: [RANGE.knuckle[0] * f.cup, RANGE.knuckle[1] * f.cup] }] : []),
+      ...(f.cup ? [{ name: "cup", range: [RANGE.knuckle[0] * f.cup, RANGE.knuckle[1] * f.cup], follow: { joint: "mcp", ratio: f.cup } }] : []),
       { name: "mcp", range: RANGE.knuckle },
       { name: "pip", range: RANGE.curl },
       { name: "dip", range: [0, RANGE.curl[1] * 0.75], follow: { joint: "pip", ratio: 0.75 } },
@@ -260,8 +260,7 @@ const THUMB_LIMB = (() => {
 function poseDigits(p) {
   const out = {};
   for (const name of Object.keys(FINGERS)) {
-    const f = FINGERS[name], mcp = p[`${name}Knuckle`];
-    out[name] = FINGER_LIMB[name].pose({ bend: { ...(f.cup ? { cup: mcp * f.cup } : {}), mcp, pip: p[`${name}Curl`] } });
+    out[name] = FINGER_LIMB[name].pose({ bend: { mcp: p[`${name}Knuckle`], pip: p[`${name}Curl`] } });
   }
   out.thumb = THUMB_LIMB.pose({ bend: { abduct: p.thumbAbduct, oppose: -p.thumbOppose, mcp: p.thumbCurl } });
   return out;
@@ -310,7 +309,7 @@ export default {
   // One angles-mode handle per digit: drag a fingertip and the drag solves that digit's
   // joints. `joints` gives each named joint its own rotate ring.
   handles: {
-    ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, { on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { ...(FINGERS[f].cup ? { cup: { param: `${f}Knuckle`, scale: FINGERS[f].cup } } : {}), mcp: `${f}Knuckle`, pip: `${f}Curl` } }])),
+    ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, { on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } }])),
     thumb: { on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } },
   },
   verify: { expect: { hand: { watertight: true } } },

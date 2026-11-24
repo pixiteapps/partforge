@@ -1365,8 +1365,8 @@ Each digit is a `limb` posed in `derive`:
   at 0.75. `mcp` is the base knuckle, inside the palm. Its params are `<f>Knuckle` (the
   `mcp` angle, -10° to 90°) and `<f>Curl` (the `pip` angle, 0° to 80°), for `f` in
   `index`, `middle`, `ring` and `pinky`. The ring and little fingers have one more
-  joint, `cup`, low in the palm: it bends by a share of the knuckle's bend (0.07 and
-  0.2), so the palm folds on that side as the hand closes;
+  joint, `cup`, low in the palm. It follows the later `mcp` joint at a share of its bend
+  (0.07 and 0.2), so the palm folds on that side as the hand closes;
 - the thumb is a limb from the wrist end of the pad, with four joints. `abduct`
   (`thumbAbduct`, 0° to 70°) swings the thumb forward out of the palm. `oppose`
   (`thumbOppose`, -22° to 98°) turns it about the line up the hand, round to the palm's
@@ -1575,8 +1575,8 @@ const restLine = (name, lengths) => {
 };
 // A finger's first joint is inside the palm, near its front face, and its middle joint is
 // back on the finger's own line. Its first bone runs between the two. A finger whose palm
-// bone cups has one more joint before that, low in the palm. poseDigits bends it by a share
-// of the knuckle's bend: the palm folds as the finger closes. The limb's toward is the
+// bone cups has one more joint before that, low in the palm. It follows the knuckle by a
+// share of its bend: the palm folds as the finger closes. The limb's toward is the
 // finger's line, so every joint bends square to it.
 const P0 = palm(cage);
 const FINGER_LIMB = Object.fromEntries(Object.entries(FINGERS).map(([name, f]) => {
@@ -1591,7 +1591,7 @@ const FINGER_LIMB = Object.fromEntries(Object.entries(FINGERS).map(([name, f]) =
     points: [...cup, mcp, pip, dip, along(dip, toward, f.lengths[2] - MID)],
     toward, bendToward: squareTo([Math.sin(turn), -Math.cos(turn), 0], toward),
     joints: [
-      ...(f.cup ? [{ name: "cup", range: [RANGE.knuckle[0] * f.cup, RANGE.knuckle[1] * f.cup] }] : []),
+      ...(f.cup ? [{ name: "cup", range: [RANGE.knuckle[0] * f.cup, RANGE.knuckle[1] * f.cup], follow: { joint: "mcp", ratio: f.cup } }] : []),
       { name: "mcp", range: RANGE.knuckle },
       { name: "pip", range: RANGE.curl },
       { name: "dip", range: [0, RANGE.curl[1] * 0.75], follow: { joint: "pip", ratio: 0.75 } },
@@ -1624,8 +1624,7 @@ const THUMB_LIMB = (() => {
 function poseDigits(p) {
   const out = {};
   for (const name of Object.keys(FINGERS)) {
-    const f = FINGERS[name], mcp = p[`${name}Knuckle`];
-    out[name] = FINGER_LIMB[name].pose({ bend: { ...(f.cup ? { cup: mcp * f.cup } : {}), mcp, pip: p[`${name}Curl`] } });
+    out[name] = FINGER_LIMB[name].pose({ bend: { mcp: p[`${name}Knuckle`], pip: p[`${name}Curl`] } });
   }
   out.thumb = THUMB_LIMB.pose({ bend: { abduct: p.thumbAbduct, oppose: -p.thumbOppose, mcp: p.thumbCurl } });
   return out;
@@ -1653,11 +1652,12 @@ hand.centroid("indexTip").map(Math.round);   // [43, -30, 172]
   body lies inside the cage, so that removes a slab about 1.5 mm thick at every pose.
 - `handles` has one `angles` handle per digit: `{ on: "index", drag: "angles", params:
   ["indexKnuckle", "indexCurl"], joints: { mcp: "indexKnuckle", pip: "indexCurl" } }` for
-  each finger (the ring and little fingers add `cup: { param: "<f>Knuckle", scale: <share> }`,
-  so a drag solves the palm's fold with the knuckle), and `{ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: {
+  each finger, and `{ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: {
   abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } }` for the thumb. Drag
   a fingertip and the drag solves that finger's knuckle and curl. The `dip` joint is not
-  a param: it follows `pip`, as the thumb's `ip` follows its `mcp`. `joints` gives each
+  a param: it follows `pip`, as the thumb's `ip` follows its `mcp`. The ring and little
+  fingers' `cup` joint comes before `mcp` and follows it, so the palm folds with the
+  knuckle and needs no entry in `joints`. `joints` gives each
   named joint its own rotate ring, so the thumb's opposition and abduction are rings on
   the thumb's handle. Drag a ring to turn that one joint and leave the others where they
   are.

@@ -183,16 +183,15 @@ export function buildTree(name, def) {
       if (!isNum(length) || length < 0) fail(`${path}.length`, "must be a finite number ≥ 0");
     }
 
+    // follow names any other hinge of the limb; the name is resolved once every joint is read.
     let follow = null;
     if (j.follow != null) {
       const f = j.follow;
-      if (typeof f !== "object") fail(`${path}.follow`, "must be { joint, ratio?, offset? }");
-      if (!index.has(f.joint)) fail(`${path}.follow.joint`, `unknown or later joint ${JSON.stringify(f.joint)}`);
-      if (balls.has(f.joint)) fail(`${path}.follow.joint`, `${f.joint} is a ball joint; a joint can follow only a hinge`);
+      if (f === null || typeof f !== "object" || Array.isArray(f)) fail(`${path}.follow`, "must be { joint, ratio?, offset? }");
       const ratio = f.ratio ?? 1, offset = f.offset ?? 0;
       if (!isNum(ratio)) fail(`${path}.follow.ratio`, "must be a finite number");
       if (!isNum(offset)) fail(`${path}.follow.offset`, "must be a finite number");
-      follow = { index: index.get(f.joint), ratio, offset };
+      follow = { joint: f.joint, index: -1, ratio, offset };
     }
 
     index.set(j.name, i);
@@ -200,9 +199,44 @@ export function buildTree(name, def) {
     return { name: j.name, frame: `${name}.${j.name}`, axis, axisKind, range, cone, follow, length, offset, type, aim: null };
   });
 
-  const tree = { name, parent: def.parent ?? null, at: reflect(at), base, mirrorAxis, joints, r: def.r ? [...def.r] : null };
+  const order = resolveFollows(joints, index, balls, fail);
+
+  const tree = { name, parent: def.parent ?? null, at: reflect(at), base, mirrorAxis, joints, order, r: def.r ? [...def.r] : null };
   if (fromPoints) placeFromPoints(tree, def, reflect, fail);
   return tree;
+}
+
+/**
+ * Resolve each `follow.joint` name to its joint's index (any other hinge, earlier or later),
+ * refuse a loop of followers, and return the order `couple` computes values in: every leader
+ * before its followers, otherwise declaration order. A loop is reported on its first joint
+ * in declaration order, naming the joints round the loop.
+ */
+function resolveFollows(joints, index, balls, fail) {
+  joints.forEach((j, i) => {
+    if (!j.follow) return;
+    const path = `joints[${i}].follow.joint`, target = j.follow.joint;
+    if (target === j.name) fail(path, `${j.name} cannot follow itself — name another joint, or drop follow`);
+    if (typeof target !== "string" || !index.has(target)) fail(path, `unknown joint ${JSON.stringify(target)}`);
+    if (balls.has(target)) fail(path, `${target} is a ball joint; a joint can follow only a hinge`);
+    j.follow = { index: index.get(target), ratio: j.follow.ratio, offset: j.follow.offset };
+  });
+  joints.forEach((j, i) => {
+    const names = [j.name];
+    for (let k = j.follow?.index, steps = 0; k != null && steps < joints.length; k = joints[k].follow?.index, steps++) {
+      names.push(joints[k].name);
+      if (k === i) fail(`joints[${i}].follow.joint`, `${names.slice(0, -1).map((nm, q) => (q === 0 ? `${nm} follows ${names[1]}` : `which follows ${names[q + 1]}`)).join(", ")} — one of them must be driven`);
+    }
+  });
+  const order = [], placed = new Array(joints.length).fill(false);
+  const place = (i) => {
+    if (placed[i]) return;
+    placed[i] = true;
+    if (joints[i].follow) place(joints[i].follow.index);
+    order.push(i);
+  };
+  joints.forEach((_, i) => place(i));
+  return order;
 }
 
 /**
@@ -408,17 +442,19 @@ export function jointSteps(tree, values, { spread = 0, twist = 0 } = {}) {
 export function couple(tree, raw) {
   const { joints } = tree;
   const values = new Array(joints.length), clamped = new Array(joints.length);
-  joints.forEach((j, i) => {
+  // Leaders before their followers (a follower may come before its leader in the limb).
+  for (const i of tree.order) {
+    const j = joints[i];
     if (j.type === "ball") {
       ({ value: values[i], clamped: clamped[i] } = clampBall(raw[i], j.cone));
-      return;
+      continue;
     }
     const want = j.follow ? j.follow.ratio * values[j.follow.index] + j.follow.offset : raw[i];
     const [lo, hi] = j.range;
     const v = want < lo ? lo : want > hi ? hi : want;
     values[i] = v + 0;
     clamped[i] = v !== want;
-  });
+  }
   return { values, clamped };
 }
 

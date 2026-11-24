@@ -53,8 +53,14 @@ test("params, derive and handles: one posed limb and one angles-mode handle per 
   for (const n of DIGITS) expect(d[n].bones.r, n).not.toBeNull();
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
+  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
+  // The cupping joint follows the knuckle, a share of its bend.
   const CUP = { ring: 0.07, pinky: 0.2 };
-  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { ...(CUP[f] ? { cup: { param: `${f}Knuckle`, scale: CUP[f] } } : {}), mcp: `${f}Knuckle`, pip: `${f}Curl` } });
+  const bent = part.derive({ ...part.defaults, ringKnuckle: 60, pinkyKnuckle: 60 });
+  for (const f of ["ring", "pinky"]) {
+    expect(bent[f].ikInfo().joints[0]).toMatchObject({ name: "cup", follower: true });
+    expect(bent[f].report.bend[0]).toBeCloseTo(60 * CUP[f], 12);
+  }
   expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
   // Every joint a handle names is one of its limb's.
   for (const [id, h] of Object.entries(part.handles)) {
