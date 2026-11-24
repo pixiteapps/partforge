@@ -157,3 +157,64 @@ it("snapshot is a copy, and isCage tells a cage from data", () => {
   expect(isCage(c)).toBe(true);
   expect(isCage(before)).toBe(false);
 });
+
+describe("cage: uneven box segments", () => {
+  it("takes a list of widths for an axis of segs", () => {
+    const c = createCage({ box: { size: [10, 2, 4], segs: [[1, 3, 6], 1, 2] } });
+    expect(c.faces("+z:").length).toBe(3);
+    expect(c.centroid("+z:0,0")[0]).toBeCloseTo(-4.5, 9);
+    expect(c.centroid("+z:1,0")[0]).toBeCloseTo(-2.5, 9);
+    expect(c.centroid("+z:2,0")[0]).toBeCloseTo(2, 9);
+  });
+  it("refuses widths that do not add up to the size", () => {
+    expect(() => createCage({ box: { size: [10, 2, 4], segs: [[1, 3, 5], 1, 2] } }))
+      .toThrow("cage: box.segs[0] widths add up to 9, not the box's size 10");
+  });
+  it("refuses a width that is not positive", () => {
+    expect(() => createCage({ box: { size: [10, 2, 4], segs: [[4, 0, 6], 1, 2] } })).toThrow(/box\.segs\[0\]/);
+  });
+});
+
+describe("cage: a scale per extrude step", () => {
+  it("scales each step of an extrude by its own entry", () => {
+    const a = createCage({ box: { size: [4, 4, 4] } });
+    let cur = a.extrude("+z:0,0", { by: 2, scale: 1.1, id: "ka" });
+    cur = a.extrude(cur, { by: 2, id: "kb" });
+    a.extrude(cur, { by: 2, scale: 0.92, id: "kc" });
+    const b = createCage({ box: { size: [4, 4, 4] } });
+    b.extrude("+z:0,0", { by: 6, steps: [1.1, 1, 0.92], id: "k" });
+    const sort = (c) => c.snapshot().points.map((p) => p.map((v) => v.toFixed(9)).join()).sort();
+    expect(sort(b)).toEqual(sort(a));
+    expect(b.faces("k").sort()).toEqual(["k", "k.1.s0", "k.1.s1", "k.1.s2", "k.1.s3", "k.2.s0", "k.2.s1", "k.2.s2", "k.2.s3", "k.s0", "k.s1", "k.s2", "k.s3"]);
+  });
+  it("keeps scale: [a, b, c] with steps: 3 as one [sx, sy, sz] taper", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    c.extrude("+z:0,0", { by: 6, steps: 3, scale: [0.5, 1, 1], id: "t" });
+    expect(c.size("t")).toEqual([2, 4]);
+  });
+  it("refuses scale together with a steps list", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(() => c.extrude("+z:0,0", { by: 6, steps: [1, 1], scale: 0.9 }))
+      .toThrow("cage: extrude takes scale or a steps list, not both");
+  });
+  it("refuses an empty steps list and a bad entry", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(() => c.extrude("+z:0,0", { by: 6, steps: [] })).toThrow(/extrude steps/);
+    expect(() => c.extrude("+z:0,0", { by: 6, steps: [1, "x"] })).toThrow(/extrude steps\[1\]/);
+  });
+  it("matches chained extrudes on a region, its interior points included", () => {
+    const a = createCage({ box: { size: [6, 6, 4], segs: [3, 3, 1] } });
+    const top = a.faces("+z:");
+    let cur = a.extrude(top, { by: 2, scale: [1.2, 0.9, 1], id: "ra" });
+    a.extrude(cur, { by: 2, scale: 0.8, id: "rb" });
+    const b = createCage({ box: { size: [6, 6, 4], segs: [3, 3, 1] } });
+    b.extrude(b.faces("+z:"), { by: 4, steps: [[1.2, 0.9, 1], 0.8], id: "r" });
+    const sort = (c) => c.snapshot().points.map((p) => p.map((v) => v.toFixed(9)).join()).sort();
+    expect(sort(b)).toEqual(sort(a));
+  });
+  it("refuses a step that collapses a ring", () => {
+    const c = createCage({ box: { size: [4, 4, 4] } });
+    expect(() => c.extrude("+z:0,0", { by: 6, steps: [1, 0, 1] })).toThrow(/extrude steps\[1\]/);
+    expect(c.faces().length).toBe(6);
+  });
+});

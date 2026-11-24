@@ -646,7 +646,11 @@ it. It builds on Manifold only (see "Backend: Manifold only").
 - `size` is `[x, y, z]` in mm, all positive. `center` defaults to `[0, 0, 0]` (the box
   is centred on it in all three axes).
 - `segs` is how many faces each side is split into along x, y and z, default
-  `[1, 1, 1]`. A side across x and y has `segs[0] × segs[1]` faces.
+  `[1, 1, 1]`. A side across x and y has `segs[0] × segs[1]` faces. The cuts are even.
+- An entry of `segs` may instead be a list of widths in mm, which must add up to `size`
+  on that axis: `segs: [[15, 3, 18.5, 3, 19, 3, 19.5], 1, 3]` cuts x into seven faces of
+  those widths. Ids count the faces as for a number (`+z:4,0`). Under a mirror, the
+  widths across the plane must read the same from both ends.
 - `mirror` is `"yz"` (reflect X), `"xz"` (reflect Y) or `"xy"` (reflect Z), through
   the box's centre. See "Mirror".
 
@@ -672,7 +676,7 @@ An extrude replaces the faces it extrudes and names the new ones after them:
   list, even with one face.
 - **`steps: n`:** the extrude is cut into `n` rings. Ring `m` (1 is next to the base)
   names its sides `<id>.<m>.sK`; the last ring drops the `.<m>`. Only the last ring is a
-  cap.
+  cap. A `steps` list of `n` scales gives the same ids as `steps: n`.
 
 **Side order.** Side `k` sits on boundary edge `k`. Take the two world axes least
 aligned with the face's normal (the region's summed normal), in x, y, z order; call them
@@ -700,10 +704,17 @@ pick by `normal` or `centroid` when you need "the side that faces +Y".
   along the faces' normal (their summed normal for a region), or an `[x, y, z]` offset.
   `scale` (a number, or `[sx, sy, sz]` along the world axes, default 1) sizes the cap
   about its own centre. `steps` (an integer, default 1) cuts the extrude into rings.
+  The rings run evenly from the base to the cap.
   The extruded faces are gone afterwards; their id names the cap and sides' family.
   A region must be edge-connected and have one boundary loop: a region with a hole
   throws. An `id` must be a non-empty string without `~`, and may not be an id in use
   or head a family in use (an id that an existing `<id>:` or `<id>.` id starts with).
+- **`steps` as a list** gives each ring its own scale: `steps: [1.1, 1, 0.92]`, each entry
+  a number or `[sx, sy, sz]`. Each ring is the one before it, moved one step (`by` over
+  the number of entries) and scaled about its own centre. With numbers as entries this is
+  the same as three extrudes of a third of `by`, the first scaled 1.1 and the last 0.92.
+  A list is never read as a scale, even with three entries. `scale` and a `steps` list
+  together are an error.
 - **`move(face | faces, [x, y, z])`** moves the faces' points. A point shared with a
   neighbour moves once, so the neighbours stretch to follow.
 - **`scale(face | faces, s, { about? })`** scales the faces' points by `s` (a number or
@@ -741,6 +752,8 @@ bar.size("arm");   // [10, 10]
 bar.bounds();   // { min: [-32, -10, -10], max: [30, 10, 15] }
 bar.rotate("arm", { axis: "y", deg: 90 });
 bar.normal("arm").map(Math.round);   // [0, 0, 1]
+bar.extrude("+y:0,0", { by: 6, steps: [1.1, 1, 0.92], id: "lug" });   // "lug"
+bar.faces("lug.2.");   // ["lug.2.s0", "lug.2.s1", "lug.2.s2", "lug.2.s3"]
 ```
 
 ### Posing a cage with limbs: `skin`
@@ -1236,6 +1249,9 @@ cage: region [+z:0,0, +z:1,0, +z:2,0, +z:0,1, +z:2,1, +z:0,2, +z:1,2, +z:2,2] ha
 cage: id "+y:0,0>" is already in use (by "+y:0,0>")
 cage: box.segs make 5400 faces, more than MAX_CAGE_FACES (2000)
 cage: rotate axis must be "x", "y", "z" or a non-zero [x, y, z], not "up"
+cage: box.segs[0] widths add up to 9, not the box's size 10
+cage: mirror "yz" needs box.segs[0] widths that read the same from both ends
+cage: extrude takes scale or a steps list, not both
 ```
 
 `k.subdiv` throws or warns with `subdiv: ` messages:
@@ -1338,11 +1354,10 @@ import { limb } from "partforge/kinematics";
 import { cage } from "partforge/organic";
 
 const RING = 5;                     // a knuckle ring's length (mm); three per knuckle
-const PALM = { size: [81, 26, 90], center: [0, 0, 57], segs: [7, 1, 3] };
-// The palm's columns, by the X of their edges: pinky, strip, ring, strip, middle, strip, index.
-// The strips are 3 mm, so the hand is about 86 mm across the knuckles and the fingers lie
-// close together, as a hand's do.
-const COLUMNS = [-40.5, -25.5, -22.5, -4, -1, 18, 21, 40.5];
+// The palm's seven columns, by their widths across X: pinky, strip, ring, strip, middle,
+// strip, index. The strips are 3 mm, so the hand is about 86 mm across the knuckles and the
+// fingers lie close together, as a hand's do.
+const PALM = { size: [81, 26, 90], center: [0, 0, 57], segs: [[15, 3, 18.5, 3, 19, 3, 19.5], 1, 3] };
 // The base knuckles: the top `rows` rings of the palm. Each finger's joint is `rise` mm
 // above the lowest of them and `depth` mm behind the palm's front face, where a palm creases.
 const KNUCKLE = { rows: 3, rise: 4, depth: 5 };
@@ -1408,18 +1423,11 @@ const DIGITS = [...Object.keys(FINGERS), "thumb"];
 const FLAT_ABOVE = 2.4;
 const LABEL = { index: "Index", middle: "Middle", ring: "Ring", pinky: "Pinky", thumb: "Thumb" };
 
-// The palm before anything grows from it. The box's seven equal columns take their widths
-// from COLUMNS, left to right: each is scaled about its left edge, which is already placed.
-// Then it is thinner and a little wider at the knuckles, the pinky side lower, with a pad
-// on each side of the heel (the thumb's is the bigger one).
+// The palm before anything grows from it: the box, thinner and a little wider at the
+// knuckles, the pinky side lower, with a pad on each side of the heel (the thumb's is the
+// bigger one).
 const palm = (make) => {
   const c = make({ box: { size: PALM.size, center: PALM.center, segs: PALM.segs } });
-  const step = PALM.size[0] / PALM.segs[0];
-  for (let i = 0; i < PALM.segs[0] - 1; i++) {
-    const left = COLUMNS[i], right = -PALM.size[0] / 2 + step * (i + 1);
-    const column = c.faces().filter((f) => { const x = c.centroid(f)[0]; return x > left + 1e-6 && x < right - 1e-6; });
-    c.scale(column, [(COLUMNS[i + 1] - left) / (right - left), 1, 1], { about: [left, 0, 0] });
-  }
   c.scale(c.faces("+z:"), [1.08, 0.82, 1]);
   c.move("-x:0,2", [0, 0, -5]);
   c.move("+x:0,2", [0, 0, -2]);
@@ -1451,13 +1459,10 @@ function cageHand(make, posed) {
   // The pad's root, before anything grows from it: where the thumb's limb starts.
   const w = c.extrude(c.faces("-z:"), { by: 12, scale: [0.72, 1.04, 1], id: "wrist" });
   c.extrude(w, { by: 24, scale: 1.06, id: "arm" });
-  // A knuckle is three short rings, so the surface has points to bend with. Past a digit's
-  // middle knuckle the first ring widens and the last narrows, which draws the joint.
-  const knuckle = (cur, tag, wide) => {
-    cur = c.extrude(cur, { by: RING, id: `${tag}a`, scale: wide ? 1.1 : 1 });
-    cur = c.extrude(cur, { by: RING, id: `${tag}b` });
-    return c.extrude(cur, { by: RING, id: `${tag}c`, scale: wide ? 0.92 : 1 });
-  };
+  // A knuckle is one extrude in three short rings, so the surface has points to bend with.
+  // Past a digit's middle knuckle the first ring widens and the last narrows, which draws
+  // the joint.
+  const knuckle = (cur, tag, wide) => c.extrude(cur, { by: 3 * RING, id: tag, steps: [wide ? 1.1 : 1, 1, wide ? 0.92 : 1] });
   // A digit from the cap `cur` on, straight: a knuckle and a segment per length, then a
   // blunt tip. A finger starts at its second knuckle (`from` 1): its first is in the palm.
   const digit = (cur, name, lengths, from = 0) => {
@@ -1469,12 +1474,12 @@ function cageHand(make, posed) {
     c.extrude(cur, { by: RING, scale: 0.55, id: `${name}Tip` });
   };
   // The base knuckles: the palm's top grows back as three rings across all seven columns.
-  let caps = Array.from({ length: PALM.segs[0] }, (_, col) => `+z:${col},0`);
-  for (let r = 0; r < KNUCKLE.rows; r++) caps = c.extrude(caps, { by: RING, id: `knuckle${"abc"[r]}` });
+  const top = Array.from({ length: PALM.segs[0].length }, (_, col) => `+z:${col},0`);
+  const caps = c.extrude(top, { by: KNUCKLE.rows * RING, steps: KNUCKLE.rows, id: "knuckle" });
   // A ring's side faces run round the palm: the front of column n is s(n + 1), its back s(15 - n).
   for (const f of Object.values(FINGERS)) {
-    c.move(`knuckleb.s${15 - f.col}`, [0, SHAPE.head, 0]);
-    c.move(`knucklea.s${1 + f.col}`, [0, -SHAPE.mound, 0]);
+    c.move(`knuckle.2.s${15 - f.col}`, [0, SHAPE.head, 0]);
+    c.move(`knuckle.1.s${1 + f.col}`, [0, -SHAPE.mound, 0]);
   }
   for (const [name, f] of Object.entries(FINGERS)) {
     const hinge = c.centroid(caps[f.col]);
@@ -1659,7 +1664,8 @@ The points to copy:
   The limbs are posed in `derive`, and `cageHand` skins the cage to them as its last
   step. Without limbs it returns the cage at rest.
 - **A strip between each pair of fingers.** The palm's seven columns are a finger, a
-  strip, a finger, and so on, so two fingers never share a point and one can bend alone.
+  strip, a finger, and so on, given as `box.segs` widths. So two fingers never share a
+  point, and one can bend alone.
   The strip stretches between them. Neighbouring base knuckles more than about 45° apart
   fold the strip, as a hand's skin would not allow either.
 - **The base knuckles are inside the palm.** The palm's top grows back as three rings
@@ -1667,7 +1673,8 @@ The points to copy:
   palm's front face where a palm creases. The finger's first bone runs from there to its
   `pip`, which is back on the finger's own line (a joint `offset`, `steppedLimb`). So a
   knuckle bends the top of the palm with it.
-- **Each joint is in the middle of a ring.** A knuckle is three short rings, and the limb's
+- **Each joint is in the middle of a ring.** A knuckle is one extrude with a `steps` list
+  of three short rings, and the limb's
   joint sits in the middle of the middle ring (`MID`), so a ring of points lies on each
   side of the line it bends on. A ring on that line creases.
 - **`blend` by kind of joint.** A base knuckle bends 90° about 5 mm from the palm's
