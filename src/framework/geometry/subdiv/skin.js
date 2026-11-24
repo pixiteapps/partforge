@@ -96,6 +96,9 @@ export function readSkinArgs(limbs, options = {}) {
 // cage code on every drag move, so the same cage is skinned many times at new poses.
 const CACHE = new Map();
 const CACHE_MAX = 8;
+const STATS = { hits: 0, misses: 0 };
+/** How often skinWeights found its weights kept, and how often it worked them out. For tests. */
+export const skinCacheStats = () => ({ ...STATS });
 
 /**
  * Per-point weights for a rest cage `snapshot` ({ points, faces, ids }) and limbs' bones:
@@ -103,10 +106,13 @@ const CACHE_MAX = 8;
  * that pull it (`w`, 0 to 1) and its share of each of that limb's joints.
  */
 export function skinWeights(snapshot, bones, { blend, set = [] } = {}) {
-  const key = JSON.stringify([snapshot.points, snapshot.faces, set.length ? snapshot.ids : null,
+  // The ids are part of the key: the report names faces by them, and set entries find
+  // their faces by them, so two cages of one shape but other ids must not share an entry.
+  const key = JSON.stringify([snapshot.points, snapshot.faces, snapshot.ids,
     bones.map((b) => [b.name, b.r, b.joints.map((j) => [j.name, j.rest]), b.tip.rest]), blend ?? null, set]);
   const hit = CACHE.get(key);
-  if (hit) return hit;
+  if (hit) { STATS.hits++; return hit; }
+  STATS.misses++;
   const weights = computeWeights(snapshot, bones, blend, set);
   CACHE.set(key, weights);
   if (CACHE.size > CACHE_MAX) CACHE.delete(CACHE.keys().next().value);

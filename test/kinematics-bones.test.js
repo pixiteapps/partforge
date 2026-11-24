@@ -46,4 +46,14 @@ describe("a posed limb's bones", () => {
     const hand = { "hand.wrist": { at: [5, 0, 0] } };
     expect(child.pose({}, hand).bones.parent).toBe(true);
   });
+
+  it("a limb with a parent reads its rest frames among the parent's, and follows a moved parent", () => {
+    const child = limb("c", def({ parent: "hand.wrist" }));
+    const at = (x) => ({ "hand.wrist": { at: [x, 0, 0] } });
+    const a = child.pose({}, at(5)).bones, b = child.pose({ bend: [30, 0] }, at(5)).bones;
+    near3(a.joints[0].rest.origin, [5, 0, 0]);
+    expect(b.joints.map((j) => j.rest)).toEqual(a.joints.map((j) => j.rest));
+    near3(child.pose({}, at(9)).bones.joints[0].rest.origin, [9, 0, 0]);
+    near3(child.pose({}, at(5)).bones.joints[0].rest.origin, [5, 0, 0]);
+  });
 });

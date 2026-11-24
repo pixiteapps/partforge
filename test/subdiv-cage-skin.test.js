@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createCage } from "../src/framework/geometry/subdiv/index.js";
+import { skinCacheStats } from "../src/framework/geometry/subdiv/skin.js";
 import { cage as organicCage } from "../src/framework/domains/organic/index.js";
 import { limb } from "../src/framework/domains/kinematics/index.js";
 import { compose, invert } from "../src/framework/geometry/xform.js";
@@ -115,10 +116,17 @@ describe("cage.skin", () => {
     const report = h.skin([left.pose({ bend: [60, 0] }), right.pose({})]);
     const after = h.snapshot();
     expect(report.shared).toBeGreaterThan(0);
-    // A point both limbs pull fully lands between where each would put it.
+    // A point both limbs pull fully lands strictly between where each alone would put it:
+    // the right limb, at rest, leaves it where it is; the left carries it rigidly with its
+    // last joint, since the point is past both of the left's joints.
     const i = rest.points.findIndex((p) => p[0] === 0 && p[2] === 60);
-    const m = len(sub(after.points[i], rest.points[i]));
-    expect(m).toBeGreaterThan(0);
+    const j = left.pose({ bend: [60, 0] }).bones.joints[1];
+    const byLeft = apply(compose(matrixOf(j.posed), invert(matrixOf(j.rest))), rest.points[i]);
+    const span = sub(byLeft, rest.points[i]), got = sub(after.points[i], rest.points[i]);
+    const t = (got[0] * span[0] + got[1] * span[1] + got[2] * span[2]) / (len(span) ** 2);
+    expect(t).toBeGreaterThan(0.01);
+    expect(t).toBeLessThan(0.99);
+    near3(got, span.map((v) => v * t));
   });
 
   it("set.follow makes chosen faces follow a named limb", () => {
@@ -252,15 +260,54 @@ describe("cage.skin", () => {
       d.skin(two.pose({ bend: [0, 45, 0] }));
       rest.points.forEach((p, i) => { if (p[2] > 6) expect(d.snapshot().points[i]).not.toEqual(p); });
     });
+
+    it("a joint followed by a zero-length segment takes its share direction from the next one", () => {
+      // Joint a's next origin (b) is at the same place; its direction must come from c.
+      const two = limb("arm", { at: [0, 0, 0], toward: [0, 0, 1], bendToward: [0, -1, 0], joints: ["a", "b", "c"], lengths: [0, 30, 30], r: [12, 12, 12, 12] });
+      const posed = two.pose({ bend: [50, 0, 0] });
+      const c = armCage();
+      const rest = c.snapshot();
+      c.skin(posed);
+      const after = c.snapshot();
+      const j = posed.bones.joints[0];
+      const D = compose(matrixOf(j.posed), invert(matrixOf(j.rest)));
+      let past = 0;
+      rest.points.forEach((p, i) => { if (p[2] > 6) { near3(after.points[i], apply(D, p)); past++; } });
+      expect(past).toBeGreaterThan(0);
+    });
   });
 
-  it("keeps weights by content: the same cage at two poses reports the same, a new blend does not", () => {
-    const one = handCage().skin([left.pose({ bend: [10, 0] }), right.pose({})]);
-    const two = handCage().skin([left.pose({ bend: [70, 40] }), right.pose({ bend: [5, 5] })]);
+  it("keeps weights by content: the same cage at two poses hits, a new blend misses", () => {
+    const one = handCage().skin([left.pose({ bend: [10, 0] }), right.pose({})], { blend: 7.25 });
+    const s1 = skinCacheStats();
+    const two = handCage().skin([left.pose({ bend: [70, 40] }), right.pose({ bend: [5, 5] })], { blend: 7.25 });
+    const s2 = skinCacheStats();
     expect(two).toEqual(one);
+    expect(s2.hits).toBe(s1.hits + 1);
+    expect(s2.misses).toBe(s1.misses);
+    handCage().skin([left.pose({ bend: [70, 40] }), right.pose({ bend: [5, 5] })], { blend: 9.5 });
+    const s3 = skinCacheStats();
+    expect(s3.misses).toBe(s2.misses + 1);
+    expect(s3.hits).toBe(s2.hits);
     const c1 = armCage(), c2 = armCage();
     c1.skin(arm().pose({ bend: [0, 90] }), { blend: 4 });
     c2.skin(arm().pose({ bend: [0, 90] }), { blend: 20 });
     expect(c2.snapshot().points).not.toEqual(c1.snapshot().points);
+  });
+
+  it("keeps two cages of one shape but different face ids apart", () => {
+    const build = (a, b) => {
+      const c = createCage({ box: { size: [40, 16, 20], center: [0, 0, 10], segs: [2, 1, 1] } });
+      c.extrude("+z:0,0", { by: 40, steps: 4, scale: 0.8, id: a });
+      c.extrude("+z:1,0", { by: 40, steps: 4, scale: 0.8, id: b });
+      return c;
+    };
+    const first = build("L", "R"), second = build("P", "Q");
+    const ids = (c) => new Set(c.snapshot().ids);
+    const r1 = first.skin([left.pose({ bend: [20, 0] }), right.pose({})]);
+    const r2 = second.skin([left.pose({ bend: [20, 0] }), right.pose({})]);
+    for (const id of Object.keys(r1.faces)) expect(ids(first).has(id)).toBe(true);
+    for (const id of Object.keys(r2.faces)) expect(ids(second).has(id)).toBe(true);
+    expect(r2.faces.P.follow).toEqual({ left: 1 });
   });
 });

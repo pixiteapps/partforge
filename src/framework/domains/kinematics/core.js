@@ -140,6 +140,18 @@ export function limb(name, def) {
   const resolveOwn = (set) => resolveFrames(PARENT_STUB == null ? set : { ...PARENT_STUB, ...set });
   // The rest half of bones is the same for every pose of a limb with no parent: resolve it once.
   const restBones = tree.parent == null ? bonesHalf(resolveOwn(restOwn)) : null;
+  // A limb with a parent: its rest frames sit among the parent chain's, which a pose rebuilds
+  // as a new object each time but rarely changes. A memo by value (resolveMemo) answers with
+  // the same resolve while they are unchanged, and the half read from it is kept with it.
+  // Without the parent's frames, the stand-in rest is fixed, and the posed half has its own memo.
+  const resolveRestMemo = resolveMemo(), resolveStubMemo = resolveMemo();
+  let lastRest = null, lastRestHalf = null, stubRestHalf = null;
+  const restHalfOf = (restFrames) => {
+    const resolved = resolveRestMemo(restFrames);
+    if (resolved !== lastRest) { lastRest = resolved; lastRestHalf = bonesHalf(resolved); }
+    return lastRestHalf;
+  };
+  const resolveStub = (set) => resolveStubMemo({ ...PARENT_STUB, ...set });
 
   /** Each joint's frame and the tip's origin from a resolved set, unrounded, as plain arrays. */
   function bonesHalf(resolved) {
@@ -163,10 +175,10 @@ export function limb(name, def) {
     if (tree.parent == null || hasParent) {
       // The same set the report resolves, through the same memo: no second resolve.
       posed = bonesHalf(resolvePosed(frames == null ? posedFrames : { ...frames, ...posedFrames }));
-      rest = restBones ?? bonesHalf(resolveFrames(restFrames));
+      rest = restBones ?? restHalfOf(restFrames);
     } else {
-      posed = bonesHalf(resolveOwn(posedFrames));
-      rest = bonesHalf(resolveOwn(restOwn));
+      posed = bonesHalf(resolveStub(posedFrames));
+      rest = stubRestHalf ??= bonesHalf(resolveOwn(restOwn));
     }
     const copy = (f) => ({ origin: [...f.origin], x: [...f.x], y: [...f.y], z: [...f.z] });
     return {
