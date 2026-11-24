@@ -28,7 +28,7 @@ const entryAt = (params, part = hand, name = "hand") => probePoses(part, "assemb
 
 const A = { ...hand.defaults };
 const THUMB = { ...hand.defaults, thumbCurl: 55 };
-const FINGERS = Object.keys(hand.defaults).filter((key) => key !== "thumbCurl");
+const FINGERS = Object.keys(hand.defaults).filter((key) => !key.startsWith("thumb"));
 const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 50 };
 
 // Nearest delivered vertices on a hash grid: the indices within `r` mm of a point.

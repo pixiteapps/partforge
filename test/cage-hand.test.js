@@ -34,18 +34,19 @@ test("lints with no errors or warnings", () => {
 
 test("params, derive and handles: one posed limb and one angles-mode handle per digit", () => {
   expect(CONTROLS.map((c) => c.key).sort()).toEqual([
-    ...FINGERS.flatMap((f) => [`${f}Knuckle`, `${f}Curl`]), "thumbCurl",
+    ...FINGERS.flatMap((f) => [`${f}Knuckle`, `${f}Curl`]), "thumbCurl", "thumbOppose",
   ].sort());
   for (const f of FINGERS) {
     expect(CONTROLS.find((c) => c.key === `${f}Knuckle`)).toMatchObject({ min: -10, max: 90 });
     expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 80 });
   }
   expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 50 });
+  expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: 0, max: 60 });
   expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
-  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`] });
-  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"] });
+  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
+  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { mcp: "thumbCurl" } });
 });
 
 test("is listed as an organic reference part", () => {
@@ -57,7 +58,9 @@ test("is listed as an organic reference part", () => {
 const CASES = [
   ["defaults", {}],
   ["every parameter at its min", Object.fromEntries(CONTROLS.map((c) => [c.key, c.min]))],
-  ["every parameter at its max", Object.fromEntries(CONTROLS.map((c) => [c.key, c.max]))],
+  // A fist: every bend at its max. The thumb is not opposed, since an opposed, curled thumb
+  // meets the closed fingers (test/cage-drag-validity.test.js).
+  ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: 0 }],
   ...CONTROLS.flatMap((c) => [[`${c.key} min`, { [c.key]: c.min }], [`${c.key} max`, { [c.key]: c.max }]]),
 ];
 

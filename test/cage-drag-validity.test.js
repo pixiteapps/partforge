@@ -12,7 +12,7 @@ const FINGERS = ["index", "middle", "ring", "pinky"];
 // The hand's cage with every finger at one knuckle and one curl (the tip joint follows at
 // 0.75, the thumb's at 0.8), driven straight through cageHand so a bend past the part's range can be asked for.
 const { p: P0 } = resolveParams(hand, hand.defaults);
-const handCage = (knuckle, curl, thumb) => cageHand(createCage, P0,
+const handCage = (knuckle, curl, thumb, oppose = 0) => cageHand(createCage, { ...P0, thumbOppose: oppose },
   { ...Object.fromEntries(FINGERS.map((f) => [f, [knuckle, curl, 0.75 * curl]])), thumb: [thumb, 0.8 * thumb] }).snapshot();
 const handAt = (params) => {
   const { p, d } = resolveParams(hand, { ...hand.defaults, ...params });
@@ -32,20 +32,28 @@ describe("dragValidity on the cage hand", () => {
 
   test("is null across the hand's whole slider range, every corner of it included", () => {
     const corners = [];
-    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb]);
-    for (const [knuckle, curl, thumb] of corners) expect(dragValidity(plan, handCage(knuckle, curl, thumb).points), `${knuckle} ${curl} ${thumb}`).toBeNull();
-    // The part's own params at its maxima, through its limbs.
-    const max = Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max]));
+    for (const knuckle of [-10, 40, 90]) for (const curl of [0, 40, 80]) for (const thumb of [0, 25, 50]) corners.push([knuckle, curl, thumb, 0]);
+    // The thumb opposed: every corner of an open hand's range.
+    for (const knuckle of [-10, 40]) for (const curl of [0, 40]) for (const thumb of [0, 25, 50]) for (const oppose of [30, 60]) corners.push([knuckle, curl, thumb, oppose]);
+    for (const corner of corners) expect(dragValidity(plan, handCage(...corner).points), corner.join(" ")).toBeNull();
+    // The part's own bends at their maxima, through its limbs.
+    const max = { ...Object.fromEntries(hand.parameters.flatMap((g) => g.controls).map((c) => [c.key, c.max])), thumbOppose: 0 };
     expect(dragValidity(plan, handAt(max).points)).toBeNull();
   });
 
-  test("is null at 240 seeded random poses inside the slider ranges, every parameter varied together", () => {
+  test("an opposed, curled thumb meets a closed fist: the pose is refused and names the thumb", () => {
+    const r = dragValidity(plan, handCage(90, 80, 40, 60).points, { ids: base.ids });
+    expect(r?.message).toMatch(/^subdiv: the body passes through itself between /);
+    expect(r.message).toMatch(/thumb/);
+  });
+
+  test("is null at 240 seeded random poses inside the slider ranges, every bend varied together, the thumb not opposed", () => {
     let seed = 0x5eed1234;
     const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 2 ** 32; };
     const controls = hand.parameters.flatMap((g) => g.controls);
     const refused = [];
     for (let i = 0; i < 240; i++) {
-      const params = Object.fromEntries(controls.map((c) => [c.key, c.min + rand() * (c.max - c.min)]));
+      const params = { ...Object.fromEntries(controls.map((c) => [c.key, c.min + rand() * (c.max - c.min)])), thumbOppose: 0 };
       const snapshot = handAt(params);
       const r = dragValidity(plan, snapshot.points, { ids: base.ids });
       if (r) refused.push({ params, message: r.message, full: meshSubdiv(snapshot, "preview").warnings });

@@ -37,9 +37,17 @@ const FINGERS = {
 // swings in `tuck` degrees at the wrist. The thumb grows from the pad's top: it leans out
 // `lean` degrees and toward the palm side `forward` degrees, then a short root (narrowed
 // by `neck`) and two segments. It curls across the palm.
-const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, lengths: [25, 20], follow: 0.8 };
+// Opposition turns the pad and the thumb together about the hand's long axis, on a hinge
+// `hinge` mm toward the palm side of the pad's root: the thumb swings from the palm's side
+// round to its front, and the pad wraps the palm's edge.
+const THUMB = { pad: 27, tuck: 14, lean: 23, root: 5, neck: [0.92, 0.9, 1], forward: 10, hinge: 10, lengths: [25, 20], follow: 0.8 };
 const PALMWARD = [0, -1, 0];        // the fingers curl toward the palm side
 const THUMB_CURL = [-0.75, -1, 0];   // the thumb curls toward the palm's middle
+// The way the thumb curls once it is opposed `deg` degrees: the same turn about Z.
+const thumbCurlAt = (deg) => {
+  const a = (-deg * Math.PI) / 180, [x, y] = THUMB_CURL;
+  return [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a), 0];
+};
 
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = (v) => v.map((x) => x / Math.hypot(...v));
@@ -48,9 +56,12 @@ const squareTo = (v, n) => { const along = v[0] * n[0] + v[1] * n[1] + v[2] * n[
 
 // The curl stops at 80°: with every knuckle at 90°, a curl near 90° presses the pinky's tip
 // into the palm, and a cage may not pass through itself. The thumb's stops at 50° for the
-// same reason: past it the thumb meets a curled index finger. Every pose within these
-// ranges builds, all of them at their max at once included.
-const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50] };
+// same reason: past it the thumb meets a curled index finger. With the thumb not opposed,
+// every pose within these ranges builds, all of them at their max at once included.
+// Opposed, the thumb sits in front of the palm, where a closed fist's fingers go: an open
+// hand builds at any opposition and thumb curl, but a curled thumb can meet closed
+// fingers. A drag stops at the last pose that builds.
+const RANGE = { knuckle: [-10, 90], curl: [0, 80], thumbCurl: [0, 50], thumbOppose: [0, 60] };
 const DIGITS = [...Object.keys(FINGERS), "thumb"];
 // The flat under the wrist sits this far above the cage's lowest point (mm).
 const FLAT_ABOVE = 2.4;
@@ -112,6 +123,7 @@ export function cageHand(make, p, bends) {
   // wrist. The thumb grows from the pad's top (the side of the pad that faces the
   // fingers), leaning out about the edge it shares with the palm: that edge is the web.
   const row = PALM.size[2] / PALM.segs[2];
+  const padRoot = c.centroid("+x:0,0").map((v, i) => (v + c.centroid("+x:0,1")[i]) / 2);
   const pad = c.extrude(["+x:0,0", "+x:0,1"], { by: THUMB.pad, scale: [1, 0.85, 1], id: "thenar" });
   const padTop = c.centroid(pad[1]).map((v, i) => v + (i === 2 ? row / 2 : 0));
   c.rotate(pad, { axis: "y", deg: THUMB.tuck, about: padTop });
@@ -122,22 +134,33 @@ export function cageHand(make, p, bends) {
   const t = c.extrude(shelf, { by: THUMB.root, scale: THUMB.neck, id: "thumbRoot" });
   c.rotate(t, { axis: "x", deg: THUMB.forward, about: base });
   if (bends) digit(t, "thumb", THUMB.lengths, bends.thumb, THUMB_CURL);
+  const oppose = p?.thumbOppose ?? 0;
+  if (oppose) {
+    // Everything past the pad's root turns; the web (the thumb root's own sides, which
+    // share an edge with the palm) stays and stretches.
+    const turned = [...pad, ...c.faces("thumb").filter((f) => !f.startsWith("thumbRoot.s"))];
+    c.rotate(turned, { axis: "z", deg: -oppose, about: [padRoot[0], padRoot[1] - THUMB.hinge, padRoot[2]] });
+  }
   return c;
 }
 
 // Each limb's base, read off the palm: a digit's first joint is one ring past the cap its
 // first knuckle grows from, and the limb runs along that cap's normal.
+const baseOf = (c, cap, curlToward) => {
+  const toward = c.normal(cap);
+  return { at: c.centroid(cap).map((v, i) => v + RING * toward[i]), toward, bendToward: squareTo(curlToward, toward) };
+};
 const REST = (() => {
   const c = cageHand(cage, null, null);
-  const base = (cap, curlToward) => {
-    const toward = c.normal(cap);
-    return { at: c.centroid(cap).map((v, i) => v + RING * toward[i]), toward, bendToward: squareTo(curlToward, toward) };
-  };
-  return {
-    ...Object.fromEntries(Object.keys(FINGERS).map((n) => [n, base(`${n}Neck`, PALMWARD)])),
-    thumb: base("thumbRoot", THUMB_CURL),
-  };
+  return Object.fromEntries(Object.keys(FINGERS).map((n) => [n, baseOf(c, `${n}Neck`, PALMWARD)]));
 })();
+
+// The thumb's base moves with its opposition, so it is read off a palm built at that angle.
+let lastThumb = null;
+const thumbRest = (oppose) => {
+  if (lastThumb?.oppose !== oppose) lastThumb = { oppose, base: baseOf(cageHand(cage, { thumbOppose: oppose }, null), "thumbRoot", thumbCurlAt(oppose)) };
+  return lastThumb.base;
+};
 
 /** Every digit posed: the four fingers on the palm's top, the thumb on its side. */
 function poseDigits(p) {
@@ -154,7 +177,7 @@ function poseDigits(p) {
     }).pose({ bend: { mcp: p[`${name}Knuckle`], pip: p[`${name}Curl`] } });
   }
   out.thumb = limb("thumb", {
-    ...REST.thumb,
+    ...thumbRest(p.thumbOppose),
     joints: [
       { name: "mcp", range: RANGE.thumbCurl },
       { name: "ip", range: [0, RANGE.thumbCurl[1] * THUMB.follow], follow: { joint: "mcp", ratio: THUMB.follow } },
@@ -176,12 +199,14 @@ export default {
     ]) },
     { id: "thumb", title: "Thumb", controls: [
       deg("thumbCurl", "Thumb curl", RANGE.thumbCurl, "The thumb's base joint, curling it across the palm; the tip joint follows at 0.8."),
+      deg("thumbOppose", "Thumb opposition", RANGE.thumbOppose, "Swings the thumb from the side of the palm round to its front, to face the fingers."),
     ] },
   ],
   defaults: {
     // A relaxed hand: each finger a little more curled than the one before it.
     ...Object.fromEntries(Object.keys(FINGERS).flatMap((f, i) => [[`${f}Knuckle`, 10 + 4 * i], [`${f}Curl`, 16 + 4 * i]])),
     thumbCurl: 12,
+    thumbOppose: 0,
   },
   derive: (p) => poseDigits(p),
   parts: {
@@ -204,8 +229,8 @@ export default {
   // One angles-mode handle per digit: drag a fingertip and the drag solves that digit's
   // knuckle and curl (the thumb's curl).
   handles: {
-    ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, { on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`] }])),
-    thumb: { on: "thumb", drag: "angles", params: ["thumbCurl"] },
+    ...Object.fromEntries(Object.keys(FINGERS).map((f) => [f, { on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } }])),
+    thumb: { on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { mcp: "thumbCurl" } },
   },
   verify: { expect: { hand: { watertight: true } } },
 };
