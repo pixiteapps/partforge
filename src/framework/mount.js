@@ -310,7 +310,8 @@ export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, lis
     measure: measure ?? NOOP_MEASURE,
     // Click-to-select switch: { isEnabled, setEnabled }, same shape as measure.
     // Off, a click only orbits (no onPick, no popover, no background close) and the
-    // hover label stands down; an open popover stays until the host closes it.
+    // hover label drops its "Click to edit" hint; an open popover stays until the
+    // host closes it.
     // Not viewer state: a remount comes up on.
     picking: picking ?? NOOP_PICKING,
     // Annotation-mode API (spec 2026-08-18): { isEnabled, setEnabled, clear,
@@ -711,8 +712,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     cleanup.defer(() => paneTabs.detach());
     // Always-on hover inspection (no-op on touch-only devices). With onPick the
     // host acts on a click, so the tooltip nudges toward it with `pickHint`
-    // (a host passes its own wording, or null for none).
-    const hover = attachHoverLabels(viewer, { part, tooltip, hint: onPick ? pickHint : null });
+    // (a host passes its own wording, or null for none). The hint is read per show,
+    // so the host's picking switch (runtime.picking) withholds just that line while
+    // a click does nothing: the label, and hoveredSubPart for pose showOn, carry on.
+    let pickingOn = true;
+    const hover = attachHoverLabels(viewer, { part, tooltip, hint: onPick ? () => (pickingOn ? pickHint : null) : null });
     cleanup.defer(() => hover.detach());
     const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
     cleanup.defer(() => ui.setStatus(""));
@@ -1352,12 +1356,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // while a pose dot is hovered or pressed — measure's highlight + dims take the
     // pointer; annotate's overlay canvas takes it entirely; a pose handle does while
     // the pointer is on it (between handles, the tooltip names the feature as ever).
-    // The host's picking switch (runtime.picking) stands it down too, the way
-    // measure does: with picking off a click does nothing, so the label's
-    // "Click to edit" would be wrong.
-    let pickingOn = true;
     const syncHoverSuppression = () =>
-      hover.setSuppressed(!pickingOn || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.claimsHover() ?? false));
+      hover.setSuppressed(previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false) || (poseMode?.claimsHover() ?? false));
     cleanup.defer(measureMode.onModeChange(syncHoverSuppression));
     if (annotateMode) cleanup.defer(annotateMode.onModeChange(syncHoverSuppression));
     if (poseMode) cleanup.defer(poseMode.onHoverChange(syncHoverSuppression));
@@ -2831,11 +2831,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       animation: animCtl?.runtime ?? null,
       picking: onPick ? {
         isEnabled: () => pickingOn,
-        setEnabled: (on) => {
-          if (!!on === pickingOn) return;
-          pickingOn = !!on;
-          syncHoverSuppression();
-        },
+        setEnabled: (on) => { pickingOn = !!on; },
       } : null,
       measure: {
         isEnabled: measureMode.isEnabled,

@@ -978,14 +978,15 @@ test("deprecated container/controls aliases still work", () => {
 
 test("onPick gives the hover tooltip a 'Click to edit' hint, overridable via pickHint", () => {
   const { createWorker } = makeWorkers();
+  // The hint is a function, read per show, so runtime.picking can withhold it live.
   mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
-  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBe("Click to edit");
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint()).toBe("Click to edit");
 
   mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), pickHint: "Click to change" });
-  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBe("Click to change");
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint()).toBe("Click to change");
 
   mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), pickHint: null });
-  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBeNull();
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint()).toBeNull();
 });
 
 test("onPick arms the picker permanently and delivers label/prompt/token/anchor", () => {
@@ -4093,17 +4094,35 @@ test("picking disabled: a background click leaves an open popover open, and disa
   runtime.dispose();
 });
 
-test("picking disabled: the hover label is withheld; enabling brings it back", () => {
+test("picking disabled: the hover hint is withheld, the label still shows; enabling brings it back", () => {
   const { createWorker } = makeWorkers();
   const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
   const hover = attachHoverLabels.mock.results.at(-1).value;
+  const hint = attachHoverLabels.mock.calls.at(-1)[1].hint;
+  expect(hint()).toBe("Click to edit");
   runtime.picking.setEnabled(false);
-  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
-  const calls = hover.setSuppressed.mock.calls.length;
+  expect(hint()).toBeNull();
+  // The label itself keeps working: picking never suppresses the hover.
+  expect(hover.setSuppressed).not.toHaveBeenCalledWith(true);
   runtime.picking.setEnabled(false); // the same value again is a no-op
-  expect(hover.setSuppressed.mock.calls.length).toBe(calls);
+  expect(hint()).toBeNull();
   runtime.picking.setEnabled(true);
-  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  expect(hint()).toBe("Click to edit");
+  runtime.dispose();
+});
+
+test("picking disabled: hoveredSubPart keeps updating, so a showOn pose handle still reveals", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  runtime.picking.setEnabled(false);
+  // Pose mode reveals showOn handles off hover.hoveredSubPart(), which updates only
+  // while the hover is not suppressed: picking off must leave it unsuppressed.
+  for (const cb of poseStubs.at(-1).hoverCbs) cb();
+  expect(hover.setSuppressed).not.toHaveBeenCalledWith(true);
   runtime.dispose();
 });
 
@@ -4160,13 +4179,13 @@ test("measure mode on with picking enabled still suppresses (the guards OR toget
   expect(pickerOpts().suppressed()).toBe(true);
   clickPart();
   expect(onPick).not.toHaveBeenCalled();
-  // Picking off, then measure off: the hover label stays withheld until both clear.
+  // Picking off, then measure off: clicks stay suppressed until both clear, while the
+  // hover label follows measure alone.
   runtime.picking.setEnabled(false);
   runtime.measure.setEnabled(false);
-  expect(hover.setSuppressed).toHaveBeenLastCalledWith(true);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
   expect(pickerOpts().suppressed()).toBe(true);
   runtime.picking.setEnabled(true);
-  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
   expect(pickerOpts().suppressed()).toBe(false);
   runtime.dispose();
 });
