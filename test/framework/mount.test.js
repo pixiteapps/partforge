@@ -3762,3 +3762,69 @@ test("makeHandle stands in for renderCurrent and onRendered on a viewer without 
   expect(typeof unsubscribe).toBe("function");
   expect(() => unsubscribe()).not.toThrow();
 });
+
+// runtime.setCameraCue / runtime.setCamera: jump the camera without a tween. The
+// handle validates; the viewer's cuePose + jumpCameraTo do the work.
+const jumpViewer = (pose = { position: [1, 2, 3], target: [0, 0, 0] }) => ({
+  cuePose: vi.fn(() => pose),
+  jumpCameraTo: vi.fn(),
+});
+
+test("setCameraCue jumps to the viewer's pose for a valid cue", () => {
+  const viewer = jumpViewer();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  expect(h.setCameraCue({ azimuth: 120, elevation: 20, distance: 1.5 })).toBe(true);
+  expect(viewer.cuePose).toHaveBeenCalledWith({ azimuth: 120, elevation: 20, distance: 1.5 });
+  expect(viewer.jumpCameraTo).toHaveBeenCalledWith({ position: [1, 2, 3], target: [0, 0, 0] });
+  expect(h.setCameraCue("top-front-right")).toBe(true);
+  expect(viewer.cuePose).toHaveBeenLastCalledWith("top-front-right");
+});
+
+test("setCameraCue refuses a bad cue and leaves the camera alone", () => {
+  const viewer = jumpViewer();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  for (const bad of [null, undefined, "sideways", { azimuth: 1 }, { azimuth: 0, elevation: 120 }, { azimuth: 0, elevation: 0, roll: 1 }, { azimuth: NaN, elevation: 0 }]) {
+    expect(h.setCameraCue(bad)).toBe(false);
+  }
+  expect(viewer.cuePose).not.toHaveBeenCalled();
+  expect(viewer.jumpCameraTo).not.toHaveBeenCalled();
+});
+
+test("setCameraCue is false with nothing on screen", () => {
+  const viewer = jumpViewer(null);
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  expect(h.setCameraCue("front")).toBe(false);
+  expect(viewer.jumpCameraTo).not.toHaveBeenCalled();
+});
+
+test("setCamera restores a saved getViewerState().camera exactly", () => {
+  const viewer = { ...jumpViewer(), getCameraState: () => ({ pos: [10, -4, 7.25], target: [1, 2, 3] }) };
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  const saved = h.getViewerState().camera;
+  expect(h.setCamera(saved)).toBe(true);
+  expect(viewer.jumpCameraTo).toHaveBeenCalledWith({ position: [10, -4, 7.25], target: [1, 2, 3] });
+});
+
+test("setCamera rejects NaN, short arrays, and a missing target", () => {
+  const viewer = jumpViewer();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  for (const bad of [
+    null,
+    { pos: [0, NaN, 1], target: [0, 0, 0] },
+    { pos: [0, 0, Infinity], target: [0, 0, 0] },
+    { pos: [0, 1], target: [0, 0, 0] },
+    { pos: [0, 1, 2, 3], target: [0, 0, 0] },
+    { pos: [0, 1, 2] },
+    { pos: [0, 1, 2], target: "origin" },
+    { pos: ["0", 1, 2], target: [0, 0, 0] },
+  ]) {
+    expect(h.setCamera(bad)).toBe(false);
+  }
+  expect(viewer.jumpCameraTo).not.toHaveBeenCalled();
+});
+
+test("makeHandle stands in for setCameraCue and setCamera on a viewer without jumps", () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.setCameraCue("front")).toBe(false);
+  expect(h.setCamera({ pos: [0, 0, 1], target: [0, 0, 0] })).toBe(false);
+});

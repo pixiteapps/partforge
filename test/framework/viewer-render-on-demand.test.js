@@ -106,6 +106,7 @@ test("a mutating API call draws; pure reads do not", () => {
   viewer.getCameraState();
   viewer.getRenderMode();
   viewer.isWorldPointVisible?.([0, 0, 0]);
+  viewer.cuePose("front"); // the pose a jump WOULD take: a read
   tick();
   expect(state.renderer.frames).toBe(1);
   viewer.setTheme("light");

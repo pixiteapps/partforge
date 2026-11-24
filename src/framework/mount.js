@@ -9,6 +9,7 @@ import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera, loadRenderMode, loadEnvironment } from "./view-state.js";
 import { isFaceAlignedState } from "./projection.js";
+import { isCameraCue } from "./view-angles.js";
 import { attachViewStyleControls } from "./view-style-controls.js";
 import { attachSelectionPopover } from "./selection-popover.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
@@ -94,6 +95,8 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // from IMPORT_MESH_BROKEN_MESSAGE above (that one names a digest mismatch AFTER
 // a successful tessellation) — this one names the tessellation failure and
 // carries the worker's own error text. See the correlated "error" case below.
+const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
 export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
@@ -177,6 +180,25 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // or null with nothing on screen — so a host can turn "the way I'm looking
     // now" into a `camera` value an author (or an agent) writes into a part.
     getCameraCue: () => viewer.getCameraCue?.() ?? null,
+    // Jump the camera to a camera cue (a view name or an { azimuth, elevation,
+    // distance } orbit, in degrees) with no tween: what a host stepping a
+    // turntable calls once per frame. False, with the camera untouched, for an
+    // invalid cue or with nothing on screen. Not a user grab, so an animation's
+    // remaining camera cues stay armed.
+    setCameraCue: (cue) => {
+      if (!isCameraCue(cue) || !viewer?.jumpCameraTo) return false;
+      const pose = viewer.cuePose?.(cue);
+      if (!pose) return false;
+      viewer.jumpCameraTo(pose);
+      return true;
+    },
+    // Put the camera back on a saved pose — getViewerState().camera's own
+    // `{ pos, target }` — with no tween. False unless both are three finite numbers.
+    setCamera: (state) => {
+      if (!isVec3(state?.pos) || !isVec3(state?.target) || !viewer?.jumpCameraTo) return false;
+      viewer.jumpCameraTo({ position: [...state.pos], target: [...state.target] });
+      return true;
+    },
     getViewerState: () => ({
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",

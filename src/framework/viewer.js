@@ -1731,13 +1731,8 @@ export function createViewer(container, part, {
   // difference is largest. A tween between two faces while ortho stays ortho
   // the whole way — no projection change at all, rather than two in 0.6s.
   function tweenCameraTo(viewName, { duration = 0.6, onComplete, refit = false, autoProjection = false } = {}) {
-    const box = getVisibleWorldBounds();
-    if (!box || box.isEmpty()) { onComplete?.(); return; }
-    const center = box.getCenter(new THREE.Vector3()).toArray();
-    const size = box.getSize(new THREE.Vector3());
-    // radius = full max extent (not half), matching frameTo's framing distance so a
-    // live camera cue doesn't land twice as close as the reframe button and crop the part.
-    const pose = cameraPoseForView(viewName, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
+    const pose = cuePose(viewName);
+    if (!pose) { onComplete?.(); return; }
     const toDir = new THREE.Vector3().fromArray(pose.position).sub(new THREE.Vector3().fromArray(pose.target));
     const toFace = isFaceAligned(toDir.toArray());
     if (!toFace && projectionMode === "orthographic") setProjection("perspective");
@@ -1788,12 +1783,49 @@ export function createViewer(container, part, {
   // so an orthographic view reads at its perspective-equivalent distance.
   // Null with nothing on screen.
   function getCameraCue() {
+    const framing = cueFraming();
+    if (!framing) return null;
+    const { pos, target } = getCameraState();
+    return cameraCueForPose({ position: pos, target }, framing);
+  }
+  // What a camera cue is measured against: the visible bounds' centre, and a
+  // radius of the FULL max extent (not half), matching frameTo's framing
+  // distance so a live camera cue doesn't land twice as close as the reframe
+  // button and crop the part. Null with nothing on screen.
+  function cueFraming() {
     const box = getVisibleWorldBounds();
     if (!box || box.isEmpty()) return null;
-    const center = box.getCenter(new THREE.Vector3()).toArray();
     const size = box.getSize(new THREE.Vector3());
-    const { pos, target } = getCameraState();
-    return cameraCueForPose({ position: pos, target }, { center, radius: Math.max(size.x, size.y, size.z) || 12 });
+    return { center: box.getCenter(new THREE.Vector3()).toArray(), radius: Math.max(size.x, size.y, size.z) || 12 };
+  }
+  // The pose tweenCameraTo lands on for a cue (a view name or an orbit), as
+  // `{ position, target }`; null with nothing on screen. A pure read.
+  function cuePose(view) {
+    const framing = cueFraming();
+    if (!framing) return null;
+    const { position, target } = cameraPoseForView(view, framing);
+    return { position, target };
+  }
+  // Put the camera on a pose at once (runtime.setCameraCue / setCamera, a
+  // host stepping a turntable frame by frame). A running tween is cancelled,
+  // but this is not a user grab: the camera-start listeners are NOT called, so
+  // an animation's remaining cues stay armed. A pose off every face leaves
+  // orthographic, the rule tweenCameraTo applies at its start; there is no
+  // switch INTO orthographic (that is the view cube's alone).
+  function jumpCameraTo({ position, target }) {
+    cancelCameraTween();
+    // Drain any orbit residual first (as suspendDamping does for a tween):
+    // with damping off, update() spends the whole remaining delta once, and
+    // setCameraState then overwrites that frame's pose. Left in, the next
+    // frames would walk the camera off the pose it was just put on.
+    const damping = controls.enableDamping;
+    controls.enableDamping = false;
+    controls.update();
+    controls.enableDamping = damping;
+    const dir = new THREE.Vector3().fromArray(position).sub(new THREE.Vector3().fromArray(target));
+    if (projectionMode === "orthographic" && !isFaceAligned(dir.toArray())) setProjection("perspective");
+    setCameraState({ pos: position, target });
+    requestRender();
   }
   // Cancelling has to put damping back: the tween's own completion path is the
   // only other place that does, and it never runs for a cancelled tween.
@@ -4016,6 +4048,8 @@ export function createViewer(container, part, {
     onAssemblyChange: (cb) => { assemblyListeners.add(cb); return () => assemblyListeners.delete(cb); },
     tweenCameraTo,
     getCameraCue,
+    cuePose,
+    jumpCameraTo,
     holdGround,
     isGroundHeld,
     cancelCameraTween,
@@ -4103,7 +4137,7 @@ export function createViewer(container, part, {
 // reads, subscriptions and hot per-frame queries are left unwrapped — a frame
 // listener polling getCutawayPlane() must not keep the loop drawing forever.
 // Getters (viewer.camera) and non-functions pass through untouched.
-const NO_RENDER_REQUEST = /^(get|is|has|on|__)|^(requestRender|projectPoint|subTriangles|cutawaySupported|cutawayEnabled|whenRealisticReady|dispose)$/;
+const NO_RENDER_REQUEST = /^(get|is|has|on|__)|^(requestRender|projectPoint|subTriangles|cutawaySupported|cutawayEnabled|cuePose|whenRealisticReady|dispose)$/;
 export function withRenderRequests(api, request) {
   for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(api))) {
     if (typeof desc.value !== "function" || NO_RENDER_REQUEST.test(key)) continue;
