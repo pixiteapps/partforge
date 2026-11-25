@@ -239,3 +239,67 @@ test("flush() with nothing missing sends nothing", () => {
   vi.runAllTimers();
   expect(send).not.toHaveBeenCalled();
 });
+
+// isIdle: no reply owed and no kick armed — what runtime.whenSettled waits for.
+test("isIdle is false while a kick is armed and while a reply is owed, true after", () => {
+  const { loop, send } = makeLoop();
+  loop.ready();
+  loop.buildDone();
+  expect(loop.isIdle()).toBe(true);
+  loop.markDirty();
+  expect(loop.isIdle()).toBe(false); // the debounce is armed
+  vi.advanceTimersByTime(180);       // fires: the build goes out
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(loop.isIdle()).toBe(false); // a reply is owed
+  loop.buildDone();
+  expect(loop.isIdle()).toBe(true);
+});
+
+test("a fired kick that finds nothing missing leaves the loop idle", () => {
+  const { loop, state } = makeLoop({ missing: [] });
+  loop.ready();
+  loop.markDirty();
+  vi.advanceTimersByTime(180);
+  expect(loop.isIdle()).toBe(true);
+  loop.delayKick(50);
+  expect(loop.isIdle()).toBe(false);
+  vi.advanceTimersByTime(50);
+  expect(loop.isIdle()).toBe(true);
+  state.missing = ["a"];
+  loop.markDirty();
+  loop.flush();
+  expect(loop.isIdle()).toBe(false); // flush sent, a reply is owed
+});
+
+test("markDirty({ debounce: false }) alone leaves it idle", () => {
+  const { loop, send } = makeLoop({ missing: [] });
+  loop.ready();
+  loop.markDirty(); // armed
+  loop.markDirty({ debounce: false }); // cancels it and arms nothing (the animation path)
+  expect(loop.isIdle()).toBe(true);
+  vi.runAllTimers();
+  expect(send).not.toHaveBeenCalled();
+});
+
+test("onKick is told after every kick, including one a timer fired", () => {
+  const onKick = vi.fn();
+  const send = vi.fn();
+  const loop = createRegenLoop({ missingParts: () => [], send, onKick });
+  loop.ready();
+  expect(onKick).toHaveBeenCalledTimes(1);
+  loop.markDirty();
+  vi.advanceTimersByTime(180);
+  expect(onKick).toHaveBeenCalledTimes(2);
+  loop.flush();
+  expect(onKick).toHaveBeenCalledTimes(3);
+  loop.kick();
+  expect(onKick).toHaveBeenCalledTimes(4);
+});
+
+test("dispose leaves no kick armed", () => {
+  const { loop } = makeLoop({ missing: [] });
+  loop.ready();
+  loop.markDirty();
+  loop.dispose();
+  expect(loop.isIdle()).toBe(true);
+});

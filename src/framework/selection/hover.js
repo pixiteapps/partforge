@@ -6,7 +6,8 @@
 // There is deliberately NO surface highlight: tinting just the feature under
 // the pointer read as "only this face is clickable", and people stopped
 // clicking elsewhere on the part. `hint` (e.g. "Click to edit") adds a line
-// under the name when a click does something — mount passes it with onPick.
+// under the name when a click does something — mount passes it with onPick, as a
+// function read on every show so the host's picking switch can withhold it live.
 //
 // hoveredSubPart() reports the sub-part the last pick found under the mouse (null: none,
 // or the mouse left the canvas). Pose mode reads it to reveal a handle whose `showOn` names
@@ -51,7 +52,8 @@ export function attachHoverLabels(
     } else {
       content = { title: subLabel(hit.subPart), subtitle: "" };
     }
-    if (hint) content.hint = hint;
+    const line = typeof hint === "function" ? hint() : hint;
+    if (line) content.hint = line;
     if (hasPresented) {
       hasPresented = false;
       tooltipPresenter.hide(presentationToken);

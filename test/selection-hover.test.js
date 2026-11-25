@@ -432,3 +432,20 @@ test("touch-only hover answers hoveredSubPart with null", () => {
   expect(hover.hoveredSubPart()).toBeNull();
   hover.detach();
 });
+
+test("a function hint is read on every show: null withholds the line, the label and hoveredSubPart carry on", () => {
+  const viewer = makeViewer({ featured: false });
+  const tooltip = makeTooltip();
+  let hintOn = false;
+  const hover = attachHoverLabels(viewer, { part, schedule: sync, tooltip, hint: () => (hintOn ? "Click to edit" : null) });
+  move(viewer.domElement, 100, 100);
+  expect(tooltip.showPointer).toHaveBeenLastCalledWith({ title: "Planter", subtitle: "" }, 100, 100);
+  expect(hover.hoveredSubPart()).toBe("one");
+  move(viewer.domElement, 1, 1);
+  expect(hover.hoveredSubPart()).toBeNull();
+  hintOn = true;
+  move(viewer.domElement, 100, 100);
+  expect(tooltip.showPointer).toHaveBeenLastCalledWith({ title: "Planter", subtitle: "", hint: "Click to edit" }, 100, 100);
+  expect(hover.hoveredSubPart()).toBe("one");
+  hover.detach();
+});

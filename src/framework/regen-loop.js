@@ -16,8 +16,11 @@
 //   fast-apply path kicks explicitly);
 // - delayKick(ms) re-arms the kick without bumping the version, and flush()
 //   kicks now (the pose drag: a skinned slider move holds the exact build off
-//   for a pause, and a release sends it at once — mount.js, skin/skin-drag.js).
-export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
+//   for a pause, and a release sends it at once — mount.js, skin/skin-drag.js);
+// - isIdle() is true when no reply is owed and no kick is armed, and the optional
+//   onKick is told after every kick (a timer's included), so mount's whenSettled
+//   can settle the moment the loop goes idle.
+export function createRegenLoop({ missingParts, send, debounceMs = 180, onKick }) {
   let kernelReady = false;
   let pending = 0;       // worker replies still owed for the in-flight dispatch cycle
   let disposed = false;
@@ -25,13 +28,25 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
   let genVersion = -1;   // the params version the in-flight build is building
   let timer = null;
 
-  function kick() {
+  function dispatch() {
     if (disposed || !kernelReady || pending > 0) return; // re-kicked when the current cycle finishes
     const missing = missingParts();
     if (missing.length === 0) return;
     genVersion = paramsVersion;
     // A send with no return value is the single-job case (one worker, one reply).
     pending = send(missing) ?? 1;
+  }
+  function kick() {
+    dispatch();
+    onKick?.();
+  }
+  // A fired timer is no longer armed: cleared before its kick, so isIdle() reads it so.
+  function arm(ms) {
+    timer = setTimeout(() => { timer = null; kick(); }, ms);
+  }
+  function disarm() {
+    clearTimeout(timer);
+    timer = null;
   }
 
   return {
@@ -44,19 +59,18 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
     // whenever the worker is idle (best-effort at worker cadence, clock-free).
     markDirty({ debounce = true, delayMs = debounceMs } = {}) {
       paramsVersion++;
-      clearTimeout(timer);
-      if (debounce) timer = setTimeout(kick, delayMs);
+      disarm();
+      if (debounce) arm(delayMs);
     },
     // Replace whatever kick is armed with one in `ms`; the version is untouched.
     delayKick(ms) {
       if (disposed) return;
-      clearTimeout(timer);
-      timer = setTimeout(kick, ms);
+      disarm();
+      arm(ms);
     },
     // Cancel the armed kick and kick now.
     flush() {
-      clearTimeout(timer);
-      timer = null;
+      disarm();
       kick();
     },
     // One job of the cycle finished (meshes / needs-occt / error). Returns whether
@@ -73,7 +87,9 @@ export function createRegenLoop({ missingParts, send, debounceMs = 180 }) {
     // A build is in flight and nothing has edited the params since it was sent —
     // the test a progressive batch (meshes-partial) must pass to be shown.
     isFresh: () => pending > 0 && genVersion === paramsVersion,
+    // No reply owed and no kick armed: nothing this loop has started is still coming.
+    isIdle: () => pending === 0 && timer === null,
     // Terminal: cancel the pending debounce and refuse all future sends.
-    dispose() { disposed = true; clearTimeout(timer); },
+    dispose() { disposed = true; disarm(); },
   };
 }

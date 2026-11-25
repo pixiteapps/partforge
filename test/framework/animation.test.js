@@ -4,8 +4,9 @@
 import { expect, test } from "vitest";
 import {
   EASINGS, DEFAULT_EASING, normalizeAnimation, viewAnimations,
-  evaluate, stepIndexAt, cueAt,
+  evaluate, stepIndexAt, cueAt, cameraPoseAt,
 } from "../../src/framework/animation.js";
+import { tweenPoseAt } from "../../src/framework/camera-tween.js";
 
 const open = {
   label: "Open lid", camera: "front", duration: 1.2,
@@ -217,4 +218,78 @@ test("an opacity-only animation is normalizable (no tracks anywhere)", () => {
   const fade = viewAnimations(fadePart).get("assembly")[1];
   expect(fade.trackedKeys).toEqual([]);
   expect(evaluate(fade, 0.3).values).toEqual({});
+});
+
+// --- cameraPoseAt: the camera a viewer would see at t had the animation played
+// from 0 untouched. Canned poses per cue view; every animation here is 4 s long.
+const START = { position: [10, 0, 0], target: [0, 0, 0] };
+const FRONT = { position: [0, 0, 10], target: [0, 0, 0] };
+const TOP = { position: [0, 10, 0], target: [0, 0, 0] };
+const ISO = { position: [5, 5, 5], target: [1, 0, 0] };
+const POSES = { front: FRONT, top: TOP, iso: ISO };
+const ctx = { poseFor: (view) => POSES[view], start: START };
+
+const cued = normalizeAnimation("a", { duration: 4, tracks: { x: [0, 1] }, camera: [[0, "front"], [0.5, "top"]] });
+const noCueAnim = normalizeAnimation("b", { duration: 4, tracks: { x: [0, 1] } });
+
+test("cameraPoseAt: no cues is null", () => {
+  expect(cameraPoseAt(noCueAnim, 0.5, ctx)).toBeNull();
+});
+test("cameraPoseAt: t = 0 sits on the intro cue", () => {
+  expect(cameraPoseAt(cued, 0, ctx)).toEqual(FRONT);
+});
+test("cameraPoseAt: before the second cue it is still the intro pose", () => {
+  expect(cameraPoseAt(cued, 0.49, ctx)).toEqual(FRONT);
+});
+test("cameraPoseAt: halfway through the second cue's sweep it is tweenPoseAt(FRONT, TOP, 0.5)", () => {
+  // top sweeps (1 - 0.5) * 4 = 2 s; t = 0.75 is 1 s into it
+  expect(cameraPoseAt(cued, 0.75, ctx)).toEqual(tweenPoseAt(FRONT, TOP, 0.5));
+});
+test("cameraPoseAt: t = 1 has landed", () => {
+  expect(cameraPoseAt(cued, 1, ctx)).toEqual(TOP);
+});
+test("cameraPoseAt: a first cue after 0 sweeps from the start pose; before it, the start pose is returned", () => {
+  const late = normalizeAnimation("late", { duration: 4, tracks: { x: [0, 1] }, camera: [[0.25, "top"]] });
+  expect(cameraPoseAt(late, 0, ctx)).toEqual(START);
+  expect(cameraPoseAt(late, 0.2, ctx)).toEqual(START);
+  // top sweeps (1 - 0.25) * 4 = 3 s; t = 0.625 is 1.5 s into it
+  expect(cameraPoseAt(late, 0.625, ctx)).toEqual(tweenPoseAt(START, TOP, 0.5));
+  expect(cameraPoseAt(late, 1, ctx)).toEqual(TOP);
+});
+test("cameraPoseAt: a sweep cut short by the next cue hands on its partial pose", () => {
+  // Hand-built cues: top asks for a 4 s sweep but iso fires 1 s in.
+  const base = normalizeAnimation("c", { duration: 4, tracks: { x: [0, 1] } });
+  const anim = { ...base, cues: [
+    { t: 0, view: "front", sweep: null },
+    { t: 0.25, view: "top", sweep: 4 },
+    { t: 0.5, view: "iso", sweep: 2 },
+  ] };
+  const partial = tweenPoseAt(FRONT, TOP, 0.25);
+  expect(cameraPoseAt(anim, 0.5, ctx)).toEqual(partial);
+  expect(cameraPoseAt(anim, 0.75, ctx)).toEqual(tweenPoseAt(partial, ISO, 0.5));
+  expect(cameraPoseAt(anim, 1, ctx)).toEqual(ISO);
+});
+test("cameraPoseAt: a non-intro cue with no sweep uses the 0.6 s default", () => {
+  const base = normalizeAnimation("d", { duration: 4, tracks: { x: [0, 1] } });
+  const anim = { ...base, cues: [{ t: 0.5, view: "top", sweep: null }] };
+  // 0.3 s into a 0.6 s sweep
+  const t = 0.5 + 0.3 / 4;
+  expect(cameraPoseAt(anim, t, ctx)).toEqual(tweenPoseAt(START, TOP, ((t - 0.5) * 4) / 0.6));
+  expect(cameraPoseAt(anim, 0.7, ctx)).toEqual(TOP);
+});
+test("cameraPoseAt: a lone angle (sweep null) is an intro only", () => {
+  const lone = normalizeAnimation("e", { duration: 4, tracks: { x: [0, 1] }, camera: "iso" });
+  expect(lone.cues).toEqual([{ t: 0, view: "iso", sweep: null }]);
+  for (const t of [0, 0.3, 0.5, 1]) expect(cameraPoseAt(lone, t, ctx)).toEqual(ISO);
+});
+test("cameraPoseAt: per-step cameras sweep across their own step", () => {
+  const stepped = normalizeAnimation("f", { steps: [
+    { duration: 1, camera: "front", tracks: { x: [0, 1] } },
+    { duration: 3, camera: "top", tracks: { x: [1, 0] } },
+  ] });
+  expect(stepped.totalDuration).toBe(4);
+  expect(cameraPoseAt(stepped, 0.1, ctx)).toEqual(FRONT);
+  // the second step starts at 0.25 and sweeps 3 s; t = 0.625 is halfway
+  expect(cameraPoseAt(stepped, 0.625, ctx)).toEqual(tweenPoseAt(FRONT, TOP, 0.5));
+  expect(cameraPoseAt(stepped, 1, ctx)).toEqual(TOP);
 });

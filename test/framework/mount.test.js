@@ -978,14 +978,15 @@ test("deprecated container/controls aliases still work", () => {
 
 test("onPick gives the hover tooltip a 'Click to edit' hint, overridable via pickHint", () => {
   const { createWorker } = makeWorkers();
+  // The hint is a function, read per show, so runtime.picking can withhold it live.
   mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
-  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBe("Click to edit");
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint()).toBe("Click to edit");
 
   mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), pickHint: "Click to change" });
-  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBe("Click to change");
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint()).toBe("Click to change");
 
   mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), pickHint: null });
-  expect(attachHoverLabels.mock.calls.at(-1)[1].hint).toBeNull();
+  expect(attachHoverLabels.mock.calls.at(-1)[1].hint()).toBeNull();
 });
 
 test("onPick arms the picker permanently and delivers label/prompt/token/anchor", () => {
@@ -3723,5 +3724,468 @@ test("describeKit reads the kit's sections at the live params; exportKit's reply
   await expect(done).resolves.toBeUndefined();
   expect(onKit).toHaveBeenCalledWith({ entries, name: "part" });
   expect(onDownload).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
+// runtime.renderCurrent / runtime.onRendered: the frames-out pair a host turns into video.
+test("makeHandle forwards renderCurrent through beforeCapture's hold, with captureCurrent's recenter guard", () => {
+  const order = [];
+  const canvas = document.createElement("canvas");
+  const viewer = { renderCurrent: vi.fn((opts) => { order.push(["render", opts]); return canvas; }) };
+  const beforeCapture = () => { order.push("hold"); return () => order.push("release"); };
+  const pinned = { isEnabled: () => true, pinCount: () => 2 };
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {}, beforeCapture, measure: pinned });
+  expect(h.renderCurrent({ width: 640, height: 360 })).toBe(canvas);
+  expect(order).toEqual(["hold", ["render", { width: 640, height: 360 }], "release"]);
+  // With dimensions on screen a recentred frame could cut the labels off, so the
+  // user's exact framing is kept — the same guard captureCurrent applies.
+  h.renderCurrent({ width: 640, height: 360, recenter: true });
+  expect(viewer.renderCurrent.mock.calls.at(-1)[0]).toEqual({ width: 640, height: 360, recenter: false });
+  const unpinned = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  unpinned.renderCurrent({ recenter: true });
+  expect(viewer.renderCurrent.mock.calls.at(-1)[0]).toEqual({ recenter: true });
+});
+
+test("makeHandle forwards onRendered and returns its unsubscribe", () => {
+  const off = vi.fn();
+  const viewer = { onRendered: vi.fn(() => off) };
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  const cb = () => {};
+  const unsubscribe = h.onRendered(cb);
+  expect(viewer.onRendered).toHaveBeenCalledWith(cb);
+  expect(unsubscribe).toBe(off);
+});
+
+test("makeHandle stands in for renderCurrent and onRendered on a viewer without them", () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.renderCurrent({ width: 64, height: 48 })).toBeNull();
+  const unsubscribe = h.onRendered(() => {});
+  expect(typeof unsubscribe).toBe("function");
+  expect(() => unsubscribe()).not.toThrow();
+});
+
+// runtime.setCameraCue / runtime.setCamera: jump the camera without a tween. The
+// handle validates; the viewer's cuePose + jumpCameraTo do the work.
+const jumpViewer = (pose = { position: [1, 2, 3], target: [0, 0, 0] }) => ({
+  cuePose: vi.fn(() => pose),
+  jumpCameraTo: vi.fn(),
+});
+
+test("setCameraCue jumps to the viewer's pose for a valid cue", () => {
+  const viewer = jumpViewer();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  expect(h.setCameraCue({ azimuth: 120, elevation: 20, distance: 1.5 })).toBe(true);
+  expect(viewer.cuePose).toHaveBeenCalledWith({ azimuth: 120, elevation: 20, distance: 1.5 });
+  expect(viewer.jumpCameraTo).toHaveBeenCalledWith({ position: [1, 2, 3], target: [0, 0, 0] });
+  expect(h.setCameraCue("top-front-right")).toBe(true);
+  expect(viewer.cuePose).toHaveBeenLastCalledWith("top-front-right");
+});
+
+test("setCameraCue refuses a bad cue and leaves the camera alone", () => {
+  const viewer = jumpViewer();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  for (const bad of [null, undefined, "sideways", { azimuth: 1 }, { azimuth: 0, elevation: 120 }, { azimuth: 0, elevation: 0, roll: 1 }, { azimuth: NaN, elevation: 0 }]) {
+    expect(h.setCameraCue(bad)).toBe(false);
+  }
+  expect(viewer.cuePose).not.toHaveBeenCalled();
+  expect(viewer.jumpCameraTo).not.toHaveBeenCalled();
+});
+
+test("setCameraCue is false with nothing on screen", () => {
+  const viewer = jumpViewer(null);
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  expect(h.setCameraCue("front")).toBe(false);
+  expect(viewer.jumpCameraTo).not.toHaveBeenCalled();
+});
+
+test("setCamera restores a saved getViewerState().camera exactly", () => {
+  const viewer = { ...jumpViewer(), getCameraState: () => ({ pos: [10, -4, 7.25], target: [1, 2, 3] }) };
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  const saved = h.getViewerState().camera;
+  expect(h.setCamera(saved)).toBe(true);
+  expect(viewer.jumpCameraTo).toHaveBeenCalledWith({ position: [10, -4, 7.25], target: [1, 2, 3] });
+});
+
+test("setCamera rejects NaN, short arrays, and a missing target", () => {
+  const viewer = jumpViewer();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer, setParams() {} });
+  for (const bad of [
+    null,
+    { pos: [0, NaN, 1], target: [0, 0, 0] },
+    { pos: [0, 0, Infinity], target: [0, 0, 0] },
+    { pos: [0, 1], target: [0, 0, 0] },
+    { pos: [0, 1, 2, 3], target: [0, 0, 0] },
+    { pos: [0, 1, 2] },
+    { pos: [0, 1, 2], target: "origin" },
+    { pos: ["0", 1, 2], target: [0, 0, 0] },
+  ]) {
+    expect(h.setCamera(bad)).toBe(false);
+  }
+  expect(viewer.jumpCameraTo).not.toHaveBeenCalled();
+});
+
+test("makeHandle stands in for setCameraCue and setCamera on a viewer without jumps", () => {
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.setCameraCue("front")).toBe(false);
+  expect(h.setCamera({ pos: [0, 0, 1], target: [0, 0, 0] })).toBe(false);
+});
+
+// whenSettled: the capture loop's wait for the build a seek (or any edit) started.
+describe("whenSettled", () => {
+  const flushMicrotasks = () => new Promise((r) => queueMicrotask(r));
+  const track = (p) => {
+    const s = { done: false, value: undefined };
+    p.then((v) => { s.done = true; s.value = v; });
+    return s;
+  };
+  const generates = (workers, from = 0) => workers.manifold.postMessage.mock.calls.slice(from)
+    .map(([m]) => m).filter((m) => m.type === "generate");
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("makeHandle stands in with a promise of true", async () => {
+    const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+    expect(await h.whenSettled()).toBe(true);
+  });
+
+  test("resolves true at once when nothing is building", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("before the first build it waits for that build", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    const s = track(runtime.whenSettled()); // the kernel has not announced itself yet
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the first build is in flight
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("after a geometry edit it waits for the worker's reply", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.setParams({ h: 6 });
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the debounce is armed
+    vi.advanceTimersByTime(200);
+    expect(generates(workers, before)).toHaveLength(1);
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the reply is owed
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a pose-only edit waiting on the debounce settles true when the timer finds nothing to build", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.setParams({ tilt: 30 });
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    vi.advanceTimersByTime(200);
+    await flushMicrotasks();
+    expect(generates(workers, before)).toHaveLength(0);
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  const mountAnimated = (tracks) => {
+    const part = makePart();
+    part.views.main.animations = { go: { label: "Go", duration: 2, easing: "linear", tracks } };
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(part, { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    return { workers, runtime };
+  };
+
+  test("an animation seek that rebuilds geometry is waited for", async () => {
+    const { workers, runtime } = mountAnimated({ h: [[0, 4], [1, 10]] });
+    expect(await runtime.whenSettled()).toBe(true);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.animation.seek(1);
+    const s = track(runtime.whenSettled());
+    const sent = generates(workers, before);
+    expect(sent).toHaveLength(1); // no debounce: the seek dispatched at once
+    expect(sent[0].params.h).toBeGreaterThan(4);
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a pose-only animation seek resolves at once", async () => {
+    const { workers, runtime } = mountAnimated({ tilt: [[0, 0], [1, 60]] });
+    expect(await runtime.whenSettled()).toBe(true);
+    const before = workers.manifold.postMessage.mock.calls.length;
+    runtime.animation.seek(1);
+    const s = track(runtime.whenSettled());
+    await flushMicrotasks();
+    expect(generates(workers, before)).toHaveLength(0);
+    expect(fakeViewers[0].setSubPose).toHaveBeenCalledWith("body", expect.any(Array));
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a stale reply does not settle: it waits for the rebuild the edit caused", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    runtime.setParams({ h: 6 });
+    vi.advanceTimersByTime(200); // build at h=6 in flight
+    const s = track(runtime.whenSettled());
+    runtime.setParams({ h: 8 }); // lands mid-build: the reply below is stale
+    vi.advanceTimersByTime(200); // the kick is absorbed (a reply is owed)
+    const before = workers.manifold.postMessage.mock.calls.length;
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false);
+    const redo = generates(workers, before);
+    expect(redo).toHaveLength(1);
+    expect(redo[0].params.h).toBe(8);
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a build error settles false; a later successful build settles true again", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    runtime.setParams({ h: 6 });
+    const s = track(runtime.whenSettled());
+    vi.advanceTimersByTime(200);
+    workers.manifold.onmessage({ data: { type: "error", message: "boom" } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: false });
+    // Still idle with the failed part missing: a new wait answers false at once.
+    expect(await runtime.whenSettled()).toBe(false);
+    runtime.setParams({ h: 7 });
+    const t = track(runtime.whenSettled());
+    vi.advanceTimersByTime(200);
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(t).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("a first build that errors settles false", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    const s = track(runtime.whenSettled());
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    workers.manifold.onmessage({ data: { type: "error", message: "boom" } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: false });
+    await runtime.ready.catch(() => {});
+    runtime.dispose();
+  });
+
+  test("an outstanding import tessellation keeps the wait open until the retry lands", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    const s = track(runtime.whenSettled());
+    workers.manifold.onmessage({ data: { type: "ready" } });
+    workers.manifold.onmessage({ data: { type: "needs-import-mesh" } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // idle, but the tessellation's retry is still coming
+    workers.occt.onmessage({ data: { type: "import-meshes", meshes: {} } });
+    await flushMicrotasks();
+    expect(s.done).toBe(false); // the retry is in flight
+    workers.manifold.onmessage({ data: { type: "meshes", meshes: [{ name: "body" }], ms: 5 } });
+    await flushMicrotasks();
+    expect(s).toEqual({ done: true, value: true });
+    runtime.dispose();
+  });
+
+  test("dispose settles every waiter false, and a call after dispose resolves false", async () => {
+    const { workers, createWorker } = makeWorkers();
+    const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+    finishFirstBuild(workers);
+    runtime.setParams({ h: 6 });
+    const a = track(runtime.whenSettled());
+    vi.advanceTimersByTime(200);
+    const b = track(runtime.whenSettled());
+    runtime.dispose();
+    await flushMicrotasks();
+    expect(a).toEqual({ done: true, value: false });
+    expect(b).toEqual({ done: true, value: false });
+    expect(await runtime.whenSettled()).toBe(false);
+  });
+});
+
+// --- runtime.picking: the host's click-to-select switch ----------------------
+// attachPicker is mocked, so these clicks replay the real picker's guard
+// (selection/pick.js): a suppressed click calls neither onPick nor onMiss.
+const pickerOpts = () => attachPicker.mock.calls.at(-1)[1];
+const clickPart = () => {
+  const o = pickerOpts();
+  if (o.suppressed?.()) return;
+  o.onPick({ subPart: "body", point: [0, 0, 0], normal: [0, 0, 1], params: {} }, { x: 40, y: 30 });
+};
+const clickBackground = () => {
+  const o = pickerOpts();
+  if (o.suppressed?.()) return;
+  o.onMiss?.();
+};
+
+test("picking is enabled by default with onPick, and reports it", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
+  expect(runtime.picking.isEnabled()).toBe(true);
+  expect(pickerOpts().suppressed()).toBe(false);
+  expect("picking" in runtime.getViewerState()).toBe(false);
+  runtime.dispose();
+});
+
+test("picking disabled: a click on the part does not call onPick or open the popover", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick, selectionPopover: { slot: true } });
+  runtime.picking.setEnabled(false);
+  expect(runtime.picking.isEnabled()).toBe(false);
+  clickPart();
+  expect(onPick).not.toHaveBeenCalled();
+  expect(runtime.selection.isOpen()).toBe(false);
+  expect(fakeViewers.at(-1).holdFlashPoint).not.toHaveBeenCalled();
+  runtime.dispose();
+});
+
+test("picking disabled: a background click leaves an open popover open, and disabling closes nothing", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn(), selectionPopover: { slot: true } });
+  const viewer = fakeViewers.at(-1);
+  const reasons = [];
+  runtime.selection.onClose((e) => reasons.push(e.reason));
+  clickPart();
+  expect(runtime.selection.isOpen()).toBe(true);
+  runtime.picking.setEnabled(false);
+  expect(runtime.selection.isOpen()).toBe(true);
+  clickBackground();
+  expect(runtime.selection.isOpen()).toBe(true);
+  expect(viewer.releaseFlashPoints).not.toHaveBeenCalled();
+  expect(reasons).toEqual([]);
+  // Enabled again, the same background click puts it away as before.
+  runtime.picking.setEnabled(true);
+  clickBackground();
+  expect(runtime.selection.isOpen()).toBe(false);
+  expect(reasons).toEqual(["clear"]);
+  runtime.dispose();
+});
+
+test("picking disabled: the hover hint is withheld, the label still shows; enabling brings it back", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick: vi.fn() });
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  const hint = attachHoverLabels.mock.calls.at(-1)[1].hint;
+  expect(hint()).toBe("Click to edit");
+  runtime.picking.setEnabled(false);
+  expect(hint()).toBeNull();
+  // The label itself keeps working: picking never suppresses the hover.
+  expect(hover.setSuppressed).not.toHaveBeenCalledWith(true);
+  runtime.picking.setEnabled(false); // the same value again is a no-op
+  expect(hint()).toBeNull();
+  runtime.picking.setEnabled(true);
+  expect(hint()).toBe("Click to edit");
+  runtime.dispose();
+});
+
+test("picking disabled: hoveredSubPart keeps updating, so a showOn pose handle still reveals", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  runtime.picking.setEnabled(false);
+  // Pose mode reveals showOn handles off hover.hoveredSubPart(), which updates only
+  // while the hover is not suppressed: picking off must leave it unsuppressed.
+  for (const cb of poseStubs.at(-1).hoverCbs) cb();
+  expect(hover.setSuppressed).not.toHaveBeenCalledWith(true);
+  runtime.dispose();
+});
+
+test("picking re-enabled: the next click picks", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick, selectionPopover: { slot: true } });
+  runtime.picking.setEnabled(false);
+  clickPart();
+  runtime.picking.setEnabled(1); // coerced to a boolean
+  expect(runtime.picking.isEnabled()).toBe(true);
+  clickPart();
+  expect(onPick).toHaveBeenCalledTimes(1);
+  expect(runtime.selection.isOpen()).toBe(true);
+  runtime.dispose();
+});
+
+test("picking disabled still spends a pose press's claim on the click", () => {
+  const part = makePart();
+  part.handles = { grow: { params: ["h"] } };
+  const { createWorker, workers } = makeWorkers();
+  const runtime = mount(part, { createWorker, elements: makeElements(), onPick: vi.fn() });
+  finishFirstBuild(workers);
+  const pose = poseStubs.at(-1);
+  runtime.picking.setEnabled(false);
+  pose.takeClick.mockReturnValueOnce(true);
+  expect(pickerOpts().suppressed()).toBe(true);
+  expect(pose.takeClick).toHaveBeenCalled();
+  runtime.picking.setEnabled(true);
+  expect(pickerOpts().suppressed()).toBe(false); // the claim was spent by the disabled click
+  runtime.dispose();
+});
+
+test("without onPick the picking stand-in reads false and setEnabled does nothing", () => {
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements() });
+  expect(runtime.picking.isEnabled()).toBe(false);
+  runtime.picking.setEnabled(true);
+  expect(runtime.picking.isEnabled()).toBe(false);
+  runtime.dispose();
+  const h = makeHandle({ ready: Promise.resolve(), dispose() {}, viewer: {}, setParams() {} });
+  expect(h.picking.isEnabled()).toBe(false);
+  expect(() => h.picking.setEnabled(true)).not.toThrow();
+  expect(h.picking.isEnabled()).toBe(false);
+});
+
+test("measure mode on with picking enabled still suppresses (the guards OR together)", () => {
+  const onPick = vi.fn();
+  const { createWorker } = makeWorkers();
+  const runtime = mount(makePart(), { createWorker, elements: makeElements(), onPick });
+  const hover = attachHoverLabels.mock.results.at(-1).value;
+  runtime.measure.setEnabled(true);
+  expect(runtime.picking.isEnabled()).toBe(true);
+  expect(pickerOpts().suppressed()).toBe(true);
+  clickPart();
+  expect(onPick).not.toHaveBeenCalled();
+  // Picking off, then measure off: clicks stay suppressed until both clear, while the
+  // hover label follows measure alone.
+  runtime.picking.setEnabled(false);
+  runtime.measure.setEnabled(false);
+  expect(hover.setSuppressed).toHaveBeenLastCalledWith(false);
+  expect(pickerOpts().suppressed()).toBe(true);
+  runtime.picking.setEnabled(true);
+  expect(pickerOpts().suppressed()).toBe(false);
   runtime.dispose();
 });

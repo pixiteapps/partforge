@@ -1171,6 +1171,35 @@ statement of this rule.
   than through an API call (`measure/dim3-scene.js`, `selection/feature-highlight.js`,
   the cutaway's idle fade, the animation driver) must call
   `viewer.requestRender()`, or the change shows up only on the next orbit.
+- **Capture-frame runtime (0.204.0)**: `runtime.renderCurrent` renders through
+  `renderOffscreen` into a REUSED frame set (`frameSetFor` in `viewer.js`: one
+  target, readback buffer, canvas and ImageData for the last size asked, released
+  with `_rt` and by an idle timer `FRAME_SET_IDLE_MS` = 5 s after the last
+  `renderCurrent`, re-armed by each call and cleared on park and dispose), so its
+  canvas is overwritten by the next call. The live-framing capture path
+  (`captureLiveFraming`, shared with `captureCurrent`) runs `catchUpForCapture`
+  first: `cutaway.updateForCamera()` when the cutaway is on, and in the live
+  realistic look a full-resolution shadow render when `shadowMovedAt` says the
+  poses moved since the last one — because a host seeks and captures with no live
+  frame between. Measure dimensions are NOT caught up (they rebuild only in
+  measure-mode's `onFrame`); the README tells the host to wait one `onRendered`. `onRendered`
+  listeners run right after the live draw, the one moment the live canvas reads
+  back. `setCameraCue`/`setCamera` and `seek(t, { camera: true })` move the camera
+  through `viewer.cuePose` + `viewer.jumpCameraTo` (no tween, not a user grab);
+  the seek's pose comes from `cameraPoseAt` in `animation.js`, with EVERY cue's
+  pose read once at the first camera seek and kept beside `renderStart`
+  (`renderPoses` in `animation-controls.js`, both cleared by `resetRenderStart`):
+  re-reading `cuePose` per seek re-frames on the moving part, so a held cue
+  creeps and a rebuilding track reads the previous frame's geometry.
+  `cameraPoseAt` composes the same `tweenPoseAt` the live cue tween uses (`camera-tween.js` re-exports it).
+  `tweenPoseAt` lives in `animation.js` because that file's import closure must
+  stay three-free (lint reads it), so the Spherical arithmetic is written out by
+  hand there. `whenSettled` (mount.js) resolves its waiters in `settleIfIdle`,
+  which reads the regen loop's `isIdle()`; the loop's `onKick` and the end of
+  every worker-message handler call it. **`settleIfIdle()` must run after every
+  site that can leave the loop idle**, or a waiter hangs until dispose. The
+  host's picking switch is the `pickingOn` flag in mount.js, read per click by
+  the picker's `suppressed` gate and by the hover label's hint.
 - `type: "custom"` controls (`panel/widgets/custom.js`, `panel/scoped-params.js`,
   `panel/json-value.js`) run PART-AUTHORED functions in the panel's realm. The value
   contract is `isJsonValue`, shared with hosts through `partforge/panel-values`; a
