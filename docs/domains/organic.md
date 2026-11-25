@@ -168,7 +168,7 @@ An unknown field is an error. "axis" fields take `"x"`, `"y"`, `"z"` or a non-ze
 | `subtract` | `children` | `k` | The first child minus the rest, blended by `k`. |
 | `contact` | `children` | `gap`, `bulge`, `attach` | Children that press together instead of blending. Must be the root. See "Blends and contact". |
 | `mirror` | `child` | `plane` | The child plus its reflection across `plane`: `"yz"` (the default, x → −x), `"xz"` or `"xy"`. |
-| `round` | `child`, `r` | | The child's surface moved out by `r`: rounds its edges and grows it by `r`. |
+| `offset` | `child`, `d` | | The child's surface moved by `d` mm: out for `d > 0`, in for `d < 0`. Exact over a sphere, a capsule or a box; a bound over a blend, an ellipsoid or a warp. |
 | `onion` | `child`, `t` | | A shell `2·t` thick, centred on the child's surface. |
 | `displace` | `child`, `amount`, `by` | | Moves the surface out by `amount × by`, where `by` is `{ expr, uniforms?, textures? }` (see "Formulas") and its value is clamped to −1…1. `amount` is the most it can move, in mm. |
 | `twist` | `child`, `degPerMm` | `axis` | Turns the child about `axis` (default `"z"`) by `degPerMm` degrees per mm along it. |
@@ -176,6 +176,8 @@ An unknown field is an error. "axis" fields take `"x"`, `"y"`, `"z"` or a non-ze
 | `taper` | `child`, `from`, `to` | `axis` | Scales the child's cross-section along `axis` (default `"z"`): `from: [position, scale]` to `to: [position, scale]`, linear between, held beyond. Scales must be > 0 and the positions must differ. |
 | `repeat` | `child` | `linear`, `polar` | Copies of the child. Exactly one of `linear: { step: [x, y, z], count }` (copy i at `i × step`) or `polar: { count, axis? }` (equal turns about `axis`, default `"z"`). `count` is 1 to 256. |
 | `expr` | `sdf`, `box` | `uniforms`, `textures`, `lipschitz` | A distance formula. See "Formulas". |
+
+`round` (`{ child, r }`) is an older name for `offset` with `d = r`. It still builds.
 
 A tree is checked as a whole: every issue is listed, with its path, in one error.
 
@@ -361,7 +363,7 @@ the solid. `report()` gives plain JSON:
 - `labels`: each label's box, `{ min, max, center, approximate: true }`. The box always
   contains the labelled piece but can be generous: it grows by a blend's or a contact's
   reach and by the summed `amplitude` of all `detail`, and a label at or under a
-  `round`, `onion`, `displace` or warp reports the outermost such node's box. Copies made by `mirror` and
+  `offset`, `onion`, `displace` or warp reports the outermost such node's box. Copies made by `mirror` and
   `repeat`, and duplicate labels, are in one box.
 - `mirrored`: true after an odd number of `mirror` calls.
 
@@ -478,7 +480,7 @@ other reference part, `src/parts/organic-whale.js`, also lints clean and passes 
   limb points somewhere else. Report the frames to check.
 - **A blend wider than the pieces eats them.** Keep `k` below the smallest piece it
   joins. Use `contact` where pieces should press, not fuse.
-- **`round` grows the shape** by `r`, and `onion` makes a shell `2·t` thick centred on the
+- **`offset` with a positive `d` grows the shape** by `d`, and `onion` makes a shell `2·t` thick centred on the
   surface. Size the child for that.
 - **A probe returns the frame set, not its `report()`.** Calling `report()` in a probe
   fails lint.

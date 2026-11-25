@@ -79,6 +79,9 @@ const TYPES = {
 
 const COMMON = { frame: "string", at: "vec3", label: "string" };
 
+// An older name that still builds and is not documented.
+export const LEGACY_NODE_KINDS = { round: { req: { child: "child", r: "pos" } } };
+
 export const NODE_KINDS = {
   sphere: { req: { r: "pos" } },
   ellipsoid: { req: { r: "pos3" } },
@@ -94,7 +97,6 @@ export const NODE_KINDS = {
   contact: { req: { children: "children" }, opt: { gap: "nonneg", bulge: "nonneg", attach: "attach" } },
   mirror: { req: { child: "child" }, opt: { plane: "plane" } },
   offset: { req: { child: "child", d: "nonzero" } },
-  round: { req: { child: "child", r: "pos" } },
   onion: { req: { child: "child", t: "pos" } },
   displace: { req: { child: "child", amount: "pos", by: "exprSpec" } },
   twist: { req: { child: "child", degPerMm: "num" }, opt: { axis: "axis" } },
@@ -157,7 +159,8 @@ function checkContact(node, path, ctx) {
 }
 
 function walkNode(node, path, ctx) {
-  const schema = Object.hasOwn(NODE_KINDS, node.kind) ? NODE_KINDS[node.kind] : null;
+  const schema = Object.hasOwn(NODE_KINDS, node.kind) ? NODE_KINDS[node.kind]
+    : Object.hasOwn(LEGACY_NODE_KINDS, node.kind) ? LEGACY_NODE_KINDS[node.kind] : null;
   if (!schema) {
     ctx.issues.push(`${path}.kind: unknown kind ${JSON.stringify(node.kind)} (expected one of ${Object.keys(NODE_KINDS).join(", ")})`);
     return;
