@@ -1,13 +1,15 @@
-// The cage hand (src/parts/cage-hand.js): a k.subdiv hand whose finger bends come from
-// limbs posed in derive, one angles-mode handle per digit. It lints clean, builds watertight
-// across its whole parameter range, each limb's tip sits on its cage tip, and posing never
-// changes the cage's faces (only its points move).
+// The cage hand (src/parts/cage-hand.js): a k.subdiv hand built straight and posed by one
+// cage.skin call from the limbs derive poses, one angles-mode handle per digit. It lints
+// clean, builds watertight across its whole parameter range, each limb's tip sits on its
+// cage tip, and posing never changes the cage's faces (only its points move).
 import { beforeAll, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { measure } from "../src/oracle.js";
+import { buildView } from "../src/framework/oracle/build.js";
 import { lintPart } from "../src/lint.js";
 import { resolveParams } from "../src/framework/part-model.js";
 import { cage } from "../src/framework/domains/organic/index.js";
+import { meshSubdiv } from "../src/framework/geometry/subdiv/index.js";
 import part, { cageHand } from "../src/parts/cage-hand.js";
 import organic from "../src/framework/domains/organic/manifest.js";
 
@@ -16,11 +18,10 @@ const DIGITS = [...FINGERS, "thumb"];
 const CONTROLS = part.parameters.flatMap((g) => g.controls);
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
-// The cage at params p, built the way the part's build does: bends from the posed limbs.
+// The cage at params p, built the way the part's build does: skinned to derive's limbs.
 function cageAt(p) {
-  const { p: params, d } = resolveParams(part, p);
-  const bends = Object.fromEntries(DIGITS.map((n) => [n, d[n].values]));
-  return { c: cageHand(cage, params, bends), d };
+  const { d } = resolveParams(part, { ...part.defaults, ...p });
+  return { c: cageHand(cage, d), d };
 }
 
 let k;
@@ -34,19 +35,57 @@ test("lints with no errors or warnings", () => {
 
 test("params, derive and handles: one posed limb and one angles-mode handle per digit", () => {
   expect(CONTROLS.map((c) => c.key).sort()).toEqual([
-    ...FINGERS.flatMap((f) => [`${f}Knuckle`, `${f}Curl`]), "thumbCurl",
+    ...FINGERS.flatMap((f) => [`${f}Knuckle`, `${f}Curl`]), "thumbCurl", "thumbOppose", "thumbAbduct",
   ].sort());
   for (const f of FINGERS) {
     expect(CONTROLS.find((c) => c.key === `${f}Knuckle`)).toMatchObject({ min: -10, max: 90 });
-    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 90 });
+    expect(CONTROLS.find((c) => c.key === `${f}Curl`)).toMatchObject({ min: 0, max: 80 });
   }
-  expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 60 });
-  expect(Object.keys(part.derive(part.defaults)).sort()).toEqual([...DIGITS].sort());
+  expect(CONTROLS.find((c) => c.key === "thumbCurl")).toMatchObject({ min: 0, max: 50 });
+  expect(CONTROLS.find((c) => c.key === "thumbOppose")).toMatchObject({ min: -22, max: 98 });
+  expect(CONTROLS.find((c) => c.key === "thumbAbduct")).toMatchObject({ min: 0, max: 70 });
+  const d = part.derive(part.defaults);
+  expect(Object.keys(d).sort()).toEqual([...DIGITS].sort());
+  // Each finger's limb starts at its base knuckle in the palm; the thumb's at the wrist,
+  // with its two base joints there.
+  // The ring and little fingers have one more joint low in the palm, which cups it.
+  for (const f of FINGERS) expect(d[f].bones.joints.map((j) => j.name)).toEqual([...(f === "ring" || f === "pinky" ? [`${f}.cup`] : []), `${f}.mcp`, `${f}.pip`, `${f}.dip`]);
+  expect(d.thumb.bones.joints.map((j) => j.name.slice(6))).toEqual(["abduct", "oppose", "mcp", "ip"]);
+  for (const n of DIGITS) expect(d[n].bones.r, n).not.toBeNull();
   expect(Object.keys(part.views).sort()).toEqual(["assembly", "print"]);
   expect(Object.keys(part.handles).sort()).toEqual([...DIGITS].sort());
-  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`] });
-  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"] });
+  for (const f of FINGERS) expect(part.handles[f]).toEqual({ on: f, drag: "angles", params: [`${f}Knuckle`, `${f}Curl`], joints: { mcp: `${f}Knuckle`, pip: `${f}Curl` } });
+  // The cupping joint follows the knuckle, a share of its bend.
+  const CUP = { ring: 0.05, pinky: 0.1 };
+  const bent = part.derive({ ...part.defaults, ringKnuckle: 60, pinkyKnuckle: 60 });
+  for (const f of ["ring", "pinky"]) {
+    expect(bent[f].ikInfo().joints[0]).toMatchObject({ name: "cup", follower: true });
+    expect(bent[f].report.bend[0]).toBeCloseTo(60 * CUP[f], 12);
+  }
+  expect(part.handles.thumb).toEqual({ on: "thumb", drag: "angles", params: ["thumbCurl"], joints: { abduct: "thumbAbduct", oppose: { param: "thumbOppose", scale: -1 }, mcp: "thumbCurl" } });
+  // Every joint a handle names is one of its limb's.
+  for (const [id, h] of Object.entries(part.handles)) {
+    const names = d[h.on].ikInfo().joints.map((j) => j.name);
+    for (const j of Object.keys(h.joints)) expect(names, `${id}.${j}`).toContain(j);
+  }
 });
+
+// The measure report's limbs hold the hand's proportions: the thumb's bones, and the
+// hand's width across the knuckles at the index's base joint. An edit that stretches the
+// thumb or widens the hand fails here.
+test("the measure report's bone lengths and knuckle width are a hand's", () => {
+  const { limbs } = measure(k, part, "assembly", {});
+  const joint = (limbName, name) => limbs[limbName].joints.find((j) => j.name === `${limbName}.${name}`);
+  // abduct and oppose share the pivot, so the bone from the pivot is oppose's.
+  expect(joint("thumb", "abduct").length).toBe(0);
+  expect(joint("thumb", "oppose").length).toBeGreaterThan(43);
+  expect(joint("thumb", "oppose").length).toBeLessThan(47);
+  expect(joint("thumb", "mcp").length).toBeGreaterThan(28);
+  expect(joint("thumb", "mcp").length).toBeLessThan(32);
+  expect(joint("index", "mcp").part).toBe("hand");
+  expect(joint("index", "mcp").width).toBeGreaterThan(80);
+  expect(joint("index", "mcp").width).toBeLessThan(92);
+}, 60_000);
 
 test("is listed as an organic reference part", () => {
   expect(organic.referenceParts).toContain("src/parts/cage-hand.js");
@@ -54,10 +93,38 @@ test("is listed as an organic reference part", () => {
 
 // Defaults, every parameter at its min at once and at its max at once (a fist: the
 // tightest pose the sliders reach), then each parameter alone at its min and at its max.
+// The OK sign: the thumb opposed until its tip meets the bent index finger's.
+const OK_SIGN = { thumbOppose: 38, thumbCurl: 25, indexKnuckle: 35, indexCurl: 60, middleKnuckle: 5, middleCurl: 8, ringKnuckle: 0, ringCurl: 6, pinkyKnuckle: -5, pinkyCurl: 6 };
+// Holding a bar that lies across the palm. A wide one (1.5 inch radius): the fingers over
+// it, the thumb abducted and opposed under it. One of half the diameter: seated on the
+// palm, the fingers wrapped over it and the thumb closed round its front.
+const fingersAt = (knuckle, curl) => Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, knuckle], [`${f}Curl`, curl]]));
+const GRIPS = [
+  { name: "a 1.5 inch radius bar", pose: { thumbOppose: 88, thumbAbduct: 70, thumbCurl: 35, ...fingersAt(45, 50), ringKnuckle: 37, pinkyKnuckle: 27 }, bar: { radius: 38.1, y: -62, z: 66 }, deepest: -0.5, open: 160, tips: { thumb: 6, index: 6 } },
+  { name: "a 0.75 inch radius bar", pose: { thumbOppose: 78, thumbAbduct: 35, thumbCurl: 40, ...fingersAt(62, 58), pinkyKnuckle: 55, pinkyCurl: 50 }, bar: { radius: 19.05, y: -40.5, z: 70 }, deepest: -1.5, open: 70, palm: 3, tips: { thumb: 8, index: 10 } },
+];
+// Base knuckles as far apart as the sliders go: each finger's column of the palm follows
+// that finger alone, so one finger bends at its knuckle while its neighbours stay straight.
+const knuckles = (index, middle, ring, pinky, curl = 0) => ({ indexKnuckle: index, middleKnuckle: middle, ringKnuckle: ring, pinkyKnuckle: pinky, ...Object.fromEntries(FINGERS.map((f) => [`${f}Curl`, curl])) });
+const APART = [
+  ["pointing: the index straight, the others closed", { ...knuckles(-10, 90, 90, 90, 80), indexCurl: 0 }],
+  ["every other knuckle at 90°, the rest bent back", knuckles(90, -10, 90, -10)],
+  ["the other way round", knuckles(-10, 90, -10, 90)],
+  ["the pinky alone at 90°", knuckles(-10, -10, -10, 90)],
+  ["the ring finger alone at 90°", knuckles(-10, -10, 90, -10)],
+];
 const CASES = [
   ["defaults", {}],
   ["every parameter at its min", Object.fromEntries(CONTROLS.map((c) => [c.key, c.min]))],
-  ["every parameter at its max", Object.fromEntries(CONTROLS.map((c) => [c.key, c.max]))],
+  // A fist: every bend at its max. The thumb is neither opposed nor abducted, since a thumb
+  // in front of the palm meets the closed fingers (test/cage-drag-validity.test.js).
+  ["every bend at its max", { ...Object.fromEntries(CONTROLS.map((c) => [c.key, c.max])), thumbOppose: -22, thumbAbduct: 0 }],
+  ["the OK sign", OK_SIGN],
+  ...GRIPS.map((g) => [`holding ${g.name}`, g.pose]),
+  // An open hand with the thumb at the far corner of its range.
+  ["an open hand, the thumb opposed, abducted and curled", { ...Object.fromEntries(FINGERS.flatMap((f) => [[`${f}Knuckle`, 0], [`${f}Curl`, 0]])), thumbOppose: 98, thumbAbduct: 70, thumbCurl: 50 }],
+  ...APART,
+  // One parameter at an end of its range, the others at their defaults.
   ...CONTROLS.flatMap((c) => [[`${c.key} min`, { [c.key]: c.min }], [`${c.key} max`, { [c.key]: c.max }]]),
 ];
 
@@ -68,14 +135,74 @@ test.each(CASES)("builds watertight on the preview tier: %s", (_, params) => {
   expect(report.warnings).toEqual([]);
 }, 60_000);
 
-test("at its defaults each limb's tip is within 6 mm of its cage tip", () => {
-  const { c, d } = cageAt(part.defaults);
-  for (const n of DIGITS) expect(dist(d[n].report.tip, c.centroid(`${n}Tip`)), n).toBeLessThan(6);
+// A print-quality build refuses a body that passes through itself, where the preview only
+// warns. The knuckles furthest apart, and the two single knuckles that failed it before each
+// finger's column of the palm followed that finger alone.
+test("builds at print quality with the base knuckles as far apart as they go", () => {
+  for (const [name, params] of [...APART, ["ringKnuckle max", { ringKnuckle: 90 }], ["middleKnuckle max", { middleKnuckle: 90 }]])
+    expect(() => meshSubdiv(cageAt(params).c.snapshot(), "print"), name).not.toThrow();
+}, 120_000);
+
+test("the OK sign: the thumb's tip and the index finger's are a fingertip apart", () => {
+  const d = part.derive({ ...part.defaults, ...OK_SIGN });
+  const gap = Math.hypot(...d.thumb.report.tip.map((v, i) => v - d.index.report.tip[i]));
+  expect(gap).toBeGreaterThan(12);
+  expect(gap).toBeLessThan(17);
 });
 
-test("posing moves points, never faces: the face count is the same at defaults and at every max", () => {
-  const count = cageAt(part.defaults).c.faces().length;
-  for (const ctl of CONTROLS) expect(cageAt({ ...part.defaults, [ctl.key]: ctl.max }).c.faces().length, ctl.key).toBe(count);
+test.each(GRIPS)("holding $name: nothing enters the bar, and the thumb and index finger close round it", ({ pose, bar, deepest: limit, open: most, palm, tips }) => {
+  const params = { ...part.defaults, ...pose };
+  const [{ mesh }] = buildView(k, part, "assembly", params);
+  k.cleanup?.();
+  const P = mesh.positions, d = part.derive(params);
+  const outside = (i) => Math.hypot(P[i + 1] - bar.y, P[i + 2] - bar.z) - bar.radius;
+  let deepest = Infinity;
+  for (let i = 0; i < P.length; i += 3) deepest = Math.min(deepest, outside(i));
+  // Soft skin on a hard bar: it may press in by this much (mm), never deeper.
+  expect(deepest).toBeGreaterThan(limit);
+  // Each tip's pad is near the bar. On the narrow bar the index finger wraps past it, so
+  // its tip is allowed further off.
+  for (const n of ["thumb", "index"]) {
+    const tip = d[n].report.tip;
+    let gap = Infinity;
+    for (let i = 0; i < P.length; i += 3) if (dist([P[i], P[i + 1], P[i + 2]], tip) < 13) gap = Math.min(gap, outside(i));
+    expect(gap, n).toBeLessThan(tips[n]);
+  }
+  // Seen along the bar, the arc from the index tip round the front to the thumb tip is
+  // the part of the bar the hand leaves open.
+  const angle = (n) => Math.atan2(d[n].report.tip[2] - bar.z, d[n].report.tip[1] - bar.y) * (180 / Math.PI);
+  expect((((angle("thumb") - angle("index")) % 360) + 360) % 360).toBeLessThan(most);
+  // The narrow bar is seated: the palm's front, below the knuckles, is within `palm` mm of it.
+  if (palm !== undefined) {
+    let seat = Infinity;
+    for (let i = 0; i < P.length; i += 3) if (P[i + 2] > 25 && P[i + 2] < 88 && Math.abs(P[i]) < 40 && P[i + 1] > -26) seat = Math.min(seat, outside(i));
+    expect(seat).toBeLessThan(palm);
+  }
+}, 60_000);
+
+// The poses the tip and face tests read: defaults, the two hand shapes, and every
+// parameter alone at each end.
+const POSES = CASES.filter(([name]) => name !== "every parameter at its min" && name !== "every bend at its max");
+
+test("each limb's tip is on its cage tip, at rest and posed", () => {
+  for (const [name, params] of POSES) {
+    const { c, d } = cageAt(params);
+    // A straight finger between two bent 100° away is drawn a little by its neighbours.
+    const within = APART.some(([apart]) => apart === name) ? 1.5 : 1;
+    for (const n of DIGITS) expect(dist(d[n].report.tip, c.centroid(`${n}Tip`)), `${name}: ${n}`).toBeLessThan(within);
+  }
+});
+
+test("posing moves points, never faces: faces and ids are the same at rest and at every pose", () => {
+  const rest = cageHand(cage, null).snapshot();
+  for (const [name, params] of CASES) {
+    const s = cageAt(params).c.snapshot();
+    expect(s.faces, name).toEqual(rest.faces);
+    expect(s.ids, name).toEqual(rest.ids);
+    expect(s.points.length, name).toBe(rest.points.length);
+  }
+  // The limbs at rest leave the cage as it was built.
+  expect(cageHand(cage, part.derive(Object.fromEntries(CONTROLS.map((c) => [c.key, 0])))).snapshot().points).toEqual(rest.points);
 });
 
 // The flat under the wrist is placed from the cage, so it is the same at every pose: the
