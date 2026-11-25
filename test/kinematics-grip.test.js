@@ -321,3 +321,23 @@ describe("grip errors", () => {
     });
   });
 });
+
+describe("grip with a follower before its leader", () => {
+  // cup (joint 0) follows mcp (joint 1): closing mcp swings cup's segment too. The ball sits
+  // where only that segment passes, so mcp must stop on it, and report it touched.
+  const L = limb("f", { toward: [0, 1, 0], bendToward: [0, 0, -1], lengths: [30, 10, 10], r: [1, 1, 1, 1],
+    joints: [{ name: "cup", range: [0, 90], follow: { joint: "mcp" } }, { name: "mcp", range: [0, 90] }, { name: "pip", range: [0, 90] }] });
+  const BALL = { kind: "sphere", r: 3, at: [0, 20, -12] };
+  for (const [mode, wrap] of Object.entries(MODES)) {
+    it(`stops on the follower's segment and reports it (${mode})`, () => {
+      const posed = L.pose({ grip: { around: wrap(BALL) } });
+      const mcp = posed.report.grip.joints.find((j) => j.joint === "mcp");
+      expect(mcp).toMatchObject({ touched: true, skipped: false });
+      expect(posed.report.bend[1]).toBeLessThan(90);
+      expect(posed.report.bend[0]).toBe(posed.report.bend[1]);
+      // Grip samples 24 points a segment; the 200-point check may find it a hair inside.
+      expect(Math.abs(contactMin(posed, {}, BALL, [1, 1, 1, 1], 0))).toBeLessThanOrEqual(0.05);
+      expect(posed.report.grip.gap).toBeLessThan(1e-3);
+    });
+  }
+});

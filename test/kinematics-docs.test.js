@@ -69,7 +69,7 @@ test("every runnable example in the guide returns the value it shows", () => {
   const specs = [];
   const k = { implicit: (spec) => { validateSpec(spec); specs.push(spec); return {}; } };
   new Function("limb", "aimFromAngles", "implicitDistance", "k", "check", blocks.map(toScript).join("\n"))(limb, aimFromAngles, implicitDistance, k, check);
-  expect(checked.length).toBe(38);   // every shown value; a parse change that drops one fails here
+  expect(checked.length).toBe(43);   // every shown value; a parse change that drops one fails here
   expect(specs.length).toBe(1);
 });
 
@@ -97,6 +97,15 @@ test("every error message in the guide is the code's own, a SpecError with code 
     () => thumb.pose({ bend: { ball: { rotate: [], bend: 3 } } }),
     () => limb("thumb", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "ball", type: "ball", range: [0, 10] }], lengths: [1] }),
     () => index.pose({}).place({ rotate() {}, translate() {} }, "pip", { from: "printed" }),
+    () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [0, 20, 0]], at: [0, 0, 0], bendToward: [0, 0, -1], joints: ["j0", "j1"] }),
+    () => limb("a", { points: [[0, 0, 0], [0, 10, 0]], bendToward: [0, 0, -1], joints: ["j0", "j1"] }),
+    () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [0, 20, 0]], bendToward: [0, 0, -1], joints: ["j0", { name: "j1", offset: [1, 0, 0] }] }),
+    () => limb("a", { points: [[0, 0, 0], [0, 0, 0], [0, 20, 0]], bendToward: [0, 0, -1], joints: ["j0", "j1"] }),
+    () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [5, 20, 0]], toward: [0, 1, 0], bendToward: [0, 0, -1], joints: ["j0", "j1"] }),
+    () => limb("a", { toward: [0, 1, 0], bendToward: [0, 0, -1], joints: [{ name: "j0", toward: [0, 1, 0] }], lengths: [10] }),
+    () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [0, 20, 0]], bendToward: [0, 0, -1], joints: ["j0", { name: "j1", bendToward: [0, 1, 0] }] }),
+    () => limb("a", { points: [[0, 0, 0], [0, 10, 0], [0, 20, -5]], bendToward: [0, 0, -1], joints: ["j0", "j1"] }).pose({ reach: [0, 15, -5] }),
+    () => limb("f", { toward: [0, 0, 1], bendToward: [0, -1, 0], joints: [{ name: "a", follow: { joint: "b" } }, { name: "b", follow: { joint: "a" } }], lengths: [10, 10] }),
   ];
   const produced = triggers.map((f) => {
     try { f(); } catch (e) {

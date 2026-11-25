@@ -13,13 +13,39 @@ const AXIS_KINDS = { bend: [1, 0, 0], spread: [0, 0, 1], twist: [0, 1, 0] };
 const MIRRORS = { YZ: 0, XZ: 1, XY: 2 };
 const DEFAULT_RANGE = [-10, 100];
 const PARALLEL_EPS = 1e-6;
-const JOINT_KEYS = new Set(["name", "axis", "length", "range", "follow", "type", "offset", "cone"]);
+const JOINT_KEYS = new Set(["name", "axis", "length", "range", "follow", "type", "offset", "cone", "toward", "bendToward"]);
 const BALL_KEYS = new Set(["bend", "spread", "twist"]);
 const BALL_REST = Object.freeze({ bend: 0, spread: 0, twist: 0 });
-const DEF_KEYS = new Set(["parent", "at", "toward", "bendToward", "rotate", "joints", "lengths", "r", "mirror"]);
+const DEF_KEYS = new Set(["parent", "at", "points", "toward", "bendToward", "rotate", "joints", "lengths", "r", "mirror"]);
+/** A bone shorter than this (mm) has no direction to aim a joint with. */
+const BONE_EPS = 1e-9;
+/** The last bone may turn this far (degrees) off its joint's aim and still count as on it. */
+const LAST_BONE_EPS_DEG = 1e-6;
+const DEG = 180 / Math.PI;
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(isNum);
+const isDir = (v) => isVec3(v) && hypot3(v[0], v[1], v[2]) !== 0;
+
+/**
+ * A frame aimed along `t` with its bend toward `b` (both non-zero, reflected already): Y the
+ * unit t, Z the part of −b square to Y, X = Y × Z. Null when b is parallel to t.
+ */
+function aimFrame(t, b) {
+  const tl = hypot3(t[0], t[1], t[2]);
+  const Y = [t[0] / tl, t[1] / tl, t[2] / tl];
+  const d = b[0] * Y[0] + b[1] * Y[1] + b[2] * Y[2];
+  const bp = [b[0] - d * Y[0], b[1] - d * Y[1], b[2] - d * Y[2]];
+  const bpl = hypot3(bp[0], bp[1], bp[2]);
+  if (!(bpl >= PARALLEL_EPS * hypot3(b[0], b[1], b[2]))) return null;
+  const Z = [-bp[0] / bpl, -bp[1] / bpl, -bp[2] / bpl];
+  const X = [Y[1] * Z[2] - Y[2] * Z[1], Y[2] * Z[0] - Y[0] * Z[2], Y[0] * Z[1] - Y[1] * Z[0]];
+  return { X, Y, Z };
+}
+/** A frame as a 3×4 transform with no translation: columns X, Y, Z; layout [r00 r01 r02 r10 …]. */
+const frameMatrix = ({ X, Y, Z }) => Float64Array.of(X[0], Y[0], Z[0], X[1], Y[1], Z[1], X[2], Y[2], Z[2], 0, 0, 0);
+/** `v` in the frame's own axes: [X·v, Y·v, Z·v]. */
+const inFrame = ({ X, Y, Z }, v) => [X, Y, Z].map((a) => a[0] * v[0] + a[1] * v[1] + a[2] * v[2]);
 
 /** An error-throwing helper bound to one limb: fail("lengths", "…") → `limb "x".lengths: …`. */
 export function failer(name) {
@@ -46,6 +72,16 @@ export function buildTree(name, def) {
   }
   const reflect = (v) => (mirrorAxis == null ? [...v] : v.map((c, i) => (i === mirrorAxis ? -c + 0 : c)));
 
+  // points: each joint's place, then the tip's, in part coordinates. They replace at,
+  // lengths and joint offsets, and every joint is aimed from them (below, after the joints).
+  const fromPoints = def.points != null;
+  if (fromPoints) {
+    for (const k of ["at", "lengths"]) if (def[k] != null) fail("points", `replaces at, lengths and joint offsets — remove ${k}`);
+    if (def.rotate != null) fail("rotate", "a limb from points is aimed by toward and bendToward — remove rotate");
+    if (def.toward != null && !isDir(def.toward)) fail("toward", "must be a non-zero [x, y, z]");
+    if (!isDir(def.bendToward)) fail("bendToward", "must be a non-zero [x, y, z]");
+  }
+
   // Base orientation: toward/bendToward, or the rotate escape hatch.
   const base = { aim: null, aimStep: null, rotate: null };
   const hasAim = def.toward != null || def.bendToward != null;
@@ -58,20 +94,12 @@ export function buildTree(name, def) {
       if (s.deg != null && !isNum(s.deg)) fail(`rotate[${i}].deg`, "must be a finite number");
     });
     base.rotate = steps.map((s) => ({ ...s }));
-  } else {
-    if (!isVec3(def.toward) || hypot3(...def.toward) === 0) fail("toward", "must be a non-zero [x, y, z]");
-    if (!isVec3(def.bendToward) || hypot3(...def.bendToward) === 0) fail("bendToward", "must be a non-zero [x, y, z]");
-    const t = reflect(def.toward), b = reflect(def.bendToward);
-    const tl = hypot3(t[0], t[1], t[2]);
-    const Y = [t[0] / tl, t[1] / tl, t[2] / tl];
-    const d = b[0] * Y[0] + b[1] * Y[1] + b[2] * Y[2];
-    const bp = [b[0] - d * Y[0], b[1] - d * Y[1], b[2] - d * Y[2]];
-    const bpl = hypot3(bp[0], bp[1], bp[2]);
-    if (!(bpl >= PARALLEL_EPS * hypot3(b[0], b[1], b[2]))) fail("bendToward", "must not be parallel to toward");
-    const Z = [-bp[0] / bpl, -bp[1] / bpl, -bp[2] / bpl];
-    const X = [Y[1] * Z[2] - Y[2] * Z[1], Y[2] * Z[0] - Y[0] * Z[2], Y[0] * Z[1] - Y[1] * Z[0]];
-    // Columns X, Y, Z; layout [r00 r01 r02 r10 …].
-    base.aim = Float64Array.of(X[0], Y[0], Z[0], X[1], Y[1], Z[1], X[2], Y[2], Z[2], 0, 0, 0);
+  } else if (def.points == null) {
+    if (!isDir(def.toward)) fail("toward", "must be a non-zero [x, y, z]");
+    if (!isDir(def.bendToward)) fail("bendToward", "must be a non-zero [x, y, z]");
+    const F = aimFrame(reflect(def.toward), reflect(def.bendToward));
+    if (!F) fail("bendToward", "must not be parallel to toward");
+    base.aim = frameMatrix(F);
     base.aimStep = axisAngle(base.aim);
   }
 
@@ -127,10 +155,19 @@ export function buildTree(name, def) {
       range = [range[0], range[1]];
     }
 
+    // A joint's own toward and bendToward aim its frame; only a limb from points has one.
+    for (const k of ["toward", "bendToward"]) {
+      if (j[k] == null) continue;
+      if (!fromPoints) fail(`${path}.${k}`, `a joint's own ${k} needs the limb's points`);
+      if (!isDir(j[k])) fail(`${path}.${k}`, "must be a non-zero [x, y, z]");
+    }
+
     // offset: where this joint sits, in the previous joint's frame, relative to the end of the
     // previous segment ([0, previous length, 0]). Mirrored, its local x flips (the frames are
     // rebuilt right-handed, so local X is the reflection of −X).
     let offset = null;
+    if (fromPoints && j.offset != null) fail(`${path}.offset`, "points already place this joint — remove offset");
+    if (fromPoints && j.length != null) fail(`${path}.length`, "points already set this joint's length — remove length");
     if (j.offset != null) {
       if (i === 0) fail(`${path}.offset`, "the base joint has no previous joint — place it with the limb's at");
       if (!isVec3(j.offset)) fail(`${path}.offset`, "must be [x, y, z]");
@@ -138,30 +175,137 @@ export function buildTree(name, def) {
     }
 
     let length = j.length;
-    const listed = def.lengths?.[i];
-    if (length != null && listed != null && length !== listed) fail(`${path}.length`, `${length} conflicts with lengths[${i}] = ${listed}`);
-    length ??= listed;
-    if (length == null) fail(`${path}.length`, "missing — give the joint a length, or pass lengths");
-    if (!isNum(length) || length < 0) fail(`${path}.length`, "must be a finite number ≥ 0");
+    if (!fromPoints) {
+      const listed = def.lengths?.[i];
+      if (length != null && listed != null && length !== listed) fail(`${path}.length`, `${length} conflicts with lengths[${i}] = ${listed}`);
+      length ??= listed;
+      if (length == null) fail(`${path}.length`, "missing — give the joint a length, or pass lengths");
+      if (!isNum(length) || length < 0) fail(`${path}.length`, "must be a finite number ≥ 0");
+    }
 
+    // follow names any other hinge of the limb; the name is resolved once every joint is read.
     let follow = null;
     if (j.follow != null) {
       const f = j.follow;
-      if (typeof f !== "object") fail(`${path}.follow`, "must be { joint, ratio?, offset? }");
-      if (!index.has(f.joint)) fail(`${path}.follow.joint`, `unknown or later joint ${JSON.stringify(f.joint)}`);
-      if (balls.has(f.joint)) fail(`${path}.follow.joint`, `${f.joint} is a ball joint; a joint can follow only a hinge`);
+      if (f === null || typeof f !== "object" || Array.isArray(f)) fail(`${path}.follow`, "must be { joint, ratio?, offset? }");
       const ratio = f.ratio ?? 1, offset = f.offset ?? 0;
       if (!isNum(ratio)) fail(`${path}.follow.ratio`, "must be a finite number");
       if (!isNum(offset)) fail(`${path}.follow.offset`, "must be a finite number");
-      follow = { index: index.get(f.joint), ratio, offset };
+      follow = { joint: f.joint, index: -1, ratio, offset };
     }
 
     index.set(j.name, i);
     if (type === "ball") balls.add(j.name);
-    return { name: j.name, frame: `${name}.${j.name}`, axis, axisKind, range, cone, follow, length, offset, type };
+    return { name: j.name, frame: `${name}.${j.name}`, axis, axisKind, range, cone, follow, length, offset, type, aim: null };
   });
 
-  return { name, parent: def.parent ?? null, at: reflect(at), base, mirrorAxis, joints, r: def.r ? [...def.r] : null };
+  const order = resolveFollows(joints, index, balls, fail);
+
+  const tree = { name, parent: def.parent ?? null, at: reflect(at), base, mirrorAxis, joints, order, r: def.r ? [...def.r] : null };
+  if (fromPoints) placeFromPoints(tree, def, reflect, fail);
+  return tree;
+}
+
+/**
+ * Resolve each `follow.joint` name to its joint's index (any other hinge, earlier or later),
+ * refuse a loop of followers, and return the order `couple` computes values in: every leader
+ * before its followers, otherwise declaration order. A loop is reported on its first joint
+ * in declaration order, naming the joints round the loop.
+ */
+function resolveFollows(joints, index, balls, fail) {
+  joints.forEach((j, i) => {
+    if (!j.follow) return;
+    const path = `joints[${i}].follow.joint`, target = j.follow.joint;
+    if (target === j.name) fail(path, `${j.name} cannot follow itself — name another joint, or drop follow`);
+    if (typeof target !== "string" || !index.has(target)) fail(path, `unknown joint ${JSON.stringify(target)}`);
+    if (balls.has(target)) fail(path, `${target} is a ball joint; a joint can follow only a hinge`);
+    j.follow = { index: index.get(target), ratio: j.follow.ratio, offset: j.follow.offset };
+  });
+  joints.forEach((j, i) => {
+    const names = [j.name];
+    for (let k = j.follow?.index, steps = 0; k != null && steps < joints.length; k = joints[k].follow?.index, steps++) {
+      names.push(joints[k].name);
+      if (k === i) fail(`joints[${i}].follow.joint`, `${names.slice(0, -1).map((nm, q) => (q === 0 ? `${nm} follows ${names[1]}` : `which follows ${names[q + 1]}`)).join(", ")} — one of them must be driven`);
+    }
+  });
+  const order = [], placed = new Array(joints.length).fill(false);
+  const place = (i) => {
+    if (placed[i]) return;
+    placed[i] = true;
+    if (joints[i].follow) place(joints[i].follow.index);
+    order.push(i);
+  };
+  joints.forEach((_, i) => place(i));
+  return order;
+}
+
+/**
+ * A limb from points: each joint's rest frame, the fixed turn into it from the previous
+ * joint's (`aim`), and the lengths and offsets that put each joint on its point. Joint i's +Y
+ * is its own toward, else the limb's, else its bone (point i to point i + 1), else the previous
+ * joint's +Y; its bend is toward its own bendToward, else the limb's. Everything is built from
+ * reflected vectors, so a mirrored limb's frames, turns and offsets are mirrored already.
+ * Sets `tree.straight` when no joint turns from the one before: every joint has one aim, as a
+ * limb written with `at`, `toward` and `lengths` does (its joints may still sit off the line).
+ */
+function placeFromPoints(tree, def, reflect, fail) {
+  const { joints } = tree, n = joints.length;
+  const pts = def.points;
+  if (!Array.isArray(pts)) fail("points", `must be an array of ${n + 1} [x, y, z] points (one per joint, then the tip)`);
+  if (pts.length !== n + 1) fail("points", `expected ${n + 1} entries (one per joint, then the tip), got ${pts.length}`);
+  pts.forEach((p, i) => { if (!isVec3(p)) fail(`points[${i}]`, "must be [x, y, z]"); });
+  const P = pts.map(reflect);
+  const limbToward = def.toward != null ? reflect(def.toward) : null;
+  const limbBend = reflect(def.bendToward);
+  const own = def.joints.map((e) => (typeof e === "string" ? {} : e));
+
+  const frames = [];
+  joints.forEach((j, i) => {
+    const bone = P[i + 1].map((v, k) => v - P[i][k]);
+    let Y = own[i].toward != null ? reflect(own[i].toward) : limbToward;
+    if (Y == null && hypot3(bone[0], bone[1], bone[2]) > BONE_EPS) Y = bone;
+    if (Y == null && i > 0) Y = frames[i - 1].Y;
+    if (Y == null) fail(`joints[${i}].toward`, "this joint's bone has no length, so it needs a toward (its own, or the limb's)");
+    const F = aimFrame(Y, own[i].bendToward != null ? reflect(own[i].bendToward) : limbBend);
+    if (!F) fail(`joints[${i}].bendToward`, "must not be parallel to this joint's aim");
+    frames.push(F);
+  });
+
+  // The tip has no offset: the last bone runs along the last joint's +Y.
+  const last = P[n].map((v, k) => v - P[n - 1][k]), lastLength = hypot3(last[0], last[1], last[2]);
+  if (lastLength > BONE_EPS) {
+    const Y = frames[n - 1].Y;
+    // atan2 of |Y × bone| and Y · bone: exact near 0°, where acos of the cosine is not.
+    const c = last[0] * Y[0] + last[1] * Y[1] + last[2] * Y[2];
+    const s = hypot3(Y[1] * last[2] - Y[2] * last[1], Y[2] * last[0] - Y[0] * last[2], Y[0] * last[1] - Y[1] * last[0]);
+    const off = Math.atan2(s, c) * DEG;
+    if (off > LAST_BONE_EPS_DEG) {
+      fail("points", `the last bone must lie along its joint's aim, and it is ${off.toFixed(1)}° off — move the tip onto that line, or give the last joint its own toward along the bone`);
+    }
+  }
+
+  tree.at = [...P[0]];
+  tree.base.aim = frameMatrix(frames[0]);
+  tree.base.aimStep = axisAngle(tree.base.aim);
+  let straight = true;
+  joints.forEach((j, i) => {
+    // The bone to the next point, in this joint's rest frame: its along part is this joint's
+    // length, and what is left places the next joint off the end of it.
+    const local = inFrame(frames[i], P[i + 1].map((v, k) => v - P[i][k]));
+    j.length = Math.max(0, local[1]);
+    if (i + 1 < n) {
+      // Rounding noise (under BONE_EPS) is taken as 0, so a joint on the line has no offset.
+      const o = [local[0], local[1] - j.length, local[2]].map((c) => (Math.abs(c) < BONE_EPS ? 0 : c + 0));
+      const next = joints[i + 1];
+      next.offset = o.every((c) => c === 0) ? null : o;
+      // The fixed turn from this joint's rest frame to the next one's: Fᵢᵀ · Fᵢ₊₁.
+      const A = frameMatrix({ X: inFrame(frames[i], frames[i + 1].X), Y: inFrame(frames[i], frames[i + 1].Y), Z: inFrame(frames[i], frames[i + 1].Z) });
+      next.aim = axisAngle(A);
+      if (next.aim) straight = false;
+    }
+  });
+  tree.fromPoints = true;
+  tree.straight = straight;
 }
 
 /**
@@ -281,6 +425,9 @@ export function jointSteps(tree, values, { spread = 0, twist = 0 } = {}) {
   tree.joints.forEach((j, i) => {
     const steps = [];
     if (i === 0) steps.push(...baseSteps(tree, { spread, twist }));
+    // A limb from points: the fixed turn from the previous joint's rest frame, before the
+    // joint's own step (which stays last: ikInfo reads it there). Built mirrored already.
+    else if (j.aim) steps.push({ axis: [...j.aim.axis], deg: j.aim.deg });
     steps.push(...jointStep(j, values[i], mirrored));
     out[j.frame] = steps;
   });
@@ -295,17 +442,19 @@ export function jointSteps(tree, values, { spread = 0, twist = 0 } = {}) {
 export function couple(tree, raw) {
   const { joints } = tree;
   const values = new Array(joints.length), clamped = new Array(joints.length);
-  joints.forEach((j, i) => {
+  // Leaders before their followers (a follower may come before its leader in the limb).
+  for (const i of tree.order) {
+    const j = joints[i];
     if (j.type === "ball") {
       ({ value: values[i], clamped: clamped[i] } = clampBall(raw[i], j.cone));
-      return;
+      continue;
     }
     const want = j.follow ? j.follow.ratio * values[j.follow.index] + j.follow.offset : raw[i];
     const [lo, hi] = j.range;
     const v = want < lo ? lo : want > hi ? hi : want;
     values[i] = v + 0;
     clamped[i] = v !== want;
-  });
+  }
   return { values, clamped };
 }
 

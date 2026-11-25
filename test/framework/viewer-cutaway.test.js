@@ -441,3 +441,45 @@ test("viewer delegates cutaway change subscriptions (on/off, plane moves)", () =
   expect(state.cutaway.onChange).toHaveBeenCalledWith(listener);
   viewer.dispose();
 });
+
+// No live frame runs between a host's seek and its renderCurrent, and the
+// section outline re-slices only in updateForCamera — so the live-framing
+// capture catches it up itself, and only when the cutaway is on.
+function builtCutawayViewer() {
+  const viewer = createViewer(createContainer(), { meta: {}, parts: { body: {} } });
+  viewer.setSubGeometry("body", {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    triangles: 1,
+  });
+  viewer.showAssembly(["body"], { frame: true });
+  state.cutaway.updateForCamera.mockClear();
+  return viewer;
+}
+
+test("renderCurrent re-slices the cutaway outline for the camera before it draws", () => {
+  const viewer = builtCutawayViewer();
+  state.cutaway.isEnabled = true;
+  let renderedBeforeUpdate = null;
+  state.cutaway.updateForCamera.mockImplementation(() => { renderedBeforeUpdate = state.renderer.renderTargets.length; });
+  expect(viewer.renderCurrent({ width: 64, height: 48 })).toBeInstanceOf(HTMLCanvasElement);
+  expect(state.cutaway.updateForCamera).toHaveBeenCalledOnce();
+  expect(renderedBeforeUpdate).toBe(0); // before the offscreen render, not after
+  viewer.dispose();
+});
+
+test("renderCurrent and captureCurrent leave the cutaway alone while it is off", () => {
+  const viewer = builtCutawayViewer();
+  viewer.renderCurrent({ width: 64, height: 48 });
+  viewer.captureCurrent({ width: 64, height: 48 });
+  expect(state.cutaway.updateForCamera).not.toHaveBeenCalled();
+  viewer.dispose();
+});
+
+test("captureCurrent shares the cutaway catch-up", () => {
+  const viewer = builtCutawayViewer();
+  state.cutaway.isEnabled = true;
+  viewer.captureCurrent({ width: 64, height: 48 });
+  expect(state.cutaway.updateForCamera).toHaveBeenCalledOnce();
+  viewer.dispose();
+});

@@ -3747,6 +3747,56 @@ What to look for:
 - **A handle that writes nothing.** `(none changed)` means that the drag does not move the
   handle's point, so the user cannot drag it.
 
+### Which poses do not build
+
+`measure --ranges` builds the view at a list of poses and lists each pose that does not
+build cleanly. A pose is listed when its build throws, or when it warns that a body passes
+through itself. It runs no lint, measure or verify.
+
+```bash
+npx partforge measure src/parts/cage-hand.js --ranges                # 24 random poses, seed 1
+npx partforge measure src/parts/cage-hand.js --ranges --random 100 --seed 7
+```
+
+The poses, in order: the defaults. Then each ranged control at its `min` and at its `max`,
+with the others at their defaults. Then every ranged control at `min` at once, and at `max`
+at once. Then `--random <n>` random poses (default 24). A ranged control is one with a
+finite `min` and `max`. Other controls, checkboxes for example, keep their defaults.
+A hidden control is not swept: it keeps its default too. The same `--seed <n>` (default 1)
+gives the same random poses, so a run repeats. A random value falls on the control's
+`step`, as a slider's would.
+
+```
+random 15  indexKnuckle=58.6 indexCurl=27.6 ... thumbAbduct=2.1  →  warning: subdiv: the body passes through itself: pinkyNeck.s2 folds through itself
+random 24  indexKnuckle=68.1 indexCurl=7.7 ... thumbAbduct=44  →  warning: subdiv: the body passes through itself between knuckle:1 and knuckle.s14; knuckle.s14 folds through itself
+5 of 49 poses did not build cleanly (view assembly): 0 threw, 5 passed through themselves
+faces  knuckle:3 ×2, knuckle.s12 ×2, pinkyNeck.s2 ×2, knuckle:1 ×2, knuckle.s14 ×2, middleNeck.s0 ×1, ringNeck.s2 ×1, knuckle.s13 ×1, and 11 more
+```
+
+Each line gives the pose's name, the values it changes from the defaults, its kind and the
+message. The kind is `error` when the build threw, and the message is the error's first
+line. The kind is `warning` when the build only warned that a body passes through itself,
+and the message is that warning. Other build warnings are not failures. Then the count,
+split into the poses that threw and the poses that passed through themselves. When the
+errors or warnings name cage faces (a `subdiv:` body that passes through itself), the last
+line lists the faces named, most often first, with the number of poses that name each one.
+A face many poses name is where to look first.
+
+A pose that does not build is a fact about the part. It is not always a fault. In Pose mode
+a drag stops at the last pose that builds, so a range whose far end does not build still
+works. It is a fault when the user can reach the pose: by a slider, or by a pose the panel
+sets. The poses are built at preview quality, as `measure` builds them. A print-quality export
+can still fail at a pose this run passes, because the preview mesh is coarser. `--json`
+and `--out` give the result as JSON:
+`{ view, poses, failed: [{ name, params, kind, error }], faces: [{ id, count }] }`. `--drag`,
+`--process`, `--no-verify` and `--no-lint` do not apply and are refused. A pose whose
+build needs the exact kernel (`NEEDS_OCCT`) is listed as an error, and is not retried on
+the OCCT backend as `measure` is. It exits 0 whenever the sweep ran. It exits 1 when the
+part cannot be loaded, and on a usage error such as a refused flag or an unknown view.
+In code:
+`sweepRanges(kernel, part, view, { random, seed })` and `rangePoses(part, { random, seed })`
+from `partforge/oracle` or `partforge/testing`.
+
 ### For hosts: `runtime.pose`
 
 `runtime.pose` is the host's view of Pose mode: `isEnabled()`, `setEnabled(on)` (on by
@@ -5021,7 +5071,9 @@ if any sub-part isn't watertight or any parts interpenetrate — so it doubles a
 CI/agent gate. Add `--json` to also dump the report as JSON on stdout, or
 `--out report.json` to write it to a file (nothing is written otherwise).
 `--drag <handle>` (with `--to x,y,z` or `--turn <deg>`) plays a handle drag instead of
-measuring: see "Testing a drag" under Handles. (Manifold output is
+measuring: see "Testing a drag" under Handles. `--ranges` (with `--random <n>` and
+`--seed <n>`) builds the view at a list of poses instead, and lists the ones that throw or
+pass through themselves: see "Which poses do not build" under Handles. (Manifold output is
 manifold by construction, so `watertight` is mainly a build-sanity check for
 empty/degenerate results; `holes` is the informative topology number.)
 
@@ -5519,6 +5571,20 @@ and these pairs have no distance", which a declared `clearance` gate fails on.
 defeated and skipped, a `k.implicit` feature too thin for its grid, a shape clipped at
 the edge of its sampling box, a `k.subdiv` cage that cannot meet its quality's tolerance
 or (at preview) passes through itself. `partforge measure` prints them. They never gate `ok`.
+`limbs` is present when `derive` returns a posed limb (a value that carries `bones`, at
+the top level or in an array there). A limb with a `parent` is left out. Each limb is
+keyed by its name and holds `joints` and `tip`. Each joint has `name`, `at` (its posed
+position) and `length` (the distance to the next joint or to the tip). The plane through
+the joint, square to the joint's aim, cuts the body. The aim is the bone's direction
+unless a `toward` aims the joint another way. When an outline of that cut goes round the
+joint, the joint also has `part` (the sub-part that was cut), `width` (the outline's size
+along the joint's bend axis) and `depth` (its size across that axis). A joint inside a
+hollow body reads the innermost outline round it, which is the cavity's. Numbers are rounded
+to 0.1 mm. `partforge measure` prints one line per limb. Read the lengths against the
+real thing, and the sizes to see how thick the body is at each joint. A joint's position
+is in part coordinates, and its plane is carried into the body by the sub-part's `place()`.
+When two limbs have the same name, only the first is reported, and `warnings` gets an entry
+with `part: "limbs"` that names it. A limb that cannot be read gets one too.
 
 A sheet sub-part (`sheetPart()`) also carries `sheet` — its 2-D facts:
 `material`, `thickness`, `flat` (the cut layer's size), `area`, `pieces`, the

@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   disposedMaterials: null,
   shadow: null,
   lineDraws: null,
+  targets: null,
 }));
 
 const OriginalResizeObserver = globalThis.ResizeObserver;
@@ -78,7 +79,17 @@ vi.mock("three", async (importOriginal) => {
     readRenderTargetPixels() {}
     dispose() {}
   }
-  return { ...actual, WebGLRenderer: FakeRenderer };
+  // Every offscreen target the viewer allocates, so a test can count how many
+  // were created and how many released (RenderTarget.dispose fires "dispose").
+  class TrackedRenderTarget extends actual.WebGLRenderTarget {
+    constructor(...args) {
+      super(...args);
+      this.disposed = false;
+      this.addEventListener("dispose", () => { this.disposed = true; });
+      state.targets?.push(this);
+    }
+  }
+  return { ...actual, WebGLRenderer: FakeRenderer, WebGLRenderTarget: TrackedRenderTarget };
 });
 
 import { createViewer } from "../../src/framework/viewer.js";
@@ -118,6 +129,7 @@ beforeEach(() => {
   state.disposedMaterials = null;
   state.shadow = null;
   state.lineDraws = null;
+  state.targets = null;
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -396,4 +408,145 @@ test("no shadow plane when the camera is below the floor", () => {
   viewer.renderMeshPayloads([solidPayload("a")], { angle: "bottom", size: 64 });
   expect(state.shadow).toBeNull();
   viewer.dispose();
+});
+
+// runtime.renderCurrent: the live framing as a 2-D canvas at an exact size, for a
+// host turning frames into video. Repeat calls at one size reuse one target and
+// one canvas; captureCurrent keeps allocating and releasing per call.
+function builtViewer() {
+  const viewer = newViewer();
+  viewer.setSubGeometry("a", cubePayload("a"));
+  viewer.showAssembly(["a"]);
+  state.targets = []; // count from here on
+  return viewer;
+}
+const targetsCreated = () => state.targets.length;
+const targetsDisposed = () => state.targets.filter((t) => t.disposed).length;
+
+test("renderCurrent returns a canvas at the exact size", () => {
+  const viewer = builtViewer();
+  const c = viewer.renderCurrent({ width: 640, height: 360 });
+  expect(c).toBeInstanceOf(HTMLCanvasElement);
+  expect(c.width).toBe(640);
+  expect(c.height).toBe(360);
+  viewer.dispose();
+});
+
+test("renderCurrent reuses its canvas and target at one size, and replaces them at another", () => {
+  const viewer = builtViewer();
+  const a = viewer.renderCurrent({ width: 640, height: 360 });
+  const b = viewer.renderCurrent({ width: 640, height: 360 });
+  expect(b).toBe(a);
+  expect(targetsCreated()).toBe(1);
+  expect(targetsDisposed()).toBe(0);
+  const c = viewer.renderCurrent({ width: 360, height: 640 });
+  expect(c).not.toBe(a);
+  expect(c.width).toBe(360);
+  expect(c.height).toBe(640);
+  expect(targetsCreated()).toBe(2);
+  expect(targetsDisposed()).toBe(1);
+  expect(state.targets[0].disposed).toBe(true); // the old size's target went
+  viewer.dispose();
+  expect(targetsDisposed()).toBe(2); // and dispose releases the current one
+});
+
+test("renderCurrent ignores type and quality", () => {
+  const viewer = builtViewer();
+  const c = viewer.renderCurrent({ width: 64, height: 48, type: "image/png", quality: 0.1 });
+  expect(c).toBeInstanceOf(HTMLCanvasElement);
+  viewer.dispose();
+});
+
+test("captureCurrent still allocates and disposes per call and returns a data URL", () => {
+  const viewer = builtViewer();
+  expect(viewer.captureCurrent({ width: 640, height: 360 })).toMatch(/^data:image\/jpeg/);
+  expect(viewer.captureCurrent({ width: 640, height: 360 })).toMatch(/^data:image\/jpeg/);
+  expect(targetsCreated()).toBe(2);
+  expect(targetsDisposed()).toBe(2);
+  // An `output` slipped into captureCurrent's options changes nothing.
+  expect(viewer.captureCurrent({ width: 640, height: 360, output: "canvas" })).toMatch(/^data:image\/jpeg/);
+  viewer.dispose();
+});
+
+test("renderCurrent is null before a build and after dispose", () => {
+  const viewer = newViewer();
+  expect(viewer.renderCurrent({ width: 64, height: 48 })).toBeNull();
+  viewer.setSubGeometry("a", cubePayload("a"));
+  viewer.showAssembly(["a"]);
+  expect(viewer.renderCurrent({ width: 64, height: 48 })).toBeInstanceOf(HTMLCanvasElement);
+  viewer.dispose();
+  expect(viewer.renderCurrent({ width: 64, height: 48 })).toBeNull();
+});
+
+test("parking releases the reused frame target; renderCurrent still works while parked", () => {
+  const viewer = builtViewer();
+  viewer.renderCurrent({ width: 640, height: 360 });
+  viewer.setActive(false);
+  expect(state.targets[0].disposed).toBe(true);
+  const c = viewer.renderCurrent({ width: 640, height: 360 });
+  expect(c.width).toBe(640);
+  expect(c.height).toBe(360);
+  viewer.dispose();
+});
+
+// The reused frame set (about 50 MB at 1080²) is released 5 s after the last
+// renderCurrent — one timer, re-armed by each call, cleared by park and dispose.
+test("renderCurrent's frame set is released 5 s after the last call", () => {
+  vi.useFakeTimers();
+  try {
+    const viewer = builtViewer();
+    viewer.renderCurrent({ width: 640, height: 360 });
+    vi.advanceTimersByTime(4999);
+    expect(state.targets[0].disposed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(state.targets[0].disposed).toBe(true);
+    // The next call simply allocates again.
+    const c = viewer.renderCurrent({ width: 640, height: 360 });
+    expect(c.width).toBe(640);
+    expect(targetsCreated()).toBe(2);
+    viewer.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a renderCurrent inside the 5 s window re-arms the release", () => {
+  vi.useFakeTimers();
+  try {
+    const viewer = builtViewer();
+    const a = viewer.renderCurrent({ width: 640, height: 360 });
+    vi.advanceTimersByTime(4000);
+    const b = viewer.renderCurrent({ width: 640, height: 360 });
+    expect(b).toBe(a);
+    vi.advanceTimersByTime(4000);
+    expect(state.targets[0].disposed).toBe(false);
+    expect(targetsCreated()).toBe(1);
+    expect(vi.getTimerCount()).toBe(1); // one timer, not one per call
+    vi.advanceTimersByTime(1000);
+    expect(state.targets[0].disposed).toBe(true);
+    viewer.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("parking and dispose clear the frame-set release timer", () => {
+  vi.useFakeTimers();
+  try {
+    const parked = builtViewer();
+    parked.renderCurrent({ width: 640, height: 360 });
+    expect(vi.getTimerCount()).toBe(1);
+    parked.setActive(false);
+    expect(vi.getTimerCount()).toBe(0);
+    parked.dispose();
+
+    const gone = builtViewer();
+    gone.renderCurrent({ width: 640, height: 360 });
+    expect(vi.getTimerCount()).toBe(1);
+    gone.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

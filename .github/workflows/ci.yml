@@ -162,8 +162,9 @@ jobs:
             exit 1
           fi
 
-  # Pose mode: drag handles in real Chromium (ghost path, regen hold, one commit).
-  # Its own job because it alone takes ~4.5 min.
+  # Pose mode: drag handles in real Chromium (ghost path, regen hold, one commit),
+  # then the capture-frame runtime (renderCurrent, onRendered, seek's camera,
+  # whenSettled, the picking switch). Its own job because pose alone takes ~4.5 min.
   pose:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -177,6 +178,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
         timeout-minutes: 10
       - run: CHECK_PORT=5191 npm run check:pose
+      - run: CHECK_PORT=5192 npm run check:frames
 
   # The `main` ruleset requires a check named "test". This job keeps that one name
   # standing for every job above, so adding or splitting a job never needs a

@@ -80,8 +80,9 @@ function worstGap(positions, exact) {
 const A = { ...hand.defaults };
 const THUMB = { ...hand.defaults, thumbCurl: 55 };
 const INDEX = { ...hand.defaults, indexKnuckle: 60, indexCurl: 70 };
-const FINGERS = Object.keys(hand.defaults).filter((key) => key !== "thumbCurl");
-const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 60 };
+const FINGERS = Object.keys(hand.defaults).filter((key) => !key.startsWith("thumb"));
+// The thumb at the palm's side (-22): curled in front of the palm it meets the closed fingers.
+const ALL_CURLED = { ...hand.defaults, ...Object.fromEntries(FINGERS.map((key) => [key, 90])), thumbCurl: 50, thumbOppose: -22 };
 
 // test/mount-cage-drag.test.js's swing arm: clear at 60°, back through itself at 140°.
 const armCage = (make, deg, x = 0) => {
@@ -142,9 +143,6 @@ describe("the cage hand's preview file", () => {
     expect(cages.verifyNext()).toBe(false);  // nothing left to prove
     expect(cages.holdsDragState()).toBe(false); // the plan the proof built is dropped
     expect(viewer.writes).toEqual([]);
-    // The thumb pose below lists the cage's faces in another order than the file's.
-    const faces = (params) => JSON.stringify(probePoses(hand, "assembly", params, { scope: "build" }).get("hand").cages[0].faces);
-    expect(faces(THUMB)).not.toBe(faces(A));
   });
 
   test("the editor's tolerance would refuse the quantized file (why the preview derives its own)", async () => {

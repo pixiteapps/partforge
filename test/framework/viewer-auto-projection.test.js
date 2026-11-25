@@ -681,3 +681,33 @@ test("a remount at a very high ortho zoom keeps its size (the surface is right b
   expect(next.camera.top / next.camera.zoom).toBeCloseTo(onScreen, 9);
   next.dispose();
 });
+
+// --- jumps (runtime.setCameraCue / setCamera): the tween's START rule, no END rule ---
+
+test("a jump to an off-axis cue from an orthographic face view switches to perspective", () => {
+  const viewer = orthoFrontViewer();
+  viewer.jumpCameraTo(viewer.cuePose({ azimuth: 30, elevation: 20 }));
+  expect(viewer.getProjection()).toBe("perspective");
+  expect(viewer.camera.isPerspectiveCamera).toBe(true);
+  viewer.dispose();
+});
+
+test("a jump to a face cue while orthographic stays orthographic", () => {
+  const viewer = orthoFrontViewer();
+  const seen = [];
+  viewer.onProjectionChange((mode) => seen.push(mode));
+  viewer.jumpCameraTo(viewer.cuePose("top"));
+  runFrames(5);
+  expect(viewer.getProjection()).toBe("orthographic");
+  expect(seen).toEqual([]);
+  expect(offAxisDeg(viewer, [0, 1, 0])).toBeLessThan(0.01);
+  viewer.dispose();
+});
+
+test("a jump to a face cue from perspective never switches INTO ortho", () => {
+  const viewer = makeViewer();
+  viewer.jumpCameraTo(viewer.cuePose("front"));
+  runFrames();
+  expect(viewer.getProjection()).toBe("perspective");
+  viewer.dispose();
+});

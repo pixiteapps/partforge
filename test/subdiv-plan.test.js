@@ -32,9 +32,8 @@ const cages = {
 };
 
 const handAt = (params) => {
-  const { p, d } = resolveParams(handPart, params);
-  const bends = Object.fromEntries(["index", "middle", "ring", "pinky", "thumb"].map((n) => [n, d[n].values]));
-  return cageHand(cage, p, bends).snapshot();
+  const { d } = resolveParams(handPart, params);
+  return cageHand(cage, d).snapshot();
 };
 
 describe("topologyKey", () => {

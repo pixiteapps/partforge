@@ -9,6 +9,7 @@ import { attachMobileTabs } from "./mobile-tabs.js";
 import { createTooltipPresenter, attachButtonTooltips } from "./tooltip.js";
 import { loadCamera, loadRenderMode, loadEnvironment } from "./view-state.js";
 import { isFaceAlignedState } from "./projection.js";
+import { isCameraCue } from "./view-angles.js";
 import { attachViewStyleControls } from "./view-style-controls.js";
 import { attachSelectionPopover } from "./selection-popover.js";
 import { ENVIRONMENTS } from "./materials/environments.js";
@@ -71,6 +72,8 @@ const NOOP_TOOLTIP_BINDING = { sync: () => {}, hide: () => {}, detach: () => {} 
 // Same no-op-default stance as attachTooltips/setHostPane below, for a
 // makeHandle caller (or a direct test) that doesn't wire measure mode.
 const NOOP_MEASURE = { isEnabled: () => false, setEnabled: () => {}, clearPins: () => {}, pinCount: () => 0 };
+// Without onPick nothing picks, so the host's switch reads off and moves nothing.
+const NOOP_PICKING = { isEnabled: () => false, setEnabled: () => {} };
 // Same stance as NOOP_MEASURE: the handle's annotate surface exists whether or
 // not this mount wired the mode (it wires only when the host passes
 // onAnnotationSend — without a sink, Send would have nowhere to go).
@@ -84,6 +87,7 @@ const NOOP_ANNOTATE = {
 // A shape drag (spec 2026-11-02 §4) rebuilds live while it holds only on a part whose
 // last real build took under this many milliseconds; a slower one waits for release.
 export const LIVE_REBUILD_MS = 120;
+const isVec3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 // The STEP-on-Manifold import crossover's broken-state message (a second
 // needs-import-mesh after the mesh is already primed — see the "needs-import-mesh"
 // case below). One shared string so the status line, onBuild, and the ready
@@ -96,7 +100,7 @@ const IMPORT_MESH_BROKEN_MESSAGE = "STEP import tessellation failed to satisfy t
 // carries the worker's own error text. See the correlated "error" case below.
 const importTessellateFailedMessage = (workerMessage) => `STEP import tessellation failed — ${workerMessage}`;
 
-export function makeHandle({ ready, dispose, viewer, setParams, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
+export function makeHandle({ ready, dispose, viewer, setParams, whenSettled, listExportableParts, listExportFormats, exportParts, describeKit, exportKit, warmExportKernel, setHostPane, setRailLayout, animation, getView, setView, captureView, attachTooltips, measure, picking, annotate, pose, poseState, projection, pickMarker, getPanelState, getPanelErrors, controlsFor, renderMode, environment, declaresMaterials, renderViews, isPreviewActive, exportPreview, pendingCutaway, listSubParts, openAppearance, setDisplaySaveState, selection, selectionState, beforeCapture }) {
   // Run before every capture of the live scene: mount puts a pose drag's deformed
   // meshes back to their exact bases (skin/skin-drag.js), so no capture reads them.
   // beforeCapture may return a release function: the hold it took lasts until the
@@ -109,8 +113,20 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     return typeof release === "function" ? release : () => {};
   };
   const prepared = (capture) => { const release = prepare(); try { return capture(); } finally { release(); } };
+  // `recenter` reads the sub-part geometry only, so with measurements on
+  // screen the dimension labels — which sit beside the part, not on it —
+  // could land outside the centred window. A dimensioned capture therefore
+  // keeps the user's exact framing; a host wanting both re-frames first.
+  const framingFor = (opts) => (
+    opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
+      ? { ...opts, recenter: false }
+      : opts
+  );
   return {
     ready, dispose, setParams,
+    // Resolves once no build is pending for the live params: true when the view on
+    // screen is built at them, false after a build error or dispose. Never rejects.
+    whenSettled: whenSettled ?? (() => Promise.resolve(true)),
     // Whether the `preview` GLB handed to mount() is on screen (see mount's
     // preview block). A GETTER, read live: a host that copies the handle object
     // freezes the value it had at that moment.
@@ -142,17 +158,19 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
         release();
       }
     },
-    // `recenter` reads the sub-part geometry only, so with measurements on
-    // screen the dimension labels — which sit beside the part, not on it —
-    // could land outside the centred window. A dimensioned capture therefore
-    // keeps the user's exact framing; a host wanting both re-frames first.
+    // Keeps the user's framing when dimensions are on screen (framingFor).
     // Follows the live render mode unless opts.renderMode pins one ("realistic"
     // only once the environment has loaded — see viewer.captureCurrent).
-    captureCurrent: (opts) => prepared(() => viewer.captureCurrent(
-      opts?.recenter && (measure ?? NOOP_MEASURE).isEnabled() && (measure ?? NOOP_MEASURE).pinCount() > 0
-        ? { ...opts, recenter: false }
-        : opts,
-    )),
+    captureCurrent: (opts) => prepared(() => viewer.captureCurrent(framingFor(opts))),
+    // captureCurrent's capture as a 2-D canvas at an exact `width` × `height`,
+    // for a host encoding video frames. The canvas is partforge's: the next call
+    // may draw over it, so consume it (new VideoFrame(canvas), drawImage) first.
+    // Null when nothing is built or the viewer is gone.
+    renderCurrent: (opts) => prepared(() => viewer.renderCurrent?.(framingFor(opts)) ?? null),
+    // After a frame has drawn to the live canvas, in the same task as the draw
+    // (the loop draws on demand, so an idle tick calls nobody). Returns an
+    // unsubscribe. A throwing callback costs that callback, never the loop.
+    onRendered: (cb) => viewer.onRendered?.(cb) ?? (() => {}),
     // Everything about the CURRENT VIEW that a host would lose by remounting,
     // as one plain-JSON token: pass it back as mount()'s `viewerState` and the
     // remount comes up where the user left it. An embedder that applies edits
@@ -166,6 +184,25 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // or null with nothing on screen — so a host can turn "the way I'm looking
     // now" into a `camera` value an author (or an agent) writes into a part.
     getCameraCue: () => viewer.getCameraCue?.() ?? null,
+    // Jump the camera to a camera cue (a view name or an { azimuth, elevation,
+    // distance } orbit, in degrees) with no tween: what a host stepping a
+    // turntable calls once per frame. False, with the camera untouched, for an
+    // invalid cue or with nothing on screen. Not a user grab, so an animation's
+    // remaining camera cues stay armed.
+    setCameraCue: (cue) => {
+      if (!isCameraCue(cue) || !viewer?.jumpCameraTo) return false;
+      const pose = viewer.cuePose?.(cue);
+      if (!pose) return false;
+      viewer.jumpCameraTo(pose);
+      return true;
+    },
+    // Put the camera back on a saved pose — getViewerState().camera's own
+    // `{ pos, target }` — with no tween. False unless both are three finite numbers.
+    setCamera: (state) => {
+      if (!isVec3(state?.pos) || !isVec3(state?.target) || !viewer?.jumpCameraTo) return false;
+      viewer.jumpCameraTo({ position: [...state.pos], target: [...state.target] });
+      return true;
+    },
     getViewerState: () => ({
       camera: viewer.getCameraState(),
       projection: viewer.getProjection?.() ?? "perspective",
@@ -270,6 +307,12 @@ export function makeHandle({ ready, dispose, viewer, setParams, listExportablePa
     // distance); clearPins() is the Clear button. Dimensions render in the scene, so a dimensioned capture is just
     // captureCurrent() taken while the mode is on.
     measure: measure ?? NOOP_MEASURE,
+    // Click-to-select switch: { isEnabled, setEnabled }, same shape as measure.
+    // Off, a click only orbits (no onPick, no popover, no background close) and the
+    // hover label drops its "Click to edit" hint; an open popover stays until the
+    // host closes it.
+    // Not viewer state: a remount comes up on.
+    picking: picking ?? NOOP_PICKING,
     // Annotation-mode API (spec 2026-08-18): { isEnabled, setEnabled, clear,
     // strokeCount, send, onModeChange } — an embedder drives the mode without
     // the built-in pencil button. send() delivers to onAnnotationSend and
@@ -367,6 +410,10 @@ function createCleanupStack() {
 //                                         // framing (live camera pose + viewport aspect) at the
 //                                         // given long-edge resolution → JPEG data URL, or null
 //                                         // when disposed / nothing built yet
+//   runtime.renderCurrent({ width: 1280, height: 720 });  // the same capture as a 2-D canvas
+//                                         // at that exact size (a video frame), or null; the
+//                                         // canvas is reused by the next call — consume it first
+//   runtime.onRendered(() => {});         // after each frame drawn to the live canvas; → unsubscribe
 //   runtime.listExportableParts();        // [{ name, label, sheet? }] — every exportable sub-part,
 //                                         // independent of the active view (for an embedder-drawn export UI);
 //                                         // a sheet part's row adds sheet: { process, material, thickness, group }
@@ -664,8 +711,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     cleanup.defer(() => paneTabs.detach());
     // Always-on hover inspection (no-op on touch-only devices). With onPick the
     // host acts on a click, so the tooltip nudges toward it with `pickHint`
-    // (a host passes its own wording, or null for none).
-    const hover = attachHoverLabels(viewer, { part, tooltip, hint: onPick ? pickHint : null });
+    // (a host passes its own wording, or null for none). The hint is read per show,
+    // so the host's picking switch (runtime.picking) withholds just that line while
+    // a click does nothing: the label, and hoveredSubPart for pose showOn, carry on.
+    let pickingOn = true;
+    const hover = attachHoverLabels(viewer, { part, tooltip, hint: onPick ? () => (pickingOn ? pickHint : null) : null });
     cleanup.defer(() => hover.detach());
     const ui = createStatusUi({ ...els.status, exports: [els.exports.stl, els.exports.step, els.exports.threeMf] });
     cleanup.defer(() => ui.setStatus(""));
@@ -1343,7 +1393,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // A press that grabbed a pose handle claims its click (a pin toggle or the end
         // of a drag), so it never also picks: takeClick() answers once, and comes
         // first so the claim is spent on this click even when another guard is up.
-        suppressed: () => (poseMode?.takeClick() ?? false) || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
+        // The host's picking switch is OR'd in after it, and holds onMiss off too,
+        // so a background click leaves an open popover alone.
+        suppressed: () => (poseMode?.takeClick() ?? false) || !pickingOn || previewGate.isActive() || measureMode.isEnabled() || (annotateMode?.isEnabled() ?? false),
         // A click on the background, past the part, puts the selection away.
         onMiss: () => { if (selPopover?.isOpen()) selPopover.close("clear"); },
         onPick: (selection, anchor, hit) => {
@@ -1439,6 +1491,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // the host sees: it counts as missing, and as unsettled to export and the floor.
     const isSettled = (n) => isCurrent(n) && !owed.has(n);
     const missingParts = () => viewSubParts(part, view(), params).filter((n) => !isSettled(n));
+    // What the loop is told is missing (the pose hold's answer), without the cage revert
+    // its kick runs first: whenSettled reads it too, and must change nothing.
+    const loopMissingParts = () => (!poseHold ? missingParts()
+      : liveRebuild ? viewSubParts(part, view(), params).filter((n) => !isCurrent(n)) : []);
 
     // The regenerate state machine (ready gating / debounce / stale-redo) lives in
     // regen-loop.js; this send callback is the one place a build job is dispatched.
@@ -1463,9 +1519,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       // build never goes out at a pose the body cannot take (revertHeldCagePose).
       missingParts: () => {
         if (!poseHold) revertHeldCagePose();
-        return !poseHold ? missingParts()
-          : liveRebuild ? viewSubParts(part, view(), params).filter((n) => !isCurrent(n)) : [];
+        return loopMissingParts();
       },
+      onKick: () => settleIfIdle(),
       send: (missing) => {
         // Flagged at dispatch, read by this cycle's replies: the loop sends the next
         // cycle only after this one's last reply, so the flag travels with its jobs.
@@ -1504,6 +1560,30 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       },
     });
     cleanup.defer(() => loop.dispose());
+
+    // runtime.whenSettled(): resolves at the first moment the loop is idle (no reply owed,
+    // no kick armed) — true when nothing the loop would build is missing for the view on
+    // screen at the live params, false when it went idle with something missing (a build
+    // error) or the mount was disposed. settleIfIdle runs after every kick (the loop's
+    // onKick, a debounce's included) and after every worker message has been handled
+    // (so a stale reply's re-kick has already gone out). Two waits are not idle although
+    // the loop is: before the first build has an outcome (the kernel has not announced
+    // itself, so the loop has sent nothing), and while a STEP import's tessellation is
+    // outstanding (its import-meshes kicks the retry).
+    const settleWaiters = [];
+    function settleIfIdle() {
+      if (!settleWaiters.length || !loop.isIdle() || importMeshState === "requested") return;
+      const missing = loopMissingParts();
+      if (missing.length && !readySettled) return;
+      // A provisional stage still on screen is not exact geometry, whatever the loop says.
+      const exact = missing.length === 0 && !viewSubParts(part, view(), params).some((n) => provisional.has(n));
+      for (const resolve of settleWaiters.splice(0)) resolve(exact);
+    }
+    function whenSettled() {
+      if (cleanup.isDisposed()) return Promise.resolve(false);
+      return new Promise((resolve) => { settleWaiters.push(resolve); settleIfIdle(); });
+    }
+    cleanup.defer(() => { for (const resolve of settleWaiters.splice(0)) resolve(false); });
 
     // Pose fast path (Layer 0): a param edit that only re-poses a sub-part is
     // repaired synchronously in the viewer — no debounce, no worker job.
@@ -2248,6 +2328,8 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           break;
         }
       }
+      // Every branch has done its own handling, re-kick included.
+      settleIfIdle();
     }
 
     const service = createGeometryService({ createWorker, onMessage: onWorkerMessage });
@@ -2704,7 +2786,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     }
 
     return makeHandle({
-      ready, dispose, viewer, setParams,
+      ready, dispose, viewer, setParams, whenSettled,
       // No capture reads a pose drag's deformed mesh: the hold keeps a slider input
       // during an async capture from deforming it again. Nor a two-stage delivery's
       // provisional stage, which has no exact base to put back: the capture throws
@@ -2756,6 +2838,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       exportKit: (opts) => exportCtl.exportKit(opts),
       warmExportKernel: () => exportCtl.warmKernel(),
       animation: animCtl?.runtime ?? null,
+      picking: onPick ? {
+        isEnabled: () => pickingOn,
+        setEnabled: (on) => { pickingOn = !!on; },
+      } : null,
       measure: {
         isEnabled: measureMode.isEnabled,
         // Held off while a cached preview shows (no feature ids to dimension).

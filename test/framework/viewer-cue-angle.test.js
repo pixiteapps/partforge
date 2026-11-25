@@ -271,3 +271,95 @@ test("an animation camera cue still only changes the angle, never the framing", 
   expect(offAxisDeg(viewer, [0, 1, 0])).toBeLessThan(TOLERANCE_DEG);
   viewer.dispose();
 });
+
+// --- jumps: cuePose + jumpCameraTo (what runtime.setCameraCue / setCamera call) ---
+
+// A jump to a cue, the way the handle's setCameraCue makes one.
+const jumpTo = (viewer, cue) => viewer.jumpCameraTo(viewer.cuePose(cue));
+
+test("a jump to an orbit cue lands where getCameraCue reads it back", () => {
+  const viewer = makeViewer();
+  jumpTo(viewer, { azimuth: 120, elevation: 20, distance: 1.5 });
+  const { cue, panned } = viewer.getCameraCue();
+  expect(cue.azimuth).toBeCloseTo(120, 4);
+  expect(cue.elevation).toBeCloseTo(20, 4);
+  expect(cue.distance).toBeCloseTo(1.5, 4);
+  expect(panned).toBeCloseTo(0, 4);
+  viewer.dispose();
+});
+
+test("cuePose is the pose a tween to the same cue settles on", () => {
+  const viewer = makeViewer();
+  const pose = viewer.cuePose("top-front-right");
+  viewer.tweenCameraTo("top-front-right", { duration: 0.6 });
+  runFrames();
+  const { pos, target } = viewer.getCameraState();
+  pos.forEach((v, i) => expect(v).toBeCloseTo(pose.position[i], 6));
+  target.forEach((v, i) => expect(v).toBeCloseTo(pose.target[i], 6));
+  expect(Object.keys(pose).sort()).toEqual(["position", "target"]);
+  viewer.dispose();
+});
+
+test("a full turn in 240 jumps returns to the start", () => {
+  const viewer = makeViewer();
+  const start = viewer.cuePose({ azimuth: 45, elevation: 30 });
+  for (let i = 1; i <= 240; i++) jumpTo(viewer, { azimuth: 45 + (360 * i) / 240, elevation: 30 });
+  const { pos, target } = viewer.getCameraState();
+  pos.forEach((v, i) => expect(Math.abs(v - start.position[i])).toBeLessThan(1e-6));
+  target.forEach((v, i) => expect(Math.abs(v - start.target[i])).toBeLessThan(1e-6));
+  viewer.dispose();
+});
+
+test("cuePose is null with nothing on screen", () => {
+  const viewer = createViewer(createContainer(), { meta: {}, parts: { body: {} } });
+  expect(viewer.cuePose("front")).toBeNull();
+  expect(viewer.cuePose({ azimuth: 0, elevation: 0 })).toBeNull();
+  viewer.dispose();
+});
+
+test("a jump cancels a running tween, draws, and does not fire onCameraStart", () => {
+  const viewer = makeViewer();
+  const started = vi.fn();
+  viewer.onCameraStart(started);
+  const drawn = vi.fn();
+  viewer.onRendered(drawn);
+  viewer.tweenCameraTo("top", { duration: 0.6 });
+  runFrames(10);
+  expect(state.controls.enableDamping).toBe(false); // the tween is in flight
+  drawn.mockClear();
+
+  const pose = viewer.cuePose({ azimuth: 90, elevation: 0 });
+  viewer.jumpCameraTo(pose);
+  expect(state.controls.enableDamping).toBe(true); // cancelled: damping given back
+  runFrames(80); // a live tween would drag it back toward top
+  const { pos } = viewer.getCameraState();
+  pos.forEach((v, i) => expect(v).toBeCloseTo(pose.position[i], 6));
+  expect(drawn).toHaveBeenCalled();
+  expect(started).not.toHaveBeenCalled();
+  viewer.dispose();
+});
+
+test("a leftover orbit fling cannot drag a jump off its pose", () => {
+  const viewer = makeViewer();
+  state.controls._sphericalDelta.phi = FLING;
+  state.controls._sphericalDelta.theta = FLING;
+  const pose = viewer.cuePose({ azimuth: 200, elevation: -15 });
+  viewer.jumpCameraTo(pose);
+  runFrames();
+  const { pos } = viewer.getCameraState();
+  pos.forEach((v, i) => expect(v).toBeCloseTo(pose.position[i], 6));
+  expect(state.controls.enableDamping).toBe(true);
+  viewer.dispose();
+});
+
+test("a jump to a saved getCameraState restores it exactly", () => {
+  const viewer = makeViewer();
+  jumpTo(viewer, { azimuth: 33, elevation: 12, distance: 0.8 });
+  const saved = viewer.getCameraState();
+  jumpTo(viewer, "bottom-back-left");
+  viewer.jumpCameraTo({ position: saved.pos, target: saved.target });
+  const { pos, target } = viewer.getCameraState();
+  pos.forEach((v, i) => expect(v).toBeCloseTo(saved.pos[i], 9));
+  target.forEach((v, i) => expect(v).toBeCloseTo(saved.target[i], 9));
+  viewer.dispose();
+});

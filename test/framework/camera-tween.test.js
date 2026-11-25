@@ -1,7 +1,7 @@
 // Pure orbit-tween math: eased spherical interpolation, shortest-path azimuth,
 // pole clamping, retargeting, cancel.
 import { expect, test, vi } from "vitest";
-import { createCameraTween } from "../../src/framework/camera-tween.js";
+import { createCameraTween, tweenPoseAt } from "../../src/framework/camera-tween.js";
 
 const FROM = { position: [10, 0, 0], target: [0, 0, 0] };
 
@@ -87,4 +87,31 @@ test("duration 0 completes on the first update (reduced-motion jump cut)", () =>
   const tw = createCameraTween();
   tw.start(FROM, { position: [0, 0, 10], target: [0, 0, 0] }, { duration: 0 });
   expect(tw.update(0.016).done).toBe(true);
+});
+
+test("update() and tweenPoseAt agree at every sampled time", () => {
+  // +x → -z with a moving target: the short-way azimuth wrap must match too
+  const to = { position: [0, 3, -10], target: [2, 1, 0] };
+  const tw = createCameraTween();
+  tw.start(FROM, to, { duration: 1 });
+  let elapsed = 0;
+  for (let i = 0; i < 12; i++) {
+    elapsed += 0.1;
+    const out = tw.update(0.1);
+    const pure = tweenPoseAt(FROM, to, elapsed / 1);
+    expect({ position: out.position, target: out.target }).toEqual(pure);
+    if (out.done) break;
+  }
+  expect(tw.isActive()).toBe(false);
+});
+
+test("tweenPoseAt lands on its ends exactly and takes the short way", () => {
+  const to = { position: [0, 0, -10], target: [0, 0, 0] };
+  expect(tweenPoseAt(FROM, to, 0)).toEqual(FROM);
+  expect(tweenPoseAt(FROM, to, 1)).toEqual(to);
+  expect(tweenPoseAt(FROM, to, 0.5).position[0]).toBeGreaterThan(0);
+  // a pure function: the inputs are not touched or aliased
+  const out = tweenPoseAt(FROM, to, 1);
+  out.position[0] = 99;
+  expect(to.position[0]).toBe(0);
 });

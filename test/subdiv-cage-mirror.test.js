@@ -100,3 +100,29 @@ it("rotates a side face and its reflection the opposite way; a point on the plan
   expect(c.snapshot().faces[c.snapshot().ids.indexOf("+z:1,1")].filter((p) => pts[p][1] === 0).length).toBe(2);
   expect(reflectY(pts)).toEqual(pts.map((p) => p.join()).sort());
 });
+it("needs mirrored widths to read the same from both ends", () => {
+  expect(() => createCage({ mirror: "yz", box: { size: [10, 2, 4], segs: [[1, 4, 3, 2], 1, 1] } }))
+    .toThrow('cage: mirror "yz" needs box.segs[0] widths that read the same from both ends');
+  expect(() => createCage({ mirror: "yz", box: { size: [10, 2, 4], segs: [[2, 3, 3, 2], 1, 1] } })).not.toThrow();
+});
+it("keeps a steps list symmetric, joined across the plane and copied across it", () => {
+  const c = fish();
+  c.extrude(["+z:1,1", "+z:2,1"], { by: 6, steps: [1.2, [0.8, 1, 1.1], 0.9], id: "ridge" });   // touches y = 0: joined
+  c.extrude("+y:0,0", { by: 8, steps: [0.9, [1, 1, 1.2]], id: "fin" });                        // copied across
+  const pts = c.snapshot().points;
+  expect(reflectY(pts)).toEqual(pts.map((p) => p.join()).sort());
+  expect(c.faces("ridge.1.").length).toBeGreaterThan(0);
+  expect(c.centroid("fin~")[1]).toBeCloseTo(-c.centroid("fin")[1], 9);
+});
+it("lists reflected faces by direction, and moves a number along the normal on both sides", () => {
+  const c = createCage({ box: { size: [40, 20, 20], segs: [2, 1, 1] }, mirror: "yz" });
+  const far = c.faces("", { facing: "-x" });
+  expect(far.length).toBeGreaterThan(0);
+  expect(far.every((id) => id.endsWith("~"))).toBe(true);
+  c.move("+y:1,0", 3);
+  expect(c.centroid("+y:1,0")[1]).toBeCloseTo(13, 9);
+  expect(c.centroid("+y:1,0~")[1]).toBeCloseTo(13, 9);
+  const pts = c.snapshot().points;
+  const reflectX = (ps) => ps.map(([x, y, z]) => [-x + 0, y, z].join()).sort();
+  expect(reflectX(pts)).toEqual(pts.map((p) => p.join()).sort());
+});
