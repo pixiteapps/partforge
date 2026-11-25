@@ -200,7 +200,11 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         mb.min[axis] = -cb.max[axis]; mb.max[axis] = -cb.min[axis];
         return finish({ kind: "mirror", axis, children: [id], L: nodes[id].L }, boxUnion(cb, mb), nodes[id].thin, nodes[id].G);
       }
-      case "round": { const id = child(node.child), G = nodes[id].G; return finish({ kind: "round", r: node.r, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.r / G), nodes[id].thin + 2 * node.r, G); }
+      case "offset":
+      case "round": {
+        const id = child(node.child), G = nodes[id].G, d = node.kind === "offset" ? node.d : node.r;
+        return finish({ kind: "round", r: d, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, Math.max(0, d) / G), Math.max(0, nodes[id].thin + 2 * d), G);
+      }
       case "onion": { const id = child(node.child), G = nodes[id].G; return finish({ kind: "onion", t: node.t, children: [id], L: nodes[id].L }, boxPad(nodes[id].box, node.t / G), 2 * node.t, G); }
       case "displace": {
         const id = child(node.child);

@@ -12,6 +12,7 @@ const isObj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 // recurse receive (value, path, ctx).
 const TYPES = {
   pos: (v) => (isNum(v) && v > 0 ? null : "must be a number > 0"),
+  nonzero: (v) => (isNum(v) && v !== 0 ? null : "must be a finite number other than 0"),
   nonneg: (v) => (isNum(v) && v >= 0 ? null : "must be a number ≥ 0"),
   num: (v) => (isNum(v) ? null : "must be a finite number"),
   vec3: (v) => (isVec3(v) ? null : "must be [x, y, z]"),
@@ -92,6 +93,7 @@ export const NODE_KINDS = {
   subtract: { req: { children: "children" }, opt: { k: "nonneg" } },
   contact: { req: { children: "children" }, opt: { gap: "nonneg", bulge: "nonneg", attach: "attach" } },
   mirror: { req: { child: "child" }, opt: { plane: "plane" } },
+  offset: { req: { child: "child", d: "nonzero" } },
   round: { req: { child: "child", r: "pos" } },
   onion: { req: { child: "child", t: "pos" } },
   displace: { req: { child: "child", amount: "pos", by: "exprSpec" } },

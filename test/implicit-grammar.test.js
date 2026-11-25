@@ -63,3 +63,11 @@ describe("inherited property names are not kinds", () => {
     expect(issues({ root: { kind: "sphere", r: 1 }, detail: [{ kind: "toString" }] }).some((m) => m.startsWith('detail[0].kind: unknown detail kind "toString"'))).toBe(true);
   });
 });
+
+test("offset takes a child and a signed, non-zero d", () => {
+  const ok = (d) => validateSpec({ root: { kind: "offset", d, child: { kind: "sphere", r: 5 } } });
+  expect(() => ok(2)).not.toThrow();
+  expect(() => ok(-2)).not.toThrow();
+  expect(() => ok(0)).toThrow(/root\.d: must be a finite number other than 0/);
+  expect(() => validateSpec({ root: { kind: "offset", d: 1 } })).toThrow(/root\.child: required/);
+});
