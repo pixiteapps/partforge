@@ -11,7 +11,9 @@ test("drawer-box: each drawer's opening depends on its own slider and the depth"
 });
 
 test("hand: the index finger's pose never depends on the thumb", () => {
-  const n = nudgeAttribution(hand, { ...hand.defaults }, { budgetMs: 1000 });
+  // Both time limits are lifted: past totalMs (40 ms) the inputs not yet nudged count as
+  // inputs to everything, which is what a loaded CI machine reported for the thumb.
+  const n = nudgeAttribution(hand, { ...hand.defaults }, { budgetMs: 1000, totalMs: 1000 });
   const deps = n.depsForPath("index");
   expect(deps.has("indexCurl")).toBe(true);
   expect(deps.has("thumbCurl")).toBe(false);

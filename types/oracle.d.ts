@@ -6,6 +6,7 @@
 // oracle (`describe`) is its own closed package now — its types ship with it, and
 // the direction of this seam is what lets that package consume these helpers.
 import type { CameraCue, Easing, Keyframes, ParamValue, PartDefinition } from "./part.js";
+import type { GeometryKernel } from "./testing.js";
 export type { GeometryKernel, Mesh, PartDefinition, ResolvedParams, Solid } from "./testing.js";
 export {
   // measurement + verification
@@ -200,3 +201,84 @@ export interface DragResult {
  * browser. Never throws — a bad request or a failed solve returns `{ handle, error }`.
  */
 export function dragHandle(part: PartDefinition, request: DragRequest): DragResult | { handle: string; error: string };
+
+/** One pose `measure --ranges` builds: its name and the params it changes from the defaults. */
+export interface RangePose {
+  name: string;
+  params: Record<string, ParamValue>;
+}
+
+/** What `sweepRanges` found: the poses that threw, and the cage faces their errors name. */
+export interface RangesResult {
+  view: string;
+  poses: number;
+  /**
+   * `kind: "error"`: the build threw, and `error` is its first line. `kind: "warning"`: the
+   * build warned that a body passes through itself, and `error` is that warning.
+   */
+  failed: Array<{ name: string; params: Record<string, ParamValue>; kind: "error" | "warning"; error: string }>;
+  /** The faces either kind names, most often first; each counted once per pose. */
+  faces: Array<{ id: string; count: number }>;
+}
+
+/**
+ * The poses `measure --ranges` builds: the defaults, each ranged control at its min and max,
+ * all at min, all at max, then `random` seeded random poses (default 24, seed 1).
+ */
+export function rangePoses(part: PartDefinition, opts?: { random?: number; seed?: number }): RangePose[];
+
+/**
+ * Build `view` at every pose of `rangePoses` and list the ones that throw, or that warn that
+ * a body passes through itself. Other build warnings are not failures.
+ */
+export function sweepRanges(kernel: GeometryKernel, part: PartDefinition, view?: string, opts?: { random?: number; seed?: number }): RangesResult;
+
+/** One joint of a posed limb in the measure report's `limbs`. */
+export interface LimbJointFacts {
+  /** The joint's frame name, `<limb>.<joint>`. */
+  name: string;
+  /** The joint's posed position, in part coordinates. */
+  at: [number, number, number];
+  /** The distance to the next joint, or to the tip for the last joint. */
+  length: number;
+  /** The sub-part whose cross-section goes round the joint. Absent when none does. */
+  part?: string;
+  /** The cross-section's size along the joint's bend axis (frame X). */
+  width?: number;
+  /** The cross-section's size across the bend axis (frame Z). */
+  depth?: number;
+}
+
+/** One posed limb in the measure report's `limbs`. Numbers are rounded to 0.1. */
+export interface LimbFacts {
+  joints: LimbJointFacts[];
+  tip: [number, number, number];
+}
+
+/** A plain frame: an origin and three unit axes. */
+export interface SectionFrame {
+  origin: [number, number, number];
+  x: [number, number, number];
+  y: [number, number, number];
+  z: [number, number, number];
+}
+
+/**
+ * The size of a mesh's cross-section at a frame: the plane through `origin` square to `y`
+ * cuts the mesh, and the outline that goes round `origin` is measured along `x` (`width`)
+ * and `z` (`depth`). Null when no outline goes round it. Without `indices` the positions are a
+ * triangle soup, as a kernel mesh's are.
+ */
+export function sectionAt(mesh: { positions: ArrayLike<number>; indices?: ArrayLike<number> }, frame: SectionFrame): { width: number; depth: number } | null;
+
+/**
+ * The measure report's `limbs`: each posed limb in `d` (a value carrying `bones`, one level
+ * deep or in an array there; a limb with a parent is skipped), keyed by its name. Undefined
+ * when there is none. `matrix` is the sub-part's column-major place() pose (part to display
+ * coordinates), or null. A second limb with a name already reported is named through `warn`.
+ */
+export function limbFacts(
+  d: unknown,
+  subparts: Array<{ name: string; mesh: { positions: ArrayLike<number>; indices?: ArrayLike<number> }; matrix: ArrayLike<number> | null }>,
+  opts?: { warn?: (message: string) => void },
+): Record<string, LimbFacts> | undefined;

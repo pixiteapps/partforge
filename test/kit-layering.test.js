@@ -41,12 +41,14 @@ vi.mock("../src/framework/oracle/gaps.js", () => refuse("gaps.js"));
 vi.mock("../src/framework/oracle/gates.js", () => refuse("gates.js"));
 vi.mock("../src/framework/oracle/held.js", () => refuse("held.js"));
 vi.mock("../src/framework/oracle/handles.js", () => refuse("handles.js"));
+vi.mock("../src/framework/oracle/limb-sections.js", () => refuse("limb-sections.js"));
 vi.mock("../src/framework/oracle/match.js", () => refuse("match.js"));
 vi.mock("../src/framework/oracle/measure.js", () => refuse("measure.js"));
 vi.mock("../src/framework/oracle/mesh.js", () => refuse("mesh.js"));
 vi.mock("../src/framework/oracle/min-wall.js", () => refuse("min-wall.js"));
 vi.mock("../src/framework/oracle/op-graph.js", () => refuse("op-graph.js"));
 vi.mock("../src/framework/oracle/overhang.js", () => refuse("overhang.js"));
+vi.mock("../src/framework/oracle/ranges.js", () => refuse("ranges.js"));
 vi.mock("../src/framework/oracle/shape-probe.js", () => refuse("shape-probe.js"));
 vi.mock("../src/framework/oracle/silhouette.js", () => refuse("silhouette.js"));
 vi.mock("../src/framework/oracle/sweep.js", () => refuse("sweep.js"));
@@ -63,8 +65,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 // honest — a new oracle module fails here until it is mocked too.
 const MOCKED = [
   "annotation-ray.js", "assert-dsl.js", "bed-contact.js", "build.js", "bvh.js", "cases.js", "changes.js", "compare.js", "dfm-profiles.js", "drag.js", "flex-members.js", "flex-root.js", "gaps.js",
-  "gates.js", "handles.js", "held.js", "match.js", "measure.js", "mesh.js", "min-wall.js", "op-graph.js", "overhang.js",
-  "shape-probe.js", "silhouette.js", "sweep.js", "verify.js",
+  "gates.js", "handles.js", "held.js", "limb-sections.js", "match.js", "measure.js", "mesh.js", "min-wall.js", "op-graph.js", "overhang.js",
+  "ranges.js", "shape-probe.js", "silhouette.js", "sweep.js", "verify.js",
 ];
 
 test("the mock list names every oracle module", () => {

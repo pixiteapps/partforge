@@ -195,7 +195,8 @@ export function solveGoals(tree, parentWorld, goals, raw, pinned, { spread = 0, 
   // The first moving joint and the segment lengths from it: the reach the too-far test reads.
   const moving = new Array(n).fill(false);
   for (const d of dofs) moving[d.i] = true;
-  joints.forEach((j, i) => { if (j.follow && moving[j.follow.index]) moving[i] = true; });
+  // Leaders before followers: a follower may come before its leader, or follow a follower.
+  for (const i of tree.order) if (joints[i].follow && moving[joints[i].follow.index]) moving[i] = true;
   const first = moving.indexOf(true);
   const segment = (k) => {
     const o = joints[k + 1]?.offset ?? [0, 0, 0];

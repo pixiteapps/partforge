@@ -30,6 +30,10 @@ export { measure } from "./framework/oracle/measure.js";
 export { verify } from "./framework/oracle/verify.js";
 // A handle drag played headlessly (derive only): which params a handle writes, and whether it reaches.
 export { dragHandle } from "./framework/oracle/drag.js";
+// Which poses of a part do not build: the poses `measure --ranges` builds, and the sweep.
+export { rangePoses, sweepRanges } from "./framework/oracle/ranges.js";
+// Bone lengths and body sizes at each joint of a posed limb: the `limbs` measure reports.
+export { limbFacts, sectionAt } from "./framework/oracle/limb-sections.js";
 // Change tracking — the `inspect` job's opt-in "what changed since my last
 // inspect of this view" signal, re-exported so a downstream harness can run the
 // same tracker outside the job loop (e.g. across a scripted sequence of builds).

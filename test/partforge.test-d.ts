@@ -34,6 +34,7 @@ import { resolveDerived } from "partforge/derive";
 import { lintPart, RULES } from "partforge/lint";
 import { runWorker } from "partforge/worker";
 import { encodePreviewGlb, PREVIEW_ENCODER_VERSION } from "partforge/gltf";
+import { limb } from "partforge/kinematics";
 import {
   assemblyOverlaps,
   bootManifoldKernel,
@@ -531,6 +532,14 @@ cage.extrude("+y:0,0", {});
 // @ts-expect-error -- so are the options
 cage.extrude("+y:0,0");
 expectType<number[]>(kernel.subdiv(cage).boundingBox().min);
+// Uneven box segments, a steps list, move by a number, and faces by direction.
+const uneven = kernel.cage({ box: { size: [40, 20, 20], segs: [[10, 20, 10], 1, 2] } });
+uneven.extrude("+z:1,0", { by: 6, steps: [1.1, [1, 0.9, 1], 0.92], id: "rib" });
+uneven.move("+y:0,0", 1.5);
+expectType<string[]>(uneven.faces("rib.s", { facing: "+y", near: [0, 10, 20] }));
+uneven.faces("", { facing: [0, -1, 0] });
+// @ts-expect-error -- facing is a named direction or [x, y, z]
+uneven.faces("", { facing: "up" });
 
 const facts = measure(kernel, spacer, "spacer", {}, { minWall: true });
 expectType<boolean>(facts.ok);
@@ -707,5 +716,19 @@ const nodeSection: ParameterSection = {
   ],
 };
 void nodeSection;
+
+// A limb from joint points, each joint with its own aim; a follower may follow a later joint.
+const thumbFromPoints = limb("thumb", {
+  points: [[0, 0, 0], [0, 0, 0], [10, 0, 30], [14, 0, 50], [16, 0, 66]],
+  bendToward: [0, -1, 0],
+  joints: [
+    { name: "abduct", toward: [0, 0, 1], bendToward: [0, -1, 0], range: [0, 70] },
+    { name: "oppose", axis: "twist", toward: [0, 0, 1], range: [-98, 22] },
+    { name: "mcp", range: [0, 50], follow: { joint: "ip", ratio: 1 } },
+    { name: "ip", range: [0, 40] },
+  ],
+  r: [26, 26, 19, 18, 18],
+});
+void thumbFromPoints;
 
 export { singlePhase, steppedSpec, withCue, withCueList, bothForms, neitherForm, badCue };
