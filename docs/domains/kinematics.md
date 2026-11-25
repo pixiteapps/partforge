@@ -70,17 +70,68 @@ posed.world("pip");           // { origin: [-30, 122.997, -30.174], x: [1, 0, 0]
 
 | field | meaning |
 | --- | --- |
-| `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, type?, axis?, length?, offset?, range?, cone?, follow? }`. |
+| `joints` | Required. A non-empty array, base first. An entry is a joint name, or `{ name, type?, axis?, length?, offset?, range?, cone?, follow?, toward?, bendToward? }`. A joint's own `toward` and `bendToward` need `points`. |
 | `lengths` | One length per joint, in mm: from that joint to the next joint, and from the last joint to the tip. Alternatively, give each joint its own `length`. If you give both, they must agree. |
-| `toward` | The direction the straight limb points. Required unless you use `rotate`. |
+| `toward` | The direction the straight limb points. Required unless you use `rotate` or `points`. |
 | `bendToward` | The side a positive bend curls toward. Required unless you use `rotate`. |
 | `at` | The base joint's position, in the parent frame (or part coordinates). Default `[0, 0, 0]`. |
+| `points` | Each joint's position, then the tip's, in place of `at`, `lengths` and joint offsets. See "A limb from joint points". |
 | `parent` | The name of a frame the limb hangs from. Omit it for part coordinates. See "Limbs on a parent frame". |
 | `r` | Radii, one per joint and then the tip (`joints.length + 1` entries). Only `grip`, `flesh`, `attach` and a subdivision cage's `skin` use them. |
 | `mirror` | `"XY"`, `"XZ"` or `"YZ"`: reflects the limb. See "Mirroring". |
 | `rotate` | The escape hatch: raw rotate steps for the base frame, in place of `toward`/`bendToward`. |
 
 An unknown field is an error. This prevents a typo from being ignored.
+
+### A limb from joint points
+
+`points` places every joint at once: one `[x, y, z]` per joint, then the tip, in the
+parent frame (or part coordinates). Each joint sits on its point at rest. It replaces
+`at`, `lengths` and joint `offset`, so give none of them with it. It is the easy way to
+fit a limb to a body you already have, such as a cage at rest.
+
+Each joint's frame has its own aim. Its +Y is the first of these that is there:
+
+1. the joint's own `toward`;
+2. the limb's `toward`;
+3. the direction to the next point;
+4. the previous joint's +Y.
+
+It bends toward its own `bendToward`, else the limb's. The limb's `bendToward` is
+required. A joint entry may carry `toward` and `bendToward` only in a limb with `points`.
+
+```js
+const bentFinger = limb("bent", {
+  points: [[0, 0, 0], [0, 40, -2], [0, 64, -6], [0, 84, -12]],
+  bendToward: [0, 0, -1],
+  joints: ["mcp", "pip", "dip"],
+});
+bentFinger.pose({}).world("pip").origin;      // [0, 40, -2]
+bentFinger.pose({}).world("pip").y;           // [0, 0.986, -0.164]  along its own bone
+bentFinger.pose({}).report.tip;               // [0, 84, -12]
+bentFinger.pose({ bend: [0, 90, 0] }).report.tip;   // [0, 30, -46]
+const levelFinger = limb("level", {
+  points: [[0, 0, 0], [0, 40, -2], [0, 64, -6], [0, 84, -6]],
+  toward: [0, 1, 0], bendToward: [0, 0, -1],
+  joints: ["mcp", "pip", "dip"],
+});
+levelFinger.pose({}).frames["level.pip"];     // { parent: "level.mcp", at: [0, 40, -2] }
+```
+
+With no `toward`, each joint aims down its own bone and bends square to it. Give the
+limb a `toward` when the joints are off one line but should all bend square to that
+line, as a limb with offsets does: `levelFinger` is that limb, and its last bone runs
+along `toward`. Give a joint its own `toward` when its bone has no length (two joints at
+one point) or when it should turn about another line, such as a thumb's base turning
+about the line up the hand.
+
+- The last bone must lie along the last joint's aim, since the tip has no offset.
+- The base joint needs a `toward` (its own or the limb's) when its bone has no length.
+  A later joint with no length takes the previous joint's aim.
+- `mirror` reflects the points and every `toward` and `bendToward`.
+- `reach` needs a limb from points whose joints all have one aim, as a limb with a
+  `toward` does. Pose any other with `goals`. `goals`, `grip`, `place`, `flesh` and
+  handles work on any limb.
 
 ## Joints
 
@@ -94,8 +145,12 @@ An unknown field is an error. This prevents a typo from being ignored.
 - **`follow: { joint, ratio = 1, offset = 0 }`**: makes this joint a follower (a
   tendon coupling, URDF's mimic). Its value is `ratio × leader + offset`, where the
   leader's value has already been clamped. The follower then clamps to its own range.
-  `joint` must name an EARLIER joint of the same limb. A follower takes no pose value
-  of its own.
+  `joint` may name any other hinge of the same limb, earlier or later. A follower may
+  follow another follower. It then takes that follower's final value, and applies its
+  own ratio, offset and range to it. Every chain of followers must start at a driven
+  joint. A loop, where `a` follows `b` and `b` follows `a`, is an error. A follower takes
+  no pose value of its own, and a `bend` array skips it. On the joints `cup, mcp, pip`
+  with `cup` following `mcp`, `bend: [50, 10]` sets `mcp` to 50 and `pip` to 10.
 - **`offset: [x, y, z]`**: moves this joint off the straight line, in mm. The joint
   sits at the end of the previous segment (`[0, length, 0]` in the previous joint's
   frame) plus `offset`, in that same frame, so the offset turns with the previous
@@ -142,6 +197,9 @@ knuckle.pose({ bend: [90, 0, 0] }).world("pip").origin;   // [0, -0.5, -35.4]  t
 
 `reach` and `grip` solve through offsets. `reach` still needs its aiming joint at the
 base, so the joints up to and including it take no offset.
+
+A limb whose joints all have a place to be is easier to give as `points` ("A limb from
+joint points"): each joint's position, with no step to work out.
 
 ### Ball joints
 
@@ -252,8 +310,13 @@ the other: a pose cannot have both.
   ends bracket the target's distance. Couplings always hold.
 - Joints on other axes keep the values you give in `bend`.
 - Rules: the limb needs a driven bend joint, every segment before the pitch joint must
-  have length 0, and no joint may follow the pitch joint or the aiming spread joint.
+  have length 0, and no joint may follow the pitch joint or the aiming spread joint,
+  directly or through another follower.
   The `robot-finger` limb (mcp, pip, dip following pip) meets all three rules.
+- A limb from `points` must also have one aim for every joint: give the limb a `toward`,
+  and give no joint its own `toward` or `bendToward` that turns it from the joint before.
+  Its joints may sit off that line, as offsets do. Pose any other with
+  `goals: [{ at: "tip", position }]`.
 
 `report.reach` is `{ target, residual, status }`. `residual` is the distance from the
 tip to the target, in mm. `status` is one of:
@@ -307,13 +370,16 @@ index.pose({ reach: [-30, 160, -20] }).report;
   to joint), minus `clearance`, is ≤ 0.
 - **Closing.** Grip starts from the pose's own `bend`/`curl` values, clamped into range.
   Then each driven bend joint closes in turn, **base joint first**, toward its closing
-  end. Its followers move with it. A joint stops at the first contact (a scan, then a
-  40-step bisection, so it stops on the clear side). A joint that reaches its closing
+  end. Its followers move with it, and a follower that comes before it in the limb
+  moves its own segment too. A joint stops at the first contact on any segment it
+  moves (a scan, then a 40-step bisection, so it stops on the clear side). A joint that reaches its closing
   end with no contact stays there, with `touched: false`. Joints on other axes are not
   moved, and keep their `bend` values.
 - **Scan steps.** Each joint's scan has from 48 to 1024 even steps. The count is set so
   that, from one step to the next, no point of the limb beyond the joint moves more than
-  the smallest radius beyond the joint plus `clearance`, and never less than 0.25 mm. A
+  the smallest radius beyond the joint plus `clearance`, and never less than 0.25 mm. An
+  earlier follower of the closing joint moves too, but the count reads only the points
+  beyond the joint, so a point past that follower can move further in one step. A
   shape thinner than about the limb's radius can be stepped over only when a joint hits
   the 1024-step cap (a long limb, a wide range, or a thin limb).
 - **Stop.** The closing stops early when the first contact that a joint finds is on
@@ -333,8 +399,9 @@ index.pose({ reach: [-30, 160, -20] }).report;
     start value, and its `touched` is always false.
   - For a joint that closed (`skipped: false`), `touched` is read from the final pose,
     because a later joint can swing an earlier contact away. The joint is `touched` if
-    it made contact while it closed, and the limb from that joint to the tip is still
-    in contact.
+    it made contact while it closed, and the segments it moves are still in contact.
+    Those are the segments from that joint to the tip, and from an earlier follower of
+    it when it has one.
 
 ```js
 const rod = { kind: "cylinder", r: 8, h: 40, axis: "x", at: [-30, 130, -22] };
@@ -1047,6 +1114,11 @@ starts from the saved seed, and from the near side it can stop short of a far ta
 
 Numbers are rounded to 0.001.
 
+`partforge measure` and `measure()` also report `limbs` for every posed limb that
+`derive` returns. Read it to check each bone's length against the real thing, and the
+body's width and depth at each joint. The fields are in `docs/AUTHORING-PARTS.md`, beside
+the rest of the measure report.
+
 ## Edge cases
 
 - **A joint whose range excludes 0 is clamped even when you do not set it.** A joint
@@ -1097,12 +1169,21 @@ limb "thumb".bend.ball: a ball joint takes { bend?, spread?, twist? } or { rotat
 limb "thumb".bend.ball.bend: use rotate or bend/spread/twist, not both
 limb "thumb".joints[0].range: a ball joint takes cone (its largest swing, in degrees), not range
 limb "index": place: from must be "joint" or "rest"
+limb "a".points: replaces at, lengths and joint offsets — remove at
+limb "a".points: expected 3 entries (one per joint, then the tip), got 2
+limb "a".joints[1].offset: points already place this joint — remove offset
+limb "a".joints[0].toward: this joint's bone has no length, so it needs a toward (its own, or the limb's)
+limb "a".points: the last bone must lie along its joint's aim, and it is 26.6° off — move the tip onto that line, or give the last joint its own toward along the bone
+limb "a".joints[0].toward: a joint's own toward needs the limb's points
+limb "a".joints[1].bendToward: must not be parallel to this joint's aim
+limb "a": reach needs a straight limb (every joint with one aim) — pose this one with goals: [{ at: "tip", position: [x, y, z] }]
+limb "f".joints[0].follow.joint: a follows b, which follows a — one of them must be driven
 ```
 
 Other errors: `attach` without a `k`, `flesh` or `attach` on a limb with no segment
 longer than zero, `lengths`, `r` or a `bend` array of the wrong length, a `range` that is not
 `[min, max]` with `min ≤ max`, a zero-length `toward` or `bendToward`, a duplicate joint
-name, a `follow` that names an unknown or later joint, an `axis` that is not `"bend"`,
+name, a `follow` that names an unknown joint or the joint itself, an `axis` that is not `"bend"`,
 `"spread"`, `"twist"` or a non-zero vector, an unknown `parent` when frames are passed,
 a `cone` on a hinge, a `follow` on or of a ball joint, an unknown key in a ball value,
 `pose` frames that are not an object, a posed limb or an array of them, and an unknown
