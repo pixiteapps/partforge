@@ -199,12 +199,23 @@ with a different test for where a crease is.
    is kept if the field there is within `SHARP_TOL` cells of zero and it moved less than
    `SHARP_MAX_MOVE` cells. A kept point close to an edge end moves that end, as
    `CREASE_SNAP` does. Otherwise it splits the edge.
+   - **The density rule.** Each edge belongs to the leaf program of its lower end's
+     sparse-grid leaf. When more than `SHARP_DENSE` (0.2) of a program's edges are
+     candidates, none of that program's candidates is tried. This is decided before any
+     field read. A texture finer than the grid makes half its edges candidates, and its
+     cleaned mesh is already poor. The cost: a fine texture, or facets finer than the
+     grid, stay bevelled as they are today. A plain edge elsewhere in the same part is
+     still sharpened, because its leaves have their own program.
    - The move is Newton on the two sides of the crease. Each side is read a little way
      along its own plane, away from the other, with six points (central differences).
    - Newton stops when its step is under `1e-5` cells. The point is judged on that read.
-   - A candidate whose two sides agree within `SHARP_ANGLE` on its first three reads is
-     not sharp, and stops there. On the plate, bracket and cylinder cases no kept point
-     is lost by this. On a knurl it saves most of the reads.
+   - A candidate whose two sides agree within `SHARP_ANGLE` on each of its first three
+     reads, and whose Newton step on the third is not shorter than on the second, is not
+     sharp, and stops there. This rule can change the output. It was measured against the
+     same stage without it, at 0.6 and 1.0 mm, on the plate (which holds the fade case),
+     the bracket, the cylinder, the curved crease, the box, the cage post, and `offset`
+     −2 and +2. The output is the same, byte for byte, on all of them: no kept point is
+     lost.
    - Moves go first, then splits on edges with no moved end. A snap that cannot be made,
      or that fails its checks, falls back to a split.
    - An edge point carries the two planes of its Newton side gradients, through its own
@@ -226,6 +237,11 @@ with a different test for where a crease is.
      of the nearer end; a move of the far end. Each try is checked as an edge change is.
    - A corner vertex is reused only by an edge next to it. An edge that is not next to it
      is refused, so that no two vertices sit at one position.
+   - This is the only path known to make two vertices at one position. An edge point lies
+     within 1.5 cells of its own edge's middle, on that edge's own crease. Two edge points
+     meet only where two creases meet, at a corner, and there the corner pass merges its
+     estimates and refuses the case above. The tests count vertex pairs closer than
+     1e-6 mm on every case, and find none.
 4. Triangles with one, two or three split edges become two, three or four. A triangle
    left with a repeated vertex is dropped.
 5. **A second edge round** runs after corners, on edges with neither end an edge or corner
@@ -244,7 +260,11 @@ is drawn sharp.
 - It never moves a held, pinned or crease vertex.
 - A new vertex takes the owner, leaf and frame data that the crease cut gives its new
   vertices, so pose drag and the frame report are unchanged in kind.
-- The mesh stays closed and oriented. Edge splits alone guarantee that.
+- The mesh stays closed and oriented. Edge splits keep it so. The corner pass may drop a
+  triangle left with a repeated vertex, and the tests check that the mesh stays closed
+  and that no vertex is pinched.
+- It makes no flipped or sliver triangle, and leaves no more of either than the mesh it
+  was given. It does not repair the mesher's own.
 - JS and the native core give the same bytes. It is ported to the core in this phase.
 - It runs on every tree and both tiers. It has no option.
 
@@ -272,7 +292,8 @@ blend.
 **What the prototype did not do, and the real stage must.**
 
 - It had no end-snap and no untangle. It left 19 to 54 flipped triangles and 45 to 752
-  triangles thinner than 0.001 mm per body. The real stage must leave none of either.
+  triangles thinner than 0.001 mm per body. The real stage must make none of either, and
+  leave no more than the mesh it was given.
 - It took one tangent-plane step. That is exact for flat faces only. A crease between two
   curved surfaces needs the move onto the zero set.
 - It left a few stray marks where the plate's edge fades into the blend. There the true
@@ -286,24 +307,35 @@ blend.
 stage's internal values are `CORNER_MERGE` 0.05 cells, the Newton stop `1e-5` cells, three
 flat reads, and the flip test's two steps, `1e-4` and `0.005` cells.
 
+`SHARP_DENSE` is 0.2. It was chosen from the share of candidate edges per leaf program, at
+0.6 and 1.0 mm. Where real edges and corners are (the plate, bracket, cylinder, curved
+crease, box, cage post and `offset` −2), the share is 0.015 to 0.122. On the knurl it is
+0.314 at 0.6 mm and 0.51 at 1.0 mm. 0.2 leaves room on both sides. The share per single
+leaf did not separate the two: a leaf is 4 cells across, so one crease through it already
+makes 0.1 to 0.75 of its edges candidates, and knurl leaves range from 0.1 to 1.
+
 **Stage numbers.** JS, preview tier, 0.6 mm grid, milliseconds, median of 3 runs. "Before"
 is plan, evaluate, mesh and cleanup. Wall time is the one JS thread. CPU time is the whole
 process, so it also counts the garbage collector's helper threads.
 
 | Case | Before (wall) | Stage (wall) | Stage / before | Before (CPU) | Stage (CPU) | Stage / before |
 | --- | --- | --- | --- | --- | --- | --- |
-| Boss near a plate's edge | 1184 | 195 | 16.5% | 1286 | 306 | 23.8% |
-| Boss in an L bracket's inside corner | 1123 | 201 | 17.9% | 1198 | 344 | 28.7% |
-| Box boss on a cylinder's side | 624 | 82 | 13.2% | 685 | 123 | 18.0% |
-| Knurled cylinder (`displace`) | 1322 | 2657 | 201% | 1403 | 2921 | 208% |
+| Boss near a plate's edge | 1254 | 268 | 21.4% | 1349 | 452 | 33.5% |
+| Boss in an L bracket's inside corner | 1197 | 196 | 16.3% | 1265 | 302 | 23.9% |
+| Box boss on a cylinder's side | 641 | 82 | 12.7% | 700 | 109 | 15.6% |
+| Knurled cylinder (`displace`) | 1322 | 55 | 4.2% | 1364 | 109 | 8.0% |
 
 - Before this tuning the stage took 816, 655, 323 and 15607 ms of wall time (68%, 59%,
-  50% and 1178%). Fewer field reads per point, no second solve in the second round, and
-  array work without copies made the difference.
-- The target was 10%. It is not met. About half of the time is field reads: a solid
-  leaf's distance is a BVH query. The other half is the stage's own bookkeeping.
-- A knurl at 0.6 mm has 38,936 candidate edges, about half of all its edges. About 11,000
-  become sharp points. Its field reads alone cost more than the stages before it.
+  50% and 1178%). Fewer field reads per point, no second solve in the second round,
+  array work without copies, and the density rule made the difference.
+- Two more runs of the plate gave 20.4% and 19.8%. The flat rule's added condition (a
+  step that is not getting shorter) costs about 40 ms of that: some candidates read on
+  where they stopped before, with the same output.
+- The target was 10%. 13% to 21% is accepted for ordinary cases. About half of the time
+  is field reads (a solid leaf's distance is a BVH query); the other half is the stage's
+  own bookkeeping.
+- The knurl's 38,936 candidate edges (about half of all its edges) are all skipped by the
+  density rule. What is left is one pass over the edges.
 
 **Hard cases.** Tests in `test/implicit-sharpen.test.js`, 0.6 mm grid unless named.
 
@@ -312,9 +344,11 @@ process, so it also counts the garbage collector's helper threads.
   at one of them is 0.78 mm (limit 1.8). A small zigzag of about one cell stays where the
   box boss's top edge meets the blend on the cylinder case. It was there before this
   tuning.
-- A knurl: closed, no flipped or sliver triangle made. Triangles grow by 22% (limit 40%).
-  The cleaned mesh already has 1,084 flipped and 3 sliver triangles by the test's
-  measure; after the stage there are 1,039 and 3.
+- A knurl: the density rule skips all its candidates, so it gets no sharp point and stays
+  as the mesher left it. The stage takes under 25% of the stages before it (about 4%). The
+  cleaned mesh already has 1,084 flipped and 3 sliver triangles by the test's measure.
+- A knurled cylinder and a plain box far from it, in one union: the box gets its 8
+  corners and sharp edges, and the knurl none.
 - A post blended into a subdivision body (`cage-post`): 163 sharp points, all within
   0.002 mm of the post's bottom rim. None on the body.
 - `offset` `d: -2` on a box: 8 corners, each on the shrunk box's corner. `d: 2`: no sharp

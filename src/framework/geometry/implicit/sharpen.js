@@ -7,12 +7,15 @@
 //   1. A candidate is a mesh edge whose two ends (neither pinned nor a crease point) have field
 //      normals more than SHARP_ANGLE_COS apart. Its start is the point nearest the edge's middle
 //      on both ends' tangent planes. A crease point's normal is a bisector, not a field normal.
+//      Each edge belongs to the leaf program of its lower end's sparse-grid leaf. When a
+//      program's candidates are more than SHARP_DENSE of its edges (a texture or facets finer
+//      than the grid), none of them is tried.
 //   2. That point is moved onto the field's zero set and the crease of its two sides: Newton,
 //      NEWTON_STEPS, within the plane holding the edge and the sum of the two normals. Each side
 //      is read SIDE·edge along its own plane, away from the other, so a step sees the two smooth
 //      surfaces and not the kink between them. Newton stops at a step under CONVERGED·edge; a
-//      candidate whose sides agree within the angle on its first FLAT_READS reads stops as not
-//      sharp.
+//      candidate whose sides agree within the angle on its first FLAT_READS reads, while its
+//      step is not getting shorter, stops as not sharp.
 //   3. It is kept if the field there is within SHARP_TOL·edge of zero, it moved at most
 //      SHARP_MAX_MOVE·edge from the edge's middle, and the gradients just to each side still
 //      differ by more than the angle. The last test refuses a point on a thin wall's other face
@@ -34,9 +37,9 @@
 //      zero set. Then, in order: an end within CORNER_MERGE·edge of it is moved onto it; else the
 //      edge is split there (at an earlier corner vertex there, which must be next to the edge:
 //      else the candidate is refused, so no two vertices share a position); else its nearer
-//      end, then its other end, is moved there. A moved end takes the
-//      corner's normal; a held, pinned or crease vertex never moves. Each try is checked as step
-//      4 checks. A triangle left with a repeated vertex is dropped.
+//      end, then its other end, is moved there. A moved end takes the corner's normal; a held,
+//      pinned or crease vertex never moves. Each try is checked as step 4 checks. A triangle
+//      left with a repeated vertex is dropped.
 //   7. Steps 4 and 5 once more, on edges with neither end an edge or corner point: a corner in
 //      place lets a split through that the bevel beside it refused. The candidates are step 3's
 //      kept ones; their ends did not change, so they are not solved again.
@@ -57,6 +60,12 @@ export const SHARP_MAX_MOVE = 1.5;
 export const SHARP_SNAP = 0.15;
 /** The corner pass's least |determinant| of three unit plane normals. */
 export const SHARP_CORNER_DET = 0.05;
+/**
+ * The density rule's share: a leaf program whose candidate edges are more than this share of its
+ * edges is skipped. Measured (design §4): at most 0.122 where real edges are, at least 0.314 on a
+ * knurl.
+ */
+export const SHARP_DENSE = 0.2;
 
 const NEWTON_STEPS = 10, STEP_CAP = 0.25, SIDE = 0.02;
 /** Difference steps (cells) and the least altitude (mm), shared with sharpen-mesh.js. */
@@ -133,6 +142,7 @@ function newtonStep(c, r, edge) {
   }
   const len = hypot3(dx[0], dx[1], dx[2]);
   if (!Number.isFinite(len)) return false;
+  c.lastLen = c.len ?? Infinity; c.len = len;
   const done = len <= CONVERGED * edge, sc = len > STEP_CAP * edge ? (STEP_CAP * edge) / len : 1;
   if (!done) for (let k = 0; k < 3; k++) c.p[k] += dx[k] * sc;
   const uA = unit(A.g), uB = unit(B.g);
@@ -144,10 +154,11 @@ function newtonStep(c, r, edge) {
 // batch for all live candidates. A candidate is evaluated with its first end's leaf program, or its
 // other end's when the first gives a non-finite value at its start (read again with that one). A
 // candidate whose step is under CONVERGED·edge stops and is judged on that read; the rest are
-// judged on one more read after NEWTON_STEPS. One whose sides agree within the angle on its first
-// FLAT_READS reads stops there as not sharp (on the plate, bracket and cylinder cases no kept point
-// is lost by this; on a knurl it saves most of the reads). Only the first read and the judge read
-// the point itself. Sets `c.solved` on each that passes.
+// judged on one more read after NEWTON_STEPS. One whose sides agree within the angle on each of
+// its first FLAT_READS reads, and whose Newton step on the last of them is not shorter than the
+// one before, stops there as not sharp: it is not closing on a crease. This changes no kept point
+// on any measured case (design §4). Only the first read and the judge read the point itself. Sets
+// `c.solved` on each that passes.
 function solve(store, cand, VL0, edge, st) {
   let live = cand.filter((c) => c.ok);
   const judged = [], reads = [];
@@ -165,10 +176,13 @@ function solve(store, cand, VL0, edge, st) {
     }
     live = live.filter((c, q) => {
       if (it < FLAT_READS && agree(rs[q])) c.flat = (c.flat ?? 0) + 1;
-      if (c.flat === FLAT_READS) { c.ok = false; judged.push(c); reads.push(null); return false; }
       const s = c.w ? newtonStep(c, rs[q], edge) : false;
       if (!s) { c.ok = false; return false; }
       if (s === "done") { judged.push(c); reads.push(rs[q]); return false; }
+      // Flat on every one of its first FLAT_READS reads, and Newton's step is not getting shorter.
+      if (it === FLAT_READS - 1 && c.flat === FLAT_READS && !(c.len < c.lastLen)) {
+        c.ok = false; judged.push(c); reads.push(null); return false;
+      }
       return true;
     });
   }
@@ -204,7 +218,9 @@ function solve(store, cand, VL0, edge, st) {
  * one of the two, its normal unchanged so its plane stays). A mesh that already has `sharp` keeps
  * it, and its edge and corner points are no candidate's end (step 7 runs on such a mesh). A mesh
  * with no candidate edge is returned as the same object. `stats`, when given, is filled with the
- * candidates' counts by outcome, and step 7's in `stats.again`.
+ * candidates' counts by outcome (`dense`: skipped by the density rule), and step 7's in
+ * `stats.again`. Step 7 solves nothing, so there `candidates` is the retried count and the solve
+ * outcomes (`dense`, `offField`, `tooFar`, `notSharp`, `unsolved`) are always 0.
  */
 export function sharpenMesh(store, mesh, { corners = true, stats = null } = {}) {
   return sharpenRound(store, mesh, corners, stats ?? {}, null);
@@ -220,15 +236,23 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const pinned = (v) => (mesh.pinned ? mesh.pinned[v] : 0), creased = (v) => (mesh.crease ? mesh.crease[v] : 0);
   const prior = (v) => (mesh.sharp ? mesh.sharp[v] : 0);
   const normal = (v) => [N0[3 * v], N0[3 * v + 1], N0[3 * v + 2]], pos = (v) => [P0[3 * v], P0[3 * v + 1], P0[3 * v + 2]];
-  for (const name of ["candidates", "split", "moved", "offField", "tooFar", "notSharp", "unsolved"]) st[name] = 0;
+  for (const name of ["candidates", "dense", "split", "moved", "offField", "tooFar", "notSharp", "unsolved"]) st[name] = 0;
   for (const name of ["snapBlocked", "endMoved", "flip", "sliver", "fieldFlip"]) st[name] = 0;
   for (const name of ["cornerCandidates", "corners", "cornerSplits", "cornerDet", "cornerFar", "cornerOffField"]) st[name] = 0;
   for (const name of ["cornerMoves", "cornerFlip", "cornerSliver", "cornerFieldFlip"]) st[name] = 0;
 
   // 1. The candidate edges, in the order the triangle list first names them.
-  const adj = adjacency(T, nv0), cand = [];
+  const adj = adjacency(T, nv0);
+  let cand = [];
   // PORTED: lo·nv0 + hi is exact in a JS double (below 2^53); the core needs a 64-bit integer key.
   const again = retry ? new Map(retry.map((c) => [c.a * nv0 + c.b, c])) : null;
+  // The density rule: each edge belongs to the leaf program of its lower end's sparse-grid leaf.
+  const nProg = 1 + store.leaves.reduce((m, L) => (L.progIndex > m ? L.progIndex : m), -1);
+  const progOf = (v) => store.leaves[VL0[v]].progIndex, progEdges = new Int32Array(nProg), progCand = new Int32Array(nProg);
+  if (!again) for (let i = 0; i < T.length; i++) {
+    const a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
+    if (a < b) progEdges[progOf(a)]++;   // a closed mesh names each edge once in each direction
+  }
   for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
     const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
@@ -242,6 +266,7 @@ function sharpenRound(store, mesh, corners, st, retry) {
     const x = 3 * lo, y = 3 * hi, ax = N0[x], ay = N0[x + 1], az = N0[x + 2], bx = N0[y], by = N0[y + 1], bz = N0[y + 2];
     const lA = hypot3(ax, ay, az), lB = hypot3(bx, by, bz);
     if (!(lA > 0.5 && lB > 0.5) || ax * bx + ay * by + az * bz >= SHARP_ANGLE_COS * lA * lB || !adj.first(t / 3, lo, hi)) continue;
+    progCand[progOf(lo)]++;
     const nA = normal(lo), nB = normal(hi);
     const uA = nA.map((x) => x / lA), uB = nB.map((x) => x / lB), pA = pos(lo), pB = pos(hi);
     const m = [0, 1, 2].map((i) => (pA[i] + pB[i]) / 2), ab = [0, 1, 2].map((i) => pB[i] - pA[i]);
@@ -256,6 +281,13 @@ function sharpenRound(store, mesh, corners, st, retry) {
     const s = [0, 1, 2].map((i) => uA[i] + uB[i]);
     const pn = unit([ab[1] * s[2] - ab[2] * s[1], ab[2] * s[0] - ab[0] * s[2], ab[0] * s[1] - ab[1] * s[0]]);
     cand.push({ a: lo, b: hi, m, p, uA, uB, sigma: conv > 0 ? 1 : -1, ok: conv !== 0, pn, leaf: VL0[lo], ev: lo });
+  }
+  if (!again) {
+    // A program whose candidates are more than SHARP_DENSE of its edges is a texture or facets
+    // finer than the grid: none of its candidates is tried.
+    const dense = (c) => progCand[progOf(c.a)] > SHARP_DENSE * progEdges[progOf(c.a)];
+    st.dense = cand.filter(dense).length;
+    if (st.dense) cand = cand.filter((c) => !dense(c));
   }
   if (!cand.length) return mesh;
   st.candidates = cand.length;
@@ -314,21 +346,24 @@ function sharpenRound(store, mesh, corners, st, retry) {
 // The kept candidates (c.ok), committed in order: every move, then every split on an edge with
 // neither end moved. Returns the positions, normals, splits, the
 // `sharp` and `sharpPlanes` tables, the split candidates in vertex order (`added`), and for each
-// changed triangle the candidates that changed it (`touched`).
+// changed triangle the candidates that changed it (`touched`) and what each did (`how`: the moved
+// end, or −1 for a split).
 function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh }) {
   const kept = cand.filter((c) => c.ok), cap = nv0 + kept.length;
   // Room for a vertex per kept candidate; `nv` is the count so far.
   const P = new Float64Array(3 * cap), N = new Float64Array(3 * cap), splitOf = new Map(), moved = new Uint8Array(nv0);
   P.set(P0); N.set(N0);
   let nv = nv0;
-  const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map();
+  const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map(), how = new Map();
   if (mesh.sharp) { sharp.set(mesh.sharp); planes.set(mesh.sharpPlanes); }
   // Each edge point's two plane normals (the side gradients Newton ended on); 0 otherwise.
   const planeN = new Float64Array(6 * cap);
   const setPlanes = (v, c) => { for (let i = 0; i < 3; i++) { planeN[6 * v + i] = c.uA[i]; planeN[6 * v + 3 + i] = c.uB[i]; } };
   for (const k of ["split", "moved", "endMoved", "snapBlocked", "flip", "sliver"]) st[k] = 0;
   const check = (tris) => checkTris(T, tris, splitOf, ekey, P, N);
-  const touch = (tris, c) => { for (const t of tris) (touched.get(t) ?? touched.set(t, []).get(t)).push(c); };
+  const touch = (tris, c, v) => {
+    for (const t of tris) { (touched.get(t) ?? touched.set(t, []).get(t)).push(c); (how.get(t) ?? how.set(t, []).get(t)).push(v); }
+  };
   // Which end each kept candidate moves (−1: it splits), from the original positions.
   const endOf = (c) => {
     const ax = P0[3 * c.a], ay = P0[3 * c.a + 1], az = P0[3 * c.a + 2];
@@ -350,7 +385,7 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh }) {
     if (bad) { P[3 * end] = was[0]; P[3 * end + 1] = was[1]; P[3 * end + 2] = was[2]; st[bad]++; ends[q] = -1; return; }
     // The moved end keeps its normal: the crease point is on its own plane too.
     moved[end] = 1; sharp[end] = 1; planes[2 * end] = c.a; planes[2 * end + 1] = c.b; setPlanes(end, c); st.moved++;
-    touch(fan.get(end), c);
+    touch(fan.get(end), c, end);
   });
   // Then splits, on edges with neither end moved.
   kept.forEach((c, q) => {
@@ -363,9 +398,9 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh }) {
     const bad = check(byEdge.get(key));
     if (bad) { splitOf.delete(key); st[bad]++; return; }   // v is not counted: the next split writes over it
     nv++; sharp[v] = 1; planes[2 * v] = c.a; planes[2 * v + 1] = c.b; setPlanes(v, c); added.push(c);
-    touch(byEdge.get(key), c);
+    touch(byEdge.get(key), c, -1);
     st.split++;
   });
   return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, sharp: sharp.subarray(0, nv), planes: planes.subarray(0, 2 * nv),
-    planeN: planeN.subarray(0, 6 * nv), added, touched };
+    planeN: planeN.subarray(0, 6 * nv), added, touched, how };
 }

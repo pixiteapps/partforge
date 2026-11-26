@@ -41,6 +41,7 @@ export function adjacency(T, nv) {
     get: (key) => {
       let r = memo.get(key);
       if (r) return r;
+      // PORTED: a 64-bit integer key and integer division in the core.
       const lo = Math.floor(key / nv), hi = key - lo * nv;
       r = [];
       for (let i = off[lo]; i < off[lo + 1]; i++) if (holds(tri[i], hi)) r.push(tri[i]);
@@ -96,19 +97,20 @@ function triNormal(P, i, j, k) {
   return longest > 0 && hypot3(n[0], n[1], n[2]) >= MIN_ALTITUDE * longest ? n : null;
 }
 
-// The changed triangles (ids in T) one of whose parts faces against the field at its centre: the
-// field falls from FLIP_NEAR·edge behind the part to FLIP_NEAR·edge in front of it, or from
+// The changed triangles (ids in T) one of whose parts faces against the field at its centre:
+// the field falls from FLIP_NEAR·edge behind the part to FLIP_NEAR·edge in front of it, or from
 // DIFF·edge behind to DIFF·edge in front, read with its first corner's leaf program. The near
 // pair sees a centre that sits on a crease of a rough field (a knurl), where a face just past
-// the crease runs the other way; the far pair sees past noise in the field. With `memo` (a Map kept across a commit loop's rounds), a triangle
-// changed by the same candidates as in an earlier round has the same final form and is not read
-// again.
+// the crease runs the other way; the far pair sees past noise in the field.
+// With `memo` (a Map kept across a commit loop's rounds) and `S.how`, a triangle changed by the
+// same candidates, each in the same way (`S.how`: the end it moved, or −1 for a split), as in an
+// earlier round has the same final form and is not read again.
 export function fieldFlips(store, S, tris, { VL0, T, ekey, edge }, memo = null) {
   const e = DIFF * edge, en = FLIP_NEAR * edge, owner = [], pts = [], lf = [], fresh = [], known = new Set();
   const same = (x, y) => x.length === y.length && x.every((c, i) => c === y[i]);
   for (const t of tris) {
-    const by = S.touched.get(t), m = memo?.get(t);
-    if (m && same(m.by, by)) { if (m.bad) known.add(t); continue; }
+    const by = S.touched.get(t), m = S.how ? memo?.get(t) : null;
+    if (m && same(m.by, by) && same(m.how, S.how.get(t))) { if (m.bad) known.add(t); continue; }
     fresh.push(t);
     const out = [], P = S.P;
     subdivide(T, t, S.splitOf, ekey, out);
@@ -125,6 +127,6 @@ export function fieldFlips(store, S, tris, { VL0, T, ekey, edge }, memo = null) 
   }
   const d = evalField(store, Float64Array.from(pts), lf), flipped = new Set();
   owner.forEach((t, q) => { if (d[4 * q] - d[4 * q + 1] < 0 || d[4 * q + 2] - d[4 * q + 3] < 0) flipped.add(t); });
-  if (memo) for (const t of fresh) memo.set(t, { by: S.touched.get(t).slice(), bad: flipped.has(t) });
+  if (memo && S.how) for (const t of fresh) memo.set(t, { by: S.touched.get(t).slice(), how: S.how.get(t).slice(), bad: flipped.has(t) });
   return tris.filter((t) => known.has(t) || flipped.has(t));
 }

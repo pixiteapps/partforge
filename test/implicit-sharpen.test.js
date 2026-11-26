@@ -17,6 +17,7 @@ import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js
 import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field-build.js";
 import { meshDistance } from "../src/framework/geometry/implicit/mesh-field.js";
 import { sharpenMesh, SHARP_TOL } from "../src/framework/geometry/implicit/sharpen.js";
+import { fieldFlips } from "../src/framework/geometry/implicit/sharpen-mesh.js";
 import { jsStages, meshChecks, meshFieldOf } from "./helpers/implicit-stages.js";
 
 const GRIDS = [0.6, 1.0];
@@ -320,10 +321,26 @@ describe("sharpenMesh, hard cases", () => {
     expect(longest).toBeLessThanOrEqual(3 * edge);
   }, 120_000);
 
-  test("knurl: a displaced cylinder meshes closed and sound, with under 40% more triangles (grid 0.6)", () => {
-    const r = run(knurl(), 0.6);
+  // The density rule: a texture finer than the grid makes half its edges candidates. Its leaf
+  // program is skipped whole, so the knurl stays as the mesher left it, and the stage costs little.
+  test("knurl: a displaced cylinder is too dense to sharpen; the stage skips it cheaply (grid 0.6)", () => {
+    const edge = 0.6, spec = { root: knurl() };
+    jsStages(spec, edge, { tier: "preview" });   // warm: the solid's mesh field and the JIT
+    const t0 = performance.now(), { store, cleaned } = jsStages(spec, edge, { tier: "preview" }), t1 = performance.now();
+    const stats = {}, mesh = sharpenMesh(store, cleaned, { stats }), t2 = performance.now();
+    expect(stats.dense).toBeGreaterThan(0);
+    expect(mesh.sharp ? sharpVerts(mesh).length : 0).toBeLessThanOrEqual(0.001 * cleaned.positions.length / 3);
+    expectSound({ cleaned, mesh, field: implicitDistance(spec.root, { meshFieldOf }) });
+    expect(mesh.indices.length).toBeLessThanOrEqual(1.4 * cleaned.indices.length);
+    expect(t2 - t1).toBeLessThan(0.25 * (t1 - t0));
+  }, 240_000);
+
+  test("dense: a knurled solid does not stop a plain box edge far from it being sharpened (grid 0.6)", () => {
+    const root = { kind: "union", children: [knurl(), leaf(k.box({ min: [30, -10, 0], max: [50, 10, 10] }))] }, r = run(root, 0.6);
     expectSound(r);
-    expect(r.mesh.indices.length).toBeLessThanOrEqual(1.4 * r.cleaned.indices.length);
+    expect(r.stats.dense).toBeGreaterThan(0);
+    expectCorners(r.mesh, boxCorners([[30, -10, 0], [50, 10, 10]]));
+    for (const v of sharpVerts(r.mesh)) expect(vert(r.mesh, v)[0]).toBeGreaterThan(29);
   }, 240_000);
 
   test("cage: on a subdivision body, sharp points only at the post's bottom rim (grid 0.6)", () => {
@@ -361,4 +378,25 @@ describe("sharpenMesh, hard cases", () => {
       expectSolid(r.mesh);
     }, 240_000);
   }
+});
+
+describe("sharpenMesh, the flip memo", () => {
+  // Two candidates: dropping the first (for a field flip) turns the second's move into a split.
+  // The second still touches the triangle, but its final form changed, so it must be read again.
+  test("a triangle touched by the same candidate in a different way is read again", () => {
+    const { store, cleaned } = jsStages({ root: { kind: "box", size: [40, 30, 6] } }, 1.0, { tier: "preview" });
+    let near = 0;
+    for (let v = 0; v < cleaned.positions.length / 3; v++) if (dist(vert(cleaned, v), [0, 0, 3]) < dist(vert(cleaned, near), [0, 0, 3])) near = v;
+    const VL0 = new Int32Array(4).fill(cleaned.vertLeaf[near]), T = [0, 1, 2], ekey = (a, b) => (a < b ? 4 * a + b : 4 * b + a);
+    const c = {}, memo = new Map(), opts = { VL0, T, ekey, edge: 1.0 };
+    // Round r: c moved end 0; the triangle lies on the top face, facing up.
+    const moved = { P: [0, 0, 3, 1, 0, 3, 0, 1, 3], splitOf: new Map(), touched: new Map([[0, [c]]]), how: new Map([[0, [0]]]) };
+    expect(fieldFlips(store, moved, [0], opts, memo)).toEqual([]);
+    // Round r + 1: c splits edge (1, 2) instead, at a point that folds one part over.
+    const split = { P: [0, 0, 3, 1, 0, 3, 0, 1, 3, -1, -1, 3], splitOf: new Map([[ekey(1, 2), 3]]), touched: new Map([[0, [c]]]),
+      how: new Map([[0, [-1]]]) };
+    expect(fieldFlips(store, split, [0], opts, memo)).toEqual([0]);
+    // The same change again is taken from the memo.
+    expect(fieldFlips(store, { ...split, P: [] }, [0], opts, memo)).toEqual([0]);
+  }, 60_000);
 });
