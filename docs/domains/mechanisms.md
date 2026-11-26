@@ -209,15 +209,40 @@ What to read first:
 - **`drumWidth`** against the drum you drew. The rope is fixed to the drum at its middle,
   so the wound band shifts along the drum as it turns; this is the band's whole reach.
 
-`lineInfo()` returns the rope's centreline as points (`kind: "partforge.lines"`, the line
-named `rope`). Nothing draws it yet.
-
 The helper models one rope across parallel axes. The pulley's two grooves sit either side
 of its own centre, as far apart as the rope's two ends on the drum at rest: a pulley level
 with the drum has no fleet at rest, and one set along the axis from it leans both spans at
 every angle. Members whose rope circles overlap across the axis throw, and so does a
 member named after a report field (`length`, `span`, `fleet`, `runOff`, `required`, `ok`,
 `inside`). It does not model friction losses, creep, or a rope that crosses another joint.
+
+### Checking the rope over the motion: `lines`
+
+The report reads one pose. To check the whole travel, name the rope in the part's `lines`
+block and sweep the drive. `lineInfo()` returns the rope's centreline as points
+(`kind: "partforge.lines"`, the line named `rope`), and measure reads it at the pose and at
+every sample of each declared sweep. From `src/parts/capstan-joint.js`:
+
+```js
+lines: { rope: { on: "drive" } },
+probes: { rope: (k, p, d) => d.drive.report() },
+verify: {
+  sweeps: { drive: { param: "motorAngle" } },
+  expect: { _view: { lineDrift: "<=0.2", sweepContacts: 0 } },
+},
+```
+
+```
+sweeps: drive clear (min 1.00mm drum×pulley), rope drift 0.03mm
+lines: rope 286.51mm, bend 10.0
+```
+
+`lineDrift` is the longest rope length less the shortest over the sweep, so it fails a
+pulley set off its pivot or a termination off the drum's axis. The sweep row's `lines`
+reading names where the extremes are (`lengthMinAt`, `lengthMaxAt`): tension the rope at the
+shortest. `lineBend` gates the bend ratio against a rope maker's minimum. Lint warns
+`line-unswept` for a rope that moves with a param no sweep covers. The full reference is
+`docs/AUTHORING-PARTS.md`, "Lines". Nothing draws the rope yet.
 
 ## `rack({ pinion, direction, name? })`
 

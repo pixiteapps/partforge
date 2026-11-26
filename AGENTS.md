@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has twenty-nine: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has thirty: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -80,7 +80,11 @@ crank, all writing one `wrap: true` `driveAngle`, and a `spin` animation that ne
 rebuilds, swept for contact and gated, its meshing and bearing pairs in `collisions.allow`; `gearbox.html`), `drawer-box.js` (shape and motion handles on one part - a
 corner `plane` handle writing width and depth, which rebuilds, and an `axis` handle per
 drawer, which only re-places it - each opening a percentage of its `depth - 10` travel, so
-no value of it is dead, and each drawer's handle swept and gated; `drawer-box.html`, dev-only and not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
+no value of it is dead, and each drawer's handle swept and gated; `drawer-box.html`, dev-only and not in `rollupOptions.input`), `capstan-joint.js` (the lines reference part and the
+worked example of the capstan section of `docs/domains/mechanisms.md` - a motor drum and an
+output pulley placed by one `capstan` in `derive`, the rope declared in `lines`, a
+`motorAngle` sweep gated by `lineDrift` and `sweepContacts`, the rope report in a probe;
+no demo page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -795,7 +799,19 @@ the installed package, so let the publish finish before bumping the dep there.
   win and an unknown material throws). Pure and worker-safe: it imports `geometry/errors.js`
   and nothing else, never a domain (`test/lines-taut.test.js`). Its one caller so far is
   `domains/mechanisms/capstan.js`. A line is recognised by plain data,
-  `lineInfo().kind === "partforge.lines"`; nothing in core reads it yet (phases 2 and 3).
+  `lineInfo().kind === "partforge.lines"`. Phase 2 reads it: `read.js` (`normalizeLines`,
+  `linesInView`, `readLine`; pure, imports only the error type) reads a part's top-level
+  `lines` block (`{ <name>: { on, line?, views? } }`, `on` a derive key), and
+  `oracle/lines.js` reads each declared line derive-only - at the pose for `measure().lines`
+  (the CLI's `lines:` line, `bin/sweep-text.js`'s `lineText`), and at `LINE_SWEEP_SAMPLES` (33)
+  values along each sweep, each interior extreme refined, for the row's `lines` (`lengthMin`/
+  `lengthMinAt`, `lengthMax`/`lengthMaxAt`, `drift`, `bendMin`; `linesSampled: true`). The
+  readings ignore the sweep deadline. Two core `VIEW_METRICS` gate them: `lineDrift` (the
+  largest drift; withheld when a line cannot be read along a sweep, and on a quick lap) and
+  `lineBend` (the smallest bend ratio; withheld when any line cannot be read). Lint:
+  `line-bad-source` (an error) and `line-unswept` (a warning only - an unswept line never
+  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3 (drawing the line, `lineContacts`)
+  is still to come.
 - **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
   outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
   `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics

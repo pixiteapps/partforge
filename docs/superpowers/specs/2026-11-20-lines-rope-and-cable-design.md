@@ -1,6 +1,6 @@
 # Lines: capstan rope and cable routing on one core
 
-Date: 2026-11-20. Status: design; phase 1 approved, decisions 1-3 made.
+Date: 2026-11-20. Status: design; phases 1 and 2 built, decisions 1-4 and 6 made.
 Repos: `partforge` (the core, the helpers, the checks), `partforge-cloud` (prompt
 corpus regenerated after publish; evals).
 
@@ -273,6 +273,25 @@ Phase 1 as built (0.205.0): `lines/taut.js` (open and closed lines, parallel axe
 part `src/parts/capstan-joint.js`, and a public `partforge/lines` entry for
 `line()` (the solver is internal until a second caller needs it).
 
+Phase 2 as built (0.206.0): the top-level `lines` block (`{ <name>: { on, line?, views? } }`,
+read by `lines/read.js`); `measure().lines` at the pose and each sweep row's `lines` with
+`linesSampled: true` (`oracle/lines.js`), and the CLI's `lines:` line and `, rope drift …`
+on the sweep line; the `lineDrift` and `lineBend` gates in core `VIEW_METRICS`; lint
+`line-bad-source` and `line-unswept`; the reference part `src/parts/capstan-joint.js`
+(no demo page); ERROR-PATTERNS entries and an AUTHORING-PARTS "Lines" section. Deviations
+from section 4:
+
+- A taut reading's `drift` is the range over the motion, `lengthMax − lengthMin`, and the
+  row names where each extreme is (`lengthMinAt`, `lengthMaxAt`) instead of one `driftAt`.
+  The reading is 33 even samples, each interior extreme refined by golden-section search.
+- A line source must give an exact `length` in `lineInfo()`; a line with none is an
+  unreadable line, never a length summed from the sampled points.
+- `lineBend` is withheld when any declared line cannot be read, at the pose or along a sweep,
+  whatever the other lines read; `lineDrift` is withheld when a line cannot be read along a
+  sweep, and on a quick lap of a view with lines.
+- Line readings call `derive` only, so they run to the end of the motion outside the sweep's
+  deadline: a row the clock stopped still carries its full `lines` readings.
+
 Phase 1 is useful by itself: it answers the capstan joint's design questions at one
 pose and, through a probe sampled by the part, over a range.
 
@@ -309,8 +328,12 @@ pose and, through a probe sampled by the part, over a range.
 4. **Where the gates live.** Core `VIEW_METRICS` (recommended, since the sweep
    engine is core and reads the lines) or wiring `oracle.metrics` (which today
    merge into sub-part metrics only, so that route needs a registry change first).
+   *Taken as recommended in phase 2 (0.206.0): `lineDrift` and `lineBend` are core
+   `VIEW_METRICS`.*
 5. **Capstan in mechanisms, cable in a new domain** (recommended), or one
    `partforge/lines` domain holding both.
 6. **Withholding the verdict.** Should a line riding a moving frame with no sweep
    hold `verify.ok` at null, as an unswept motion does, or only warn? Recommended:
    warn in phase 2, revisit after the capstan joint has been through it.
+   *Taken as recommended in phase 2 (0.206.0): `line-unswept` is a lint warning and never
+   withholds `verify.ok`.*

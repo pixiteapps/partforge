@@ -122,6 +122,48 @@
     "declared": 1,
     "evaluated": 1
   },
+  "capstan-joint.js#assembly": {
+    "ok": true,
+    "view": "assembly",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "motorAngle": 0
+        },
+        "checks": [
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "lineDrift",
+            "kind": "gate",
+            "expr": "<=0.2",
+            "actual": 0.0302138975,
+            "status": "pass",
+            "pass": true,
+            "message": "0.03021389745020997 <= 0.2"
+          },
+          {
+            "scope": "view",
+            "subpart": null,
+            "metric": "sweepContacts",
+            "kind": "gate",
+            "expr": "0",
+            "actual": 0,
+            "status": "pass",
+            "pass": true,
+            "message": "0 == 0"
+          }
+        ]
+      }
+    ],
+    "failures": [],
+    "warnings": [],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 2,
+    "evaluated": 2
+  },
   "demo.js#spacer": {
     "ok": true,
     "view": "spacer",
