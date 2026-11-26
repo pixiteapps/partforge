@@ -28,10 +28,11 @@
 //      the three meet, if their determinant is at least SHARP_CORNER_DET and the point is within
 //      SHARP_MAX_MOVE·edge of the edge's middle. Candidates within CORNER_MERGE·edge of each
 //      other are one corner, at the best one's point. It is kept within SHARP_TOL·edge of the
-//      zero set. Then, in order: an end already there is the corner; else the edge is split
-//      there; else its nearer end, then its other end, is moved there (never a held, pinned or
-//      crease vertex). Each try is checked as step 4 checks. A triangle left with a repeated
-//      vertex is dropped.
+//      zero set. Then, in order: an end within CORNER_MERGE·edge of it is moved onto it; else the
+//      edge is split there (at an earlier corner vertex there only when that vertex is next to
+//      the edge); else its nearer end, then its other end, is moved there. A moved end takes the
+//      corner's normal; a held, pinned or crease vertex never moves. Each try is checked as step
+//      4 checks. A triangle left with a repeated vertex is dropped.
 //   7. Steps 1 to 5 once more, on edges with neither end an edge or corner point: a corner in
 //      place lets a split through that the bevel beside it refused.
 // Pure edge splits on a closed manifold keep it closed and oriented; a corner point shared by
@@ -391,7 +392,8 @@ function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, 
     const p = [0, 1, 2].map((i) => (set[0].d * c12[i] + set[1].d * c20[i] + set[2].d * c01[i]) / det);
     const mx = (P[3 * lo] + P[3 * hi]) / 2 - p[0], my = (P[3 * lo + 1] + P[3 * hi + 1]) / 2 - p[1], mz = (P[3 * lo + 2] + P[3 * hi + 2]) / 2 - p[2];
     if (!(hypot3(mx, my, mz) <= SHARP_MAX_MOVE * edge)) { st.cornerFar++; continue; }
-    const n = unit([0, 1, 2].map((i) => n0[i] + n1[i] + n2[i])) ?? [0, 0, 0];
+    const n = unit([0, 1, 2].map((i) => n0[i] + n1[i] + n2[i]));
+    if (!n) { st.cornerDet++; continue; }   // the three normals cancel: no side to face
     // How many of its planes are a mesher vertex's, and how far the point is from the nearest
     // vertex that gave it one.
     let rough = 0, clear = Infinity;
@@ -453,14 +455,17 @@ function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, 
   return { out, added: S.added, marked: S.marked };
 }
 
-// A corner candidate's tries, in order: an end already within CORNER_MERGE·edge of the point
-// becomes the corner there; the edge is split at the point; the nearer end, then the other, is
-// moved onto it (never a held, pinned or crease vertex, at most SHARP_MAX_MOVE·edge).
+// A corner candidate's tries, in order: an end within CORNER_MERGE·edge of the point is moved
+// onto it; the edge is split at the point; the nearer end, then the other, is moved onto it. A
+// move takes the corner's normal, is at most SHARP_MAX_MOVE·edge and never moves a held, pinned
+// or crease vertex.
 const TRIES = 4;
 
 // The kept corner candidates, committed in order, each by its first try (from `c.from`) that
 // makes no flip or sliver. A point within CORNER_MERGE·edge of an earlier corner point is that
-// vertex: nothing more when it is an end of the edge, else the edge is split at it. Returns the
+// vertex: nothing more when it is an end of the edge, else the edge is split at it if it is next
+// to the edge (the apex of a triangle on it, or the split point of another edge of one), so a
+// shared corner never pinches the mesh; a vertex not next to it gets a new one. Returns the
 // positions, normals and splits, the candidates that made a vertex (`added`), the vertices made
 // corners (`marked`) and, for each changed triangle, the candidates that changed it.
 function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, st }) {
@@ -469,6 +474,11 @@ function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, s
   const R2 = CORNER_MERGE * edge * CORNER_MERGE * edge, M2 = SHARP_MAX_MOVE * edge * SHARP_MAX_MOVE * edge;
   const d2 = (v, p) => { const x = P[3 * v] - p[0], y = P[3 * v + 1] - p[1], z = P[3 * v + 2] - p[2]; return x * x + y * y + z * z; };
   const touch = (tris, c) => { for (const t of tris) (touched.get(t) ?? touched.set(t, []).get(t)).push(c); };
+  // Whether v is the apex of a triangle on c's edge, or the split point of another of its edges.
+  const nextTo = (v, c) => byEdge.get(ekey(c.a, c.b)).some((t) => {
+    const x = T[3 * t], y = T[3 * t + 1], z = T[3 * t + 2];
+    return x === v || y === v || z === v || splitOf.get(ekey(x, y)) === v || splitOf.get(ekey(y, z)) === v || splitOf.get(ekey(z, x)) === v;
+  });
   // Move v onto the corner point, if free and the fan stays sound; true when done.
   const moveTo = (v, c) => {
     if (moved.has(v) || !free(v) || d2(v, c.p) > M2) return false;
@@ -489,6 +499,7 @@ function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, s
     let v = -1;
     for (const q of made) if (d2(q.v, c.p) <= R2) { v = q.v; break; }
     if (v === c.a || v === c.b) { c.took = c.from; continue; }   // already the corner
+    if (v >= 0 && !nextTo(v, c)) v = -1;
     const near = d2(c.a, c.p) <= d2(c.b, c.p) ? c.a : c.b, far = near === c.a ? c.b : c.a;
     for (let k = c.from; k < TRIES && c.took < 0; k++) {
       if (k === 0) { if (v < 0 && d2(near, c.p) <= R2 && moveTo(near, c)) c.took = k; continue; }

@@ -87,6 +87,7 @@ function expectSound({ cleaned, mesh, field }) {
   const changed = (t) => [T[3 * t], T[3 * t + 1], T[3 * t + 2]].some((v) => v >= nv0 || mesh.sharp[v]);
   const all = meshChecks(mesh, field), made = meshChecks(mesh, field, { only: changed });
   expect(all.open).toBe(0);
+  expect(all.nonManifold).toBe(0);
   expect(all.slivers).toBe(0);
   expect(made.flips).toBe(0);
   expect(all.flips).toBeLessThanOrEqual(meshChecks(cleaned, field).flips);
@@ -202,7 +203,7 @@ describe("sharpenMesh, edges and corners", () => {
     const X = new Float64Array(1), Y = new Float64Array(1), Z = new Float64Array(1), out = new Float64Array(1);
     return (x, y, z) => { X[0] = x; Y[0] = y; Z[0] = z; evalBatch(prog, compiled.textures, X, Y, Z, out); return out[0]; };
   };
-  const OWNER_ARRAYS = ["vertOwner", "ownerHeld", "pinned", "crease", "vertLeaf"];
+  const OWNER_ARRAYS = ["vertOwner", "ownerHeld", "pinned", "crease", "vertLeaf", "sharp"];
 
   for (const edge of GRIDS) for (const gap of [0, 0.05]) {
     test(`posed: held, pinned and crease vertices stay; every array keeps the length (gap ${gap}, grid ${edge})`, () => {
@@ -218,7 +219,7 @@ describe("sharpenMesh, edges and corners", () => {
       const nv = sharpened.positions.length / 3;
       for (const f of OWNER_ARRAYS) expect(sharpened[f].length, f).toBe(nv);
       expect(sharpened.normals.length).toBe(3 * nv);
-      // The stage only appends vertices: by index, none of these moved.
+      // By index, none of these held, pinned or crease vertices moved.
       for (const v of kept) expect(vert(sharpened, v)).toEqual(vert(cleaned, v));
       // A new vertex takes its evaluating end's owner, and is not held, pinned or crease.
       for (let v = nv0; v < nv; v++) {
@@ -233,6 +234,8 @@ describe("sharpenMesh, edges and corners", () => {
       const field = fieldOf(compiled), base = meshChecks(untangle(store, cleaned), field);
       const done = untangle(store, sharpened), n = done.positions.length / 3;
       for (const f of OWNER_ARRAYS) expect(done[f].length, f).toBe(n);
+      expect(done.sharpPlanes.length).toBe(2 * n);
+      for (const w of done.sharpPlanes) expect(w >= -1 && w < n).toBe(true);
       expect(done.normals.length).toBe(3 * n);
       const checks = meshChecks(done, field);
       expect(checks.open).toBe(0);

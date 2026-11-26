@@ -40,7 +40,8 @@ export function jsStages(spec, edge, { tier = "preview" } = {}) {
 const H = 1e-4;
 
 /**
- * `open`: directed edges without their reverse exactly once. `flips`: triangles whose normal has
+ * `open`: directed edges without their reverse exactly once. `nonManifold`: vertices whose
+ * triangle fan is not one cycle (the pinch a shared vertex can make). `flips`: triangles whose normal has
  * a negative dot with the field's gradient at their centre. `slivers`: triangles whose shortest
  * altitude is under 0.001 mm. `field(x, y, z)` is the full field (implicitDistance). `only(t)`,
  * when given, picks the triangles (by index) that `flips` and `slivers` count.
@@ -52,10 +53,27 @@ export function meshChecks(mesh, field, { only = null } = {}) {
     const key = T[t + j] * nv + T[t + (j + 1) % 3];
     dir.set(key, (dir.get(key) ?? 0) + 1);
   }
-  let open = 0, flips = 0, slivers = 0;
+  let open = 0, flips = 0, slivers = 0, nonManifold = 0;
   for (const [key, n] of dir) {
     const a = Math.floor(key / nv), b = key % nv;
     if (n !== 1 || dir.get(b * nv + a) !== 1) open++;
+  }
+  // Each vertex's fan: for each triangle at v, the step from its next corner to the one after.
+  const next = new Map();
+  for (let t = 0; t < T.length; t += 3) for (let j = 0; j < 3; j++) {
+    const v = T[t + j], m = next.get(v) ?? next.set(v, new Map()).get(v);
+    const from = T[t + (j + 1) % 3], to = T[t + (j + 2) % 3];
+    if (m.has(from)) m.set(from, -1); else m.set(from, to);
+  }
+  for (const m of next.values()) {
+    let bad = [...m.values()].includes(-1);
+    if (!bad) {
+      const start = m.keys().next().value;
+      let u = start, steps = 0;
+      do { u = m.get(u); steps++; } while (u !== undefined && u !== start && steps <= m.size);
+      bad = u !== start || steps !== m.size;
+    }
+    if (bad) nonManifold++;
   }
   for (let t = 0; t < T.length; t += 3) {
     if (only && !only(t / 3)) continue;
@@ -71,5 +89,5 @@ export function meshChecks(mesh, field, { only = null } = {}) {
     const gx = field(x + H, y, z) - field(x - H, y, z), gy = field(x, y + H, z) - field(x, y - H, z), gz = field(x, y, z + H) - field(x, y, z - H);
     if (nx * gx + ny * gy + nz * gz < 0) flips++;
   }
-  return { open, flips, slivers };
+  return { open, nonManifold, flips, slivers };
 }
