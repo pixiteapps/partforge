@@ -17,7 +17,7 @@
 - Iteration order is fixed: edges in the order the triangle list first names them, new vertices appended in that order.
 - It never moves or re-owns a held, pinned or crease vertex.
 - The mesh stays closed and oriented: every directed edge has its reverse exactly once.
-- No triangle may face against the field (a flip), and no triangle may be thinner than 0.001 mm, after the pass.
+- The pass makes no triangle that faces against the field (a flip), and leaves no more flips than the mesh it was given. No triangle it makes may be thinner than 0.001 mm.
 - Constants, in `sharpen.js`, named exactly: `SHARP_ANGLE_COS = 0.9063077870366499` (25°), `SHARP_TOL = 0.05` (cells), `SHARP_MAX_MOVE = 1.5` (cells), `SHARP_SNAP = 0.15` (edge fraction, the value of `CREASE_SNAP`), `SHARP_CORNER_DET = 0.05`. Task 3 may change a value; it then records the new value and its reason in the design's section 4.
 - Docs and comments use short plain sentences. No dashes as punctuation.
 - The package version becomes `0.206.0` in this branch (Task 6).
@@ -151,6 +151,8 @@
 - [ ] **Step 3:** In the report, give a table: test, what was pinned, old value, new value.
 - [ ] **Step 4: Commit** `tests: re-record implicit meshes with sharp edges`.
 
+Run order: Task 7 (below) runs after Task 5 and before Task 6.
+
 ### Task 6: Docs, bench and version
 
 **Files:**
@@ -160,3 +162,22 @@
 - [ ] **Step 2:** Add the 0.206.0 paragraph to `docs/KERNEL-CONTRACT.md` in the form of the 0.205 one: what changed, that meshes of existing implicit parts change, that it has no option.
 - [ ] **Step 3:** Bump the version. Run the docs parity tests and `npm test`. Expected: PASS.
 - [ ] **Step 4: Commit** `organic: implicit meshes keep sharp edges and corners (0.206.0)`.
+
+### Task 7: A messy imported mesh as a solid leaf
+
+**Files:**
+- Modify: `src/framework/geometry/implicit/mesh-field-build.js`, `src/framework/geometry/implicit/mesh-field.js` (only if the cause is there), `src/framework/geometry/manifold-backend.js` (only if the cause is there)
+- Modify: `test/implicit-mesh-field.test.js` or create `test/implicit-solid-messy.test.js`
+- Modify: `docs/ERROR-PATTERNS.md`, `docs/domains/organic.md` ("Solids in a tree": one sentence)
+
+**Interfaces:**
+- Consumes: `buildMeshField(mesh)`, `MeshFieldError(code, message)`, the `solid` leaf.
+- Produces: a closed mesh with folded or sliver triangles, used as a `solid` leaf, either builds a valid solid or throws a `MeshFieldError` that names the problem and the fix. It never fails with "Not manifold".
+
+Background: `k.import` accepts a closed STL that has about 40 folded triangles and over 100 sliver triangles, and reports the right volume. As a `solid` leaf, `offset` 1, `offset` -1 and a `union` with `k: 5` each throw "Not manifold". A clean STL of a similar shape works. The file and a script that reproduces it are in the task workspace: `damaged-leaf.stl`, `damaged-leaf-repro.mjs` (edit its paths to this worktree).
+
+- [ ] **Step 1: Find the cause.** Reproduce with the file. Find which call throws "Not manifold" and why the result mesh is bad: for example a wrong sign near folded triangles, a zero-area triangle's normal, or duplicate vertices from the STL reader. Write the cause in the report with evidence (the point, the field value, the triangle). Do not fix before the cause is known.
+- [ ] **Step 2: Write failing tests** with a small fixture built in the test, not the 7 MB file: a closed mesh (a subdivided box or sphere of about 300 triangles) damaged the same way the cause needs (a folded triangle pair, a zero-area triangle, or both). Assert for `offset` 1, `offset` -1 and a smooth `union`: the call either returns a solid whose mesh is closed and whose volume is within 2% of the same op on the undamaged mesh, or throws `MeshFieldError`. In no case does any other error escape.
+- [ ] **Step 3: Fix.** Prefer making it work when the fix is local and keeps every existing mesh-field test and its bytes (for example skipping zero-area triangles in the normals, or a sign rule that folded pairs cannot break). If the result cannot be trusted, refuse in `buildMeshField` with a new `MeshFieldError` code and a message of this shape: what is wrong, where (one point in part coordinates), and what to do (repair the mesh in a mesh tool, or re-export it). The clean-mesh path must keep its bytes: `test/core-parity.test.js` and `test/implicit-mesh-field.test.js` pass unchanged.
+- [ ] **Step 4:** Run the reproduction script on the real file and put its output in the report. Add the error (if any) to `docs/ERROR-PATTERNS.md` in that file's form, and one sentence to the organic guide.
+- [ ] **Step 5:** Run `npm test`. Expected: PASS. **Commit** `implicit: a messy mesh as a solid leaf builds or is refused clearly`.
