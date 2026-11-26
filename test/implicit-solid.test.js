@@ -6,6 +6,7 @@ import { compileImplicit } from "../src/framework/geometry/implicit/compile.js";
 import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field.js";
 import { hashableSpec, implicitShapeHash, implicitCallId } from "../src/framework/geometry/implicit/call-id.js";
 import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
+import { probeSubPartPose } from "../src/framework/pose-probe-core.js";
 
 let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
 const leaf = (solid, extra = {}) => ({ kind: "solid", solid, ...extra });
@@ -126,13 +127,15 @@ describe("solid leaf identity", () => {
     expect(hashableSpec({ root: { kind: "solid" } })).toEqual({ root: { kind: "solid", solid: "solid:?" } });
     expect(() => implicitShapeHash({ root: leaf({}) })).not.toThrow();
   });
-  test("the shape hash and call id tell two solids apart and ignore the solid object", () => {
+  test("the call id's shape hash counts every solid as the same, so the ordinal tells two calls apart", () => {
     const a = k.sphere(8), b = k.sphere(9);
     const spec = (s) => ({ frames: { f: { at: [0, 0, 0] } }, root: leaf(s) });
-    expect(implicitShapeHash(spec(a))).not.toBe(implicitShapeHash(spec(b)));
-    // A different object with the same _hash is the same shape.
-    expect(implicitShapeHash(spec(a))).toBe(implicitShapeHash(spec({ _hash: a._hash })));
-    expect(implicitCallId(spec(a), [spec(b), spec(a)])).toBe(`${implicitShapeHash(spec(a))}#1`);
+    expect(hashableSpec(spec(a), { identity: false }).root).toEqual({ kind: "solid", solid: "solid" });
+    expect(implicitShapeHash(spec(a))).toBe(implicitShapeHash(spec(b)));
+    expect(implicitShapeHash(spec(a))).toBe(implicitShapeHash(spec({})));   // a probe stub, too
+    expect(implicitCallId(spec(b), [spec(a)])).toBe(`${implicitShapeHash(spec(a))}#1`);
+    // The geometry-cache form still names each solid.
+    expect(hashableSpec(spec(a)).root.solid).not.toBe(hashableSpec(spec(b)).root.solid);
   });
   test("k.implicitFrames builds a solid leaf's field at most once across two calls", () => {
     const real = k.sphere(7);
@@ -149,5 +152,47 @@ describe("solid leaf identity", () => {
     const meshFieldOf = (solid) => { seen.push(solid._hash); return buildMeshField(solid.toMesh()); };
     implicitFrames({ root: leaf(s, { label: "s" }) }, { meshFieldOf });
     expect(seen).toEqual([s._hash]);
+  });
+});
+
+describe("solid leaf call ids: the pose probe and the worker agree", () => {
+  // Two framed calls that differ only in the solid they blend: one shape hash, ordinals #0, #1.
+  const spec = (solid, bend) => ({
+    frames: { arm: { at: [0, 0, 0] }, tip: { parent: "arm", at: [0, 0, 20], rotate: [{ axis: [1, 0, 0], deg: bend }] } },
+    root: { kind: "union", k: 2, children: [
+      { kind: "capsule", a: [0, 0, 0], b: [0, 0, 20], r: 3, frame: "arm" },
+      { kind: "sphere", r: 3, frame: "tip" },
+      { kind: "solid", solid, at: [0, 0, -4] },
+    ] },
+  });
+  const build = (kk, bend) => kk.union([
+    kk.implicit({ preview: 1, ...spec(kk.box({ min: [-5, -5, -5], max: [5, 5, 0] }), bend) }),
+    kk.implicit({ preview: 1, ...spec(kk.box({ min: [-6, -6, -6], max: [6, 6, 0] }), bend) }).translate([40, 0, 0]),
+  ]);
+  test("the probe's call ids are the ids the worker names its bound frames by", async () => {
+    const probe = probeSubPartPose({ build: (kk) => build(kk, 30) }, { view: "v", p: {}, d: {} });
+    expect(probe.implicitSpecs).toHaveLength(2);
+    const probeIds = probe.implicitSpecs.map((s, i) => implicitCallId(s, probe.implicitSpecs.slice(0, i)));
+    expect(probeIds[0].endsWith("#0") && probeIds[1].endsWith("#1")).toBe(true);
+    expect(probeIds[0].split("#")[0]).toBe(probeIds[1].split("#")[0]);
+
+    const kp = await bootManifoldKernel({ quality: "preview" });
+    kp.beginSubPart("t");
+    let m;
+    try { m = build(kp, 30).toMesh(); } finally { kp.endSubPart(); }
+    const workerIds = new Set(m.bindings.frames.filter(Boolean).map((f) => f.slice(0, f.lastIndexOf(":"))));
+    expect([...workerIds].sort()).toEqual([...probeIds].sort());
+    expect(m.bindings.frames).toEqual(expect.arrayContaining(probeIds.flatMap((id) => [`${id}:arm`, `${id}:tip`])));
+    // The solid leaf's own vertices (below z = -1, inside the first box) are bound: the solid
+    // has no frame of its own, so bindVertices gives each the nearest unit's frame ("arm").
+    let low = 0;
+    for (let c = 0; c < m.triangles * 3; c++) {
+      const x = m.positions[3 * c], z = m.positions[3 * c + 2];
+      if (x < 20 && z < -2) {
+        low++;
+        expect(m.bindings.frames[m.bindings.frameA[c]]).toBe(`${probeIds[0]}:arm`);
+      }
+    }
+    expect(low).toBeGreaterThan(0);
   });
 });
