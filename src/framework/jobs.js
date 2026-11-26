@@ -203,7 +203,9 @@ function nudgedFor(part, p) {
 // partial delivery is posted again, which a host applies by sub-part name). At most one
 // retry per code: after it the full build is loaded, or its load failed and the JS
 // engine answers; the builder has no fallback, so a builder that cannot load fails the
-// job, and a second NEEDS_MESH_FIELD is reported as the job's error.
+// job, and a second NEEDS_MESH_FIELD is reported as the job's error. loadFullCore never
+// rejects; a core module that cannot be imported rejects out of handle() to worker.js's
+// error boundary, as it did before the builder.
 const LOADERS = {
   [NEEDS_FULL_CORE]: async () => { await (await import("./core/core.js")).loadFullCore(); },
   [NEEDS_MESH_FIELD]: async () => { await (await import("./geometry/implicit/mesh-field-loader.js")).loadMeshFieldBuilder(); },
@@ -216,11 +218,13 @@ export async function handle(kernel, part, msg, post, opts = {}) {
     let code = await runJob(kernel, part, msg, post, opts, retryable);
     while (code !== undefined) {
       retryable.delete(code);
-      try { await LOADERS[code](); }
-      catch (err) {
-        post({ type: "error", message: `implicit: the mesh field builder could not be loaded: ${String(err?.message || err)}`, jobId: msg.jobId });
-        return;
-      }
+      if (code === NEEDS_MESH_FIELD) {
+        try { await LOADERS[code](); }
+        catch (err) {
+          post({ type: "error", message: `implicit: the mesh field builder could not be loaded: ${String(err?.message || err)}`, jobId: msg.jobId });
+          return;
+        }
+      } else await LOADERS[code]();
       code = await runJob(kernel, part, msg, post, opts, retryable);
     }
   } finally {

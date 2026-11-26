@@ -95,3 +95,28 @@ test("a builder that cannot load fails the job with one error, and runs it no th
     expect(loaded()).toBe(false);
   } finally { vi.doUnmock(`${IMPLICIT}/mesh-field-build.js`); }
 });
+
+// The other code's failure path keeps its behaviour from before the mesh field builder:
+// loadFullCore never rejects (a failed full build leaves the JS engine), so the one way
+// its load fails is the core module itself not loading. That rejection is not reported as
+// a job error here: it leaves handle() for worker.js's error boundary, as it always did.
+test("a core module that cannot load leaves handle() with its own error, not the builder's", async () => {
+  const { handle, k } = await fresh();
+  const coreMod = await import("../src/framework/core/core.js");
+  await coreMod.setFullCoreForTesting(false);   // the base build only: k.implicit throws NEEDS_FULL_CORE
+  vi.doMock("../src/framework/core/core.js", () => { throw new Error("no core chunk here"); });
+  try {
+    const post = vi.fn();
+    const err = await handle(k, noSolid(), { type: "generate", subparts: ["grip"], view: "v", params: {}, jobId: "g2" }, post)
+      .then(() => null, (e) => e);
+    // vitest wraps a throwing mock factory's error; the factory's own error is its cause.
+    expect(err).toBeInstanceOf(Error);
+    expect(err.cause?.message).toBe("no core chunk here");
+    const posts = post.mock.calls.map(([m]) => m);
+    expect(posts.filter((m) => m.type === "error")).toEqual([]);
+    expect(JSON.stringify(posts)).not.toMatch(/mesh field builder/);
+  } finally {
+    vi.doUnmock("../src/framework/core/core.js");
+    await coreMod.setFullCoreForTesting(true);
+  }
+});
