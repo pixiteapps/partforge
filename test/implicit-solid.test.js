@@ -25,13 +25,20 @@ describe("solid leaf", () => {
     expect(soft).toBeGreaterThan(plain);
     expect(soft).toBeLessThan(plain * 1.08);   // the spike measured +4.4%
   });
-  test("offset over a solid matches Solid.offset by volume, both ways", () => {
-    const body = k.sphere(16).union(k.box({ min: [-8, -8, -22], max: [8, 8, 0] }));
-    for (const d of [2, -2]) {
-      const v = k.implicit({ resolution: 0.5, root: { kind: "offset", d, child: leaf(body) } }).volume();
-      expect(v / body.offset(d).volume()).toBeCloseTo(1, 2);
-    }
-  }, 120_000);   // Solid.offset (the Minkowski reference) takes about 25 s per call at print
+  test("offset over a solid moves its surface by d, both ways", () => {
+    const box = k.box({ min: [-10, -6, -4], max: [10, 6, 4] });
+    const off = (solid, d) => k.implicit({ resolution: 0.4, root: { kind: "offset", d, child: leaf(solid) } }).volume();
+    // A shrunk box is exactly the smaller sharp box.
+    expect(off(box, -2) / (16 * 8 * 4)).toBeCloseTo(1, 2);
+    // A grown box is the box swept by a ball of radius r.
+    const [a, b, c] = [20, 12, 8], r = 2;
+    const grown = a * b * c + 2 * r * (a * b + b * c + c * a) + Math.PI * r * r * (a + b + c) + (4 / 3) * Math.PI * r ** 3;
+    expect(off(box, 2) / grown).toBeCloseTo(1, 2);
+    // The mesh sphere is faceted: within 1% of the exact balls.
+    const ball = k.sphere(16), vol = (R) => (4 / 3) * Math.PI * R ** 3;
+    expect(Math.abs(off(ball, 2) / vol(18) - 1)).toBeLessThan(0.01);
+    expect(Math.abs(off(ball, -2) / vol(14) - 1)).toBeLessThan(0.01);
+  });
   test("a leaf follows its frame, and works under mirror and repeat", () => {
     const peg = k.cylinder({ r: 3, h: 10 });
     const moved = k.implicit({ resolution: 0.4, frames: { f: { at: [20, 0, 0] } }, root: leaf(peg, { frame: "f" }) });
