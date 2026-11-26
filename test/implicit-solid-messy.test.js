@@ -6,7 +6,14 @@
 // from the fold, and the mesher's cull steps past the surface: "Not manifold". The leaf must
 // either build the right solid, with one warning that names the fold, or, when the build
 // fails, refuse with the place of the fold. A raw "Not manifold" never reaches the author.
-import { describe, expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll, vi } from "vitest";
+// One planted conversion failure (see "another conversion error passes through"): the kernel's
+// manifoldFromWeldedMesh throws `inject.next` once when it is set.
+const inject = vi.hoisted(() => ({ next: null }));
+vi.mock("../src/framework/geometry/mesh-build.js", async (importOriginal) => {
+  const mod = await importOriginal();
+  return { ...mod, manifoldFromWeldedMesh: (...a) => { const e = inject.next; if (e) { inject.next = null; throw e; } return mod.manifoldFromWeldedMesh(...a); } };
+});
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -260,6 +267,20 @@ describe("a k.implicit result with folds, as a leaf, builds with a warning", () 
     kp.takeBuildWarnings();
     expect(err).toBeInstanceOf(ImplicitSpecError);
     expect(err.message).toMatch(FOLDED);
+    // The original error is kept: Manifold's NotManifold.
+    expect(err.cause?.name).toBe("ManifoldError");
+    expect(err.cause?.code).toBe("NotManifold");
+  });
+
+  test("another conversion error passes through unchanged while a leaf has folds", () => {
+    const inner = kp.implicit({ resolution: 0.8, root: CASES["tapered cylinder at 0.8"][0] });
+    const planted = new Error("planted conversion failure");
+    inject.next = planted;
+    let err;
+    try { kp.implicit({ resolution: 0.7, root: { kind: "offset", d: 1, child: { kind: "solid", solid: inner } } }); } catch (e) { err = e; }
+    inject.next = null;
+    kp.takeBuildWarnings();
+    expect(err).toBe(planted);
   });
 });
 

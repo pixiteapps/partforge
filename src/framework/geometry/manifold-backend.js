@@ -1300,14 +1300,16 @@ export function createManifoldKernel(wasm, { quality = "preview", meshFieldBudge
         // (compiled.foldedLeaves, mesh-field-build.js findFolds) usually still builds: the
         // wrong region is thin and the sampler rarely reaches it. So such a leaf is refused
         // only when Manifold refuses the mesh ("Not manifold"), with the first folded leaf's
-        // place, and otherwise the build warns once.
+        // place (the original error kept as `cause`), and otherwise the build warns once.
+        // Only Manifold's NotManifold is replaced: any other error passes through. Compared by
+        // name, not instanceof, because the error class belongs to one wasm module.
         const folded = compiled.foldedLeaves ?? [];
         let m;
         try {
           m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
             : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
         } catch (e) {
-          if (folded.length > 0) throw foldedLeafError(folded[0]);
+          if (folded.length > 0 && e?.name === "ManifoldError" && e.code === "NotManifold") throw Object.assign(foldedLeafError(folded[0]), { cause: e });
           throw e;
         }
         const warnings = folded.length > 0 ? [...out.warnings, foldedLeafWarning(folded[0])] : out.warnings;

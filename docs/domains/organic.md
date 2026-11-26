@@ -367,7 +367,7 @@ smooth on screen.
 - Most corners are found. A corner can stay cut by a small facet, more often on a thin
   shell or a bent shape.
 - Where a curved sharp edge meets nothing, a stray corner point can appear beside it,
-  within the stage's tolerance.
+  very close to the surface.
 - Small notches can remain where a sharp edge fades into a blend.
 - A smooth `union` of three or more children has real creases where a third child is
   within `k`. Those creases are drawn as straight lines.
