@@ -107,9 +107,9 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
   // Commit in candidate order, checked as step 4 checks; then the field-flip rounds, as there,
   // except that a candidate whose change flipped one goes on to its next try.
   let S;
-  const apart = apartIndex(P, nv1, edge, cand.filter((c) => c.ok).map((c) => c.p));
+  const apart = apartIndex(P, nv1, edge, cand.filter((c) => c.ok).map((c) => c.p)), work = {};
   for (;;) {
-    S = commitCorners(cand, { P, N, T, ekey, fan, byEdge, free, edge, st, apart });
+    S = commitCorners(cand, { P, N, T, ekey, fan, byEdge, free, edge, st, apart, work });
     const flipped = fieldFlips(store, S, [...S.touched.keys()], { VL0: VL, T, ekey, edge });
     if (!flipped.length) break;
     for (const t of flipped) for (const c of S.touched.get(t)) if (c.ok && c.from <= c.took) {
@@ -140,10 +140,16 @@ export const TRIES = 4;
 // shared corner never pinches the mesh; a vertex not next to it gets a new one. Returns the
 // positions, normals and splits, the candidates that made a vertex (`added`), the vertices made
 // corners (`marked`) and, for each changed triangle, the candidates that changed it.
-function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, st, apart: index }) {
-  // Room for a vertex per candidate; `nv` is the count so far.
-  const cap = P1.length / 3 + cand.length, P = new Float64Array(3 * cap), N = new Float64Array(3 * cap);
-  P.set(P1); N.set(N1);
+function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, st, apart: index, work }) {
+  // Room for a vertex per candidate, made by the first commit of the loop; `nv` is the count so
+  // far. A later commit puts back the vertices the one before moved, in place.
+  if (!work.P) {
+    const cap = P1.length / 3 + cand.length;
+    work.P = new Float64Array(3 * cap); work.N = new Float64Array(3 * cap);
+    work.P.set(P1); work.N.set(N1);
+  } else for (const v of work.dirty) for (let i = 0; i < 3; i++) { work.P[3 * v + i] = P1[3 * v + i]; work.N[3 * v + i] = N1[3 * v + i]; }
+  work.dirty = [];
+  const { P, N } = work;
   const apart = index(P);
   let nv = P1.length / 3;
   const splitOf = new Map(), made = [], added = [], marked = [], moved = new Set(), touched = new Map(), cut = [];
@@ -168,7 +174,7 @@ function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, s
       st[bad === "flip" ? "cornerFlip" : "cornerSliver"]++;
       return false;
     }
-    moved.add(v); marked.push(v); made.push({ v, p: c.p }); touch(fan.get(v), c); st.cornerMoves++;
+    moved.add(v); marked.push(v); made.push({ v, p: c.p }); touch(fan.get(v), c); st.cornerMoves++; work.dirty.push(v);
     apart.add(v);
     return true;
   };

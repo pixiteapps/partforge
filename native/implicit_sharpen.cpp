@@ -99,6 +99,21 @@ struct Mesh {
   std::vector<int32_t> planes;
 };
 
+// Which vertices a change may move (`free`: not held, pinned or crease; a vertex past the round's
+// input count always, except a corner point on the across pass, `sh` 2) and which give no plane
+// (`noPlane`: past the input count, as the JS's N0 has no entry there, or pinned or crease).
+struct FreeRule {
+  const Mesh* m;
+  size_t nv0;
+  const std::vector<uint8_t>* sh;
+  bool marked(size_t v) const { return (m->owner && m->pin[v]) || (m->hasCrease && m->crease[v]); }
+  bool free(size_t v) const {
+    if (sh && (*sh)[v] == 2) return false;
+    return v >= nv0 || (!(m->owner && m->held[v]) && !marked(v));
+  }
+  bool noPlane(size_t v) const { return v >= nv0 || marked(v); }
+};
+
 // sharpen-mesh.js's adjacency: one counting sort. fan(v) is v's triangles in index order.
 struct Adj {
   size_t nv = 0;
@@ -223,24 +238,36 @@ struct Touched {
 // fieldFlips' memo across one commit loop's rounds: per triangle, the last read's candidates,
 // how each changed it, and whether it was flipped.
 struct MemoEntry { bool has = false, bad = false; std::vector<int32_t> by, how; };
+// Keyed by triangle: only the triangles a commit touched have an entry.
+struct Memo {
+  flat::Map<uint32_t> idx{64};
+  std::vector<MemoEntry> e;
+  const MemoEntry* find(uint32_t t) { const uint32_t* i = idx.find(t); return i ? &e[*i] : nullptr; }
+  MemoEntry& get(uint32_t t) {
+    bool inserted = false;
+    const uint32_t i = idx.insert(t, (uint32_t)e.size(), &inserted);
+    if (inserted) e.emplace_back();
+    return e[i];
+  }
+};
 
 // fieldFlips: the triangles of `tc.keys` one of whose parts faces against the field at its
 // centre (read with its first corner's leaf program along the part's normal at FLIP_NEAR·edge and
 // at DIFF·edge), in tc.keys order. `withHow` (the edge rounds) compares and records `how`, with
 // the memo. Returns 0, or nonzero when an evaluation fails.
 int fieldFlips(ipe::Session& s, const double* P, SplitMap& sp, const Touched& tc, bool withHow, const std::vector<int32_t>& VL0,
-               const std::vector<uint32_t>& T, double edge, std::vector<MemoEntry>* memo, std::vector<uint32_t>& flipped) {
+               const std::vector<uint32_t>& T, double edge, Memo* memo, std::vector<uint32_t>& flipped) {
   flipped.clear();
   const double e = DIFF * edge, en = FLIP_NEAR * edge;
-  const size_t nt = T.size() / 3;
-  std::vector<uint8_t> known(nt, 0), bad(nt, 0);
-  std::vector<uint32_t> owner, fresh, out;
-  std::vector<size_t> freshAt;
+  // Per entry of tc.keys (each triangle once): known from the memo, or read and flipped.
+  std::vector<uint8_t> bad(tc.keys.size(), 0);
+  std::vector<uint32_t> fresh, out;
+  std::vector<size_t> owner, freshAt;
   Points pts;
   for (size_t q = 0; q < tc.keys.size(); q++) {
     const uint32_t t = tc.keys[q];
-    const MemoEntry* m = withHow && memo ? &(*memo)[t] : nullptr;
-    if (m && m->has && m->by == tc.by[q] && m->how == tc.how[q]) { if (m->bad) known[t] = 1; continue; }
+    const MemoEntry* m = withHow && memo ? memo->find(t) : nullptr;
+    if (m && m->has && m->by == tc.by[q] && m->how == tc.how[q]) { if (m->bad) bad[q] = 1; continue; }
     fresh.push_back(t); freshAt.push_back(q);
     out.clear();
     subdivide(T, t, sp, out);
@@ -254,7 +281,7 @@ int fieldFlips(ipe::Session& s, const double* P, SplitMap& sp, const Touched& tc
       pts.add(cx - e * u[0], cy - e * u[1], cz - e * u[2], pr);
       pts.add(cx + en * u[0], cy + en * u[1], cz + en * u[2], pr);
       pts.add(cx - en * u[0], cy - en * u[1], cz - en * u[2], pr);
-      owner.push_back(t);
+      owner.push_back(q);
     }
   }
   std::vector<double> d(pts.size());
@@ -262,11 +289,11 @@ int fieldFlips(ipe::Session& s, const double* P, SplitMap& sp, const Touched& tc
   for (size_t q = 0; q < owner.size(); q++) if (d[4 * q] - d[4 * q + 1] < 0 || d[4 * q + 2] - d[4 * q + 3] < 0) bad[owner[q]] = 1;
   if (memo && withHow) {
     for (size_t i = 0; i < fresh.size(); i++) {
-      MemoEntry& me = (*memo)[fresh[i]];
-      me.has = true; me.by = tc.by[freshAt[i]]; me.how = tc.how[freshAt[i]]; me.bad = bad[fresh[i]] != 0;
+      MemoEntry& me = memo->get(fresh[i]);
+      me.has = true; me.by = tc.by[freshAt[i]]; me.how = tc.how[freshAt[i]]; me.bad = bad[freshAt[i]] != 0;
     }
   }
-  for (const uint32_t t : tc.keys) if (known[t] || bad[t]) flipped.push_back(t);
+  for (size_t q = 0; q < tc.keys.size(); q++) if (bad[q]) flipped.push_back(tc.keys[q]);
   return 0;
 }
 
@@ -325,9 +352,19 @@ struct ApartBase {
       }
     }
     if (!want.size()) return;
+    // The x test is a table over the asked x range when that is not too wide.
+    int64_t x0 = INT64_MAX, x1 = INT64_MIN;
+    for (size_t q = 0; q < askedCell.size(); q += 3) { if (askedCell[q] - 1 < x0) x0 = askedCell[q] - 1; if (askedCell[q] + 1 > x1) x1 = askedCell[q] + 1; }
+    std::vector<uint8_t> table;
+    if (x1 - x0 < (1 << 22)) {
+      table.assign((size_t)(x1 - x0 + 1), 0);
+      for (size_t q = 0; q < askedCell.size(); q += 3) for (int i = -1; i <= 1; i++) table[(size_t)(askedCell[q] + i - x0)] = 1;
+    }
     for (size_t v = 0; v < nv; v++) {
       const double qx = std::floor(P[3 * v] / size);
-      if (!(std::fabs(qx) <= 9007199254740991.0) || !wantX.find(ApartCells::key((int64_t)qx, 0, 0))) continue;
+      if (!(std::fabs(qx) <= 9007199254740991.0)) continue;
+      const int64_t ix = (int64_t)qx;
+      if (!table.empty() ? (ix < x0 || ix > x1 || !table[(size_t)(ix - x0)]) : !wantX.find(ApartCells::key(ix, 0, 0))) continue;
       int64_t c[3];
       if (!cellOf(P[3 * v], P[3 * v + 1], P[3 * v + 2], c)) continue;
       const uint64_t k = ApartCells::key(c[0], c[1], c[2]);
@@ -572,6 +609,19 @@ struct Commit {
   std::vector<uint32_t> marked;   // corners: the vertices made corners where they are or by a move
   std::vector<uint32_t> cut;      // the triangles on a split edge
   std::vector<uint32_t> pts;      // edge rounds: the vertices made edge points
+  // Kept from one commit of a loop to the next (P, N, sharp, planes, planeN at their room for
+  // the first commit's candidates): `moved` and the vertices it moved (`dirty`), put back in place.
+  std::vector<uint8_t> moved;
+  std::vector<uint32_t> dirty;
+  // Takes the buffers of the commit before it in the loop.
+  void takeBuffers(Commit& o) {
+    P.swap(o.P); N.swap(o.N); sharp.swap(o.sharp); planes.swap(o.planes); planeN.swap(o.planeN); moved.swap(o.moved); dirty.swap(o.dirty);
+  }
+  // At the end of the loop: the arrays at the vertex count.
+  void trim(bool edgeRound) {
+    P.resize(3 * nv); N.resize(3 * nv);
+    if (edgeRound) { sharp.resize(nv); planes.resize(2 * nv); planeN.resize(6 * nv); }
+  }
   Touched touched;
   size_t nv = 0;
   explicit Commit(uint64_t keyNv) : sp(keyNv) {}
@@ -579,22 +629,34 @@ struct Commit {
 
 // commit: the kept candidates (ok), in order: every move, then every split on an edge with
 // neither end moved.
-int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, const std::vector<uint8_t>& freeV, ApartBase& apartBase) {
+int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, const FreeRule& freeV, ApartBase& apartBase) {
   const size_t nv0 = mesh.P.size() / 3;
   std::vector<uint32_t> kept;
   for (size_t q = 0; q < C.size(); q++) if (C[q].ok) kept.push_back((uint32_t)q);
-  const size_t cap = nv0 + kept.size();
-  S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
-  for (size_t i = 0; i < mesh.P.size(); i++) { S.P[i] = mesh.P[i]; S.N[i] = mesh.N[i]; }
-  ApartView apart(apartBase, S.P.data());   // S.P is never resized before the end
-  std::vector<uint8_t> moved(nv0, 0);
-  size_t nv = nv0;
-  S.sharp.assign(cap, 0); S.planes.assign(2 * cap, -1);
-  if (mesh.hasSharp) {
-    for (size_t i = 0; i < mesh.sharp.size(); i++) S.sharp[i] = mesh.sharp[i];
-    for (size_t i = 0; i < mesh.planes.size(); i++) S.planes[i] = mesh.planes[i];
+  if (S.P.empty()) {
+    // The first commit of the loop: room for a vertex per kept candidate (a later one keeps fewer).
+    const size_t cap = nv0 + kept.size();
+    S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
+    for (size_t i = 0; i < mesh.P.size(); i++) { S.P[i] = mesh.P[i]; S.N[i] = mesh.N[i]; }
+    S.moved.assign(nv0, 0);
+    S.sharp.assign(cap, 0); S.planes.assign(2 * cap, -1);
+    if (mesh.hasSharp) {
+      for (size_t i = 0; i < mesh.sharp.size(); i++) S.sharp[i] = mesh.sharp[i];
+      for (size_t i = 0; i < mesh.planes.size(); i++) S.planes[i] = mesh.planes[i];
+    }
+    S.planeN.assign(6 * cap, 0);
+  } else for (const uint32_t v : S.dirty) {
+    for (int i = 0; i < 3; i++) S.P[3 * (size_t)v + i] = mesh.P[3 * (size_t)v + i];
+    for (int i = 0; i < 6; i++) S.planeN[6 * (size_t)v + i] = 0;
+    S.moved[v] = 0;
+    S.sharp[v] = mesh.hasSharp ? mesh.sharp[v] : 0;
+    S.planes[2 * (size_t)v] = mesh.hasSharp ? mesh.planes[2 * (size_t)v] : -1;
+    S.planes[2 * (size_t)v + 1] = mesh.hasSharp ? mesh.planes[2 * (size_t)v + 1] : -1;
   }
-  S.planeN.assign(6 * cap, 0);
+  S.dirty.clear();
+  std::vector<uint8_t>& moved = S.moved;
+  ApartView apart(apartBase, S.P.data());   // S.P is never resized before the loop ends
+  size_t nv = nv0;
   auto setPlanes = [&](size_t v, const ECand& c) { for (int i = 0; i < 3; i++) { S.planeN[6 * v + i] = c.uA[i]; S.planeN[6 * v + 3 + i] = c.uB[i]; } };
   const std::vector<double>& P0 = mesh.P;
   const std::vector<double>& N0 = mesh.N;
@@ -613,7 +675,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     const int64_t end = ends[q];
     if (end < 0) continue;
     if (moved[c.a] || moved[c.b]) continue;
-    if (!freeV[(size_t)end]) { ends[q] = -1; continue; }
+    if (!freeV.free((size_t)end)) { ends[q] = -1; continue; }
     if (apart.has(c.p, end)) continue;   // not tried as a split either: the same point
     const size_t e3 = 3 * (size_t)end;
     const double was[3] = {S.P[e3], S.P[e3 + 1], S.P[e3 + 2]};
@@ -625,7 +687,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     }
     moved[(size_t)end] = 1; S.sharp[(size_t)end] = 1; S.planes[2 * (size_t)end] = (int32_t)c.a; S.planes[2 * (size_t)end + 1] = (int32_t)c.b;
     setPlanes((size_t)end, c);
-    apart.add((uint32_t)end); S.pts.push_back((uint32_t)end);
+    apart.add((uint32_t)end); S.pts.push_back((uint32_t)end); S.dirty.push_back((uint32_t)end);
     for (const uint32_t* t = adj.fanBegin((uint32_t)end); t != adj.fanEnd((uint32_t)end); t++) S.touched.add(*t, (int32_t)kept[q], (int32_t)end);
   }
   // Then splits, on edges with neither end moved.
@@ -651,7 +713,6 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     S.cut.insert(S.cut.end(), edgeTris.begin(), edgeTris.end());
   }
   S.nv = nv;
-  S.P.resize(3 * nv); S.N.resize(3 * nv); S.sharp.resize(nv); S.planes.resize(2 * nv); S.planeN.resize(6 * nv);
   return 0;
 }
 
@@ -690,8 +751,7 @@ struct CornerCtx {
   const std::vector<double>& N0;
   const std::vector<uint8_t>& sharp;
   const std::vector<double>& planeN;
-  const std::vector<uint8_t>& noPlane;   // per vertex below the round's input count
-  const std::vector<uint8_t>& freeV;     // per current vertex
+  const FreeRule& rule;                  // free and noPlane, per vertex
   double edge;
   bool across;
   const std::vector<uint32_t>& pts;      // every vertex with sharp 1, any order
@@ -700,14 +760,23 @@ struct CornerCtx {
 
 // commitCorners: the kept candidates, each by its first try (from c.from) with no flip or sliver.
 void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& S, ApartBase& apartBase) {
-  const size_t nv1 = x.P.size() / 3, cap = nv1 + C.size();
-  S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
-  for (size_t i = 0; i < x.P.size(); i++) { S.P[i] = x.P[i]; S.N[i] = x.N[i]; }
-  ApartView apart(apartBase, S.P.data());   // S.P is never resized before the end
+  const size_t nv1 = x.P.size() / 3;
+  if (S.P.empty()) {
+    // The first commit of the loop: room for a vertex per candidate.
+    const size_t cap = nv1 + C.size();
+    S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
+    for (size_t i = 0; i < x.P.size(); i++) { S.P[i] = x.P[i]; S.N[i] = x.N[i]; }
+    S.moved.assign(nv1, 0);
+  } else for (const uint32_t v : S.dirty) {
+    for (int i = 0; i < 3; i++) { S.P[3 * (size_t)v + i] = x.P[3 * (size_t)v + i]; S.N[3 * (size_t)v + i] = x.N[3 * (size_t)v + i]; }
+    S.moved[v] = 0;
+  }
+  S.dirty.clear();
+  std::vector<uint8_t>& moved = S.moved;
+  ApartView apart(apartBase, S.P.data());   // S.P is never resized before the loop ends
   size_t nv = nv1;
   struct Made { uint32_t v; };
   std::vector<Made> made;
-  std::vector<uint8_t> moved(nv1, 0);
   const double edge = x.edge;
   const double R2 = CORNER_MERGE * edge * CORNER_MERGE * edge, M2 = SHARP_MAX_MOVE * edge * SHARP_MAX_MOVE * edge;
   auto d2 = [&](size_t v, const double* p) {
@@ -725,7 +794,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
   };
   auto moveTo = [&](uint32_t v, size_t ci) {
     const KCand& c = C[ci];
-    if (moved[v] || !x.freeV[v] || d2(v, c.p) > M2) return false;
+    if (moved[v] || !x.rule.free(v) || d2(v, c.p) > M2) return false;
     if (apart.has(c.p, v)) return false;
     const size_t o = 3 * (size_t)v;
     const double was[3] = {S.P[o], S.P[o + 1], S.P[o + 2]}, wn[3] = {S.N[o], S.N[o + 1], S.N[o + 2]};
@@ -734,7 +803,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
       for (int i = 0; i < 3; i++) { S.P[o + i] = was[i]; S.N[o + i] = wn[i]; }
       return false;
     }
-    moved[v] = 1; S.marked.push_back(v); made.push_back(Made{v});
+    moved[v] = 1; S.marked.push_back(v); made.push_back(Made{v}); S.dirty.push_back(v);
     apart.add(v);
     for (const uint32_t* t = adj.fanBegin(v); t != adj.fanEnd(v); t++) S.touched.add(*t, (int32_t)ci, 0);
     return true;
@@ -770,7 +839,6 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
     }
   }
   S.nv = nv;
-  S.P.resize(3 * nv); S.N.resize(3 * nv);
 }
 
 // cornerPass: step 6 on the split mesh x.T. Returns 0, or nonzero when an evaluation fails.
@@ -778,7 +846,7 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   ipe::Session& s = x.s;
   const std::vector<uint32_t>& T = x.T;
   const std::vector<double>& P = x.P;
-  const size_t nv1 = P.size() / 3, nv0 = x.noPlane.size();
+  const size_t nv1 = P.size() / 3;
   const double edge = x.edge;
   const std::vector<uint32_t>& have = x.have;
   auto planesOf = [&](uint32_t v, std::vector<Plane>& out) {
@@ -794,7 +862,7 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
       return;
     }
     // Past the round's input count N0 has no entry: unit(undefined…) is null in the JS.
-    if (v >= nv0 || x.noPlane[v]) return;
+    if (x.rule.noPlane(v)) return;
     Plane q;
     if (!unit(&x.N0[3 * (size_t)v], q.n)) return;
     q.d = q.n[0] * x.P0[3 * (size_t)v] + q.n[1] * x.P0[3 * (size_t)v + 1] + q.n[2] * x.P0[3 * (size_t)v + 2]; q.v = v;
@@ -925,7 +993,9 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
     apartBase.build(P.data(), nv1, edge, asks);
   }
   for (;;) {
-    S.reset(new Commit((uint64_t)nv1));
+    std::unique_ptr<Commit> next(new Commit((uint64_t)nv1));
+    if (S) next->takeBuffers(*S);
+    S = std::move(next);
     commitCorners(cand, x, adj, *S, apartBase);
     if (fieldFlips(s, S->P.data(), S->sp, S->touched, false, x.VL, T, edge, nullptr, flipped) != 0) return 2;
     if (flipped.empty()) break;
@@ -943,6 +1013,7 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   retriangulate(T, S->cut, S->sp, res.out);
   for (const uint32_t ci : S->added) { res.addedLeaf.push_back(cand[ci].leaf); res.addedEv.push_back(cand[ci].ev); }
   res.marked = S->marked;
+  S->trim(false);
   x.P.swap(S->P);
   x.N.swap(S->N);
   return 0;
@@ -967,13 +1038,16 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   // every edge's angle before it builds anything else; step 7 with nothing to retry costs nothing.
   if (retry && retry->empty()) return 0;
   std::vector<uint32_t> hits;   // the first round's half-edges past the angle test (t + k), in order
+  std::vector<double> lens;      // each normal's length, taken once per vertex
   if (!retry) {
+    lens.resize(nv0);
+    for (size_t v = 0; v < nv0; v++) lens[v] = hypot3(N0[3 * v], N0[3 * v + 1], N0[3 * v + 2]);
     for (size_t t = 0; t < T.size(); t += 3) for (int k = 0; k < 3; k++) {
       const uint32_t a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
       if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
       const size_t x = 3 * (size_t)lo, y = 3 * (size_t)hi;
       const double ax = N0[x], ay = N0[x + 1], az = N0[x + 2], bx = N0[y], by = N0[y + 1], bz = N0[y + 2];
-      const double lA = hypot3(ax, ay, az), lB = hypot3(bx, by, bz);
+      const double lA = lens[lo], lB = lens[hi];
       if (!(lA > 0.5 && lB > 0.5) || ax * bx + ay * by + az * bz >= SHARP_ANGLE_COS * lA * lB) continue;
       hits.push_back((uint32_t)(t + k));
     }
@@ -991,9 +1065,13 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   const size_t nProg = (size_t)(1 + maxProg);
   auto progOf = [&](size_t v) { return (size_t)leaf_prog(s, VL0[v]); };
   std::vector<int32_t> progEdges(nProg, 0), progCand(nProg, 0);
-  if (!retry) for (size_t i = 0; i < T.size(); i++) {
-    const uint32_t a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
-    if (a < b) progEdges[progOf(a)]++;   // a closed mesh names each edge once in each direction
+  if (!retry) {
+    std::vector<int32_t> progV(nv0);
+    for (size_t v = 0; v < nv0; v++) progV[v] = (int32_t)progOf(v);
+    for (size_t i = 0; i < T.size(); i++) {
+      const uint32_t a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
+      if (a < b) progEdges[(size_t)progV[a]]++;   // a closed mesh names each edge once in each direction
+    }
   }
   if (retry) {
     // Step 7 looks only at its own edges (the first of a repeated one): each where a scan of the
@@ -1020,7 +1098,7 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     const size_t t = i - i % 3;
     const uint32_t a = T[i], b = T[t + (i % 3 + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     const size_t x = 3 * (size_t)lo, y = 3 * (size_t)hi;
-    const double lA = hypot3(N0[x], N0[x + 1], N0[x + 2]), lB = hypot3(N0[y], N0[y + 1], N0[y + 2]);
+    const double lA = lens[lo], lB = lens[hi];
     if (!adj.first((uint32_t)(t / 3), lo, hi)) continue;
     progCand[progOf(lo)]++;
     ECand c;
@@ -1058,10 +1136,9 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
 
   // 4. Commit, in candidate order; then every changed triangle's final form is read against the
   // field, and the candidates that changed one facing against it are dropped and the commit run again.
-  std::vector<uint8_t> freeV(nv0);
-  for (size_t v = 0; v < nv0; v++) freeV[v] = !(mesh.owner && mesh.held[v]) && !pinned(v) && !creased(v);
+  const FreeRule freeV{&mesh, nv0, nullptr};
   std::unique_ptr<Commit> S;
-  std::vector<MemoEntry> memo(T.size() / 3);
+  Memo memo;
   std::vector<uint32_t> flipped;
   ApartBase apartBase;
   {
@@ -1070,7 +1147,9 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     apartBase.build(P0.data(), nv0, edge, asks);
   }
   for (;;) {
-    S.reset(new Commit((uint64_t)nv0));
+    std::unique_ptr<Commit> next(new Commit((uint64_t)nv0));
+    if (S) next->takeBuffers(*S);
+    S = std::move(next);
     commit(cand, mesh, adj, *S, freeV, apartBase);
     if (fieldFlips(s, S->P.data(), S->sp, S->touched, true, VL0, T, edge, &memo, flipped) != 0) return 2;
     if (flipped.empty()) break;
@@ -1094,6 +1173,7 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   };
   for (const uint32_t ci : S->added) grow(cand[ci].leaf, cand[ci].ev);
   std::vector<double> P, N;
+  S->trim(true);
   P.swap(S->P); N.swap(S->N);
   const size_t nv1 = P.size() / 3;
   std::vector<uint32_t> marked;
@@ -1110,15 +1190,11 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   if (mesh.hasSharp) for (size_t v = 0; v < nv0; v++) { if (mesh.sharp[v] == 1) pts.push_back((uint32_t)v); else if (mesh.sharp[v] == 2) had.push_back((uint32_t)v); }
   pts.insert(pts.end(), S->pts.begin(), S->pts.end());
   if (corners) {
-    std::vector<uint8_t> noPlane(nv0);
-    for (size_t v = 0; v < nv0; v++) noPlane[v] = pinned(v) || creased(v);
-    std::vector<uint8_t> freeC(nv1, 1);
-    for (size_t v = 0; v < nv0; v++) freeC[v] = freeV[v];
     {
       std::vector<uint32_t> Tin;
       Tin.swap(res.T);
       const std::vector<uint32_t> none;
-      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, S->sharp, S->planeN, noPlane, freeC, edge, false, pts, none};
+      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, S->sharp, S->planeN, freeV, edge, false, pts, none};
       CornerOut C;
       if (cornerPass(x, C) != 0) return 2;
       res.T.swap(C.out);
@@ -1133,11 +1209,10 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
       have.insert(have.end(), marked.begin(), marked.end());
       for (size_t v = nv1; v < P.size() / 3; v++) have.push_back((uint32_t)v);
       for (const uint32_t v : pts) if (sh[v] == 1) pts2.push_back(v);
-      std::vector<uint8_t> freeD(sh.size());
-      for (size_t v = 0; v < sh.size(); v++) freeD[v] = (v < nv0 ? freeV[v] : 1) && sh[v] != 2;
+      const FreeRule freeD{&mesh, nv0, &sh};
       std::vector<uint32_t> Tin;
       Tin.swap(res.T);
-      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, sh, S->planeN, noPlane, freeD, edge, true, pts2, have};
+      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, sh, S->planeN, freeD, edge, true, pts2, have};
       CornerOut D;
       if (cornerPass(x, D) != 0) return 2;
       res.T.swap(D.out);
@@ -1226,7 +1301,7 @@ int ip_flip_probe(int id, int leaf, const double* P1, const double* P2, double e
   if (!s || !s->sampled || leaf < 0 || (size_t)leaf >= s->leaves.size() / 4) return 1;
   const std::vector<uint32_t> T = {0, 1, 2};
   const std::vector<int32_t> VL0(4, leaf);
-  std::vector<MemoEntry> memo(1);
+  Memo memo;
   std::vector<uint32_t> flipped;
   for (int k = 0; k < 3; k++) {
     SplitMap sp(4);

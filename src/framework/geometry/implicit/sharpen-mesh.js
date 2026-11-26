@@ -184,8 +184,14 @@ export function apartIndex(P, nv, edge, asks) {
       for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) want.add(key(ix + i, iy + j, iz + k));
     }
   }
+  // The x test is a table over the asked x range when that is not too wide.
+  let x0 = Infinity, x1 = -Infinity;
+  for (const ix of wantX) { if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; }
+  const table = want.size && x1 - x0 < 1 << 22 ? new Uint8Array(x1 - x0 + 1) : null;
+  if (table) for (const ix of wantX) table[ix - x0] = 1;
+  const inX = table ? (ix) => ix >= x0 && ix <= x1 && table[ix - x0] === 1 : (ix) => wantX.has(ix);
   if (want.size) for (let v = 0; v < nv; v++) {
-    if (!wantX.has(cell(P[3 * v]))) continue;
+    if (!inX(cell(P[3 * v]))) continue;
     const x = P[3 * v], y = P[3 * v + 1], z = P[3 * v + 2];
     if (finite(x, y, z) && want.has(key(cell(x), cell(y), cell(z)))) file(base, P, v);
   }
