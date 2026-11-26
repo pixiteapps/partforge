@@ -144,7 +144,7 @@ describe("a damaged mesh as a solid leaf", () => {
       expect(x).toBeGreaterThanOrEqual(H - 0.01); expect(x).toBeLessThanOrEqual(H + FIN_W + 0.01);
       expect(Math.abs(z - H)).toBeLessThanOrEqual(0.01);
       expect(y).toBeGreaterThanOrEqual(meshes.fin.fin.y[0] - 0.01); expect(y).toBeLessThanOrEqual(meshes.fin.fin.y[1] + 0.01);
-      expect(error.message).toMatch(/repair the mesh in a mesh tool/);
+      expect(error.message).toMatch(/: repair the mesh in a mesh tool and import it again, or, for a solid built in this part, build it at a finer grid$/);
     }
   });
 
@@ -168,6 +168,24 @@ describe("a damaged mesh as a solid leaf", () => {
     const part = k.import("slivered");
     expect(part.volume()).toBeGreaterThan(0);
     expect(k.implicit({ preview: 1, root: ops["offset 1"](part) }).volume()).toBeGreaterThan(part.volume());
+  });
+});
+
+// A pinned refusal. A k.implicit result of a knife blade two grid cells thick (0.8 mm at
+// grid 0.4, a 20° tip) has flipped triangles on its thin edge, and its field is wrong off the
+// surface: meshDistance reads -1.99 at a point 2 mm outside, where ray parity and a winding
+// number both say outside. Before the fold check it built, by luck (the wrong wedge missed
+// every sample that mattered). The refusal is right; the cause is cleanup's flipped rim
+// triangles upstream.
+describe("a k.implicit blade two grid cells thick, as a leaf, is refused", () => {
+  test("blade t 0.8, tip 20°, inner preview 0.4", () => {
+    const t = 0.8, tip = (t / 2) / Math.tan((10 * Math.PI) / 180);
+    const blade = k.extrude({ profile: { outer: [[0, -t / 2], [10, -t / 2], [10 + tip, 0], [10, t / 2], [0, t / 2]] }, h: 8 });
+    const leaf = k.implicit({ preview: 0.4, root: { kind: "solid", solid: blade } });
+    let err;
+    try { k.implicit({ preview: 0.5, root: { kind: "offset", d: 0.3, child: { kind: "solid", solid: leaf } } }); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(ImplicitSpecError);
+    expect(err.message).toMatch(FOLDED);
   });
 });
 

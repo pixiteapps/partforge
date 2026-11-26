@@ -142,7 +142,7 @@ function refuseFolds(field, V, N, edges, diagonal) {
   }
   if (count === 0) return;
   throw new MeshFieldError("folded",
-    `the mesh folds back on itself: ${count} triangle${count === 1 ? " is" : "s are"} folded, the first near (${where.map(fmt).join(", ")}), so its inside cannot be told from its outside there: repair the mesh in a mesh tool (or export it again) and import the repaired file`);
+    `the mesh folds back on itself: ${count} triangle${count === 1 ? " is" : "s are"} folded, the first near (${where.map(fmt).join(", ")}), so its inside cannot be told from its outside there: repair the mesh in a mesh tool and import it again, or, for a solid built in this part, build it at a finer grid`);
 }
 
 /**
