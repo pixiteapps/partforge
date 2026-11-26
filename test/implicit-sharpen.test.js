@@ -347,6 +347,26 @@ describe("sharpenMesh, hard cases", () => {
     }, 120_000);
   }
 
+  // Plain boxes 3 to 12 cells wide, placed three ways against the grid. Four cases still miss one
+  // corner, listed here on purpose (task-3-report.md, fix round 3): near that corner the mesher's
+  // bevel joins a face vertex straight to a crease point, so every split or move that would put a
+  // vertex on the corner leaves a triangle that cuts through the solid. Reaching it needs edge
+  // flips, which the stage does not do. Each of those has exactly the other 7 corners.
+  const ONE_CORNER_CUT = new Set(["0.6 8 1", "0.6 9 1", "1 3 1", "1 4 1"]);
+  const OFFSETS = [[0, 0, 0], [0.37, 0.11, 0.73], [0.5, 0.5, 0.5]];
+  for (const edge of GRIDS) {
+    test(`sweep: boxes 3 to 12 cells wide get all 8 corners, wherever the grid falls (grid ${edge})`, () => {
+      for (let n = 3; n <= 12; n += 0.5) OFFSETS.forEach((o, i) => {
+        const h = (n * edge) / 2, at = o.map((x) => x * edge), r = run({ kind: "box", size: [2 * h, 2 * h, 2 * h], at }, edge);
+        const name = `${edge} ${n} ${i}`, truth = boxCorners([[-h, -h, -h], [h, h, h]]).map((c) => c.map((x, k) => x + at[k]));
+        expectSound(r);
+        const cs = cornerVerts(r.mesh).map((v) => vert(r.mesh, v));
+        for (const p of cs) expect(Math.min(...truth.map((c) => dist(p, c))), name).toBeLessThanOrEqual(0.005);
+        expect(cs.length, name).toBe(ONE_CORNER_CUT.has(name) ? 7 : 8);
+      });
+    }, 120_000);
+  }
+
   test("small: a 4 mm boss on a plate keeps its own edges and corners (grid 1.0)", () => {
     const root = { kind: "union", k: 0, children: [{ kind: "box", size: [40, 30, 6] }, { kind: "box", size: [4, 4, 4], at: [0, 0, 5] }] };
     const r = run(root, 1.0);

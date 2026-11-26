@@ -41,6 +41,10 @@
 //      end, then its other end, is moved there. A moved end takes the corner's normal; a held,
 //      pinned or crease vertex never moves. Each try is checked as step 4 checks. A triangle
 //      left with a repeated vertex is dropped.
+//      Then a second corner pass across a vertex (cornerPass `across`): v's planes with those of
+//      each edge point across a non-edge-point neighbour u, for corners whose creases' edge points
+//      are not side by side. Its points keep within ACROSS_TOL of the field and clear of the
+//      first pass's corners, and no corner point moves.
 //   7. Steps 4 and 5 once more, on edges with neither end an edge or corner point: a corner in
 //      place lets a split through that the bevel beside it refused. The candidates are step 3's
 //      kept ones; their ends did not change, so they are not solved again.
@@ -221,7 +225,7 @@ function solve(store, cand, VL0, edge, st) {
  * it, and its edge and corner points are no candidate's end (step 7 runs on such a mesh). A mesh
  * with no candidate edge is returned as the same object. `stats`, when given, is filled with the
  * candidates' counts by outcome (`dense`: skipped by the density rule), and step 7's in
- * `stats.again`. Step 7 solves nothing, so there `candidates` is the retried count and the solve
+ * `stats.again`, the second corner pass's in `stats.across`. Step 7 solves nothing, so there `candidates` is the retried count and the solve
  * outcomes (`dense`, `offField`, `tooFar`, `notSharp`, `unsolved`) are always 0.
  */
 export function sharpenMesh(store, mesh, { corners = true, stats = null } = {}) {
@@ -329,16 +333,35 @@ function sharpenRound(store, mesh, corners, st, retry) {
   for (const c of added) grow(c);
   // 6. Corners, on step 5's mesh.
   const nv1 = P.length / 3;
-  let marked = [];
+  const marked = [];
+  // The `sharp` table for the current vertices: step 5's, then 2 for every corner point so far.
+  const sharpNow = () => {
+    const r = new Uint8Array(P.length / 3).fill(2, nv1);
+    r.set(S.sharp);
+    for (const v of marked) r[v] = 2;
+    return r;
+  };
   if (corners) {
     const noPlane = (v) => v < nv0 && (pinned(v) || creased(v));
     const C = cornerPass(store, { P, N, T: out, VL, P0, N0, sharp: S.sharp, planeN, noPlane, free, edge, st });
-    ({ out, P, N, marked } = C);
+    ({ out, P, N } = C);
+    marked.push(...C.marked);
     for (const c of C.added) grow(c);
+    // 6b. Corners across a bevel vertex, where the first pass made none (see cornerPass). A
+    // corner point made so far never moves.
+    const sh = sharpNow();
+    st.across = {};
+    for (const name of ["cornerCandidates", "corners", "cornerDet", "cornerFar", "cornerOffField", "cornerFieldFlip"]) st.across[name] = 0;
+    const D = cornerPass(store, { P, N, T: out, VL, P0, N0, sharp: sh, planeN, noPlane, free: (v) => free(v) && sh[v] !== 2,
+      edge, st: st.across, across: true });
+    ({ out, P, N } = D);
+    marked.push(...D.marked);
+    for (const c of D.added) grow(c);
+    st.corners += st.across.corners;
   }
-  const nvF = P.length / 3, sharp = new Uint8Array(nvF).fill(2, nv1), planes = new Int32Array(2 * nvF).fill(-1);
-  sharp.set(S.sharp); planes.set(S.planes);
-  for (const v of marked) { sharp[v] = 2; planes[2 * v] = -1; planes[2 * v + 1] = -1; }
+  const nvF = P.length / 3, sharp = sharpNow(), planes = new Int32Array(2 * nvF).fill(-1);
+  planes.set(S.planes);
+  for (const v of marked) { planes[2 * v] = -1; planes[2 * v + 1] = -1; }
   const res = {
     ...mesh, positions: P.slice(), normals: N.slice(), indices: Uint32Array.from(out), vertLeaf: Int32Array.from(VL), sharp, sharpPlanes: planes,
   };

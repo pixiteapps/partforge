@@ -11,8 +11,11 @@ import { evalField, dot, unit, adjacency, subdivide, checkTris, fieldFlips } fro
 // through its input position (P0, N0). Returns the re-triangulated list, the candidates that
 // made a new vertex in vertex order (`added`, each with its `leaf` and evaluating end `ev`), and
 // the vertices that became corner points where they were or by a move (`marked`).
-export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, edge, st }) {
+export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, edge, st, across = false }) {
   const nv1 = P.length / 3;
+  // On the across pass: the corner points the first pass made, which its candidates keep clear of.
+  const have = [];
+  if (across) for (let v = 0; v < nv1; v++) if (sharp[v] === 2) have.push(v);
   // PORTED: lo·nv1 + hi is exact in a JS double (below 2^53); the core needs a 64-bit integer key.
   const ekey = (a, b) => (a < b ? a * nv1 + b : b * nv1 + a);
   const planesOf = (v) => {
@@ -29,21 +32,21 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
   };
   const cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
   const adj = adjacency(T, nv1), cand = [];
-  for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
-    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
-    if ((sharp[lo] !== 1 && sharp[hi] !== 1) || !adj.first(t / 3, lo, hi)) continue;
-    // The distinct planes: an edge point's first (a mesher vertex's normal is the rougher one).
-    const set = [], ordered = sharp[lo] === 1 ? [...planesOf(lo), ...planesOf(hi)] : [...planesOf(hi), ...planesOf(lo)];
+  // A candidate on edge (lo, hi) from the planes `ordered`, when exactly three are distinct.
+  const offer = (ordered, lo, hi) => {
+    const set = [];
     for (const q of ordered) if (set.every((o) => dot(o.n, q.n) < SHARP_ANGLE_COS)) set.push(q);
-    if (set.length !== 3) continue;
+    if (set.length !== 3) return;
     st.cornerCandidates++;
     const [n0, n1, n2] = set.map((q) => q.n), c12 = cr(n1, n2), c20 = cr(n2, n0), c01 = cr(n0, n1), det = dot(n0, c12);
-    if (!(Math.abs(det) >= SHARP_CORNER_DET)) { st.cornerDet++; continue; }
+    if (!(Math.abs(det) >= SHARP_CORNER_DET)) { st.cornerDet++; return; }
     const p = [0, 1, 2].map((i) => (set[0].d * c12[i] + set[1].d * c20[i] + set[2].d * c01[i]) / det);
     const mx = (P[3 * lo] + P[3 * hi]) / 2 - p[0], my = (P[3 * lo + 1] + P[3 * hi + 1]) / 2 - p[1], mz = (P[3 * lo + 2] + P[3 * hi + 2]) / 2 - p[2];
-    if (!(hypot3(mx, my, mz) <= SHARP_MAX_MOVE * edge)) { st.cornerFar++; continue; }
+    if (!(hypot3(mx, my, mz) <= SHARP_MAX_MOVE * edge)) { st.cornerFar++; return; }
+    const R = CORNER_MERGE * edge;
+    if (have.some((v) => hypot3(P[3 * v] - p[0], P[3 * v + 1] - p[1], P[3 * v + 2] - p[2]) <= R)) return;
     const n = unit([0, 1, 2].map((i) => n0[i] + n1[i] + n2[i]));
-    if (!n) { st.cornerDet++; continue; }   // the three normals cancel: no side to face
+    if (!n) { st.cornerDet++; return; }   // the three normals cancel: no side to face
     // How many of its planes are a mesher vertex's, and how far the point is from the nearest
     // vertex that gave it one.
     let rough = 0, clear = Infinity;
@@ -52,6 +55,24 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
       clear = Math.min(clear, hypot3(P[3 * q.v] - p[0], P[3 * q.v + 1] - p[1], P[3 * q.v + 2] - p[2]));
     }
     cand.push({ a: lo, b: hi, p, n, rough, clear, leaf: VL[lo], ev: lo, ok: true, from: 0 });
+  };
+  for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
+    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+    if ((sharp[lo] !== 1 && sharp[hi] !== 1) || !adj.first(t / 3, lo, hi)) continue;
+    // The distinct planes: an edge point's first (a mesher vertex's normal is the rougher one).
+    const v = sharp[lo] === 1 ? lo : hi, u = v === lo ? hi : lo;
+    if (!across) { offer([...planesOf(v), ...planesOf(u)], lo, hi); continue; }
+    // When u is not an edge point: v's planes with those of each edge point w across u, in u's
+    // fan order. Three creases meeting at a corner need not leave two of their edge points side
+    // by side: the bevel's own vertices can sit between them.
+    if (sharp[u] === 1) continue;
+    const seen = [];
+    for (const f of adj.fan.get(u)) for (let j = 0; j < 3; j++) {
+      const w = T[3 * f + j];
+      if (w === v || w === u || sharp[w] !== 1 || seen.includes(w)) continue;
+      seen.push(w);
+      offer([...planesOf(v), ...planesOf(w)], lo, hi);
+    }
   }
   if (!cand.length) return { out: T, added: [], marked: [], P, N };
   // One point per corner. Candidates within CORNER_MERGE·edge of a group's first point take the
@@ -77,7 +98,7 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
   let r = 0;
   cand.forEach((c, q) => {
     const f = Number.isFinite(d[q]) ? d[q] : d2[r++];
-    if (!(Math.abs(f) <= SHARP_TOL * edge)) { c.ok = false; st.cornerOffField++; }
+    if (!(Math.abs(f) <= (across ? ACROSS_TOL : SHARP_TOL) * edge)) { c.ok = false; st.cornerOffField++; }
   });
 
   const { fan, byEdge } = adj;
@@ -98,6 +119,10 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
   for (let t = 0; t < T.length / 3; t++) subdivide(T, t, S.splitOf, ekey, out);
   return { out, added: S.added, marked: S.marked, P: S.P, N: S.N };
 }
+
+// The field limit (cells) for a corner found across a vertex: its planes are all edge points',
+// exact on flat faces, and two tangent lines of one curved crease (a rim) meet off the surface.
+const ACROSS_TOL = 0.005;
 
 // A corner candidate's tries, in order: an end within CORNER_MERGE·edge of the point is moved
 // onto it; the edge is split at the point; the nearer end, then the other, is moved onto it. A

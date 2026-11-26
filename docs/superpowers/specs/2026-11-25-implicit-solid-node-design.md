@@ -245,6 +245,17 @@ with a different test for where a crease is.
      of the nearer end; a move of the far end. Each try is checked as an edge change is.
    - A corner vertex is reused only by an edge next to it. An edge that is not next to it
      is refused, so that no two vertices sit at one position.
+   - **A second corner pass, across a vertex.** Three creases that meet at a corner need not
+     leave two of their edge points side by side: the bevel's own vertices can sit between
+     them. Then no edge sees three planes, or only an edge whose third plane is a bevel
+     vertex's rough normal. So, after the first pass, a second one takes each edge from an
+     edge point v to a vertex u that is not an edge point, and offers v's two planes with
+     the two planes of each edge point w that shares a triangle with u (in u's fan order).
+     Its candidates must lie within `0.005` cells of the field, not `SHARP_TOL`: their planes
+     are all edge points' planes, exact on flat faces, and two tangent lines of one curved
+     crease (a rim) meet just off the surface. A candidate within `CORNER_MERGE` of a corner
+     the first pass made is not made, and no corner point moves. The tries are the first
+     pass's. Where the first pass found every corner, the second changes nothing.
    - This is the only path known to make two vertices at one position. An edge point lies
      within 1.5 cells of its own edge's middle, on that edge's own crease. Two edge points
      meet only where two creases meet, at a corner, and there the corner pass merges its
@@ -342,10 +353,10 @@ process, so it also counts the garbage collector's helper threads.
 
 | Case | Before (wall) | Stage (wall) | Stage / before | Before (CPU) | Stage (CPU) | Stage / before |
 | --- | --- | --- | --- | --- | --- | --- |
-| Boss near a plate's edge | 1254 | 268 | 21.4% | 1349 | 452 | 33.5% |
-| Boss in an L bracket's inside corner | 1197 | 196 | 16.3% | 1265 | 302 | 23.9% |
-| Box boss on a cylinder's side | 641 | 82 | 12.7% | 700 | 109 | 15.6% |
-| Knurled cylinder (`displace`) | 1322 | 55 | 4.2% | 1364 | 109 | 8.0% |
+| Boss near a plate's edge | 1205 | 255 | 21.2% | 1305 | 388 | 29.7% |
+| Boss in an L bracket's inside corner | 1142 | 223 | 19.6% | 1228 | 375 | 30.5% |
+| Box boss on a cylinder's side | 635 | 92 | 14.5% | 696 | 142 | 20.4% |
+| Knurled cylinder (`displace`) | 1322 | 57 | 4.3% | 1401 | 115 | 8.2% |
 
 - Before this tuning the stage took 816, 655, 323 and 15607 ms of wall time (68%, 59%,
   50% and 1178%). Fewer field reads per point, no second solve in the second round,
@@ -356,6 +367,7 @@ process, so it also counts the garbage collector's helper threads.
 - The target was 10%. 13% to 21% is accepted for ordinary cases. About half of the time
   is field reads (a solid leaf's distance is a BVH query); the other half is the stage's
   own bookkeeping.
+- The second corner pass adds about 10 to 25 ms (one more scan of the edges).
 - The knurl's 38,936 candidate edges (about half of all its edges) are all skipped by the
   density rule. What is left is one pass over the edges.
 
@@ -377,6 +389,14 @@ process, so it also counts the garbage collector's helper threads.
   point (2 candidates, both not sharp).
 - The plate at the print tier's cleanup, 0.3 mm grid: sound, and the 99th percentile
   error away from the blend is 0.000 mm.
+- Plain boxes 3 to 12 cells wide, in steps of half a cell, at 0.6 and 1.0 mm, each at
+  three offsets against the grid (114 cases): 110 get all 8 corners. Before the second
+  corner pass, 7 cases missed one corner. Four still do (0.6 mm: 8 and 9 cells; 1.0 mm: 3
+  and 4 cells; all at the offset 0.37, 0.11, 0.73 cells). There the mesher's bevel joins
+  a vertex of one face straight to an edge point on the crease above it, so every split
+  or move that puts a vertex on the corner leaves a triangle that cuts through the solid.
+  The corner stays cut by a small facet, and the three creases' edge points stop 0.35 to
+  1.05 cells short of it. Reaching it needs edge flips, which the stage does not do.
 - The sharpened plate, bracket and knurl each build as a valid solid with every triangle
   kept, as `k.implicit` builds one.
 
