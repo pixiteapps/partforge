@@ -5,7 +5,8 @@
 // the NaN/∞ union case.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { core, setCoreForTesting } from "../src/framework/core/core.js";
-import { NativeSession, CORE_FAULT } from "../src/framework/core/implicit-core.js";
+import { NativeSession, CORE_FAULT, CORE_REFUSED } from "../src/framework/core/implicit-core.js";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { blockDecision, fullDecision } from "../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatch, evalBatchContact, runProgram } from "../src/framework/geometry/implicit/program.js";
@@ -398,6 +399,208 @@ describe.each([["SIMD", true], ["scalar", false]])("native contact capture (%s b
       expect(() => s.evalContact(wide, at, at, at, { K: 2, piece: new Int32Array(1) })).toThrow(/refused/);   // child 5 ≥ K
       expect(() => s.evalContact(wide, at, at, at, { K: 0, piece: new Int32Array(1) })).toThrow(/K/);
       expect(core()).not.toBeNull();   // refusing a program is not a fault
+    } finally { s.destroy(); }
+  });
+});
+
+// The MESH op (a `solid` leaf): native/implicit_eval.cpp's mesh_distance against
+// mesh-field.js's meshDistance, in both builds. The parity hinges on the native BVH
+// reporting the same triangle, point and distance as the JS one, ties included (a point
+// whose nearest point is on an edge or a corner several triangles share), so the points
+// include every mesh vertex, every edge midpoint and points pushed off them.
+describe.each([["SIMD", true], ["scalar", false]])("native MESH op (%s build)", (_, simd) => {
+  let k;
+  beforeAll(async () => {
+    if (!simd) globalThis.PARTFORGE_CORE_SIMD = false;
+    setCoreForTesting(undefined);
+    k = await bootManifoldKernel({ quality: "print" });
+  });
+  afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
+
+  const solid = (s, extra = {}) => ({ kind: "solid", solid: s, ...extra });
+  const blend = () => compileImplicit({ root: { kind: "union", k: 3, children: [
+    solid(k.box({ min: [-10, -5, -2], max: [10, 5, 2] })),
+    solid(k.cylinder({ r: 6, h: 20 }), { at: [8, 0, 0] }),
+  ] } });
+  // The 2,000 lattice points: x −12..12 by 1, y −6.25..5 by 1.25, z −3..4 by 1. They hit the
+  // box's faces (x = ±10, y = ±5, z = ±2), its edges and its corners exactly.
+  const lattice = () => {
+    const X = [], Y = [], Z = [];
+    for (let i = 0; i < 25; i++) for (let j = 0; j < 10; j++) for (let l = 0; l < 8; l++) { X.push(i - 12); Y.push(-6.25 + 1.25 * j); Z.push(l - 3); }
+    return [X, Y, Z].map((a) => Float64Array.from(a));
+  };
+  // Every vertex and edge midpoint of the field's mesh, each pushed out and in along the
+  // face normal of a triangle that holds it, diagonally off it, and to three random
+  // points within 0.6 of it (so every region of every triangle is reached).
+  const onMesh = (f) => {
+    const V = f.bvh.vertices, X = [], Y = [], Z = [];
+    const push = (x, y, z) => { X.push(x); Y.push(y); Z.push(z); };
+    for (let t = 0; t < f.tris; t++) {
+      const o = t * 9, n = f.normals.subarray(t * 21, t * 21 + 3);
+      for (let c = 0; c < 3; c++) {
+        const a = o + 3 * c, b = o + 3 * ((c + 1) % 3);
+        const pts = [[V[a], V[a + 1], V[a + 2]], [(V[a] + V[b]) / 2, (V[a + 1] + V[b + 1]) / 2, (V[a + 2] + V[b + 2]) / 2]];
+        for (const [x, y, z] of pts) {
+          push(x, y, z);
+          for (const s of [0.25, -0.25]) push(x + s * n[0], y + s * n[1], z + s * n[2]);
+          push(x + 0.5, y + 0.5, z + 0.5);
+          push(x - 0.5, y - 0.5, z - 0.5);
+          for (let q = 0; q < 3; q++) push(x + rnd() * 0.6, y + rnd() * 0.6, z + rnd() * 0.6);
+        }
+      }
+    }
+    return [X, Y, Z].map((a) => Float64Array.from(a));
+  };
+  const same = (label, nat, js, X, Y, Z) => {
+    expect(nat.length).toBe(js.length);
+    for (let i = 0; i < js.length; i++) {
+      if (!Object.is(nat[i], js[i])) throw new Error(`${label} at (${X[i]}, ${Y[i]}, ${Z[i]}): native ${nat[i]} vs JS ${js[i]}`);
+    }
+  };
+  const evalBoth = (c, prog, X, Y, Z) => {
+    const s = new NativeSession(core());
+    try {
+      for (const t of c.textures) s.addTexture(t);
+      c.meshes.forEach((f, i) => expect(s.addMesh(f)).toBe(i));
+      const js = new Float64Array(X.length);
+      evalBatch(prog, c.textures, X, Y, Z, js);
+      return { js, nat: s.eval(s.addProgram(prog), X, Y, Z) };
+    } finally { s.destroy(); }
+  };
+
+  test("this build is the one booted", () => {
+    expect(core().simd).toBe(simd);
+  });
+
+  test("MESH: the core and the JS interpreter agree to the bit on 2,000 points", () => {
+    const c = blend();
+    expect(c.meshes.length).toBe(2);
+    const [X, Y, Z] = lattice();
+    expect(X.length).toBe(2000);
+    const prog = emitProgram(c, fullDecision(c));
+    const { js, nat } = evalBoth(c, prog, X, Y, Z);
+    same("union", nat, js, X, Y, Z);
+    // Not a vacuous match: the lattice reaches inside, outside and the surface.
+    expect(js.some((v) => v < 0) && js.some((v) => v > 0)).toBe(true);
+    // Pruned programs too (a block decision drops a far leaf).
+    const b = c.bounds;
+    for (let q = 0; q < 12; q++) {
+      const cx = b.min[0] + (rnd() * 0.5 + 0.5) * (b.max[0] - b.min[0]), cy = b.min[1] + (rnd() * 0.5 + 0.5) * (b.max[1] - b.min[1]);
+      const cz = b.min[2] + (rnd() * 0.5 + 0.5) * (b.max[2] - b.min[2]);
+      const pruned = emitProgram(c, blockDecision(c, cx, cy, cz, 3).dec);
+      const r = evalBoth(c, pruned, X, Y, Z);
+      same(`pruned ${q}`, r.nat, r.js, X, Y, Z);
+    }
+  });
+
+  test("MESH: a lone solid leaf agrees to the bit on every vertex and edge midpoint (ties on shared edges and corners)", () => {
+    for (const [name, s] of [
+      ["box", k.box({ min: [-10, -5, -2], max: [10, 5, 2] })],
+      ["cylinder", k.cylinder({ r: 6, h: 20 })],
+      ["sphere", k.sphere(7)],
+      // Two cubes touching along one edge: four triangles on that edge.
+      ["edge-touching cubes", k.box({ min: [0, 0, 0], max: [4, 4, 4] }).union(k.box({ min: [4, 4, 0], max: [8, 8, 4] }))],
+    ]) {
+      const c = compileImplicit({ root: solid(s) });
+      const [X, Y, Z] = onMesh(c.meshes[0]);
+      const { js, nat } = evalBoth(c, emitProgram(c, fullDecision(c)), X, Y, Z);
+      same(name, nat, js, X, Y, Z);
+      expect(js.some((v) => Object.is(v, 0)), `${name}: some points are on the surface`).toBe(true);
+      expect(js.some((v) => v < 0) && js.some((v) => v > 0), `${name}: inside and outside`).toBe(true);
+      // The real pseudonormals give the right sign from several regions, so a port that
+      // picked a wrong region or triangle could still match on them. Scrambled normals
+      // (a random direction in every slot, both sides reading the same array) make the
+      // sign depend on exactly which slot was read.
+      const f = c.meshes[0];
+      for (let i = 0; i < f.normals.length; i++) f.normals[i] = rnd();
+      const r = evalBoth(c, emitProgram(c, fullDecision(c)), X, Y, Z);
+      same(`${name}, scrambled normals`, r.nat, r.js, X, Y, Z);
+    }
+  });
+
+  test("MESH: the native BVH reports the JS's triangle, point and distance, ties included", () => {
+    // The session builds its BVH from the vertices as doubles; a Manifold soup's JS BVH
+    // holds them as float32. Both must be the same tree and give the same answers.
+    const c = compileImplicit({ root: solid(k.box({ min: [0, 0, 0], max: [4, 4, 4] }).union(k.box({ min: [4, 4, 0], max: [8, 8, 4] }))) });
+    const f = c.meshes[0], V = f.bvh.vertices;
+    expect(V).toBeInstanceOf(Float32Array);
+    const x = core().x, handle = x.bvh_build(core().copyIn(Float64Array.from(V)), f.tris, 1, 1);
+    try {
+      const [X, Y, Z] = onMesh(f);
+      const p = core().alloc(4 * 8), out = core().alloc(4 * 8);
+      try {
+        for (let i = 0; i < X.length; i++) {
+          new Float64Array(x.memory.buffer, p, 3).set([X[i], Y[i], Z[i]]);
+          const tri = x.bvh_closest_point(handle, p, out);
+          const o = new Float64Array(x.memory.buffer, out, 4);
+          const r = f.bvh.closestPoint([X[i], Y[i], Z[i]]);
+          expect(tri).toBe(r.tri);
+          for (let a = 0; a < 3; a++) expect(Object.is(o[a], r.point[a])).toBe(true);
+          expect(Object.is(o[3], r.dist)).toBe(true);
+        }
+      } finally { x.free(p); x.free(out); }
+    } finally { x.bvh_destroy(handle); }
+  });
+
+  test("MESH: NaN and infinite points read +Infinity on both sides", () => {
+    const c = compileImplicit({ root: solid(k.sphere(5)) });
+    const SPECIAL = [0, -0, 5, -5, Infinity, -Infinity, NaN, 1e300, -1e300];
+    const X = [], Y = [], Z = [];
+    for (const a of SPECIAL) for (const b of SPECIAL) for (const d of SPECIAL) { X.push(a); Y.push(b); Z.push(d); }
+    const [x, y, z] = [X, Y, Z].map((v) => Float64Array.from(v));
+    const { js, nat } = evalBoth(c, emitProgram(c, fullDecision(c)), x, y, z);
+    same("special", nat, js, x, y, z);
+  });
+
+  test("MESH: a session frees its mesh fields (and their BVHs) when destroyed", () => {
+    const c = compileImplicit({ root: solid(k.sphere(20)) });   // a few thousand triangles
+    const cycle = () => {
+      const s = new NativeSession(core());
+      try { s.addMesh(c.meshes[0]); s.addMesh(c.meshes[0]); } finally { s.destroy(); }
+    };
+    for (let i = 0; i < 4; i++) cycle();
+    const before = core().x.memory.buffer.byteLength;
+    for (let i = 0; i < 60; i++) cycle();   // ~2 MB a cycle: a leak would grow the memory
+    expect(core().x.memory.buffer.byteLength).toBe(before);
+  });
+
+  test("MESH with a slot the session lacks is a refusal, not a fault", () => {
+    const c = blend();
+    const prog = emitProgram(c, fullDecision(c));
+    const at = Float64Array.of(0);
+    const s = new NativeSession(core());
+    try {
+      const idx = s.addProgram(prog);
+      let err = null;
+      try { s.eval(idx, at, at, at); } catch (e) { err = e; }
+      expect(err?.code).toBe(CORE_REFUSED);
+      s.addMesh(c.meshes[0]);   // one of two: slot 1 is still missing
+      err = null;
+      try { s.eval(idx, at, at, at); } catch (e) { err = e; }
+      expect(err?.code).toBe(CORE_REFUSED);
+      s.addMesh(c.meshes[1]);
+      expect(s.eval(idx, at, at, at)).toHaveLength(1);   // now it runs
+      // A malformed MESH op (no slot word, a negative or fractional slot) is refused too.
+      for (const bad of [
+        Float64Array.of(1, 1, 26, 0, 0),
+        Float64Array.of(1, 1, 26, 0, 0, -1, 0, 0),
+        Float64Array.of(1, 1, 26, 0, 0, 0.5, 0, 0),
+        Float64Array.of(1, 1, 26, 1, 0, 0, 0, 0),   // dst past nV
+      ]) {
+        err = null;
+        try { s.eval(s.addProgram(bad), at, at, at); } catch (e) { err = e; }
+        expect(err?.code).toBe(CORE_REFUSED);
+      }
+      // A bad mesh field is refused at addMesh.
+      for (const bad of [null, { tris: 1, normals: new Float64Array(21), bvh: { vertices: new Float64Array(8) } },
+        { tris: 0, normals: new Float64Array(0), bvh: { vertices: new Float64Array(0) } },
+        { tris: 1, normals: new Float64Array(20), bvh: { vertices: new Float64Array(9) } }]) {
+        err = null;
+        try { s.addMesh(bad); } catch (e) { err = e; }
+        expect(err?.code).toBe(CORE_REFUSED);
+      }
+      expect(core()).not.toBeNull();   // refusing is not a fault
+      expect(core().poisoned).toBe(false);
     } finally { s.destroy(); }
   });
 });

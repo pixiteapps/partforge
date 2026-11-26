@@ -38,8 +38,20 @@ const time = (f) => { const t = process.cpuUsage(); const r = f(); return [r, cp
 const { spec: vase, images } = vaseSpec();
 // The hand at 0.5 mm is the spec's print-tier target (docs/research/organic-shapes.md §9).
 // Each case cleans up as its tier does: the preview grids decimate (PREVIEW_CLEANUP).
+// The solid leaves (the MESH op, test/core-parity.test.js's fixtures): the plate and boss join
+// (a blended union of two solids) at both tiers and the blob shrink (offset −2), at 0.6 mm.
+// Their solids come from a preview kernel, as a forge's would; compile includes buildMeshField.
+const sk = await bootManifoldKernel();
+const solidLeaf = (solid) => ({ kind: "solid", solid });
+const solidJoin = { root: { kind: "union", k: 8, children: [
+  solidLeaf(sk.box({ min: [-30, -20, 0], max: [30, 20, 6] })), solidLeaf(sk.cylinder({ r: 8, h: 26 }).at([0, 0, 4])),
+] } };
+const solidShrink = { root: { kind: "offset", d: -2, child: solidLeaf(sk.sphere(16)
+  .union(sk.box({ min: [-8, -8, -22], max: [8, 8, 0] })).union(sk.cylinder({ r: 6, h: 44 }).rotateY(90).at([-22, 0, 4]))) } };
 const cases = [["hand preview", handSpec(), 1.5, new Map(), PREVIEW_CLEANUP], ["hand print", handSpec(), 0.8, new Map(), CLEANUP],
-  ["hand 0.5 mm", handSpec(), 0.5, new Map(), CLEANUP], ["vase preview", vase, 1.2, images, PREVIEW_CLEANUP]];
+  ["hand 0.5 mm", handSpec(), 0.5, new Map(), CLEANUP], ["vase preview", vase, 1.2, images, PREVIEW_CLEANUP],
+  ["join preview", solidJoin, 0.6, new Map(), PREVIEW_CLEANUP], ["join print", solidJoin, 0.6, new Map(), CLEANUP],
+  ["shrink preview", solidShrink, 0.6, new Map(), PREVIEW_CLEANUP]];
 
 for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);
@@ -61,7 +73,8 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
         if (on) {
           sess = new NativeSession(core());
           [, ts] = time(() => {
-            plan.textures.forEach((t) => sess.addTexture(t)); plan.programs.forEach((p) => sess.addProgram(p));
+            plan.textures.forEach((t) => sess.addTexture(t)); (plan.textures.meshes ?? []).forEach((f) => sess.addMesh(f));
+            plan.programs.forEach((p) => sess.addProgram(p));
             if (owner) sess.setContact(owner);
             sess.sample(plan, { readBack: false });
           });

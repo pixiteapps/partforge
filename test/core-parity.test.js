@@ -52,6 +52,17 @@ const implicitPart = (specs, images = new Map(), quality = "preview") => ({
   ...one((k) => (specs.length === 1 ? k.implicit(specs[0]) : k.union(specs.map((sp) => k.implicit(sp))))),
   testImages: images, testQuality: quality,
 });
+// A spec with `solid` leaves (the MESH op) needs the kernel's own solids, so it is made inside
+// the build from `k`.
+const solidPart = (makeSpec, quality = "preview") => ({ ...one((k) => k.implicit(makeSpec(k))), testImages: new Map(), testQuality: quality });
+const solidLeaf = (solid) => ({ kind: "solid", solid });
+// The plate and boss join (a blended union of two solids) and the blob shrink (offset −2 over
+// one solid), at edge 0.6: `preview` sets the preview tier's edge, `resolution` the print tier's.
+const solidJoin = (k, edge) => ({ root: { kind: "union", k: 8, children: [
+  solidLeaf(k.box({ min: [-30, -20, 0], max: [30, 20, 6] })), solidLeaf(k.cylinder({ r: 8, h: 26 }).at([0, 0, 4])),
+] }, ...edge });
+const solidShrink = (k, edge) => ({ root: { kind: "offset", d: -2, child: solidLeaf(k.sphere(16)
+  .union(k.box({ min: [-8, -8, -22], max: [8, 8, 0] })).union(k.cylinder({ r: 6, h: 44 }).rotateY(90).at([-22, 0, 4]))) }, ...edge });
 const vase = vaseSpec();
 const IMPLICIT = {
   "implicit hand with nails": implicitPart([handSpec(), ...nailSpecs()]),
@@ -70,6 +81,10 @@ const IMPLICIT = {
     { kind: "tube", points: [[10, 0, 0], [10, 0, 0], [10, 0, 8]], r: [3, 1, 1] },
   ] }, preview: 0.8 }]),
   "implicit flush pocket":implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
+  // The MESH op (solid leaves): the plate and boss join at both tiers, the blob shrink.
+  "implicit solid join": solidPart((k) => solidJoin(k, { preview: 0.6 })),
+  "implicit solid join, print tier": solidPart((k) => solidJoin(k, { resolution: 0.6 }), "print"),
+  "implicit solid shrink": solidPart((k) => solidShrink(k, { preview: 0.6 })),
   // The contact node's CONTACT and BULGE ops: every contact tree.
   ...Object.fromEntries(Object.keys(TREES).filter((k) => k.startsWith("contact"))
     .map((k) => [`implicit ${k}`, implicitPart([{ ...TREES[k], preview: 0.8 }])])),
@@ -235,5 +250,51 @@ describe("owner path: every seam fixture", () => {
         setCoreEnabled(true);
       }, 240_000);
     }
+  }
+});
+
+// The MESH op on the core: the solid fixtures above pass through buildView, where a core that
+// quietly declined a solid spec would still match. Here meshImplicit runs each one directly,
+// core off against core on (both builds), through a stand-in that counts the session's mesh
+// fields: the core must really have taken them, and answered (nothing refused, no fault).
+describe("solid leaves: the MESH op runs on the core", () => {
+  let k;
+  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
+  const SOLID_CASES = [
+    ["solid join, preview tier", () => solidJoin(k, {}), 0.6, "preview", 2],
+    ["solid join, print tier", () => solidJoin(k, {}), 0.6, "print", 2],
+    ["solid shrink", () => solidShrink(k, {}), 0.6, "preview", 1],
+  ];
+  for (const [name, make, edge, tier, fields] of SOLID_CASES) {
+    test(`core on == core off: ${name} at ${edge} mm`, () => {
+      const compiled = compileImplicit(make());
+      expect(compiled.meshes.length).toBe(fields);
+      setCoreEnabled(false);
+      const off = meshImplicit(compiled, edge, { tier });
+      expect(off.indices.length).toBeGreaterThan(0);
+      for (const simd of [true, false]) {
+        if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
+        setCoreForTesting(undefined);
+        setCoreEnabled(true);
+        const real = core();
+        let added = 0;
+        const standIn = { ...real, x: { ...real.x, ip_mesh_field_add: (...a) => { added++; return real.x.ip_mesh_field_add(...a); } } };
+        setCoreForTesting(standIn);
+        const on = meshImplicit(compiled, edge, { tier });
+        expect(real.simd, "the build under test ran").toBe(simd);
+        expect(standIn.poisoned, "the core did not fault").toBeFalsy();
+        expect(coreStatus(), "the core answered").toMatchObject({ reason: null, refusedMeshes: 0 });
+        expect(added, "the session took every mesh field").toBe(fields);
+        for (const key of ["positions", "indices", "normals"]) {
+          expect(on[key]?.constructor, `${key} (${simd ? "SIMD" : "scalar"})`).toBe(off[key].constructor);
+          expect(Buffer.compare(bytes(on[key]), bytes(off[key])), `${key} (${simd ? "SIMD" : "scalar"})`).toBe(0);
+        }
+        expect(on.warnings).toEqual(off.warnings);
+        expect(on.stats).toEqual(off.stats);
+      }
+      delete globalThis.PARTFORGE_CORE_SIMD;
+      setCoreForTesting(undefined);
+      setCoreEnabled(true);
+    }, 240_000);
   }
 });

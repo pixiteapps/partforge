@@ -276,7 +276,7 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
       const int32_t pi = progIndex[(size_t)q];
       if (pi < 0 || (size_t)pi >= s.programs.size()) return 3;
       const ipe::Program& p = s.programs[(size_t)pi];
-      if (!p.ok || p.maxSlot >= (int)s.textures.size()) return 3;
+      if (!ipe::runnable(s, p)) return 3;
       c.progs[(size_t)k] = &p;
     }
   }

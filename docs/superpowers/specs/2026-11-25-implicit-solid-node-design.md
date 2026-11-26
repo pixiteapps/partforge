@@ -187,13 +187,25 @@ the fix is to snap border vertices onto the solid's own mesh.
 
 ### 5. Cost
 
-- The spike's times are JS and are an upper bound. The native path must be measured before
-  any number is promised.
+- Measured with `node scripts/bench-implicit.mjs --core both` (CPU ms, edge 0.6 mm, the
+  development desktop). The native `MESH` op gives the same bits as the JS.
+
+  | Case | Core | Compile | Sample | Mesh | Cleanup | Total |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Plate and boss join, preview tier | off | 10 | 482 | 32 | 726 | 1250 |
+  | Plate and boss join, preview tier | on | 7 | 187 | 7 | 222 | 423 |
+  | Plate and boss join, print tier | off | 4 | 514 | 34 | 1732 | 2284 |
+  | Plate and boss join, print tier | on | 3 | 176 | 7 | 560 | 747 |
+  | Blob shrink, preview tier | off | 24 | 345 | 17 | 565 | 949 |
+  | Blob shrink, preview tier | on | 10 | 143 | 4 | 200 | 356 |
+
+- The core makes these cases about three times faster. Sample and cleanup take most of the
+  time. Compile includes `buildMeshField`.
 - The preview-grid chooser (`preview-edge.js`) weighs a program by its op count. A `MESH`
   op needs a weight that grows with the mesh's triangle count (about log n), measured, so
   the automatic preview grid stays inside its budget.
-- My proposed acceptance target, to confirm by measurement: the plate and boss join at the
-  preview tier in under 300 ms on the development desktop with the core on.
+- The proposed target was the plate and boss join at the preview tier in under 300 ms with
+  the core on. It takes about 420 ms, so it misses the target. This task did no tuning.
 
 ## Agent-facing surface
 

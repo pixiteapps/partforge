@@ -12,7 +12,7 @@ binds the same C calls into its own JS engine.
 | `bvh.{h,cpp}` | `src/framework/oracle/bvh.js` + `min-wall.js` — the oracle's triangle BVH (raycast, closestPoint, distanceTo) and the min-wall pass |
 | `js_math.h` | `src/framework/geometry/js-math.js` — partforge's own `hypot3` |
 | `flat_map.h` | (no JS twin) the open-addressing hash map the ports use in place of `std::unordered_map` |
-| `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture), `contact.js` (contactValue/bulgeOffset: the CONTACT and BULGE ops) — the implicit engine's field interpreter, and the session that holds a meshing run |
+| `implicit_eval.{h,cpp}` | `src/framework/geometry/implicit/` `program.js` (runProgram/evalBatch), `primitives.js`, `frames.js` (xformPoint/xformDir), `expr-lower.js` (the UN/BIN/TER tables), `textures.js` (sampleTexture), `contact.js` (contactValue/bulgeOffset: the CONTACT and BULGE ops), `mesh-field.js` (meshDistance/regionOf: the MESH op of a `solid` leaf, on `bvh.cpp`'s closestPoint) — the implicit engine's field interpreter, and the session that holds a meshing run |
 | `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
 | `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail, with the owner path's seamFade) — refine, project and displace for surface detail |
 | `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `result.js` (triangleOwners) — the owner path of a contact root; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
@@ -98,11 +98,12 @@ Two rules come with that freedom:
 
 The implicit engine is not one call but a run of stages over shared state, so
 its ABI is a **session**: `ip_session_create` returns an id (≥ 1; sessions
-are independent and several may be live), `ip_tex_add` / `ip_prog_add` copy in
-the part's textures and programs (their indices are the add order, which must
-be the plan's), then `ip_sample` → `ip_mesh` → `ip_cleanup` → `ip_detail` each
-read and write the session's leaf store and mesh in place, and only the final
-mesh is copied out (`ip_positions`, `ip_indices`, `ip_normals`, …).
+are independent and several may be live), `ip_tex_add` / `ip_mesh_field_add` /
+`ip_prog_add` copy in the part's textures, mesh fields and programs (their
+indices are the add order, which must be the plan's), then `ip_sample` →
+`ip_mesh` → `ip_cleanup` → `ip_detail` each read and write the session's leaf
+store and mesh in place, and only the final mesh is copied out (`ip_positions`,
+`ip_indices`, `ip_normals`, …).
 `ip_session_destroy` frees it. `src/framework/core/implicit-core.js`
 (`NativeSession`, `meshImplicitCore`) is the one JS caller: it validates
 inputs before any call, treats a refusal (a nonzero code) as "let the JS
@@ -143,6 +144,18 @@ held (each `.cpp`'s top comment has the full list):
   triangle, corner order); a collapse's kill/rename follows it, so it decides
   which triangles survive and how they are renumbered. The preview tier's
   decimation passes are the same walk again over each pass's compacted mesh.
+
+**The MESH op** (`[26, dst, p, slot]`, a `solid` leaf) is `meshDistance` per
+lane. `ip_mesh_field_add` takes buildMeshField's arrays as data: the vertices (9
+doubles per triangle, mesh order) and the pseudonormals (21 doubles per triangle).
+The C++ never recomputes the normals. The session builds a BVH over the vertices
+with `bvh.cpp` and frees it with the session. A Manifold soup's JS BVH holds float32
+vertices and the session's holds doubles. That changes no bit: `bvh.cpp` stores only
+vertex coordinates in the vertex type, and does all arithmetic in double. So the
+query reports the JS's triangle, point and distance, ties on shared edges and corners
+included. A program whose MESH slot the session lacks is refused, as a missing
+texture slot is (`ipe::runnable`). The sample cache's leaf keys are made in JS
+(`leafKeys`) and carry each mesh's digest, so the native cache path needs nothing more.
 
 The `contact` node's two ops keep `contact.js`'s order per lane (planning stays
 in JS; a program carries its clearance `cl` baked in):
@@ -246,9 +259,10 @@ ES module with a hash of these sources and the build flags:
   downloads it, and it then replaces the base build for every pass.
 
 A new `.cpp` joins the full build automatically. Add it to `BASE_SOURCES` only if
-every part needs it. The implicit sources must not include the base ones' headers
-(they share only `flat_map.h` and `js_math.h`), or the base build stops linking
-alone. `test/core-wasm.test.js` recomputes that hash, so a C++ edit
+every part needs it. The base sources must not depend on the implicit ones, or
+the base build stops linking alone. The implicit sources share `flat_map.h` and
+`js_math.h` with them, and may call the base C API: `implicit_eval.cpp` calls
+`bvh.h` for the MESH op, which the full build links. `test/core-wasm.test.js` recomputes that hash, so a C++ edit
 without a rebuild fails CI even though CI has no compiler. A JS module rather
 than a `.wasm` file because partforge ships as source into a browser worker,
 Node (the CLI, tests, a host's server), and `blob:` hosts — an import works in
