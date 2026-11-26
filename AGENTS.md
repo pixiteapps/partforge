@@ -1022,7 +1022,9 @@ the installed package, so let the publish finish before bumping the dep there.
   bindings), `frames-only.js` (`framesOnlyChange`) and `skin-drag.js` (the drag state,
   the 150 ms pause, `hold()` for captures). `canSkin` needs a trusted probe, skinnable
   on both sides, an equal `shapeHash` (the build hash without implicit frames, assets
-  included) and a frames-only change; anything else rebuilds. Bindings are made by
+  included) and a frames-only change; anything else rebuilds. The call id counts every
+  `solid` leaf as the same `"solid"`, so a change of only a leaf's solid passes
+  `framesOnlyChange`; the probe's `shapeHash` is what refuses it. Bindings are made by
   `geometry/implicit/bindings.js` per call slot and ride Manifold vertex properties
   (`mesh-bindings.js`); the preview cache key carries the slot only for calls that bind.
   The preview sample cache (`geometry/implicit/sample-cache.js`, native `ip_sample_cached`)
