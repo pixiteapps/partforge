@@ -19,9 +19,9 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
   const ekey = (a, b) => (a < b ? a * nv1 + b : b * nv1 + a);
   const planesOf = (v) => {
     if (sharp[v] === 1) {
-      const px = P[3 * v], py = P[3 * v + 1], pz = P[3 * v + 2], o = 6 * v;
+      const px = P[3 * v], py = P[3 * v + 1], pz = P[3 * v + 2], q6 = planeN.get(v) ?? [0, 0, 0, 0, 0, 0];
       return [0, 3].map((j) => {
-        const n = [planeN[o + j], planeN[o + j + 1], planeN[o + j + 2]];
+        const n = [q6[j], q6[j + 1], q6[j + 2]];
         return { n, d: n[0] * px + n[1] * py + n[2] * pz, v };
       });
     }

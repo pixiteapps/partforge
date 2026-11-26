@@ -4,7 +4,7 @@
 // indices and normals (`mesh`) and its other tables and stats (`tables`) must match the digests
 // recorded here, and the core's positions, indices and normals must match the JS's. The digests
 // were recorded before the stage's bookkeeping was made local (0.207): a speed-up must keep them.
-// Do not re-record a digest to make a speed-up pass.
+// Do not re-record a digest to make a speed-up pass. Last, a check of the apart index's fallback.
 import { createHash } from "node:crypto";
 import { describe, test, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
@@ -14,7 +14,8 @@ import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { cutCreases } from "../src/framework/geometry/implicit/crease.js";
-import { sharpenMesh } from "../src/framework/geometry/implicit/sharpen.js";
+import { sharpenMesh, SHARP_APART } from "../src/framework/geometry/implicit/sharpen.js";
+import { apartIndex } from "../src/framework/geometry/implicit/sharpen-mesh.js";
 import { core, loadFullCore } from "../src/framework/core/core.js";
 import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
@@ -138,4 +139,34 @@ describe("the sharpen stage's output is pinned", () => {
       expect(gotTables, "tables and stats").toBe(wantTables);
     }, 600_000);
   }
+});
+
+// The apart index files only the cells around the points it is told it will be asked about. A
+// point it was not told about is answered by testing every vertex: the same answers.
+describe("the sharpen apart index", () => {
+  test("answers a point it was not built for as one it was", () => {
+    let seed = 7;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const edge = 1, ap = SHARP_APART * edge, nv = 400, P = new Float64Array(3 * (nv + 50));
+    for (let i = 0; i < 3 * nv; i++) P[i] = rnd() * 0.05;
+    // Points near vertices (inside and outside the guard distance) and far from all of them.
+    const asks = [];
+    for (let q = 0; q < 300; q++) {
+      const v = Math.floor(rnd() * nv), r = (q % 3) * ap * 0.8;
+      asks.push([P[3 * v] + r, P[3 * v + 1] - r / 2, P[3 * v + 2] + r / 3]);
+    }
+    const built = apartIndex(P, nv, edge, asks)(P), blind = apartIndex(P, nv, edge, [])(P);
+    // A vertex moved by the commit, and one it placed, filed with add().
+    P[0] = asks[5][0] + ap / 2; P[1] = asks[5][1]; P[2] = asks[5][2];
+    P.set(asks[9], 3 * nv);
+    for (const ix of [built, blind]) { ix.add(0); ix.add(nv); }
+    let near = 0;
+    asks.forEach((p, q) => {
+      const skip = q % 7 === 0 ? 0 : -1, a = built.has(p, skip);
+      expect(blind.has(p, skip), `ask ${q}`).toBe(a);
+      if (a) near++;
+    });
+    expect(near).toBeGreaterThan(50);
+    expect(near).toBeLessThan(300);
+  });
 });

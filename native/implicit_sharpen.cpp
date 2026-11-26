@@ -598,29 +598,48 @@ int solve(ipe::Session& s, std::vector<ECand>& C, const std::vector<int32_t>& VL
   return 0;
 }
 
+// Each edge point's two plane normals (the side gradients Newton ended on), six numbers, by vertex;
+// a vertex with no entry reads 0 (the JS's planeN Map).
+struct PlaneN {
+  flat::Map<uint32_t> at{64};
+  std::vector<double> v;
+  void set(uint32_t vert, const double* a, const double* b) {
+    bool inserted = false;
+    const uint32_t i = at.insert(vert, (uint32_t)(v.size() / 6), &inserted);
+    if (inserted) v.resize(v.size() + 6);
+    for (int k = 0; k < 3; k++) { v[6 * (size_t)i + k] = a[k]; v[6 * (size_t)i + 3 + k] = b[k]; }
+  }
+  void clear(uint32_t vert) { const uint32_t* i = at.find(vert); if (i) for (int k = 0; k < 6; k++) v[6 * (size_t)*i + k] = 0; }
+  double get(uint32_t vert, int k) { const uint32_t* i = at.find(vert); return i ? v[6 * (size_t)*i + k] : 0; }
+  void swap(PlaneN& o) { std::swap(at, o.at); v.swap(o.v); }
+};
+
 // A commit's result (sharpen.js commit / sharpen-corners.js commitCorners).
 struct Commit {
   std::vector<double> P, N;
   SplitMap sp;
   std::vector<uint8_t> sharp;
   std::vector<int32_t> planes;
-  std::vector<double> planeN;
+  PlaneN planeN;
   std::vector<uint32_t> added;    // candidate indices, in vertex order
   std::vector<uint32_t> marked;   // corners: the vertices made corners where they are or by a move
   std::vector<uint32_t> cut;      // the triangles on a split edge
   std::vector<uint32_t> pts;      // edge rounds: the vertices made edge points
   // Kept from one commit of a loop to the next (P, N, sharp, planes, planeN at their room for
-  // the first commit's candidates): `moved` and the vertices it moved (`dirty`), put back in place.
+  // the first commit's candidates): `moved` and the vertices it moved (`dirty`), put back in place;
+  // a corner commit keeps their positions and normals before the move (`was`, six each).
   std::vector<uint8_t> moved;
   std::vector<uint32_t> dirty;
+  std::vector<double> was;
   // Takes the buffers of the commit before it in the loop.
   void takeBuffers(Commit& o) {
     P.swap(o.P); N.swap(o.N); sharp.swap(o.sharp); planes.swap(o.planes); planeN.swap(o.planeN); moved.swap(o.moved); dirty.swap(o.dirty);
+    was.swap(o.was);
   }
   // At the end of the loop: the arrays at the vertex count.
   void trim(bool edgeRound) {
     P.resize(3 * nv); N.resize(3 * nv);
-    if (edgeRound) { sharp.resize(nv); planes.resize(2 * nv); planeN.resize(6 * nv); }
+    if (edgeRound) { sharp.resize(nv); planes.resize(2 * nv); }
   }
   Touched touched;
   size_t nv = 0;
@@ -636,18 +655,18 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
   if (S.P.empty()) {
     // The first commit of the loop: room for a vertex per kept candidate (a later one keeps fewer).
     const size_t cap = nv0 + kept.size();
-    S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
-    for (size_t i = 0; i < mesh.P.size(); i++) { S.P[i] = mesh.P[i]; S.N[i] = mesh.N[i]; }
+    S.P.reserve(3 * cap); S.N.reserve(3 * cap);
+    S.P.assign(mesh.P.begin(), mesh.P.end()); S.N.assign(mesh.N.begin(), mesh.N.end());
+    S.P.resize(3 * cap); S.N.resize(3 * cap);
     S.moved.assign(nv0, 0);
     S.sharp.assign(cap, 0); S.planes.assign(2 * cap, -1);
     if (mesh.hasSharp) {
       for (size_t i = 0; i < mesh.sharp.size(); i++) S.sharp[i] = mesh.sharp[i];
       for (size_t i = 0; i < mesh.planes.size(); i++) S.planes[i] = mesh.planes[i];
     }
-    S.planeN.assign(6 * cap, 0);
   } else for (const uint32_t v : S.dirty) {
     for (int i = 0; i < 3; i++) S.P[3 * (size_t)v + i] = mesh.P[3 * (size_t)v + i];
-    for (int i = 0; i < 6; i++) S.planeN[6 * (size_t)v + i] = 0;
+    S.planeN.clear(v);
     S.moved[v] = 0;
     S.sharp[v] = mesh.hasSharp ? mesh.sharp[v] : 0;
     S.planes[2 * (size_t)v] = mesh.hasSharp ? mesh.planes[2 * (size_t)v] : -1;
@@ -657,7 +676,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
   std::vector<uint8_t>& moved = S.moved;
   ApartView apart(apartBase, S.P.data());   // S.P is never resized before the loop ends
   size_t nv = nv0;
-  auto setPlanes = [&](size_t v, const ECand& c) { for (int i = 0; i < 3; i++) { S.planeN[6 * v + i] = c.uA[i]; S.planeN[6 * v + 3 + i] = c.uB[i]; } };
+  auto setPlanes = [&](size_t v, const ECand& c) { S.planeN.set((uint32_t)v, c.uA, c.uB); };
   const std::vector<double>& P0 = mesh.P;
   const std::vector<double>& N0 = mesh.N;
   std::vector<uint32_t> scratch, edgeTris;
@@ -750,7 +769,7 @@ struct CornerCtx {
   const std::vector<double>& P0;
   const std::vector<double>& N0;
   const std::vector<uint8_t>& sharp;
-  const std::vector<double>& planeN;
+  PlaneN& planeN;
   const FreeRule& rule;                  // free and noPlane, per vertex
   double edge;
   bool across;
@@ -759,19 +778,20 @@ struct CornerCtx {
 };
 
 // commitCorners: the kept candidates, each by its first try (from c.from) with no flip or sliver.
-void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& S, ApartBase& apartBase) {
-  const size_t nv1 = x.P.size() / 3;
+void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& S, ApartBase& apartBase, size_t nv1) {
   if (S.P.empty()) {
-    // The first commit of the loop: room for a vertex per candidate.
+    // The first commit of the loop takes the pass's positions and normals (cornerPass gives them
+    // back at the end), with room for a vertex per candidate.
     const size_t cap = nv1 + C.size();
-    S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
-    for (size_t i = 0; i < x.P.size(); i++) { S.P[i] = x.P[i]; S.N[i] = x.N[i]; }
+    S.P.swap(x.P); S.N.swap(x.N);
+    S.P.resize(3 * cap); S.N.resize(3 * cap);
     S.moved.assign(nv1, 0);
-  } else for (const uint32_t v : S.dirty) {
-    for (int i = 0; i < 3; i++) { S.P[3 * (size_t)v + i] = x.P[3 * (size_t)v + i]; S.N[3 * (size_t)v + i] = x.N[3 * (size_t)v + i]; }
+  } else for (size_t q = 0; q < S.dirty.size(); q++) {
+    const size_t v = S.dirty[q];
+    for (int i = 0; i < 3; i++) { S.P[3 * v + i] = S.was[6 * q + i]; S.N[3 * v + i] = S.was[6 * q + 3 + i]; }
     S.moved[v] = 0;
   }
-  S.dirty.clear();
+  S.dirty.clear(); S.was.clear();
   std::vector<uint8_t>& moved = S.moved;
   ApartView apart(apartBase, S.P.data());   // S.P is never resized before the loop ends
   size_t nv = nv1;
@@ -804,6 +824,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
       return false;
     }
     moved[v] = 1; S.marked.push_back(v); made.push_back(Made{v}); S.dirty.push_back(v);
+    S.was.insert(S.was.end(), was, was + 3); S.was.insert(S.was.end(), wn, wn + 3);
     apart.add(v);
     for (const uint32_t* t = adj.fanBegin(v); t != adj.fanEnd(v); t++) S.touched.add(*t, (int32_t)ci, 0);
     return true;
@@ -852,10 +873,9 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   auto planesOf = [&](uint32_t v, std::vector<Plane>& out) {
     if (x.sharp[v] == 1) {
       const double px = P[3 * (size_t)v], py = P[3 * (size_t)v + 1], pz = P[3 * (size_t)v + 2];
-      const size_t o = 6 * (size_t)v;
       for (int j = 0; j < 6; j += 3) {
         Plane q;
-        q.n[0] = x.planeN[o + j]; q.n[1] = x.planeN[o + j + 1]; q.n[2] = x.planeN[o + j + 2];
+        q.n[0] = x.planeN.get(v, j); q.n[1] = x.planeN.get(v, j + 1); q.n[2] = x.planeN.get(v, j + 2);
         q.d = q.n[0] * px + q.n[1] * py + q.n[2] * pz; q.v = v;
         out.push_back(q);
       }
@@ -996,8 +1016,11 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
     std::unique_ptr<Commit> next(new Commit((uint64_t)nv1));
     if (S) next->takeBuffers(*S);
     S = std::move(next);
-    commitCorners(cand, x, adj, *S, apartBase);
-    if (fieldFlips(s, S->P.data(), S->sp, S->touched, false, x.VL, T, edge, nullptr, flipped) != 0) return 2;
+    commitCorners(cand, x, adj, *S, apartBase, nv1);
+    if (fieldFlips(s, S->P.data(), S->sp, S->touched, false, x.VL, T, edge, nullptr, flipped) != 0) {
+      S->trim(false); x.P.swap(S->P); x.N.swap(S->N);   // give the positions back, as they stand
+      return 2;
+    }
     if (flipped.empty()) break;
     for (const uint32_t t : flipped) {
       const uint32_t* i = S->touched.idx.find(t);

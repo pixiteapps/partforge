@@ -439,17 +439,17 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
   const kept = cand.filter((c) => c.ok);
   // Room for a vertex per kept candidate, made by the first commit of the loop (a later one keeps
   // fewer); `nv` is the count so far. A later commit puts back the ends the one before moved, in
-  // place. `planeN` is each edge point's two plane normals (the side gradients Newton ended on);
-  // 0 otherwise.
+  // place. `planeN` maps each edge point to its two plane normals (the side gradients Newton ended
+  // on), six numbers; a vertex with no entry has none (0).
   if (!work.P) {
     const cap = nv0 + kept.length;
     work.P = new Float64Array(3 * cap); work.N = new Float64Array(3 * cap); work.moved = new Uint8Array(nv0);
     work.P.set(P0); work.N.set(N0);
-    work.sharp = new Uint8Array(cap); work.planes = new Int32Array(2 * cap).fill(-1); work.planeN = new Float64Array(6 * cap);
+    work.sharp = new Uint8Array(cap); work.planes = new Int32Array(2 * cap).fill(-1); work.planeN = new Map();
     if (mesh.sharp) { work.sharp.set(mesh.sharp); work.planes.set(mesh.sharpPlanes); }
   } else for (const v of work.dirty) {
     for (let i = 0; i < 3; i++) work.P[3 * v + i] = P0[3 * v + i];
-    for (let i = 0; i < 6; i++) work.planeN[6 * v + i] = 0;
+    work.planeN.delete(v);
     work.moved[v] = 0;
     work.sharp[v] = mesh.sharp ? mesh.sharp[v] : 0;
     work.planes[2 * v] = mesh.sharp ? mesh.sharpPlanes[2 * v] : -1; work.planes[2 * v + 1] = mesh.sharp ? mesh.sharpPlanes[2 * v + 1] : -1;
@@ -459,7 +459,7 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
   const apart = index(P);
   let nv = nv0;
   const added = [], touched = new Map(), how = new Map(), cut = [], pts = [];
-  const setPlanes = (v, c) => { for (let i = 0; i < 3; i++) { planeN[6 * v + i] = c.uA[i]; planeN[6 * v + 3 + i] = c.uB[i]; } };
+  const setPlanes = (v, c) => { planeN.set(v, [c.uA[0], c.uA[1], c.uA[2], c.uB[0], c.uB[1], c.uB[2]]); };
   for (const k of ["split", "moved", "endMoved", "snapBlocked", "flip", "sliver", "apart"]) st[k] = 0;
   const check = (tris) => checkTris(T, tris, splitOf, ekey, P, N);
   const touch = (tris, c, v) => {
@@ -508,5 +508,5 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
     st.split++;
   });
   return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, sharp: sharp.subarray(0, nv), planes: planes.subarray(0, 2 * nv),
-    planeN: planeN.subarray(0, 6 * nv), added, touched, how, cut, pts };
+    planeN, added, touched, how, cut, pts };
 }
