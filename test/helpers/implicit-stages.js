@@ -39,8 +39,27 @@ export function jsStages(spec, edge, { tier = "preview" } = {}) {
 
 const H = 1e-4;
 
+const NEAR = 1e-6;
+
+// Pairs of vertices used by a triangle that lie closer than NEAR mm: sorted on x, swept.
+function coincidentPairs(P, T) {
+  const used = new Uint8Array(P.length / 3);
+  for (const v of T) used[v] = 1;
+  const vs = [];
+  for (let v = 0; v < used.length; v++) if (used[v]) vs.push(v);
+  vs.sort((a, b) => P[3 * a] - P[3 * b] || a - b);
+  let n = 0;
+  for (let i = 0; i < vs.length; i++) for (let j = i + 1; j < vs.length && P[3 * vs[j]] - P[3 * vs[i]] < NEAR; j++) {
+    const a = 3 * vs[i], b = 3 * vs[j];
+    const dx = P[a] - P[b], dy = P[a + 1] - P[b + 1], dz = P[a + 2] - P[b + 2];
+    if (dx * dx + dy * dy + dz * dz < NEAR * NEAR) n++;
+  }
+  return n;
+}
+
 /**
- * `open`: directed edges without their reverse exactly once. `nonManifold`: vertices whose
+ * `open`: directed edges without their reverse exactly once. `coincident`: pairs of vertices used
+ * by a triangle that lie closer than 1e-6 mm (two such may weld when the kernel builds the solid). `nonManifold`: vertices whose
  * triangle fan is not one cycle (the pinch a shared vertex can make). `flips`: triangles whose normal has
  * a negative dot with the field's gradient at their centre. `slivers`: triangles whose shortest
  * altitude is under 0.001 mm. `field(x, y, z)` is the full field (implicitDistance). `only(t)`,
@@ -89,5 +108,5 @@ export function meshChecks(mesh, field, { only = null } = {}) {
     const gx = field(x + H, y, z) - field(x - H, y, z), gy = field(x, y + H, z) - field(x, y - H, z), gz = field(x, y, z + H) - field(x, y, z - H);
     if (nx * gx + ny * gy + nz * gz < 0) flips++;
   }
-  return { open, nonManifold, flips, slivers };
+  return { open, nonManifold, flips, slivers, coincident: coincidentPairs(P, T) };
 }

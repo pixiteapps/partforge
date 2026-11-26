@@ -6,7 +6,9 @@
 // per-vertex array keeps the new length through untangle. The stage is not wired into
 // meshImplicit yet.
 import { describe, test, expect, beforeAll } from "vitest";
+import Module from "manifold-3d";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { manifoldFromWeldedMesh } from "../src/framework/geometry/mesh-build.js";
 import { implicitDistance } from "../src/framework/geometry/implicit/distance.js";
 import { fullDecision } from "../src/framework/geometry/implicit/interval.js";
 import { emitProgram, evalBatch } from "../src/framework/geometry/implicit/program.js";
@@ -18,8 +20,12 @@ import { sharpenMesh, SHARP_TOL } from "../src/framework/geometry/implicit/sharp
 import { jsStages, meshChecks, meshFieldOf } from "./helpers/implicit-stages.js";
 
 const GRIDS = [0.6, 1.0];
-let k;
-beforeAll(async () => { k = await bootManifoldKernel({ quality: "preview", meshFields: true }); }, 60_000);
+let k, wasm;
+beforeAll(async () => {
+  k = await bootManifoldKernel({ quality: "preview", meshFields: true });
+  wasm = await Module();
+  wasm.setup();
+}, 60_000);
 
 const leaf = (s) => ({ kind: "solid", solid: s });
 const boxCorners = ([lo, hi]) => {
@@ -41,12 +47,12 @@ const cornerVerts = (m) => { const r = []; for (let v = 0; v < m.sharp.length; v
 // The corners of an L profile in xz (the bracket: plate plus wall), at both ends in y.
 const lCorners = (xz, [y0, y1]) => [y0, y1].flatMap((y) => xz.map(([x, z]) => [x, y, z]));
 
-// Exactly one corner point at each true corner, within 0.005 mm of it, and no other.
-function expectCorners(mesh, truth) {
+// Exactly one corner point at each true corner, within `tol` mm of it, and no other.
+function expectCorners(mesh, truth, tol = 0.005) {
   const cs = cornerVerts(mesh).map((v) => vert(mesh, v));
   expect(cs.length).toBe(truth.length);
-  for (const p of cs) expect(Math.min(...truth.map((c) => dist(p, c)))).toBeLessThanOrEqual(0.005);
-  for (const c of truth) expect(cs.some((p) => dist(p, c) <= 0.005)).toBe(true);
+  for (const p of cs) expect(Math.min(...truth.map((c) => dist(p, c)))).toBeLessThanOrEqual(tol);
+  for (const c of truth) expect(cs.some((p) => dist(p, c) <= tol)).toBe(true);
 }
 
 // The spike's cases (spike/exact-faces/sharpen.mjs): a solid `a` blended with a solid `b`, the
@@ -72,25 +78,28 @@ const SOLID_CASES = {
 };
 
 // The cleaned mesh, the sharpened one (corners on) and the full field.
-function run(root, edge) {
-  const { store, cleaned } = jsStages({ root }, edge, { tier: "preview" });
+function run(root, edge, tier = "preview") {
+  const { store, cleaned } = jsStages({ root }, edge, { tier });
   const stats = {};
   const mesh = sharpenMesh(store, cleaned, { stats });
   return { cleaned, mesh, stats, field: implicitDistance(root, { meshFieldOf }) };
 }
 
-// The mesh is closed, has no sliver, and no triangle the stage made or changed is flipped. The
-// mesher's own flips (a few, all within a cell of a corner, left there by cleanup before this
-// stage runs) stay as they were: no more of them than the cleaned mesh had.
+// The mesh is closed, no two of its vertices sit on top of each other, and no triangle the stage
+// made or changed is flipped or a sliver. The mesher's own flips and slivers (a few, near a
+// corner or on a knurl's creases, left there by cleanup before this stage runs) stay as they
+// were: no more of them than the cleaned mesh had.
 function expectSound({ cleaned, mesh, field }) {
-  const nv0 = cleaned.positions.length / 3, T = mesh.indices;
-  const changed = (t) => [T[3 * t], T[3 * t + 1], T[3 * t + 2]].some((v) => v >= nv0 || mesh.sharp[v]);
+  const nv0 = cleaned.positions.length / 3, T = mesh.indices, before = meshChecks(cleaned, field);
+  const changed = (t) => [T[3 * t], T[3 * t + 1], T[3 * t + 2]].some((v) => v >= nv0 || mesh.sharp?.[v]);
   const all = meshChecks(mesh, field), made = meshChecks(mesh, field, { only: changed });
   expect(all.open).toBe(0);
   expect(all.nonManifold).toBe(0);
-  expect(all.slivers).toBe(0);
+  expect(all.coincident).toBe(0);
   expect(made.flips).toBe(0);
-  expect(all.flips).toBeLessThanOrEqual(meshChecks(cleaned, field).flips);
+  expect(made.slivers).toBe(0);
+  expect(all.flips).toBeLessThanOrEqual(before.flips);
+  expect(all.slivers).toBeLessThanOrEqual(before.slivers);
 }
 
 describe("sharpenMesh, edges and corners", () => {
@@ -262,4 +271,94 @@ describe("sharpenMesh, edges and corners", () => {
     expect(r.mesh.sharp.length).toBe(nv);
     expect(r.mesh.sharpPlanes.length).toBe(2 * nv);
   }, 60_000);
+});
+
+// The kernel builds a solid from the sharpened mesh as k.implicit does (manifold-backend.js: one
+// welded mesh, one original ID): it is a valid manifold with every triangle kept.
+function expectSolid(mesh) {
+  const m = manifoldFromWeldedMesh(wasm, mesh.positions, mesh.indices, wasm.Manifold.reserveIDs(1));
+  try {
+    expect(m.status()).toBe("NoError");
+    expect(m.numTri()).toBe(mesh.indices.length / 3);
+    expect(m.volume()).toBeGreaterThan(0);
+  } finally { m.delete?.(); }
+}
+
+const KNURL = "vec2 z = normalize(p.xy); for (int i = 0; i < 4; i++) { z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y); } "
+  + "float c = cos(p.z * 1.3); float s = sin(p.z * 1.3); return max(z.x * c - z.y * s, z.x * c + z.y * s);";
+// spike/solid-field/run.mjs's d-knurl tree (commit 257500e2), over a solid leaf.
+const knurl = () => ({ kind: "displace", amount: 0.7, child: leaf(k.cylinder({ r: 12, h: 30 })), by: { expr: KNURL } });
+// spike/exact-faces/border.mjs's cage-post case: a post blended into a subdivision body's underside.
+const cagePost = () => {
+  const c = k.cage({ box: { size: [44, 24, 22], segs: [2, 1, 1] } });
+  c.extrude("+x:0,0", { by: 14, scale: 0.55 });
+  return { kind: "union", k: 7, children: [leaf(k.subdiv(c).at([0, 0, 24])), leaf(k.cylinder({ r: 5, h: 22 }).at([-6, 0, 0]))] };
+};
+const solidRoot = (name) => { const c = SOLID_CASES[name](); return { kind: "union", k: c.k, children: [leaf(c.a), leaf(c.b)] }; };
+
+describe("sharpenMesh, hard cases", () => {
+  test("fade: where the plate's top edge at x = 30 runs into the blend, points stay on the field and no triangle is stretched", () => {
+    const edge = 0.6, c = SOLID_CASES["plate-edge"](), r = run(solidRoot("plate-edge"), edge);
+    expectSound(r);
+    // Near the line x = 30, z = 6, inside the blend's reach box.
+    const nearEdge = (p) => inBox(p, c.reach, 0) && Math.sqrt((p[0] - 30) ** 2 + (p[2] - 6) ** 2) <= 2 * edge;
+    const m = r.mesh, T = m.indices;
+    let n = 0;
+    for (const v of sharpVerts(m)) {
+      const p = vert(m, v);
+      if (!nearEdge(p)) continue;
+      n++;
+      expect(Math.abs(r.field(...p))).toBeLessThanOrEqual(SHARP_TOL * edge);
+    }
+    expect(n).toBeGreaterThan(0);
+    let longest = 0;
+    for (let t = 0; t < T.length / 3; t++) {
+      const vs = [T[3 * t], T[3 * t + 1], T[3 * t + 2]];
+      if (!vs.some((v) => m.sharp[v] && nearEdge(vert(m, v)))) continue;
+      for (let j = 0; j < 3; j++) longest = Math.max(longest, dist(vert(m, vs[j]), vert(m, vs[(j + 1) % 3])));
+    }
+    expect(longest).toBeLessThanOrEqual(3 * edge);
+  }, 120_000);
+
+  test("knurl: a displaced cylinder meshes closed and sound, with under 40% more triangles (grid 0.6)", () => {
+    const r = run(knurl(), 0.6);
+    expectSound(r);
+    expect(r.mesh.indices.length).toBeLessThanOrEqual(1.4 * r.cleaned.indices.length);
+  }, 240_000);
+
+  test("cage: on a subdivision body, sharp points only at the post's bottom rim (grid 0.6)", () => {
+    const edge = 0.6, r = run(cagePost(), edge);
+    expectSound(r);
+    for (const v of sharpVerts(r.mesh)) {
+      const p = vert(r.mesh, v), dr = Math.sqrt((p[0] + 6) ** 2 + p[1] ** 2) - 5;
+      expect(Math.sqrt(dr * dr + p[2] * p[2])).toBeLessThanOrEqual(2 * edge);
+    }
+  }, 240_000);
+
+  test("offset: a shrunk box keeps its 8 corners; a grown box has round edges and no sharp point (grid 0.6)", () => {
+    const edge = 0.6, box = () => leaf(k.box({ min: [-20, -15, -10], max: [20, 15, 10] }));
+    const shrunk = run({ kind: "offset", d: -2, child: box() }, edge);
+    expectSound(shrunk);
+    expectCorners(shrunk.mesh, boxCorners([[-18, -13, -8], [18, 13, 8]]), 0.01);
+    const grown = run({ kind: "offset", d: 2, child: box() }, edge);
+    expect(grown.mesh.sharp ? sharpVerts(grown.mesh).length : 0).toBe(0);
+  }, 120_000);
+
+  test("print: the plate at the print tier's cleanup is sound and exact away from the blend (grid 0.3)", () => {
+    const edge = 0.3, c = SOLID_CASES["plate-edge"](), r = run(solidRoot("plate-edge"), edge, "print");
+    expectSound(r);
+    const exact = buildMeshField(c.a.union(c.b).toMesh()), ds = [];
+    for (let t = 0; t < r.mesh.indices.length / 3; t++) {
+      const p = centre(r.mesh, t);
+      if (!inBox(p, c.reach, 1.5) && !nearCorner(p, c.corners, edge)) ds.push(Math.abs(meshDistance(exact, ...p)));
+    }
+    expect(pct(ds, 0.99)).toBeLessThanOrEqual(0.01);
+  }, 240_000);
+
+  for (const name of ["plate-edge", "bracket-corner", "knurl"]) {
+    test(`kernel: the sharpened ${name} builds as a solid (grid 0.6)`, () => {
+      const r = run(name === "knurl" ? knurl() : solidRoot(name), 0.6);
+      expectSolid(r.mesh);
+    }, 240_000);
+  }
 });

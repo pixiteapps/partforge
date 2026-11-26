@@ -191,19 +191,48 @@ The bevel is the real defect. With it gone there is nothing to stitch.
 It is the crease cut's method (crease.js: split an edge at a point moved onto a crease)
 with a different test for where a crease is.
 
-1. Each vertex has the field's unit normal at its position.
+1. Each vertex has the field's unit normal at its position. The stage reads the mesh's
+   own normals. It never computes normals for the whole mesh.
 2. **Edges.** A mesh edge whose two ends' normals are more than `SHARP_ANGLE` apart is a
    candidate. Its crease point is the point nearest the edge's middle on both ends'
    tangent planes, then moved onto the field's zero set as crease.js moves its points. It
    is kept if the field there is within `SHARP_TOL` cells of zero and it moved less than
    `SHARP_MAX_MOVE` cells. A kept point close to an edge end moves that end, as
    `CREASE_SNAP` does. Otherwise it splits the edge.
-3. **Corners.** A crease point carries its two planes. An edge whose two ends carry three
-   distinct planes between them is split at the point where the three meet, under the
-   same two limits. Corner points at one position are one vertex.
+   - The move is Newton on the two sides of the crease. Each side is read a little way
+     along its own plane, away from the other, with six points (central differences).
+   - Newton stops when its step is under `1e-5` cells. The point is judged on that read.
+   - A candidate whose two sides agree within `SHARP_ANGLE` on its first three reads is
+     not sharp, and stops there. On the plate, bracket and cylinder cases no kept point
+     is lost by this. On a knurl it saves most of the reads.
+   - Moves go first, then splits on edges with no moved end. A snap that cannot be made,
+     or that fails its checks, falls back to a split.
+   - An edge point carries the two planes of its Newton side gradients, through its own
+     position. A moved end carries them too.
+   - A change is dropped if a triangle it makes faces against its corners' normals or is
+     thinner than 0.001 mm. Then every changed triangle is read against the field at its
+     centre, along its normal, at `1e-4` cells and at `0.005` cells each way. The
+     candidates behind a triangle that faces against the field are dropped, and the
+     commit runs again. The near read catches a centre that sits on a crease of a rough
+     field, such as a knurl.
+3. **Corners.** An edge with an edge point at one end, whose two ends carry three distinct
+   planes between them, is a corner candidate at the point where the three meet, under
+   the same two limits. A mesher vertex gives its normal as its one plane. A pinned or
+   crease vertex gives none.
+   - Estimates within `0.05` cells of each other are one corner (`CORNER_MERGE`). The
+     group keeps the best estimate: the one with the fewest mesher planes, then the one
+     whose planes come from farthest away.
+   - A corner tries, in order: an end already at the corner; a split of the edge; a move
+     of the nearer end; a move of the far end. Each try is checked as an edge change is.
+   - A corner vertex is reused only by an edge next to it. An edge that is not next to it
+     is refused, so that no two vertices sit at one position.
 4. Triangles with one, two or three split edges become two, three or four. A triangle
    left with a repeated vertex is dropped.
-5. `untangle` runs after it, as after the crease cut.
+5. **A second edge round** runs after corners, on edges with neither end an edge or corner
+   point. A corner in place lets a split through that the bevel beside it refused. Its
+   candidates are the first round's that passed the judge: their ends did not change, so
+   they are not solved again.
+6. `untangle` runs after it, as after the crease cut.
 
 A rounded edge is not a candidate once its radius is large enough for the grid to resolve:
 neighbouring vertices then differ by less than `SHARP_ANGLE`. A round too small for the
@@ -250,6 +279,50 @@ blend.
   edge is a round that grows from zero radius. The limits above need tuning on this case.
 - It did not run on a cage body, a texture, an `offset`, the print tier, a posed tree or
   the owner path with its own crease vertices.
+
+**Constants.** The five named constants keep their first values: `SHARP_ANGLE_COS`
+0.9063077870366499 (25°), `SHARP_TOL` 0.05, `SHARP_MAX_MOVE` 1.5, `SHARP_SNAP` 0.15 and
+`SHARP_CORNER_DET` 0.05. The hard cases below passed with them, so none was changed. The
+stage's internal values are `CORNER_MERGE` 0.05 cells, the Newton stop `1e-5` cells, three
+flat reads, and the flip test's two steps, `1e-4` and `0.005` cells.
+
+**Stage numbers.** JS, preview tier, 0.6 mm grid, milliseconds, median of 3 runs. "Before"
+is plan, evaluate, mesh and cleanup. Wall time is the one JS thread. CPU time is the whole
+process, so it also counts the garbage collector's helper threads.
+
+| Case | Before (wall) | Stage (wall) | Stage / before | Before (CPU) | Stage (CPU) | Stage / before |
+| --- | --- | --- | --- | --- | --- | --- |
+| Boss near a plate's edge | 1184 | 195 | 16.5% | 1286 | 306 | 23.8% |
+| Boss in an L bracket's inside corner | 1123 | 201 | 17.9% | 1198 | 344 | 28.7% |
+| Box boss on a cylinder's side | 624 | 82 | 13.2% | 685 | 123 | 18.0% |
+| Knurled cylinder (`displace`) | 1322 | 2657 | 201% | 1403 | 2921 | 208% |
+
+- Before this tuning the stage took 816, 655, 323 and 15607 ms of wall time (68%, 59%,
+  50% and 1178%). Fewer field reads per point, no second solve in the second round, and
+  array work without copies made the difference.
+- The target was 10%. It is not met. About half of the time is field reads: a solid
+  leaf's distance is a BVH query. The other half is the stage's own bookkeeping.
+- A knurl at 0.6 mm has 38,936 candidate edges, about half of all its edges. About 11,000
+  become sharp points. Its field reads alone cost more than the stages before it.
+
+**Hard cases.** Tests in `test/implicit-sharpen.test.js`, 0.6 mm grid unless named.
+
+- The fade zone, where the plate's top edge at x = 30 runs into the blend: 35 sharp
+  points, each within 0.004 mm of the field (limit 0.03). The longest edge of a triangle
+  at one of them is 0.78 mm (limit 1.8). A small zigzag of about one cell stays where the
+  box boss's top edge meets the blend on the cylinder case. It was there before this
+  tuning.
+- A knurl: closed, no flipped or sliver triangle made. Triangles grow by 22% (limit 40%).
+  The cleaned mesh already has 1,084 flipped and 3 sliver triangles by the test's
+  measure; after the stage there are 1,039 and 3.
+- A post blended into a subdivision body (`cage-post`): 163 sharp points, all within
+  0.002 mm of the post's bottom rim. None on the body.
+- `offset` `d: -2` on a box: 8 corners, each on the shrunk box's corner. `d: 2`: no sharp
+  point (2 candidates, both not sharp).
+- The plate at the print tier's cleanup, 0.3 mm grid: sound, and the 99th percentile
+  error away from the blend is 0.000 mm.
+- The sharpened plate, bracket and knurl each build as a valid solid with every triangle
+  kept, as `k.implicit` builds one.
 
 **What this does not give.** A flat face stays at grid density, not two triangles. A
 curved face follows the grid, not the solid's own facets. Both are true today.
