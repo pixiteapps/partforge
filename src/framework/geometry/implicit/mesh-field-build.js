@@ -41,12 +41,16 @@ function digestBytes(u8) {
 // past the surface, and the result mesh is open ("Not manifold"). Re-signing those
 // sums from a probe does not cure it: where two layers overlap only in part, one
 // face normal is right over one part of a triangle and wrong over the rest. So a
-// fold that breaks the sign is refused.
+// fold that breaks the sign is found and recorded on the field (`folds`).
 //
 // Not every fold breaks it. A k.implicit result has a few small flipped triangles
 // on a sharp rim, and its field is still right a little way off the surface. So a
-// fold is refused only on evidence: the sign meshDistance gives at a point off the
-// fold disagrees with ray parity (oracle/bvh.js insideByParity) there.
+// fold is recorded only on evidence: the sign meshDistance gives at a point off the
+// fold disagrees with ray parity (oracle/bvh.js insideByParity) there. Even then the
+// wrong region is often a thin prism over a tiny triangle that the sampler never
+// reaches, and the build is sound. So nothing is refused here: the kernel's
+// k.implicit (manifold-backend.js) refuses a leaf with `folds` only when the kernel
+// build fails, and warns when it builds.
 //
 // Suspects: the triangles of a manifold edge whose two unit normals' dot is below
 // FOLD_DOT (they face away from each other: a fold, or a sound edge sharper than
@@ -66,7 +70,7 @@ function digestBytes(u8) {
 // disagrees; it stops at its first.
 //
 // A clean mesh has no suspect edge, so it never probes and gives exactly the arrays
-// it gave before. A refusal changes no array: it is a throw. Cost: at most
+// it gave before. A fold changes no array and not the digest: it only adds `folds`. Cost: at most
 // MAX_PROBED suspect triangles (the first in triangle order) take up to 60 probes
 // each, a nearest-point query and up to four ray casts per probe. Suspects past the
 // cap are not checked. Not checked at all: a fold whose two normals' dot is above
@@ -76,7 +80,6 @@ const PROBE_NEAR = 2, PROBE_MID = 6, PROBE_FAR = 0.05;
 const MAX_PROBED = 1024;
 // A probe counts only when it ends at least PROBE_CLEAR of its distance from the surface.
 const PROBE_CLEAR = 0.25;
-const fmt = (v) => String(Math.round(v * 100) / 100 + 0);
 
 // Probe directions for triangle t, as [origin, unit direction] pairs, in a fixed order.
 function probeRays(V, N, t) {
@@ -105,7 +108,9 @@ function probeRays(V, N, t) {
   return rays;
 }
 
-function refuseFolds(field, V, N, edges, diagonal) {
+// The folds found, `{ count, where }` (where: the first folded triangle's probe origin),
+// or null when there are none.
+function findFolds(field, V, N, edges, diagonal) {
   const tris = V.length / 9, suspect = new Uint8Array(tris);
   let any = false;
   for (const ts of edges.values()) {
@@ -113,7 +118,7 @@ function refuseFolds(field, V, N, edges, diagonal) {
     const a = ts[0] * NORMALS_PER_TRI, b = ts[1] * NORMALS_PER_TRI;
     if (N[a] * N[b] + N[a + 1] * N[b + 1] + N[a + 2] * N[b + 2] < FOLD_DOT) { suspect[ts[0]] = 1; suspect[ts[1]] = 1; any = true; }
   }
-  if (!any) return;
+  if (!any) return null;
   let sum = 0;
   for (let o = 0; o < V.length; o += 9) {
     sum += hypot3(V[o + 3] - V[o], V[o + 4] - V[o + 1], V[o + 5] - V[o + 2])
@@ -140,18 +145,16 @@ function refuseFolds(field, V, N, edges, diagonal) {
     }
     if (bad) { count++; if (!where) where = bad; }
   }
-  if (count === 0) return;
-  throw new MeshFieldError("folded",
-    `the mesh folds back on itself: ${count} triangle${count === 1 ? " is" : "s are"} folded, the first near (${where.map(fmt).join(", ")}), so its inside cannot be told from its outside there: repair the mesh in a mesh tool and import it again, or, for a solid built in this part, build it at a finer grid`);
+  return count === 0 ? null : { count, where };
 }
 
 /**
  * Build the field of a closed triangle mesh: `{ positions, indices? }`, a Manifold
  * soup (9 floats per triangle) or an indexed mesh. Other fields (normals, ...) are
- * ignored. Throws MeshFieldError for an empty mesh, for a mesh with a directed
- * edge that does not occur as often as its reverse, or for a mesh that folds back
- * on itself (refuseFolds).
- * @returns {{ bvh, tris: number, normals: Float64Array, min: number[], max: number[], digest: string }}
+ * ignored. Throws MeshFieldError for an empty mesh, or for a mesh with a directed
+ * edge that does not occur as often as its reverse. A mesh that folds back on itself
+ * so its sign is wrong off the fold builds, with `folds: { count, where }` (findFolds).
+ * @returns {{ bvh, tris: number, normals: Float64Array, min: number[], max: number[], digest: string, folds?: { count: number, where: number[] } }}
  */
 export function buildMeshField(mesh) {
   const bvh = buildBVH({ positions: mesh.positions, indices: mesh.indices });
@@ -246,7 +249,7 @@ export function buildMeshField(mesh) {
     if (c < min[a]) min[a] = c;
     if (c > max[a]) max[a] = c;
   }
-  refuseFolds({ bvh, normals: N }, V, N, edges, hypot3(max[0] - min[0], max[1] - min[1], max[2] - min[2]));
+  const folds = findFolds({ bvh, normals: N }, V, N, edges, hypot3(max[0] - min[0], max[1] - min[1], max[2] - min[2]));
   const digest = digestBytes(new Uint8Array(V.buffer, V.byteOffset, V.byteLength));
-  return { bvh, tris, normals: N, min, max, digest };
+  return { bvh, tris, normals: N, min, max, digest, ...(folds ? { folds } : {}) };
 }

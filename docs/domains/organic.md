@@ -229,8 +229,9 @@ shrink a solid, or to texture one.
   edge is drawn sharp. Use a grid fine enough for the rounds you care about.
 - `frame` and `at` place the solid as they place any node.
 - A solid whose mesh folds back on itself so badly that its inside cannot be told from
-  its outside, as in some damaged STL files, is refused with a point on the fold: repair
-  the mesh there in a mesh tool first.
+  its outside (some damaged STL files, and a few rim or taper triangles of a `k.implicit`
+  result) usually builds, with a warning that names a point on the fold. If the build
+  fails, it is refused with that point: repair the mesh there in a mesh tool first.
 
 A rounded join between two ordinary solids. A sharp `union` of the same two solids has
 a square corner where the boss meets the plate. The blend fills that corner:
@@ -359,9 +360,14 @@ or cylinder in a tree, a `union` or `intersect` with `k: 0`, a flat cut, and the
 a `solid` leaf. A flat face is still meshed at the grid, and a curved face still follows
 the grid. An edge rounded by less than about a tenth of the grid edge is drawn sharp.
 Shapes made of smooth blends look almost unchanged, but the stage still costs time
-(see below).
+(see below). A `k.implicit` result is shaded with a crease angle of 80°, so an edge
+between about 25° and 80° is sharp in the mesh and in the export but can still look
+smooth on screen.
 
-- About 1 corner in 100 on a plain box can stay cut by a small facet.
+- Most corners are found. A corner can stay cut by a small facet, more often on a thin
+  shell or a bent shape.
+- Where a curved sharp edge meets nothing, a stray corner point can appear beside it,
+  within the stage's tolerance.
 - Small notches can remain where a sharp edge fades into a blend.
 - A smooth `union` of three or more children has real creases where a third child is
   within `k`. Those creases are drawn as straight lines.

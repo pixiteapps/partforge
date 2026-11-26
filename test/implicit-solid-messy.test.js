@@ -4,7 +4,8 @@
 // itself) and a zero-area triangle. A fold leaves a pseudonormal that cancels to a tiny
 // vector of no particular direction, so the field reads inside in a wedge that runs far out
 // from the fold, and the mesher's cull steps past the surface: "Not manifold". The leaf must
-// either build the right solid or refuse with the place of the fold, when it is compiled.
+// either build the right solid, with one warning that names the fold, or, when the build
+// fails, refuse with the place of the fold. A raw "Not manifold" never reaches the author.
 import { describe, expect, test, beforeAll } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -111,9 +112,13 @@ const ops = {
 };
 const EDGES = [0.5, 0.8];
 const FOLDED = /^implicit: root(\.child|\.children\[0\])\.solid: the solid's mesh folds back on itself: (?:1 triangle is|\d+ triangles are) folded, the first near \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)/;
+const FOLD_WARNING = /^implicit: root(\.child|\.children\[0\])\.solid: the solid's mesh has \d+ folded triangles? near \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)\. The result built, but check it near there\.$/;
+// The build's fold warnings, drained from the kernel (the other warnings are dropped).
+const foldWarnings = (kernel = k) => kernel.takeBuildWarnings().filter((w) => /folded/.test(w));
 const outcome = (name, op, edge) => {
-  try { return { volume: k.implicit({ preview: edge, root: ops[op](k.import(name)) }).volume() }; }
-  catch (e) { return { error: e }; }
+  k.takeBuildWarnings();
+  try { return { volume: k.implicit({ preview: edge, root: ops[op](k.import(name)) }).volume(), warnings: foldWarnings() }; }
+  catch (e) { k.takeBuildWarnings(); return { error: e }; }
 };
 
 describe("a damaged mesh as a solid leaf", () => {
@@ -125,27 +130,48 @@ describe("a damaged mesh as a solid leaf", () => {
     test(`${name}, ${op} at ${edge} mm: builds within 2% of the clean box's result, or is refused as folded`, () => {
       const clean = outcome("clean", op, edge), got = outcome(name, op, edge);
       expect(clean.error).toBeUndefined();
+      expect(clean.warnings).toEqual([]);
       if (got.error) {
         expect(got.error).toBeInstanceOf(ImplicitSpecError);
         expect(got.error.message).toMatch(FOLDED);
       } else {
         expect(Math.abs(got.volume / clean.volume - 1)).toBeLessThan(0.02);
+        // The fin's fold is found when the field is built, so a build with it warns once.
+        expect(got.warnings).toHaveLength(name === "needle" ? 0 : 1);
+        if (name !== "needle") expect(got.warnings[0]).toMatch(FOLD_WARNING);
       }
     });
   }
 
-  test("a fin is refused when the leaf is compiled, and the message names a point on the fin", () => {
-    for (const op of Object.keys(ops)) {
+  // On the fin: past the box's edge by at most the fin's width, in the top plane, inside its span.
+  const expectOnFin = (m) => {
+    const [x, y, z] = m.slice(2, 5).map(Number);
+    expect(x).toBeGreaterThanOrEqual(H - 0.01); expect(x).toBeLessThanOrEqual(H + FIN_W + 0.01);
+    expect(Math.abs(z - H)).toBeLessThanOrEqual(0.01);
+    expect(y).toBeGreaterThanOrEqual(meshes.fin.fin.y[0] - 0.01); expect(y).toBeLessThanOrEqual(meshes.fin.fin.y[1] + 0.01);
+  };
+
+  // Pinned: at 0.5 mm the fin's wrong sign breaks the shrink and the smooth union (Manifold
+  // refuses the mesh), and the grow builds.
+  test("a fin is refused when the build fails, and the message names a point on the fin", () => {
+    for (const op of ["offset -1", "smooth union"]) {
       const { error } = outcome("fin", op, 0.5);
       const m = error?.message.match(FOLDED);
       expect(m, String(error?.message)).not.toBeNull();
-      // On the fin: past the box's edge by at most the fin's width, in the top plane, inside its span.
-      const [x, y, z] = m.slice(2, 5).map(Number);
-      expect(x).toBeGreaterThanOrEqual(H - 0.01); expect(x).toBeLessThanOrEqual(H + FIN_W + 0.01);
-      expect(Math.abs(z - H)).toBeLessThanOrEqual(0.01);
-      expect(y).toBeGreaterThanOrEqual(meshes.fin.fin.y[0] - 0.01); expect(y).toBeLessThanOrEqual(meshes.fin.fin.y[1] + 0.01);
+      expect(error).toBeInstanceOf(ImplicitSpecError);
+      expectOnFin(m);
       expect(error.message).toMatch(/: repair the mesh in a mesh tool and import it again, or, for a solid built in this part, build it at a finer grid$/);
     }
+  });
+
+  test("a fin that builds gives one warning, and it names a point on the fin", () => {
+    const clean = outcome("clean", "offset 1", 0.5), got = outcome("fin", "offset 1", 0.5);
+    expect(got.error).toBeUndefined();
+    expect(Math.abs(got.volume / clean.volume - 1)).toBeLessThan(0.02);
+    expect(got.warnings).toHaveLength(1);
+    const m = got.warnings[0].match(FOLD_WARNING);
+    expect(m, got.warnings[0]).not.toBeNull();
+    expectOnFin(m);
   });
 
   test("a zero-area triangle alone builds, within 2% of the clean box", () => {
@@ -171,19 +197,67 @@ describe("a damaged mesh as a solid leaf", () => {
   });
 });
 
-// A pinned refusal. A k.implicit result of a knife blade two grid cells thick (0.8 mm at
-// grid 0.4, a 20° tip) has flipped triangles on its thin edge, and its field is wrong off the
-// surface: meshDistance reads -1.99 at a point 2 mm outside, where ray parity and a winding
-// number both say outside. Before the fold check it built, by luck (the wrong wedge missed
-// every sample that mattered). The refusal is right; the cause is cleanup's flipped rim
-// triangles upstream.
-describe("a k.implicit blade two grid cells thick, as a leaf, is refused", () => {
+// Pinned. A k.implicit result of a knife blade two grid cells thick (0.8 mm at grid 0.4, a
+// 20° tip) has a flipped triangle on its thin edge, and its field is wrong off the surface
+// there: meshDistance reads -1.99 at a point 2 mm outside, where ray parity and a winding
+// number both say outside. The wrong region misses every sample that matters, so the build
+// is sound: it builds, with one warning that names the fold. The cause is cleanup's flipped
+// rim triangles upstream.
+describe("a k.implicit blade two grid cells thick, as a leaf, builds with a warning", () => {
   test("blade t 0.8, tip 20°, inner preview 0.4", () => {
     const t = 0.8, tip = (t / 2) / Math.tan((10 * Math.PI) / 180);
     const blade = k.extrude({ profile: { outer: [[0, -t / 2], [10, -t / 2], [10 + tip, 0], [10, t / 2], [0, t / 2]] }, h: 8 });
     const leaf = k.implicit({ preview: 0.4, root: { kind: "solid", solid: blade } });
+    k.takeBuildWarnings();
+    const grown = k.implicit({ preview: 0.5, root: { kind: "offset", d: 0.3, child: { kind: "solid", solid: leaf } } });
+    expect(() => buildMeshField(grown.toMesh())).not.toThrow();   // closed
+    expect(grown.volume()).toBeGreaterThan(leaf.volume());
+    const w = foldWarnings();
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(FOLD_WARNING);
+  });
+});
+
+// k.implicit results whose cleanup leaves flipped rim triangles that the fold check finds
+// (at print, where cleanup does not decimate). Before, the check refused them as leaves,
+// though they build: the wrong region is a thin prism over a tiny triangle that the sampler
+// does not reach. They must build, closed, with one warning. Volumes are this branch's with
+// the check removed (the field's arrays are unchanged), to 1%.
+describe("a k.implicit result with folds, as a leaf, builds with a warning", () => {
+  let kp;
+  beforeAll(async () => { kp = await bootManifoldKernel({ quality: "print", meshFields: true }); });
+  const CASES = {
+    "tapered cylinder at 0.8": [{ kind: "taper", from: [-10, 1], to: [10, 0.4], child: { kind: "cylinder", h: 20, r: 10 } }, 0.8, 4681.9],
+    "twisted box at 0.5": [{ kind: "twist", degPerMm: 2, child: { kind: "box", size: [12, 8, 30] } }, 0.5, 4433.2],
+  };
+  for (const [name, [root, grid, grownVolume]] of Object.entries(CASES)) {
+    test(`${name}, offset +1`, () => {
+      const inner = kp.implicit({ root, resolution: grid });
+      expect(buildMeshField(inner.toMesh()).folds?.count).toBeGreaterThan(0);
+      kp.takeBuildWarnings();
+      const grown = kp.implicit({ resolution: 0.8, root: { kind: "offset", d: 1, child: { kind: "solid", solid: inner } } });
+      expect(() => buildMeshField(grown.toMesh())).not.toThrow();   // closed
+      expect(Math.abs(grown.volume() / grownVolume - 1)).toBeLessThan(0.01);
+      const w = foldWarnings(kp);
+      expect(w).toHaveLength(1);
+      expect(w[0]).toMatch(/^implicit: root\.child\.solid: the solid's mesh has \d+ folded triangles? near \(-?[\d.]+, -?[\d.]+, -?[\d.]+\)\./);
+    });
+  }
+
+  // Pinned: the one measured case whose fold breaks the build. A 25° wedge at 0.8 mm, grown
+  // builds; shrunk, Manifold refuses the mesh, and the author gets the folded error, not
+  // "Not manifold".
+  test("a 25° wedge at 0.8: offset +1 builds with a warning, offset -1 is the folded error", () => {
+    const a = (25 * Math.PI) / 180;
+    const inner = kp.implicit({ resolution: 0.8, root: { kind: "intersect", children: [{ kind: "box", size: [60, 30, 30] },
+      { kind: "halfspace", normal: [0, 1, 0], offset: 0 }, { kind: "halfspace", normal: [0, -Math.cos(a), Math.sin(a)], offset: 0 }] } });
+    kp.takeBuildWarnings();
+    const grown = kp.implicit({ resolution: 0.8, root: { kind: "offset", d: 1, child: { kind: "solid", solid: inner } } });
+    expect(grown.volume()).toBeGreaterThan(inner.volume());
+    expect(foldWarnings(kp)).toHaveLength(1);
     let err;
-    try { k.implicit({ preview: 0.5, root: { kind: "offset", d: 0.3, child: { kind: "solid", solid: leaf } } }); } catch (e) { err = e; }
+    try { kp.implicit({ resolution: 0.8, root: { kind: "offset", d: -1, child: { kind: "solid", solid: inner } } }); } catch (e) { err = e; }
+    kp.takeBuildWarnings();
     expect(err).toBeInstanceOf(ImplicitSpecError);
     expect(err.message).toMatch(FOLDED);
   });
@@ -191,7 +265,7 @@ describe("a k.implicit blade two grid cells thick, as a leaf, is refused", () =>
 
 // A k.implicit result as a leaf. Cleanup leaves a few small flipped triangles on the
 // cylinder's top rim (7 to 13 edges whose normals' dot is -0.6 to -0.999), but the field is
-// right off the surface, so the leaf builds, exactly as before the fold check. The volumes
+// right off the surface, so the leaf builds with no warning, exactly as before the fold check. The volumes
 // are this branch's before the check (the field's arrays are unchanged, so they are also its
 // volumes now), to 1%.
 describe("a k.implicit result as a solid leaf builds", () => {
@@ -208,23 +282,31 @@ describe("a k.implicit result as a solid leaf builds", () => {
     test(`inner grid ${inner}, ${op}, at outer grids 0.5 and 0.8`, () => {
       const bc = k.box({ min: [-15, -15, 0], max: [15, 15, 6] }).union(k.cylinder({ r: 6, h: 20 }));
       const leaf = k.implicit({ preview: inner, root: { kind: "offset", d: 0.5, child: { kind: "solid", solid: bc } } });
+      k.takeBuildWarnings();
       [0.5, 0.8].forEach((g, i) => {
         const v = k.implicit({ preview: g, root: outer[op](leaf) }).volume();
         expect(Math.abs(v / ref[inner][op][i] - 1)).toBeLessThan(0.01);
       });
+      expect(foldWarnings()).toEqual([]);
     });
   }
 });
 
 describe("buildMeshField on a damaged mesh", () => {
   const soup = (m) => ({ positions: Float32Array.from(m.positions), indices: Uint32Array.from(m.indices) });
-  test("a fin throws MeshFieldError, reason folded; a zero-area triangle and the knife edges build", () => {
+  test("a fin builds a field that records its folds; a zero-area triangle, the knife edges and a clean box record none", () => {
+    const fin = buildMeshField(soup(meshes.fin));
+    expect(fin.folds.count).toBeGreaterThan(0);
+    expect(fin.folds.where).toHaveLength(3);
+    for (const m of [meshes.clean, meshes.needle, ...WEDGES.map((d) => meshes[`wedge${d}`])]) expect(buildMeshField(soup(m)).folds).toBeUndefined();
+  });
+
+  test("an open mesh still throws MeshFieldError, reason open", () => {
+    const m = boxMesh();
+    m.indices.splice(0, 3);
     let err;
-    try { buildMeshField(soup(meshes.fin)); } catch (e) { err = e; }
+    try { buildMeshField(soup(m)); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(MeshFieldError);
-    expect(err.reason).toBe("folded");
-    expect(err.message).toMatch(/^the mesh folds back on itself: /);
-    expect(() => buildMeshField(soup(meshes.needle))).not.toThrow();
-    for (const deg of WEDGES) expect(() => buildMeshField(soup(meshes[`wedge${deg}`]))).not.toThrow();
+    expect(err.reason).toBe("open");
   });
 });

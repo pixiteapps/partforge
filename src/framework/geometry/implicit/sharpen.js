@@ -72,7 +72,8 @@ export const SHARP_CORNER_DET = 0.05;
  * The density rule: a leaf program is skipped when SHARP_DENSE_DIV times its candidate edges is
  * more than its edges (a share over one fifth) and it has more than SHARP_DENSE_MIN candidates.
  * Measured (design §4): a share of at most 0.122 where real edges are, at least 0.314 on a knurl;
- * small parts reach 0.4 with at most 249 candidates, a knurl has at least 4,839.
+ * small parts reach 0.4 with at most 249 candidates; the smallest dense knurl measured (r 1, h 1.2,
+ * at a 0.6 mm grid) has 619, and the r 6, h 8 knob at 1.0 mm has 4,839.
  */
 export const SHARP_DENSE_DIV = 5, SHARP_DENSE_MIN = 400;
 

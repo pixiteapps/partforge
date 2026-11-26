@@ -1059,7 +1059,8 @@ about a third of a grid cell. A box or cylinder in a tree, a `k: 0` union or int
 flat cut and the edges of a `solid` leaf now come out sharp. A flat face is still meshed at
 the grid, and a curved face still follows the grid. An edge rounded by less than about a
 tenth of a cell is drawn sharp. The meshes of existing implicit parts change: they have
-more triangles near edges, by up to about 15%, and different bytes. The stage has no option
+more triangles near edges, usually 5% to 15% and up to about 30% on a small part at a
+coarse grid, and different bytes. The stage has no option
 and no switch. No contract bump: the 0.179 precedent, a change inside a mesh-native op.
 
 **Additive within v4** (partforge 0.205): two node kinds join the `implicit` grammar.
