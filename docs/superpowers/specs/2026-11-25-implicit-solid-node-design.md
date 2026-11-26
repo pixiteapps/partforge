@@ -400,6 +400,19 @@ sample, mesh and cleanup, wall milliseconds, median of 3 after a warm-up.
 The `SHARP_APART` guard costs about 2 to 3 points of that share: each round and corner pass
 files every vertex in its grid once.
 
+**The vase on the core.** The vase test part (`vaseSpec()`, `test/implicit-cleanup.test.js`)
+at its 1.2 mm preview grid, core on, wall milliseconds, median of 3 after a warm-up
+(measured 2026-11-26). "Before" is plan, sample, mesh and cleanup.
+
+| Case | Before | Stage | Stage / before | Edge points | Corners |
+| --- | --- | --- | --- | --- | --- |
+| Vase, preview tier, 1.2 mm | 125 | 157 | 125% | 1,157 | 14 |
+
+The stage costs more than everything before it here. The vase's gyroid (`abs` of a formula)
+and its `k: 0` intersect have real creases that the grid resolves, so the density rule does
+not skip them. In JS the whole build went from 1.07 s to 2.34 s. The rule is not changed for
+it.
+
 **A known cost: the knurl at the print grid.** At 0.3 mm the knurl's ridges are resolved. Its
 share of candidate edges falls under a fifth, so the density rule does not skip it, and it is
 sharpened in full. Those points are real creases. The stage then costs about one and a half
@@ -498,6 +511,37 @@ curved face follows the grid, not the solid's own facets. Both are true today.
   the budget intends.
 - The proposed target was the plate and boss join at the preview tier in under 300 ms with
   the core on. It takes about 420 ms, so it misses the target. This task did no tuning.
+
+**With the sharpen stage (current).** Measured on 2026-11-26 with
+`node scripts/bench-implicit.mjs --core both`, after the sharpen stage joined every mesh
+(CPU ms, the development desktop, an Apple M1 Max; each cell the median of 3 runs). The
+script now times the stage alone, as its own column, on both paths: the core session's
+`sharpen` call, or `sharpenMesh` in JS. `Seam` is the crease cut and untangle on the owner
+path. "Before" is sample, mesh, cleanup and seam. This table is the current one. The table
+above is from before the stage.
+
+| Case | Core | Compile | Sample | Mesh | Cleanup | Seam | Sharpen | Detail | Total | Sharpen / before | Triangles |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Hand, preview tier, 1.5 mm | off | 4 | 220 | 186 | 643 | 241 | 194 | 225 | 1719 | 15% | 75,408 |
+| Hand, print tier, 0.8 mm | off | 4 | 623 | 424 | 1844 | 757 | 817 | 1561 | 6016 | 22% | 537,542 |
+| Hand, print tier, 0.5 mm | off | 3 | 1642 | 1013 | 4500 | 1318 | 1649 | 4956 | 15125 | 19% | 1,432,402 |
+| Vase, preview tier, 1.2 mm | off | 1 | 294 | 48 | 576 | 0 | 1467 | 279 | 2670 | 160% | 146,804 |
+| Plate and boss join, preview tier | off | 11 | 513 | 52 | 738 | 0 | 383 | 0 | 1689 | 29% | 49,884 |
+| Plate and boss join, print tier | off | 24 | 511 | 62 | 1665 | 0 | 472 | 0 | 2722 | 21% | 150,274 |
+| Blob shrink, preview tier | off | 32 | 342 | 21 | 528 | 0 | 114 | 0 | 1053 | 13% | 23,646 |
+| Hand, preview tier, 1.5 mm | on | 3 | 70 | 22 | 116 | 13 | 13 | 17 | 253 | 6% | 75,408 |
+| Hand, print tier, 0.8 mm | on | 3 | 201 | 91 | 347 | 89 | 218 | 75 | 1028 | 30% | 537,542 |
+| Hand, print tier, 0.5 mm | on | 24 | 508 | 227 | 795 | 187 | 382 | 186 | 2316 | 22% | 1,432,402 |
+| Vase, preview tier, 1.2 mm | on | 2 | 67 | 6 | 72 | 0 | 160 | 28 | 334 | 110% | 146,804 |
+| Plate and boss join, preview tier | on | 7 | 185 | 7 | 221 | 0 | 49 | 0 | 469 | 12% | 49,884 |
+| Plate and boss join, print tier | on | 7 | 197 | 7 | 562 | 0 | 78 | 0 | 851 | 10% | 150,274 |
+| Blob shrink, preview tier | on | 18 | 161 | 4 | 201 | 0 | 29 | 0 | 413 | 8% | 23,646 |
+
+- Each Total is the median of the three totals, so a row's cells need not add up to it.
+- The vase is the costly case, as above. The hand at its print grid is next: the stage
+  takes 30% of the meshing before it on the core and places 225 edge points and 1 corner.
+- In the same three runs the blob shrink's `k.implicit` offset −2, end to end, took 464 to
+  475 ms, and `Solid.offset(-2)` on the same body 9.2 to 9.3 s.
 
 ## Agent-facing surface
 
