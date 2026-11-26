@@ -11,11 +11,17 @@ import { ensureVectors } from "../framework/vectors.js";
 import { nodeAssetSources } from "./assets.js";
 import { tessellateStepAssets } from "./step-mesh.js";
 import { loadFullCore } from "../framework/core/core.js";
+import { loadMeshFieldBuilder } from "../framework/geometry/implicit/mesh-field-loader.js";
 
-export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors } = {}) {
+// `meshFields: true` also loads the mesh field builder (implicit/mesh-field-loader.js),
+// which a k.implicit `solid` leaf needs and which imports the oracle's BVH. Off by
+// default, so a boot loads no oracle module (test/kit-layering.test.js boots with every
+// oracle module refusing to load). Without it, a solid leaf throws NEEDS_MESH_FIELD.
+export async function bootManifoldKernel({ quality = "preview", fonts, imports, importMeshes, images, vectors, meshFields = false } = {}) {
   const wasm = await Module();
   wasm.setup();
   await loadFullCore(); // k.implicit's native engine (core.js): loaded on demand, and Node has no reason to wait
+  if (meshFields) await loadMeshFieldBuilder();
 
   const kernel = createManifoldKernel(wasm, { quality });
   if (fonts) { const opentype = normalizeOpentype(await import("opentype.js"));

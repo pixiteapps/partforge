@@ -116,6 +116,17 @@ test("implicit-blend-eats-child: a contact attach k wider than a piece warns", (
   expect(of(lintPart(implicitPart(spec(1))), "implicit-blend-eats-child")).toEqual([]);
 });
 
+// Lint has no geometry for a solid leaf, so its thickness is unknown: the rule never names a
+// solid leaf, however thin, and still judges the blend's other children.
+test("implicit-blend-eats-child: a solid leaf is never judged; its siblings still are", () => {
+  const foil = (k) => k.box({ size: [40, 40, 0.5] });
+  const spec = (k, sibling) => ({ root: { kind: "union", k: 4, children: [{ kind: "solid", solid: foil(k) }, sibling] } });
+  expect(of(lintPart(partWith((k) => k.implicit(spec(k, { kind: "sphere", r: 10 })))), "implicit-blend-eats-child")).toEqual([]);
+  const [f, ...rest] = of(lintPart(partWith((k) => k.implicit(spec(k, { kind: "sphere", r: 1, at: [0, 0, 2] })))), "implicit-blend-eats-child");
+  expect(rest).toEqual([]);
+  expect(f.message).toContain("root.children[1]");
+});
+
 // --- implicit-csg-in-disguise -----------------------------------------------
 
 const drilled = (extra = {}) => ({ root: { kind: "subtract", children: [
@@ -272,4 +283,117 @@ test("a cage edit that throws is lint's ordinary build-throws error", () => {
   const thrown = r.errors.filter((f) => /cage: no face "nope"/.test(f.message));
   expect(thrown).toHaveLength(1);
   expect(thrown[0].rule).toBe("build-throws");
+});
+
+// --- solid leaves in the geometry-free probe --------------------------------
+// The probe records a spec as JSON, where a nested solid reads as `{}`. It also records
+// where the real (probe) solids sat, so lint can tell one from a value the author wrote.
+
+const implicitFindings = (r) => all(r).filter((f) => f.rule.startsWith("implicit"));
+const plate = (k) => k.box({ min: [-10, -10, 0], max: [10, 10, 4] });
+
+test("a part whose implicit tree has a solid leaf lints clean", () => {
+  const r = lintPart(partWith((k) => k.implicit({ root: { kind: "union", k: 4, children: [
+    { kind: "solid", solid: plate(k) }, { kind: "sphere", r: 6, at: [0, 0, 6] }] } })));
+  expect(implicitFindings(r)).toEqual([]);
+  expect(r.errors).toEqual([]);
+});
+
+test("a solid leaf with a non-solid still reports the spec error through lint", () => {
+  for (const solid of [5, "box", {}, { _hash: "x" }]) {
+    const r = lintPart(partWith((k) => k.implicit({ root: { kind: "solid", solid } })));
+    expect(of(r, "implicit-spec-invalid").map((f) => f.message).join("\n"), JSON.stringify(solid))
+      .toMatch(/root\.solid: must be a solid/);
+  }
+});
+
+test("a written {} beside a real solid at the same place is its own call, and its own error", () => {
+  const r = lintPart(partWith((k) => {
+    k.implicit({ root: { kind: "solid", solid: plate(k) } });
+    return k.implicit({ root: { kind: "solid", solid: {} } });
+  }));
+  expect(of(r, "implicit-spec-invalid")).toHaveLength(1);
+});
+
+test("a 2D shape is not a solid leaf", () => {
+  const r = lintPart(partWith((k) => k.implicit({ root: { kind: "solid", solid: k.shape2d([[0, 0], [1, 0], [1, 1]]) } })));
+  expect(of(r, "implicit-spec-invalid").map((f) => f.message).join("\n")).toMatch(/root\.solid: must be a solid/);
+});
+
+test("validateImplicit inside a build accepts the probe's solid", async () => {
+  const { validateImplicit } = await import("../src/framework/domains/organic/index.js");
+  const r = lintPart(partWith((k) => {
+    const spec = { root: { kind: "offset", d: 1, child: { kind: "solid", solid: plate(k) } } };
+    validateImplicit(spec);
+    return k.implicit(spec);
+  }));
+  expect(r.errors).toEqual([]);
+  expect(implicitFindings(r)).toEqual([]);
+});
+
+test("a contact group with a solid child lints without searching the field", () => {
+  const r = lintPart(partWith((k) => k.implicit({ root: { kind: "contact", children: [
+    { kind: "solid", solid: plate(k), label: "plate" }, { kind: "sphere", r: 6, at: [0, 0, 6], label: "ball" }] } })));
+  expect(r.errors).toEqual([]);
+  expect(implicitFindings(r)).toEqual([]);
+});
+
+test("k.implicitFrames over a solid leaf records, does not throw, and lints clean", () => {
+  const r = lintPart(partWith((k) => {
+    const spec = { frames: { tip: { at: [0, 0, 10] } }, root: { kind: "solid", solid: plate(k), frame: "tip", label: "p" } };
+    k.implicitFrames(spec);
+    return k.implicit({ ...spec, root: { kind: "offset", d: 1, child: spec.root } });
+  }));
+  expect(r.errors).toEqual([]);
+  expect(implicitFindings(r)).toEqual([]);
+  const bad = lintPart(partWith((k) => { k.implicitFrames({ root: { kind: "solid", solid: 5 } }); return k.box({ size: [1, 1, 1] }); }));
+  expect(of(bad, "implicit-spec-invalid").map((f) => f.message)).toEqual(["k.implicitFrames spec is invalid: root.solid: must be a solid (the result of a kernel op)"]);
+});
+
+test("implicit-csg-in-disguise: a lone solid leaf, or solids joined sharply, is a note", () => {
+  const lone = lintPart(partWith((k) => k.implicit({ root: { kind: "solid", solid: plate(k) } })));
+  const [f, ...rest] = of(lone, "implicit-csg-in-disguise");
+  expect(rest).toEqual([]);
+  expect(f.message).toBe("k.implicit builds only solid leaves, boxes, cylinders and halfspaces with sharp booleans. It remeshes solids you already have, and the result is approximate.");
+  expect(f.hint).toBe("Join the solids with the standard ops (union, cut, k.box, k.cylinder). They are exact and faster. Keep a solid leaf for what k.implicit adds: a blend (k > 0), an offset, an onion, a displace or detail.");
+  const sharp = lintPart(partWith((k) => k.implicit({ root: { kind: "union", children: [
+    { kind: "solid", solid: plate(k) }, { kind: "solid", solid: k.sphere(4), at: [0, 0, 6] }] } })));
+  expect(of(sharp, "implicit-csg-in-disguise")).toHaveLength(1);
+});
+
+test("implicit-csg-in-disguise: a blend or an offset over solids is what k.implicit is for", () => {
+  const blended = lintPart(partWith((k) => k.implicit({ root: { kind: "union", k: 2, children: [
+    { kind: "solid", solid: plate(k) }, { kind: "solid", solid: k.sphere(4), at: [0, 0, 6] }] } })));
+  expect(of(blended, "implicit-csg-in-disguise")).toEqual([]);
+  const grown = lintPart(partWith((k) => k.implicit({ root: { kind: "offset", d: 1, child: { kind: "solid", solid: plate(k) } } })));
+  expect(of(grown, "implicit-csg-in-disguise")).toEqual([]);
+});
+
+test("implicit-csg-in-disguise: the message for a tree without solids is unchanged", () => {
+  const [f] = of(lintPart(implicitPart(drilled())), "implicit-csg-in-disguise");
+  expect(f.message).toBe("k.implicit builds only boxes, cylinders and halfspaces with sharp booleans — plain CAD, meshed approximately");
+});
+
+test("implicit-thin-feature: a thin shell over a solid warns for the print grid, without a preview prediction", () => {
+  const r = lintPart(partWith((k) => k.implicit({ resolution: 0.6, root: { kind: "onion", t: 0.4, child: { kind: "solid", solid: plate(k) } } })));
+  const [f, ...rest] = of(r, "implicit-thin-feature");
+  expect(rest).toEqual([]);
+  expect(f.message).toMatch(/the print grid \(0\.60 mm\)/);
+  expect(f.message).not.toMatch(/preview grid/);
+});
+
+test("implicit-thin-feature: a solid-leaf spec with a declared preview judges that grid too", () => {
+  const r = lintPart(partWith((k) => k.implicit({ preview: 1, resolution: 0.6, root: { kind: "onion", t: 0.4, child: { kind: "solid", solid: plate(k) } } })));
+  expect(of(r, "implicit-thin-feature")[0].message).toMatch(/the preview grid \(1\.00 mm\) and the print grid/);
+});
+
+test("a cyclic value inside a k.implicit spec lints promptly, as it did before solid leaves", () => {
+  // Two self-references double a naive walk at every level; the probe skips the cycle. The
+  // JSON copy of such a spec is "<unserializable>", so lint skips the call, as before.
+  const cyclic = () => { const a = {}; a.x = a; a.y = a; return a; };
+  const t = performance.now();
+  const plain = lintPart(implicitPart({ root: { kind: "sphere", r: 2, junk: cyclic() } }));
+  const withSolid = lintPart(partWith((k) => k.implicit({ root: { kind: "solid", solid: plate(k), junk: cyclic() } })));
+  expect(performance.now() - t).toBeLessThan(2000);
+  for (const r of [plain, withSolid]) expect(r).toEqual({ ok: true, errors: [], warnings: [], notes: [] });
 });

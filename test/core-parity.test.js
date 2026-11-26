@@ -52,6 +52,17 @@ const implicitPart = (specs, images = new Map(), quality = "preview") => ({
   ...one((k) => (specs.length === 1 ? k.implicit(specs[0]) : k.union(specs.map((sp) => k.implicit(sp))))),
   testImages: images, testQuality: quality,
 });
+// A spec with `solid` leaves (the MESH op) needs the kernel's own solids, so it is made inside
+// the build from `k`.
+const solidPart = (makeSpec, quality = "preview") => ({ ...one((k) => k.implicit(makeSpec(k))), testImages: new Map(), testQuality: quality });
+const solidLeaf = (solid) => ({ kind: "solid", solid });
+// The plate and boss join (a blended union of two solids) and the blob shrink (offset −2 over
+// one solid), at edge 0.6: `preview` sets the preview tier's edge, `resolution` the print tier's.
+const solidJoin = (k, edge) => ({ root: { kind: "union", k: 8, children: [
+  solidLeaf(k.box({ min: [-30, -20, 0], max: [30, 20, 6] })), solidLeaf(k.cylinder({ r: 8, h: 26 }).at([0, 0, 4])),
+] }, ...edge });
+const solidShrink = (k, edge) => ({ root: { kind: "offset", d: -2, child: solidLeaf(k.sphere(16)
+  .union(k.box({ min: [-8, -8, -22], max: [8, 8, 0] })).union(k.cylinder({ r: 6, h: 44 }).rotateY(90).at([-22, 0, 4]))) }, ...edge });
 const vase = vaseSpec();
 const IMPLICIT = {
   "implicit hand with nails": implicitPart([handSpec(), ...nailSpecs()]),
@@ -70,6 +81,10 @@ const IMPLICIT = {
     { kind: "tube", points: [[10, 0, 0], [10, 0, 0], [10, 0, 8]], r: [3, 1, 1] },
   ] }, preview: 0.8 }]),
   "implicit flush pocket":implicitPart([{ root: { kind: "subtract", children: [{ kind: "box", size: [10, 10, 10] }, { kind: "box", size: [4, 4, 10], at: [0, 0, 5] }] }, preview: 0.5 }]),
+  // The MESH op (solid leaves): the plate and boss join at both tiers, the blob shrink.
+  "implicit solid join": solidPart((k) => solidJoin(k, { preview: 0.6 })),
+  "implicit solid join, print tier": solidPart((k) => solidJoin(k, { resolution: 0.6 }), "print"),
+  "implicit solid shrink": solidPart((k) => solidShrink(k, { preview: 0.6 })),
   // The contact node's CONTACT and BULGE ops: every contact tree.
   ...Object.fromEntries(Object.keys(TREES).filter((k) => k.startsWith("contact"))
     .map((k) => [`implicit ${k}`, implicitPart([{ ...TREES[k], preview: 0.8 }])])),
@@ -82,7 +97,7 @@ const bytes = (a) => (a ? Buffer.from(a.buffer, a.byteOffset, a.byteLength) : nu
 async function run(part, on) {
   setCoreEnabled(on);
   const view = Object.keys(part.views)[0];
-  const kernel = await bootManifoldKernel({ quality: part.testQuality ?? "preview" });
+  const kernel = await bootManifoldKernel({ quality: part.testQuality ?? "preview", meshFields: true });
   for (const [name, im] of part.testImages ?? []) await kernel._registerImage({ name, ...im });
   const built = buildView(kernel, part, view);
   const meshes = built.map(({ name, mesh }) => ({
@@ -235,5 +250,157 @@ describe("owner path: every seam fixture", () => {
         setCoreEnabled(true);
       }, 240_000);
     }
+  }
+});
+
+// The MESH op on the core: the solid fixtures above pass through buildView, where a core that
+// quietly declined a solid spec would still match. Here meshImplicit runs each one directly,
+// core off against core on (both builds), through a stand-in that counts the session's mesh
+// fields: the core must really have taken them, and answered (nothing refused, no fault).
+describe("solid leaves: the MESH op runs on the core", () => {
+  let k;
+  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print", meshFields: true }); });
+  const SOLID_CASES = [
+    ["solid join, preview tier", () => solidJoin(k, {}), 0.6, "preview", 2],
+    ["solid join, print tier", () => solidJoin(k, {}), 0.6, "print", 2],
+    ["solid shrink", () => solidShrink(k, {}), 0.6, "preview", 1],
+  ];
+  for (const [name, make, edge, tier, fields] of SOLID_CASES) {
+    test(`core on == core off: ${name} at ${edge} mm`, () => {
+      const compiled = compileImplicit(make());
+      expect(compiled.meshes.length).toBe(fields);
+      setCoreEnabled(false);
+      const off = meshImplicit(compiled, edge, { tier });
+      expect(off.indices.length).toBeGreaterThan(0);
+      for (const simd of [true, false]) {
+        if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
+        setCoreForTesting(undefined);
+        setCoreEnabled(true);
+        const real = core();
+        let added = 0;
+        const standIn = { ...real, x: { ...real.x, ip_mesh_field_add: (...a) => { added++; return real.x.ip_mesh_field_add(...a); } } };
+        setCoreForTesting(standIn);
+        const on = meshImplicit(compiled, edge, { tier });
+        expect(real.simd, "the build under test ran").toBe(simd);
+        expect(standIn.poisoned, "the core did not fault").toBeFalsy();
+        expect(coreStatus(), "the core answered").toMatchObject({ reason: null, refusedMeshes: 0 });
+        expect(added, "the session took every mesh field").toBe(fields);
+        for (const key of ["positions", "indices", "normals"]) {
+          expect(on[key]?.constructor, `${key} (${simd ? "SIMD" : "scalar"})`).toBe(off[key].constructor);
+          expect(Buffer.compare(bytes(on[key]), bytes(off[key])), `${key} (${simd ? "SIMD" : "scalar"})`).toBe(0);
+        }
+        expect(on.warnings).toEqual(off.warnings);
+        expect(on.stats).toEqual(off.stats);
+      }
+      delete globalThis.PARTFORGE_CORE_SIMD;
+      setCoreForTesting(undefined);
+      setCoreEnabled(true);
+    }, 240_000);
+  }
+});
+
+// The sharpen stage (implicit/sharpen.js; native/implicit_sharpen.cpp): every case of
+// test/implicit-sharpen.test.js that decides something, through meshImplicit, core off against
+// core on (both builds). A stand-in counts the session's sharpen calls, so the core really ran
+// the stage, and nothing was refused. Positions, indices and normals byte for byte (and on the
+// owner path every owner field), the warnings and the stats, sharpEdges and sharpCorners included.
+// The stage's own tables never leave the engine.
+describe("the sharpen stage runs on the core", () => {
+  let k;
+  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print", meshFields: true }); });
+  const box = (size, at) => ({ root: { kind: "box", size, ...(at ? { at } : {}) } });
+  const plate = () => ({ root: { kind: "union", k: 8, children: [solidLeaf(k.box({ min: [-30, -20, 0], max: [30, 20, 6] })),
+    solidLeaf(k.cylinder({ r: 8, h: 26 }).at([20, 0, 4]))] } });
+  const bracket = () => ({ root: { kind: "union", k: 6, children: [
+    solidLeaf(k.box({ min: [-30, -20, 0], max: [30, 20, 6] }).union(k.box({ min: [-30, -20, 0], max: [-24, 20, 30] }))),
+    solidLeaf(k.cylinder({ r: 5, h: 20 }).at([-14, 0, 4]))] } });
+  const curved = () => ({ root: { kind: "intersect", k: 0, children: [{ kind: "sphere", r: 12 }, { kind: "cylinder", r: 8, h: 40 }] } });
+  const posed = (gap) => ({
+    frames: { fa: { at: [-7.4, 0, 0] }, fb: { at: [7.4, 0, 0], rotate: [{ axis: "y", deg: 6 }] } },
+    root: { kind: "contact", gap, bulge: 0, children: [
+      { kind: "capsule", a: [0, 0, -20], b: [0, 0, 20], r: 8, frame: "fa", label: "a" },
+      { kind: "capsule", a: [0, 0, -20], b: [0, 0, 20], r: 8, frame: "fb", label: "b" },
+      { kind: "box", size: [36, 24, 6], at: [0, 0, 26], label: "c" },
+    ] },
+  });
+  const KNURL = "vec2 z = normalize(p.xy); for (int i = 0; i < 4; i++) { z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y); } "
+    + "float c = cos(p.z * 1.3); float s = sin(p.z * 1.3); return max(z.x * c - z.y * s, z.x * c + z.y * s);";
+  const knurl = () => ({ kind: "displace", amount: 0.7, child: solidLeaf(k.cylinder({ r: 12, h: 30 })), by: { expr: KNURL } });
+  const cagePost = () => {
+    const c = k.cage({ box: { size: [44, 24, 22], segs: [2, 1, 1] } });
+    c.extrude("+x:0,0", { by: 14, scale: 0.55 });
+    return { root: { kind: "union", k: 7, children: [solidLeaf(k.subdiv(c).at([0, 0, 24])), solidLeaf(k.cylinder({ r: 5, h: 22 }).at([-6, 0, 0]))] } };
+  };
+  const offset = (d) => ({ root: { kind: "offset", d, child: solidLeaf(k.box({ min: [-20, -15, -10], max: [20, 15, 10] })) } });
+  const thinWall = () => ({ root: { kind: "intersect", children: [{ kind: "onion", t: 0.8, child: { kind: "box", size: [30, 30, 30] } },
+    { kind: "halfspace", normal: "z", offset: 5 }] } });
+  // The box sweep's cases (implicit-sharpen.test.js): side n cells, placed at offset `o` cells.
+  const OFFSETS = [[0, 0, 0], [0.37, 0.11, 0.73], [0.5, 0.5, 0.5]];
+  const sweep = (edge, n, o) => { const h = (n * edge) / 2; return box([2 * h, 2 * h, 2 * h], OFFSETS[o].map((x) => x * edge)); };
+  const cube = (edge, n) => { const h = (n * edge) / 2; return box([2 * h, 2 * h, 2 * h]); };
+  // [name, spec maker, edge, tier, sharp points expected]
+  const CASES = [
+    ...[[0.6, "preview"], [0.3, "print"]].flatMap(([edge, tier]) => [
+      [`box at ${edge} ${tier}`, () => box([40, 30, 6]), edge, tier, true],
+      [`plate-edge at ${edge} ${tier}`, plate, edge, tier, true],
+      [`bracket-corner at ${edge} ${tier}`, bracket, edge, tier, true],
+      [`curved-crease at ${edge} ${tier}`, curved, edge, tier, true],
+      [`posed, gap 0, at ${edge} ${tier}`, () => posed(0), edge, tier, true],
+      [`posed, gap 0.05, at ${edge} ${tier}`, () => posed(0.05), edge, tier, true],
+      // The density rule skips the knurl at 0.6. At 0.3 its share of crease edges is under a
+      // fifth, so it is sharpened in full. Parity sees bytes only: its soundness (no coincident
+      // vertices among them) is test/implicit-sharpen.test.js's "knurl at print 0.3".
+      [`knurl at ${edge} ${tier}`, () => ({ root: knurl() }), edge, tier, edge === 0.3],
+    ]),
+    // The four parked sweep cases (one corner cut), and four that find all eight.
+    ...[[0.6, 8, 1], [0.6, 9, 1], [1.0, 3, 1], [1.0, 4, 1], [0.6, 4, 1], [0.6, 7, 0], [1.0, 3, 0], [1.0, 11.5, 2]]
+      .map(([edge, n, o]) => [`sweep box ${n} cells, offset ${o}, at ${edge}`, () => sweep(edge, n, o), edge, "preview", true]),
+    ...[0.6, 1.0].flatMap((edge) => [3, 4, 4.5, 5, 6].map((n) => [`small cube ${n} cells at ${edge}`, () => cube(edge, n), edge, "preview", true])),
+    ["cage post at 0.6", cagePost, 0.6, "preview", true],
+    ["offset -2 at 0.6", () => offset(-2), 0.6, "preview", true],
+    ["offset +2 at 0.6", () => offset(2), 0.6, "preview", false],
+    ["knurl and a box at 0.6", () => ({ root: { kind: "union", children: [knurl(), solidLeaf(k.box({ min: [30, -10, 0], max: [50, 10, 10] }))] } }),
+      0.6, "preview", true],
+    ["thin wall at 1.0", thinWall, 1.0, "preview", true],
+  ];
+  const FIELDS = ["positions", "indices", "normals"];
+  const OWNER_FIELDS = [...FIELDS, "vertOwner", "ownerHeld", "pinned", "crease", "triOwner"];
+  for (const [name, make, edge, tier, expectSharp] of CASES) {
+    test(`core on == core off: ${name}`, () => {
+      const compiled = compileImplicit(make());
+      const fields = compiled.ownerRoot >= 0 ? OWNER_FIELDS : FIELDS;
+      setCoreEnabled(false);
+      const off = meshImplicit(compiled, edge, { tier });
+      expect(off.indices.length).toBeGreaterThan(0);
+      expect(off.stats.sharpEdges + off.stats.sharpCorners > 0, "sharp points").toBe(expectSharp);
+      expect(off.sharp).toBeUndefined();
+      expect(off.sharpPlanes).toBeUndefined();
+      for (const simd of [true, false]) {
+        if (simd) delete globalThis.PARTFORGE_CORE_SIMD; else globalThis.PARTFORGE_CORE_SIMD = false;
+        setCoreForTesting(undefined);
+        setCoreEnabled(true);
+        const real = core();
+        let sharpened = 0;
+        const standIn = { ...real, x: { ...real.x, ip_sharpen: (...a) => { sharpened++; return real.x.ip_sharpen(...a); } } };
+        setCoreForTesting(standIn);
+        const on = meshImplicit(compiled, edge, { tier });
+        const build = simd ? "SIMD" : "scalar";
+        expect(real.simd, "the build under test ran").toBe(simd);
+        expect(standIn.poisoned, "the core did not fault").toBeFalsy();
+        expect(coreStatus(), "the core answered").toMatchObject({ reason: null, refusedMeshes: 0 });
+        expect(sharpened, "the stage ran on the core").toBe(1);
+        for (const key of fields) {
+          expect(on[key]?.constructor, `${key} (${build})`).toBe(off[key].constructor);
+          expect(Buffer.compare(bytes(on[key]), bytes(off[key])), `${key} (${build})`).toBe(0);
+        }
+        expect(on.sharp).toBeUndefined();
+        expect(on.sharpPlanes).toBeUndefined();
+        expect(on.warnings).toEqual(off.warnings);
+        expect(on.stats).toEqual(off.stats);
+      }
+      delete globalThis.PARTFORGE_CORE_SIMD;
+      setCoreForTesting(undefined);
+      setCoreEnabled(true);
+    }, 600_000);
   }
 });

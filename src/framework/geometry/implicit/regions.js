@@ -18,7 +18,7 @@ const PHI_SLOPE = 8 / (3 * Math.sqrt(3));
 
 /**
  * Finds a contact node's regions while it is being lowered (ir.js), its children already
- * lowered. `view` is { ir: { nodes }, textures } as far as lowering has got; `n` the contact
+ * lowered. `view` is { ir: { nodes }, textures, meshes } as far as lowering has got; `n` the contact
  * node (children, att, bulge). Works in the node's local coordinates from the UN-bulged children. Returns
  *  - regions: per slot, a Float64Array of (cx, cy, cz, A, rho) per region (BULGE_STRIDE);
  *  - pad: the most any one slot's bulge can add to its field (Σ A), for the node's box;

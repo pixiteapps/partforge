@@ -4,7 +4,8 @@ Use this domain for smooth organic bodies: a hand, a paw, a creature, a blobby o
 sculpted form. You describe the body as a tree of shapes (spheres, capsules,
 ellipsoids, …) on named frames, joined by smooth blends, and `k.implicit` meshes the
 tree into one watertight solid. Joints stay smooth because the blend is part of the
-shape, not a fillet applied later.
+shape, not a fillet applied later. A tree can also hold a solid you already built, as a
+`solid` leaf. Then a blend, an offset or a texture works on that solid too.
 
 The domain has a second way to build a smooth body: box-model a coarse cage of quads
 with `k.cage` and smooth it into a solid with `k.subdiv`. See "A controlled surface:
@@ -44,7 +45,7 @@ bodies, limbs, handles that grow out of a surface, sculpted reliefs.
 Do **not** use it for prismatic or mechanical parts. A bracket, a box, a gear or a
 threaded boss is better built with the ordinary ops (`k.box`, `k.cylinder`, booleans,
 `fillet`). Those are exact, export to STEP, and build faster. A tree of only boxes,
-cylinders and half-spaces with no blending is ordinary CSG in disguise.
+cylinders, half-spaces and `solid` leaves with no blending is ordinary CSG in disguise.
 
 For one continuous skin whose outline you want to control exactly (a whale, a fish, a
 hull), a subdivision cage is often the better tool; see "When a cage, and when an
@@ -54,6 +55,10 @@ When an organic body needs a flat, a hole or a mating face, build the body with
 `k.implicit` and then apply ordinary booleans to the solid it returns. `k.implicit`
 returns an ordinary `Solid`: transforms, booleans, `measure`, `verify`, STL and 3MF
 export all work on it.
+
+To round, grow, shrink or texture a solid you already have, put it in a tree as a
+`solid` leaf. The solid can be an ordinary solid, a `k.subdiv` body or an import. See
+"Solids in a tree".
 
 ## Backend: Manifold only
 
@@ -82,8 +87,8 @@ implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached
   (AP242's `TESSELLATED_SOLID`), with its name and colour, so the file carries a closed
   mesh body beside the exact ones. A sub-part that calls `k.implicit` anywhere is one mesh
   body, including any ordinary ops in it. The pin does not change this split. Expect
-  about 40 bytes per triangle: the reference hand (`src/parts/organic-hand.js`, ~116k triangles
-  at its print grid) adds about 4 MB. A sub-part that calls both
+  about 40 bytes per triangle: the reference hand (`src/parts/organic-hand.js`, ~590k triangles
+  at its print grid) adds about 22 MB. A sub-part that calls both
   `k.implicit` and `shell` cannot export; use an `onion` node for a hollow organic body.
 - A kernel with no implicit engine at all (a host's own kernel) throws
   `implicit: this kernel has no implicit engine — build the part on the Manifold backend`.
@@ -168,7 +173,7 @@ An unknown field is an error. "axis" fields take `"x"`, `"y"`, `"z"` or a non-ze
 | `subtract` | `children` | `k` | The first child minus the rest, blended by `k`. |
 | `contact` | `children` | `gap`, `bulge`, `attach` | Children that press together instead of blending. Must be the root. See "Blends and contact". |
 | `mirror` | `child` | `plane` | The child plus its reflection across `plane`: `"yz"` (the default, x → −x), `"xz"` or `"xy"`. |
-| `round` | `child`, `r` | | The child's surface moved out by `r`: rounds its edges and grows it by `r`. |
+| `offset` | `child`, `d` | | The child's surface moved by `d` mm: out for `d > 0`, in for `d < 0`. Exact over a `solid`, a sphere, a capsule or a box; a bound over a blend, an ellipsoid or a warp. |
 | `onion` | `child`, `t` | | A shell `2·t` thick, centred on the child's surface. |
 | `displace` | `child`, `amount`, `by` | | Moves the surface out by `amount × by`, where `by` is `{ expr, uniforms?, textures? }` (see "Formulas") and its value is clamped to −1…1. `amount` is the most it can move, in mm. |
 | `twist` | `child`, `degPerMm` | `axis` | Turns the child about `axis` (default `"z"`) by `degPerMm` degrees per mm along it. |
@@ -176,6 +181,9 @@ An unknown field is an error. "axis" fields take `"x"`, `"y"`, `"z"` or a non-ze
 | `taper` | `child`, `from`, `to` | `axis` | Scales the child's cross-section along `axis` (default `"z"`): `from: [position, scale]` to `to: [position, scale]`, linear between, held beyond. Scales must be > 0 and the positions must differ. |
 | `repeat` | `child` | `linear`, `polar` | Copies of the child. Exactly one of `linear: { step: [x, y, z], count }` (copy i at `i × step`) or `polar: { count, axis? }` (equal turns about `axis`, default `"z"`). `count` is 1 to 256. |
 | `expr` | `sdf`, `box` | `uniforms`, `textures`, `lipschitz` | A distance formula. See "Formulas". |
+| `solid` | `solid` | | A solid you already built: an ordinary solid, a `k.subdiv` body, an import, or another `k.implicit` result. Its distance is exact. It is read once, at the call. The whole result is one mesh at the grid. The solid's sharp edges and corners are kept. See "Solids in a tree". |
+
+`round` (`{ child, r }`) is an older name for `offset` with `d = r`. It still builds.
 
 A tree is checked as a whole: every issue is listed, with its path, in one error.
 
@@ -205,6 +213,66 @@ A contact node must be the **root** of its spec, its children's labels must be u
 it needs at least 2 children and takes at most 127. To combine a contact group with
 other shapes, add them as children, or build them as separate `k.implicit` calls and
 join the solids with ordinary booleans.
+
+### Solids in a tree
+
+A `solid` leaf puts a solid you already built into the tree. Use it to blend two
+ordinary solids, to join a cage body to other pieces with a smooth blend, to grow or
+shrink a solid, or to texture one.
+
+- The leaf's distance is exact. It is the distance to the solid's mesh.
+- The leaf reads the solid as it is when you call `k.implicit`. For example, a cage you
+  edit after `k.subdiv` does not change a solid already built from it.
+- The whole result is one mesh at the grid. The sharp edges and corners of an ordinary
+  solid are kept. Its flat faces are remeshed at the grid, and its curved faces follow
+  the grid, not the solid's own facets. A round smaller than about a tenth of the grid
+  edge is drawn sharp. Use a grid fine enough for the rounds you care about.
+- `frame` and `at` place the solid as they place any node.
+- A solid whose mesh folds back on itself so badly that its inside cannot be told from
+  its outside (some damaged STL files, and a few rim or taper triangles of a `k.implicit`
+  result) usually builds, with a warning that names a point on the fold. If the build
+  fails, it is refused with that point: repair the mesh there in a mesh tool first.
+
+A rounded join between two ordinary solids. A sharp `union` of the same two solids has
+a square corner where the boss meets the plate. The blend fills that corner:
+
+```js
+const plate = k.box({ min: [-15, -10, 0], max: [15, 10, 4] });
+const boss = k.cylinder({ r: 4, h: 12 }).at([0, 0, 4]);
+const rounded = k.implicit({ preview: 1, root: { kind: "union", k: 4, children: [{ kind: "solid", solid: plate }, { kind: "solid", solid: boss }] } });
+rounded.volume() > plate.union(boss).volume();   // true
+```
+
+**Offsets and shells of any solid.** An `offset` over a `solid` leaf moves its surface
+by `d`: out for `d > 0`, in for `d < 0`. To make a skin, cut the inward offset from the
+solid:
+
+```js
+const bracket = k.box({ size: [20, 20, 10] }).union(k.cylinder({ r: 5, h: 10 }).at([0, 0, 5]));
+const grown = k.implicit({ preview: 1, root: { kind: "offset", d: 1, child: { kind: "solid", solid: bracket } } });
+grown.boundingBox().max.map(Math.round);   // [11, 11, 16]
+const skin = bracket.cut(k.implicit({ preview: 1, root: { kind: "offset", d: -2, child: { kind: "solid", solid: bracket } } }));
+skin.volume() < bracket.volume();   // true
+```
+
+The offset is much faster than `Solid.offset` on a large mesh (see "Resolution, preview
+and cost"). An outward offset rounds every convex edge with radius `d`. An inward offset
+keeps the solid's convex edges sharp.
+
+**A texture on a plain solid.** A `displace` over a `solid` leaf moves the solid's
+surface by a formula. This knurls a cylinder: the first lines make 16 ridges around the
+axis, and the turn with `p.z` makes them helical. `max` of two opposite turns crosses
+them. The two flat ends get the texture too; cut them flat after meshing if they must be
+plain:
+
+```js
+const knob = k.cylinder({ r: 6, h: 12 });
+const knurled = k.implicit({ preview: 0.5, root: { kind: "displace", amount: 0.4, child: { kind: "solid", solid: knob }, by: { expr: "vec2 z = normalize(p.xy); for (int i = 0; i < 4; i++) { z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y); } float c = cos(p.z * 1.3); float s = sin(p.z * 1.3); return max(z.x * c - z.y * s, z.x * c + z.y * s);" } } });
+Math.round(10 * knurled.boundingBox().max[0]) / 10;   // 6.4
+```
+
+To join a cage body to other pieces with a blend, see "When a cage, and when an implicit
+tree".
 
 ### Formulas (`expr`)
 
@@ -277,9 +345,42 @@ cells.
 - A result is cached on the spec and each image it reads, per tier. Editing
   `resolution` does not rebuild the preview, and the reverse.
 
-Measured on an Apple M1 Max (`docs/research/organic-shapes.md` §9), the hand fixture
-costs about 0.19 s in the engine at its 1.5 mm preview, about 0.42 s at 0.8 mm and about
-1 s at 0.5 mm. Manifold's import of the mesh adds to that.
+Measured on an Apple M1 Max with `node scripts/bench-implicit.mjs --core on` (CPU
+time), the hand fixture costs about 0.25 s in the engine at its 1.5 mm preview, about
+1.0 s at 0.8 mm and about 2.3 s at 0.5 mm. Manifold's import of the mesh adds to that.
+
+A `solid` leaf costs more than a plain shape. Measured with
+`node scripts/bench-implicit.mjs --core on` (CPU time, 0.6 mm grid), the engine takes
+about 0.47 s for a plate and boss join at preview and about 0.85 s at print. On a
+preview kernel, a 2 mm inward offset of a body of 2,950 triangles takes about 0.47 s
+end to end with `k.implicit`. `Solid.offset(-2)` on the same body takes about 9.3 s.
+
+**Sharp edges and corners.** The mesh keeps the field's sharp edges and corners: a box
+or cylinder in a tree, a `union` or `intersect` with `k: 0`, a flat cut, and the edges of
+a `solid` leaf. A flat face is still meshed at the grid, and a curved face still follows
+the grid. An edge rounded by less than about a tenth of the grid edge is drawn sharp.
+Shapes made of smooth blends look almost unchanged, but the stage still costs time
+(see below). A `k.implicit` result is shaded with a crease angle of 80°, so an edge
+between about 25° and 80° is sharp in the mesh and in the export but can still look
+smooth on screen.
+
+- Most corners are found. A corner can stay cut by a small facet, more often on a thin
+  shell or a bent shape.
+- Where a curved sharp edge meets nothing, a stray corner point can appear beside it,
+  very close to the surface.
+- Small notches can remain where a sharp edge fades into a blend.
+- A smooth `union` of three or more children has real creases where a third child is
+  within `k`. Those creases are drawn as straight lines.
+- A texture finer than the grid (a `displace` or a knurl) is not sharpened where it is
+  active. Neither is a real edge in that same region.
+- A texture or formula whose creases the grid does resolve is sharpened, and that can
+  more than double the part's build time. On a knurl at a 0.3 mm print grid, keeping the
+  edges took 170% of the time of the meshing before it.
+- A part with a lattice or an `abs` formula whose creases the grid resolves can cost as
+  much as the meshing before it, or more. A gyroid vase at a 1.2 mm preview grid took
+  110% to 125% with the native core.
+- On the hand and the box and cylinder solids measured, with the native core, it adds
+  about 6% to 30% to the time of the meshing before it.
 
 **Thin features.** A feature thinner than two grid cells can break up or grow handles.
 The build warns (see "Errors and warnings"). Thicken the feature, or build it as its own
@@ -315,6 +416,12 @@ sources on both sides, and a plain operand (a `k.box` in the union) unchanged.
 **What does not.** A `setParams` call, an animation, a posed or moved result, and any
 change to a shape (a radius, a node, the detail, an image) rebuild as before.
 
+**A `solid` leaf during a drag.** A `solid` leaf with its own `frame` moves with that
+frame. A `solid` leaf without a `frame` follows the nearest posed piece until the exact
+build lands. To keep a static solid in place during a drag, give it its own frame that
+the pose does not move. Away from a blend with a posed piece, its vertices then follow
+only that frame.
+
 **How.** Each vertex of a preview mesh remembers which frame or frames it follows. A
 move blends the frames' rigid motions per vertex, so a finger follows its joints and the
 palm stays put. The bent mesh is approximate: the exact build starts after a 150 ms
@@ -336,15 +443,15 @@ Measured on an Apple M1 Max, native core on, the hand part at its 1.5 mm preview
 
 | Step | Time |
 | --- | --- |
-| Bend the mesh (296,946 corners), curl 30 to 31 | 5.3 ms |
-| Bind a build's vertices (the body, 38,895 vertices) | 12.6 ms |
-| Exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 723 / 704 ms |
-| Exact rebuild, every finger (`curl` 30 to 32), cold / warm | 767 / 777 ms |
-| First mesh (the pieces), cold / warm | 536 / 526 ms |
-| Real union mesh, cold / warm | 739 / 704 ms |
+| Bend the mesh (297,192 corners), every finger's curl up 0.01 | 5.2 ms |
+| Bind a build's vertices (the body, 38,936 vertices) | 16.2 ms |
+| Exact rebuild, one finger (`indexCurl` up 0.02), cold / warm | 768 / 725 ms |
+| Exact rebuild, every finger (each curl up 0.02), cold / warm | 808 / 753 ms |
+| First mesh (the pieces), cold / warm | 568 / 552 ms |
+| Real union mesh, cold / warm | 768 / 728 ms |
 
-The warm rebuild reuses the preview sample cache: 76% of the one-finger samples hit and
-21% of the all-finger samples. A palm block's program includes the bulge regions of every
+The warm rebuild reuses the preview sample cache: 85% of the one-finger leaves hit and
+59% of the all-finger leaves. A palm block's program includes the bulge regions of every
 finger, so a flex misses the palm's blocks and the saving is small once the nails, the
 union and the mesh import are added. Cold and warm meshes are identical.
 
@@ -361,7 +468,7 @@ the solid. `report()` gives plain JSON:
 - `labels`: each label's box, `{ min, max, center, approximate: true }`. The box always
   contains the labelled piece but can be generous: it grows by a blend's or a contact's
   reach and by the summed `amplitude` of all `detail`, and a label at or under a
-  `round`, `onion`, `displace` or warp reports the outermost such node's box. Copies made by `mirror` and
+  `offset`, `onion`, `displace` or warp reports the outermost such node's box. Copies made by `mirror` and
   `repeat`, and duplicate labels, are in one box.
 - `mirrored`: true after an odd number of `mirror` calls.
 
@@ -420,10 +527,15 @@ implicit: root.radius: the child is too long to bend at radius 5 (it would wrap 
 implicit: detail[0].image: unknown image "skin" — declare it in the part's `images` field
 implicit: the shape is empty at a 1 mm grid — nothing is inside it (check subtract order and sizes), or it is thinner than the grid
 implicit: a 0.05 mm grid over this shape has 8.0e+12 cells (limit 2e+10) — raise `resolution`/`preview` or split the part
+implicit: root.solid: the solid is empty
+implicit: root.solid: the solid's mesh is not closed: 3 directed edges are not matched by its reverse (the mesh is open or inconsistently wound)
 ```
 
-The last one is an `ImplicitSizeError` (`code: "IMPLICIT_SIZE"`). The empty-shape error
-is a plain `Error`. The others are `ImplicitSpecError`s.
+The grid error (`a 0.05 mm grid`) is an `ImplicitSizeError` (`code: "IMPLICIT_SIZE"`).
+The empty-shape error is a plain `Error`. The others are `ImplicitSpecError`s. The last
+two come from a `solid` leaf: a solid with no volume, and a mesh that is open or wound
+inconsistently. A `solid` field that is not a solid is a structural issue, which
+`validateImplicit` also finds: `root.solid: must be a solid (the result of a kernel op)`.
 
 A build can also succeed with a warning in its build warnings (which `partforge
 measure` and the app show):
@@ -437,7 +549,7 @@ The other warnings are a shape clipped flat at the edge of its sampling box (enl
 contact search between two children that found too much overlap to resolve (those two
 get no bulge).
 
-Relevant entries in `docs/ERROR-PATTERNS.md`: `implicit-limbs-miss-target`, `implicit-thin-feature`, `implicit-blend-eats-child`, `implicit-lipschitz-low`.
+Relevant entries in `docs/ERROR-PATTERNS.md`: `implicit-limbs-miss-target`, `implicit-thin-feature`, `implicit-blend-eats-child`, `implicit-lipschitz-low`, `implicit-solid-empty`, `implicit-solid-open`, `implicit-solid-not-a-solid`.
 
 ## What lint and verify check
 
@@ -452,9 +564,9 @@ cage, so the build finds a cage that passes through itself (see "Validity").
 | `implicit-spec-invalid` | error | The engine's compiler rejects the spec: a bad node or field, a frame cycle, a formula error, a contact below the root, an attach naming a missing label, an undeclared image. The message is the build's own error. Image names are checked only against a static `images` object. |
 | `implicit-needs-manifold` | error | `k.implicit` or `k.subdiv` (the message names which) in a part that builds on OCCT: `meta.backend: "occt"`, a `shell` that routes the part there, or a `fillet`/`chamfer` with a function selector in any sub-part (whatever the pin). |
 | `implicit-thin-feature` | warning | The thinnest feature is under 2 cells of the preview grid (the spec's `preview`, or the automatic choice) or the print grid. |
-| `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. |
+| `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. Lint has no geometry for a `solid` leaf, so the rule does not check a solid leaf. It still checks the other children of that blend. |
 | `implicit-lipschitz-low` | warning | An `expr` formula, sampled on 512 points of its `box`, changes faster per mm than its `lipschitz`. A spot check, not a proof. Formulas that read a texture are skipped. |
-| `implicit-csg-in-disguise` | note | Only boxes, cylinders and halfspaces under sharp booleans: plain CAD that the standard ops build exactly. |
+| `implicit-csg-in-disguise` | note | Only boxes, cylinders, halfspaces and `solid` leaves under sharp booleans: plain CAD that the standard ops build exactly. A blend (`k > 0`) or an `offset` clears it. |
 
 - **Measure** shows the build's warnings (a thin feature, a clipped shape) under
   `warnings`, the same text the app shows.
@@ -478,8 +590,11 @@ other reference part, `src/parts/organic-whale.js`, also lints clean and passes 
   limb points somewhere else. Report the frames to check.
 - **A blend wider than the pieces eats them.** Keep `k` below the smallest piece it
   joins. Use `contact` where pieces should press, not fuse.
-- **`round` grows the shape** by `r`, and `onion` makes a shell `2·t` thick centred on the
+- **`offset` with a positive `d` grows the shape** by `d`, and `onion` makes a shell `2·t` thick centred on the
   surface. Size the child for that.
+- **A `solid` leaf is remeshed at the grid with the rest of the tree.** Its sharp edges
+  and corners are kept, but its faces are new triangles at the grid. To keep the solid's
+  own faces, build them after meshing with an ordinary boolean.
 - **A probe returns the frame set, not its `report()`.** Calling `report()` in a probe
   fails lint.
 - **Contact is root-only.** Put the other shapes inside it, or build them separately.
@@ -602,6 +717,11 @@ implicitDistance(pad)(0, 0, 10);   // 4
 implicitDistance(pad)(5, 0, 0);    // -1.5
 ```
 
+A node with a `solid` leaf also needs the mesh field builder. Outside a worker job,
+`implicitDistance` throws an error with code `NEEDS_MESH_FIELD` until
+`loadMeshFieldBuilder()` has resolved. `partforge/geometry` does not export it; import it
+from `partforge/oracle`.
+
 The kinematics guide has the defaults, the errors, and a worked hand.
 
 ## A controlled surface: the subdivision cage
@@ -636,8 +756,22 @@ it. It builds on Manifold only (see "Backend: Manifold only").
   and a cage that passes through itself is an error. A pose drag on a cage follows the
   pointer (see "The surface: `k.subdiv`"), but it stops where the body would pass through
   itself.
-- The two join each other only by ordinary booleans (`union`, `cut`), which leave a
-  sharp seam where they meet. Do not plan on a smooth join between a cage and a tree.
+- To join a cage body to anything else with a smooth blend, put both in one tree as
+  `solid` leaves under a `union` with `k`. The result is one mesh at the grid. Sharp
+  edges of an ordinary solid are kept, but a round smaller than about a tenth of the grid
+  edge is drawn sharp too. Keep the grid fine where that matters.
+  An ordinary boolean (`union`, `cut`) also joins them, with a sharp seam.
+
+A cage body grown smoothly out of a post:
+
+```js
+const torsoCage = k.cage({ box: { size: [24, 14, 12], segs: [2, 1, 1] } });
+torsoCage.extrude("+x:0,0", { by: 8, scale: 0.55 });
+const torso = k.subdiv(torsoCage).at([0, 0, 16]);
+const post = k.cylinder({ r: 3, h: 14 }).at([-3, 0, 2]);
+const perched = k.implicit({ preview: 1, root: { kind: "union", k: 4, children: [{ kind: "solid", solid: torso }, { kind: "solid", solid: post }] } });
+perched.volume() > torso.union(post).volume();   // true
+```
 
 ### Starting the cage: `k.cage`
 

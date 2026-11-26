@@ -70,3 +70,14 @@ test("partforge/organic stays light: no mesher, no native core", async () => {
   const heavy = [...files].filter((f) => /geometry\/implicit\/(index|mesher|program)\.js$|\/core\//.test(f));
   expect(heavy).toEqual([]);
 });
+
+test("partforge/organic accepts a solid leaf holding a solid and refuses a non-solid with the grammar's message", () => {
+  const solid = { _hash: "s1", toMesh: () => ({ positions: new Float32Array(0) }) };
+  expect(() => organic.validateImplicit({ root: { kind: "offset", d: 1, child: { kind: "solid", solid } } })).not.toThrow();
+  for (const bad of [5, "box", {}]) {
+    let caught;
+    try { organic.validateImplicit({ root: { kind: "solid", solid: bad } }); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(organic.ImplicitSpecError);
+    expect(caught.issues).toEqual(["root.solid: must be a solid (the result of a kernel op)"]);
+  }
+});

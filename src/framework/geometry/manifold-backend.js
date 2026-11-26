@@ -8,6 +8,8 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
+import { meshFieldBuilder } from "./implicit/mesh-field-loader.js";
+import { foldedLeafError, foldedLeafWarning } from "./implicit/ir.js";
 import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
 import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
@@ -53,6 +55,12 @@ const emptyProfile = (op) => new Error(
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // Trees whose automatic k.implicit preview edge a kernel remembers (each entry is a hash and a number).
 const AUTO_PREVIEW_MEMO = 256;
+// Solids whose k.implicit mesh field (a BVH and its pseudonormals) a kernel remembers,
+// bounded by count and by estimated bytes. A field keeps about 263 bytes per triangle
+// (measured: 85 MB for 323k triangles), estimated here as 270.
+const MESH_FIELD_MEMO = 32;
+const MESH_FIELD_BYTES = 192 * 1024 * 1024;
+const MESH_FIELD_BYTES_PER_TRI = 270;
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 // Full-circle segment counts live in circle-segs.js: preview is a flat SEGS.preview,
@@ -75,7 +83,8 @@ function axisAngleMat4(axis, deg) {
 
 const BYTES_PER_TRI = 160, BYTES_PER_VERT = 24;
 
-export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
+// `meshFieldBudget` (bytes) bounds the mesh field memo; tests set a small one.
+export function createManifoldKernel(wasm, { quality = "preview", meshFieldBudget = MESH_FIELD_BYTES } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
   // Per-radius count for every site that facets a circle it knows the radius of; the
@@ -243,6 +252,30 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
+  // k.implicit's `solid` leaf fields, by solid `_hash` (a solid's hash names its geometry,
+  // so an entry is never stale). Least recently used entries go first, while the memo holds
+  // MESH_FIELD_MEMO entries or the new field would take it over meshFieldBudget bytes. A
+  // field larger than the budget is built and returned but not kept. An evicted field that
+  // is needed again is simply built again. dropCache empties the memo.
+  const meshFields = new Map();   // _hash -> { field, bytes }
+  let meshFieldBytes = 0;
+  const meshFieldOf = (solid) => {
+    const hit = meshFields.get(solid._hash);
+    if (hit !== undefined) { meshFields.delete(solid._hash); meshFields.set(solid._hash, hit); return hit.field; }
+    // The builder loads on demand: not loaded yet, this throws code NEEDS_MESH_FIELD
+    // (jobs.js loads it and runs the job again).
+    const field = meshFieldBuilder()(solid.toMesh());
+    const bytes = field.tris * MESH_FIELD_BYTES_PER_TRI;
+    if (bytes > meshFieldBudget) return field;
+    while (meshFields.size >= MESH_FIELD_MEMO || meshFieldBytes + bytes > meshFieldBudget) {
+      const [oldest, entry] = meshFields.entries().next().value;
+      meshFields.delete(oldest);
+      meshFieldBytes -= entry.bytes;
+    }
+    meshFields.set(solid._hash, { field, bytes });
+    meshFieldBytes += bytes;
+    return field;
+  };
   // k.implicit's leaf samples across builds (implicit/sample-cache.js): a preview build
   // anchors its grid to the world lattice and reuses the samples a pose change did not
   // reach — the same bytes as a cold build. Bounded (SAMPLE_CACHE_BYTES); never used at print.
@@ -1226,7 +1259,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // the bracket's calls — which is why such a solid's key holds the slot. A frameless
     // call binds nothing: no props, and the key it always had. Print never binds.
     implicit: (spec) => {
-      const compiled = compileImplicit(spec, { images });
+      const compiled = compileImplicit(spec, { images, meshFieldOf });
       const isPreview = quality !== "print";
       let slot = 0, call = null;
       if (isPreview && bracketDepth > 0) {
@@ -1263,13 +1296,28 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
         const pieces = out.triOwner ? compiled.ownerK : 1;
         const first = wasm.Manifold.reserveIDs(pieces), ids = Array.from({ length: pieces }, (_, i) => first + i);
         const extra = binds ? { per: BIND_PROPS, data: encodeBindingProps(bindVertices(compiled, out.positions, edge), slot) } : null;
-        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
-          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
+        // A solid leaf whose mesh folds so its field's sign is wrong off the fold
+        // (compiled.foldedLeaves, mesh-field-build.js findFolds) usually still builds: the
+        // wrong region is thin and the sampler rarely reaches it. So such a leaf is refused
+        // only when Manifold refuses the mesh ("Not manifold"), with the first folded leaf's
+        // place (the original error kept as `cause`), and otherwise the build warns once.
+        // Only Manifold's NotManifold is replaced: any other error passes through. Compared by
+        // name, not instanceof, because the error class belongs to one wasm module.
+        const folded = compiled.foldedLeaves ?? [];
+        let m;
+        try {
+          m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
+            : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
+        } catch (e) {
+          if (folded.length > 0 && e?.name === "ManifoldError" && e.code === "NotManifold") throw Object.assign(foldedLeafError(folded[0]), { cause: e });
+          throw e;
+        }
+        const warnings = folded.length > 0 ? [...out.warnings, foldedLeafWarning(folded[0])] : out.warnings;
         const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
         for (const id of ids) oidPolicies.set(id, policy);
         implicitMs.add(m); // a union with this operand may be delivered in two stages
         const value = wrap(m, key);
-        implicitWarnings.set(value, out.warnings);
+        implicitWarnings.set(value, warnings);
         implicitIds.set(value, ids);
         return { value, pin: m, dispose: () => { for (const id of ids) oidPolicies.delete(id); m.delete?.(); } };
       });
@@ -1280,8 +1328,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return solid;
     },
     // Where a k.implicit spec's frames and labelled nodes end up (implicit/frame-report.js).
-    // Pure and mesh-free, so it is not cached.
-    implicitFrames: (spec) => implicitFrames(spec, { images }),
+    // Pure (it never meshes the spec), so it is not cached; a solid leaf's field comes from the same
+    // memo as k.implicit's (meshFieldOf), so a frames probe does not rebuild it.
+    implicitFrames: (spec) => implicitFrames(spec, { images, meshFieldOf }),
     // A subdivision cage (subdiv/cage.js): plain data the build edits in place. Pure, not cached.
     cage: (opts) => createCage(opts),
     // Cage → smooth solid (subdiv/): Catmull-Clark at the level the tier's tolerance needs
@@ -1456,6 +1505,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     _acceptsMesh: true,
     _sampleCache: sampleCache,   // tests and the bench: k.implicit's preview sample cache
+    _meshFieldMemo: () => ({ entries: meshFields.size, bytes: meshFieldBytes }),   // tests: the mesh field memo's size
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
     // that Shape2D.offset itself runs on — published here for callers that want the
@@ -1476,7 +1526,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     beginProvenance: (prov) => { activeProv = prov; },
     endProvenance: () => { activeProv = null; },
     sweepCache: () => cache.sweep(),
-    dropCache: () => { cache.clear(); sampleCache.clear(); },
+    dropCache: () => { cache.clear(); sampleCache.clear(); meshFields.clear(); meshFieldBytes = 0; },
     setCacheBudget: (bytes) => cache.setBudget(bytes),
     trimCache: () => cache.trim(),
     cacheBytes: () => cache.retainedBytes(),

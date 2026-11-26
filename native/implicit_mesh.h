@@ -103,4 +103,14 @@ int untangle(ipe::Session& s);
 // result.js's triangleOwners of the session's owner mesh into s.triOwner. 0, or nonzero.
 int tri_owners(ipe::Session& s);
 
+// ---------------------------------------------------------------------------
+// The sharpen stage (implicit_sharpen.cpp): sharpen.js's sharpenMesh on the session mesh,
+// cleaned and with normals (on an owner mesh, after the crease cut). Grows every per-vertex
+// array and, when it found a candidate, fills s.sharp and s.sharpPlanes. 0, or nonzero (no mesh,
+// a malformed one, or an evaluation the session cannot run).
+int sharpen(ipe::Session& s);
+
+// Drops the sharpen stage's tables: any stage that makes or changes the mesh calls it.
+void clear_sharp(ipe::Session& s);
+
 }  // namespace ipm_mesh

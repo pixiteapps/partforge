@@ -9,10 +9,14 @@ import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
 import { meshStoreOwners } from "../src/framework/geometry/implicit/mesher-owners.js";
 import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { sharpenMesh } from "../src/framework/geometry/implicit/sharpen.js";
 import { applySurfaceDetail, flattenDetail } from "../src/framework/geometry/implicit/detail.js";
 import { core, loadFullCore, setCoreEnabled } from "../src/framework/core/core.js";
 
+import { loadMeshFieldBuilder } from "../src/framework/geometry/implicit/mesh-field-loader.js";
+
 await loadFullCore(); // the implicit engine is the core's full build, loaded on demand
+await loadMeshFieldBuilder(); // the solid cases' mesh fields (compileImplicit's buildMeshField), loaded on demand
 import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { handSpec, vaseSpec } from "../test/fixtures/implicit-trees.js";
@@ -38,16 +42,30 @@ const time = (f) => { const t = process.cpuUsage(); const r = f(); return [r, cp
 const { spec: vase, images } = vaseSpec();
 // The hand at 0.5 mm is the spec's print-tier target (docs/research/organic-shapes.md §9).
 // Each case cleans up as its tier does: the preview grids decimate (PREVIEW_CLEANUP).
+// The solid leaves (the MESH op, test/core-parity.test.js's fixtures): the plate and boss join
+// (a blended union of two solids) at both tiers and the blob shrink (offset −2), at 0.6 mm.
+// Their solids come from a preview kernel, as a forge's would; compile includes buildMeshField.
+const sk = await bootManifoldKernel();
+const solidLeaf = (solid) => ({ kind: "solid", solid });
+const solidJoin = { root: { kind: "union", k: 8, children: [
+  solidLeaf(sk.box({ min: [-30, -20, 0], max: [30, 20, 6] })), solidLeaf(sk.cylinder({ r: 8, h: 26 }).at([0, 0, 4])),
+] } };
+const solidShrink = { root: { kind: "offset", d: -2, child: solidLeaf(sk.sphere(16)
+  .union(sk.box({ min: [-8, -8, -22], max: [8, 8, 0] })).union(sk.cylinder({ r: 6, h: 44 }).rotateY(90).at([-22, 0, 4]))) } };
 const cases = [["hand preview", handSpec(), 1.5, new Map(), PREVIEW_CLEANUP], ["hand print", handSpec(), 0.8, new Map(), CLEANUP],
-  ["hand 0.5 mm", handSpec(), 0.5, new Map(), CLEANUP], ["vase preview", vase, 1.2, images, PREVIEW_CLEANUP]];
+  ["hand 0.5 mm", handSpec(), 0.5, new Map(), CLEANUP], ["vase preview", vase, 1.2, images, PREVIEW_CLEANUP],
+  ["join preview", solidJoin, 0.6, new Map(), PREVIEW_CLEANUP], ["join print", solidJoin, 0.6, new Map(), CLEANUP],
+  ["shrink preview", solidShrink, 0.6, new Map(), PREVIEW_CLEANUP]];
 
 for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);
   setCoreEnabled(on);
   if (on && !core()) { console.log("core unavailable"); continue; }
-  // A contact root (the hand) runs meshImplicit's owner path: the owner mesher, then `seam`
-  // (the crease cut and untangle) between cleanup and detail. Other cases have no seam stage.
-  console.log("case            compile  sample  mesh  cleanup  seam  detail  total   tris     samples  programs");
+  // Every case then runs meshImplicit's sequence: cleanup, the sharpen stage (`sharpen`, its own
+  // column, timed alone on both paths), and detail. A contact root (the hand) runs the owner
+  // path: the owner mesher, and `seam` (the crease cut before sharpen, untangle after it).
+  // Other cases have no seam stage.
+  console.log("case            compile  sample  mesh  cleanup  seam  sharpen  detail  total   tris     samples  programs");
   for (const [name, spec, edge, imgs, cleanupOpts] of cases) {
     for (let warm = 0; warm < 2; warm++) {
       const [c, tc] = time(() => compileImplicit(spec, { images: imgs }));
@@ -57,32 +75,41 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
       const [plan, tp] = time(() => planLeaves(c, edge));
       const owner = c.ownerRoot >= 0 ? c.ir.nodes[c.ownerRoot] : null;
       try {
-        let ts, tm, tcl, tse = 0, td = 0, d;
+        let ts, tm, tcl, tse = 0, tsh, td = 0, d;
         if (on) {
           sess = new NativeSession(core());
           [, ts] = time(() => {
-            plan.textures.forEach((t) => sess.addTexture(t)); plan.programs.forEach((p) => sess.addProgram(p));
+            plan.textures.forEach((t) => sess.addTexture(t)); (plan.textures.meshes ?? []).forEach((f) => sess.addMesh(f));
+            plan.programs.forEach((p) => sess.addProgram(p));
             if (owner) sess.setContact(owner);
             sess.sample(plan, { readBack: false });
           });
           [, tm] = time(() => (owner ? sess.meshOwners({ readBack: false }) : sess.mesh({ readBack: false })));
-          [d, tcl] = time(() => sess.cleanup(cleanupOpts, { readBack: !owner && !c.detail.length }));
-          if (owner) [d, tse] = time(() => { sess.crease({ readBack: false }); return sess.untangle({ readBack: !c.detail.length }); });
+          [, tcl] = time(() => sess.cleanup(cleanupOpts, { readBack: false }));
+          let tcr = 0, tun = 0;
+          if (owner) [, tcr] = time(() => sess.crease({ readBack: false }));
+          [d, tsh] = time(() => sess.sharpen({ readBack: !owner && !c.detail.length }));
+          if (owner) [d, tun] = time(() => sess.untangle({ readBack: !c.detail.length }));
+          tse = tcr + tun;
           if (c.detail.length) [d, td] = time(() => sess.detail(flattenDetail(c)));
         } else {
           let s, m;
           [s, ts] = time(() => evaluateLeaves(plan));
           [m, tm] = time(() => (owner ? meshStoreOwners(s, { gap: owner.gap }) : meshStore(s)));
           [d, tcl] = time(() => cleanupMesh(s, m, cleanupOpts));
-          if (owner) [d, tse] = time(() => untangle(s, cutCreases(s, d, owner.attWorld)));
+          let tcr = 0, tun = 0;
+          if (owner) [d, tcr] = time(() => cutCreases(s, d, owner.attWorld));
+          [d, tsh] = time(() => sharpenMesh(s, d));
+          if (owner) [d, tun] = time(() => untangle(s, d));
+          tse = tcr + tun;
           if (c.detail.length) [d, td] = time(() => applySurfaceDetail(s, d, c));
         }
-        st = [tp + ts, tm, tcl, tse, td, d];
+        st = [tp + ts, tm, tcl, tse, tsh, td, d];
       } finally { sess?.destroy(); }
       if (warm === 0) continue;
-      const [ts, tm, tcl, tse, td, d] = st;
-      const total = tc + ts + tm + tcl + tse + td;
-      console.log(`${name.padEnd(15)} ${tc.toFixed(0).padStart(7)} ${ts.toFixed(0).padStart(7)} ${tm.toFixed(0).padStart(5)} ${tcl.toFixed(0).padStart(8)} ${tse.toFixed(0).padStart(5)} ${td.toFixed(0).padStart(7)} ${total.toFixed(0).padStart(6)} ${String(d.indices.length / 3).padStart(8)} ${String(plan.samples).padStart(9)} ${String(plan.programs.length).padStart(9)}`);
+      const [ts, tm, tcl, tse, tsh, td, d] = st;
+      const total = tc + ts + tm + tcl + tse + tsh + td;
+      console.log(`${name.padEnd(15)} ${tc.toFixed(0).padStart(7)} ${ts.toFixed(0).padStart(7)} ${tm.toFixed(0).padStart(5)} ${tcl.toFixed(0).padStart(8)} ${tse.toFixed(0).padStart(5)} ${tsh.toFixed(0).padStart(8)} ${td.toFixed(0).padStart(7)} ${total.toFixed(0).padStart(6)} ${String(d.indices.length / 3).padStart(8)} ${String(plan.samples).padStart(9)} ${String(plan.programs.length).padStart(9)}`);
     }
   }
   // A fresh kernel per mode: the solid cache would otherwise answer the second mode.
@@ -92,3 +119,17 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`k.implicit(hand) end to end, after warm-up: ${tk.toFixed(0)} CPU ms`);
 }
 setCoreEnabled(true);
+
+// The shrink body both ways, on one preview kernel with the core on: the solid's triangle
+// count, k.implicit's offset −2 end to end at a 0.6 mm grid (a fresh kernel, so no cache),
+// and Solid.offset(−2) (Manifold's Minkowski difference) on the same solid.
+{
+  const body = solidShrink.root.child.solid;
+  const m = body.toMesh(), tris = m.indices ? m.indices.length / 3 : m.positions.length / 9;
+  const k = await bootManifoldKernel({ meshFields: true });
+  const [, tf] = time(() => k.implicit({ ...solidShrink, preview: 0.6 }));
+  const [, to] = time(() => body.offset(-2));
+  console.log(`\nshrink body (${tris} triangles), preview kernel, core on:`);
+  console.log(`  k.implicit offset -2 at 0.6 mm, end to end: ${tf.toFixed(0)} CPU ms`);
+  console.log(`  Solid.offset(-2): ${to.toFixed(0)} CPU ms`);
+}

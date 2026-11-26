@@ -1,6 +1,7 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, beforeAll } from "vitest";
 import { compileImplicit, meshImplicit, implicitHashable, IMPLICIT_DEFAULTS } from "../src/framework/geometry/implicit/index.js";
 import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { edgeCheck } from "./helpers/mesh-topology.js";
 
 describe("engine entry", () => {
@@ -72,4 +73,22 @@ describe("derived bounds: intersect under rotation", () => {
   for (const [name, spec] of Object.entries(CASES)) {
     test(`${name}: not clipped`, () => expect(sampleField(compileImplicit(spec), 0.5).clipped).toBe(false));
   }
+});
+
+describe("offset", () => {
+  let kp;
+  beforeAll(async () => { kp = await bootManifoldKernel({ quality: "print" }); });
+  const volumeOf = (spec, edge) => kp.implicit({ ...spec, resolution: edge }).volume();
+  test("offset moves a sphere's surface in and out by d", () => {
+    const sphere = (r) => (4 / 3) * Math.PI * r ** 3;
+    const v = (d) => volumeOf({ root: { kind: "offset", d, child: { kind: "sphere", r: 10 } } }, 0.4);
+    expect(v(2) / sphere(12)).toBeCloseTo(1, 2);
+    expect(v(-2) / sphere(8)).toBeCloseTo(1, 2);
+  });
+  test("a shrink deeper than the body is the empty-shape error", () => {
+    expect(() => kp.implicit({ root: { kind: "offset", d: -6, child: { kind: "sphere", r: 5 } } })).toThrow(/the shape is empty/);
+  });
+  test("implicitFrames accepts an offset spec", () => {
+    expect(() => kp.implicitFrames({ root: { kind: "offset", d: 1, child: { kind: "sphere", r: 5 } } })).not.toThrow();
+  });
 });

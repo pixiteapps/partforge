@@ -6,6 +6,7 @@ import { evalPrim, unionN, intersectN, warpPoint, mirrorPoint, sanitize, clampUn
 import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE } from "./contact.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
+import { meshDistance } from "./mesh-field.js";
 
 export const evalReference = (compiled, x, y, z) => evalNode(compiled, compiled.ir.root, x, y, z, 0);
 /** Evaluates one IR node at a point in its parent's coordinates (applying its own `inv`). */
@@ -26,6 +27,7 @@ function evalNode(c, id, x, y, z, dep) {
   switch (n.kind) {
     case "prim": return evalPrim(n.prim.code, n.prim.P, x, y, z);
     case "expr": return sanitize(evalExprScalar(n.expr, x, y, z, c.textures, sampleTexture));
+    case "mesh": return meshDistance(c.meshes[n.slot], x, y, z);
     case "union": case "intersect": case "subtract": {
       const N = n.children.length, v = scratch(dep, N);
       for (let i = 0; i < N; i++) { const d = evalNode(c, n.children[i], x, y, z, dep + 1); v[i] = n.kind === "subtract" && i > 0 ? -d : d; }

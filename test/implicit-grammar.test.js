@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import * as organic from "../src/framework/domains/organic/index.js";
 import { validateSpec, NODE_KINDS } from "../src/framework/geometry/implicit/grammar.js";
 
 const issues = (spec, opts) => { try { validateSpec(spec, opts); return []; } catch (e) { expect(e.code).toBe("IMPLICIT_SPEC"); return e.issues; } };
@@ -49,7 +50,7 @@ describe("validateSpec", () => {
   });
   test("every documented kind has a schema", () => {
     for (const k of ["sphere", "ellipsoid", "capsule", "box", "cylinder", "torus", "tube", "halfspace",
-      "union", "intersect", "subtract", "mirror", "round", "onion", "displace", "twist", "bend", "taper", "repeat", "expr"]) {
+      "union", "intersect", "subtract", "mirror", "offset", "onion", "displace", "twist", "bend", "taper", "repeat", "expr"]) {
       expect(NODE_KINDS[k], k).toBeTruthy();
     }
   });
@@ -63,3 +64,29 @@ describe("inherited property names are not kinds", () => {
     expect(issues({ root: { kind: "sphere", r: 1 }, detail: [{ kind: "toString" }] }).some((m) => m.startsWith('detail[0].kind: unknown detail kind "toString"'))).toBe(true);
   });
 });
+
+test("offset takes a child and a signed, non-zero d", () => {
+  const ok = (d) => validateSpec({ root: { kind: "offset", d, child: { kind: "sphere", r: 5 } } });
+  expect(() => ok(2)).not.toThrow();
+  expect(() => ok(-2)).not.toThrow();
+  expect(() => ok(0)).toThrow(/root\.d: must be a finite number other than 0/);
+  expect(() => validateSpec({ root: { kind: "offset", d: 1 } })).toThrow(/root\.child: required/);
+});
+
+test("round stays accepted but is not a documented kind", () => {
+  expect(() => validateSpec({ root: { kind: "round", r: 1, child: { kind: "sphere", r: 5 } } })).not.toThrow();
+  expect(organic.IMPLICIT_NODE_KINDS).toContain("offset");
+  expect(organic.IMPLICIT_NODE_KINDS).toContain("solid");
+  expect(organic.IMPLICIT_NODE_KINDS).not.toContain("round");
+});
+
+test("a solid leaf takes a value with a string _hash and a toMesh function", () => {
+  const solid = { _hash: "abc", toMesh: () => ({ positions: [] }) };
+  expect(issues({ root: { kind: "solid", solid } })).toEqual([]);
+  expect(issues({ root: { kind: "solid", solid, at: [1, 2, 3], label: "s" } })).toEqual([]);
+  for (const bad of [{}, { _hash: 3, toMesh: () => null }, { _hash: "x" }, { _hash: "x", toMesh: 1 }, "solid", null]) {
+    expect(issues({ root: { kind: "solid", solid: bad } })).toEqual(["root.solid: must be a solid (the result of a kernel op)"]);
+  }
+  expect(issues({ root: { kind: "solid", solid, r: 1 } })).toEqual(['root: unknown field "r"']);
+});
+

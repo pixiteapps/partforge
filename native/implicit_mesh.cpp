@@ -52,6 +52,7 @@ void clear_owner_mesh(ipe::Session& s) {
   std::vector<uint8_t>().swap(s.pinned);
   std::vector<uint8_t>().swap(s.creaseMark);
   std::vector<int32_t>().swap(s.triOwner);
+  clear_sharp(s);
 }
 
 namespace {
@@ -71,7 +72,7 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
     const int32_t pi = leaves[4 * L + 3];
     if (pi < 0 || (size_t)pi >= s.programs.size()) return 2;
     const ipe::Program& p = s.programs[(size_t)pi];
-    if (!p.ok || p.maxSlot >= (int)s.textures.size()) return 3;
+    if (!ipe::runnable(s, p)) return 3;
     if (ownerK > 0 && p.maxKid >= ownerK) return 5;   // a child the owner store cannot name
   }
   s.sampled = false;
@@ -1072,6 +1073,7 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
             double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2,
             double minAccept, double minGain) {
   if (!s.meshed) return 1;
+  clear_sharp(s);
   const double edge = s.edge;
   collapse(s, collapseFrac * edge, false, -1, -1, -1, 0);
   if (decimateFrac > 0) {
