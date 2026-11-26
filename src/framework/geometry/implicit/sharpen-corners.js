@@ -1,0 +1,171 @@
+// src/framework/geometry/implicit/sharpen-corners.js
+// The sharpen pass's corners (sharpen.js step 6). Native-portable arithmetic only (js-math.js),
+// for the core port.
+import { hypot3 } from "../js-math.js";
+import { SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_CORNER_DET, CORNER_MERGE } from "./sharpen.js";
+import { evalField, dot, unit, adjacency, subdivide, checkTris, fieldFlips } from "./sharpen-mesh.js";
+
+// Step 6 on the split mesh `T` (positions P, normals N, leaves VL, all grown by step 5; P and N
+// change here). A plane is (n, n·x): an edge point's two are the side gradients Newton ended on
+// (`planeN`) through its own position, exact on flat faces; a mesher vertex's is its normal
+// through its input position (P0, N0). Returns the re-triangulated list, the candidates that
+// made a new vertex in vertex order (`added`, each with its `leaf` and evaluating end `ev`), and
+// the vertices that became corner points where they were or by a move (`marked`).
+export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, edge, st }) {
+  const nv1 = P.length / 3;
+  // PORTED: lo·nv1 + hi is exact in a JS double (below 2^53); the core needs a 64-bit integer key.
+  const ekey = (a, b) => (a < b ? a * nv1 + b : b * nv1 + a);
+  const planesOf = (v) => {
+    if (sharp[v] === 1) {
+      const px = P[3 * v], py = P[3 * v + 1], pz = P[3 * v + 2], o = 6 * v;
+      return [0, 3].map((j) => {
+        const n = [planeN[o + j], planeN[o + j + 1], planeN[o + j + 2]];
+        return { n, d: n[0] * px + n[1] * py + n[2] * pz, v };
+      });
+    }
+    if (noPlane(v)) return [];
+    const n = unit([N0[3 * v], N0[3 * v + 1], N0[3 * v + 2]]);
+    return n ? [{ n, d: n[0] * P0[3 * v] + n[1] * P0[3 * v + 1] + n[2] * P0[3 * v + 2], v }] : [];
+  };
+  const cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const adj = adjacency(T, nv1), cand = [];
+  for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
+    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+    if ((sharp[lo] !== 1 && sharp[hi] !== 1) || !adj.first(t / 3, lo, hi)) continue;
+    // The distinct planes: an edge point's first (a mesher vertex's normal is the rougher one).
+    const set = [], ordered = sharp[lo] === 1 ? [...planesOf(lo), ...planesOf(hi)] : [...planesOf(hi), ...planesOf(lo)];
+    for (const q of ordered) if (set.every((o) => dot(o.n, q.n) < SHARP_ANGLE_COS)) set.push(q);
+    if (set.length !== 3) continue;
+    st.cornerCandidates++;
+    const [n0, n1, n2] = set.map((q) => q.n), c12 = cr(n1, n2), c20 = cr(n2, n0), c01 = cr(n0, n1), det = dot(n0, c12);
+    if (!(Math.abs(det) >= SHARP_CORNER_DET)) { st.cornerDet++; continue; }
+    const p = [0, 1, 2].map((i) => (set[0].d * c12[i] + set[1].d * c20[i] + set[2].d * c01[i]) / det);
+    const mx = (P[3 * lo] + P[3 * hi]) / 2 - p[0], my = (P[3 * lo + 1] + P[3 * hi + 1]) / 2 - p[1], mz = (P[3 * lo + 2] + P[3 * hi + 2]) / 2 - p[2];
+    if (!(hypot3(mx, my, mz) <= SHARP_MAX_MOVE * edge)) { st.cornerFar++; continue; }
+    const n = unit([0, 1, 2].map((i) => n0[i] + n1[i] + n2[i]));
+    if (!n) { st.cornerDet++; continue; }   // the three normals cancel: no side to face
+    // How many of its planes are a mesher vertex's, and how far the point is from the nearest
+    // vertex that gave it one.
+    let rough = 0, clear = Infinity;
+    for (const q of set) {
+      if (sharp[q.v] !== 1) rough++;
+      clear = Math.min(clear, hypot3(P[3 * q.v] - p[0], P[3 * q.v + 1] - p[1], P[3 * q.v + 2] - p[2]));
+    }
+    cand.push({ a: lo, b: hi, p, n, rough, clear, leaf: VL[lo], ev: lo, ok: true, from: 0 });
+  }
+  if (!cand.length) return { out: T, added: [], marked: [], P, N };
+  // One point per corner. Candidates within CORNER_MERGE·edge of a group's first point take the
+  // point of the member with the fewest mesher planes (a mesher vertex on a bevel has a normal of
+  // neither face), then the one whose planes come from farthest away (a plane read within a hair
+  // of the corner sees its third face); the first on a tie.
+  const R = CORNER_MERGE * edge, groups = [];
+  for (const c of cand) {
+    const g = groups.find((x) => hypot3(x[0].p[0] - c.p[0], x[0].p[1] - c.p[1], x[0].p[2] - c.p[2]) <= R);
+    if (g) g.push(c); else groups.push([c]);
+  }
+  for (const g of groups) {
+    let best = g[0];
+    for (const c of g) if (c.rough < best.rough || (c.rough === best.rough && c.clear > best.clear)) best = c;
+    for (const c of g) { c.p = best.p; c.n = best.n; }
+  }
+  // The field at each point, with its first end's leaf program, or its other end's when the
+  // first gives a non-finite value.
+  const d = evalField(store, Float64Array.from(cand.flatMap((c) => c.p)), cand.map((c) => c.leaf));
+  const redo = cand.filter((c, q) => !Number.isFinite(d[q]));
+  for (const c of redo) { c.leaf = VL[c.b]; c.ev = c.b; }
+  const d2 = redo.length ? evalField(store, Float64Array.from(redo.flatMap((c) => c.p)), redo.map((c) => c.leaf)) : [];
+  let r = 0;
+  cand.forEach((c, q) => {
+    const f = Number.isFinite(d[q]) ? d[q] : d2[r++];
+    if (!(Math.abs(f) <= SHARP_TOL * edge)) { c.ok = false; st.cornerOffField++; }
+  });
+
+  const { fan, byEdge } = adj;
+  // Commit in candidate order, checked as step 4 checks; then the field-flip rounds, as there,
+  // except that a candidate whose change flipped one goes on to its next try.
+  let S;
+  for (;;) {
+    S = commitCorners(cand, { P, N, T, ekey, fan, byEdge, free, edge, st });
+    const flipped = fieldFlips(store, S, [...S.touched.keys()], { VL0: VL, T, ekey, edge });
+    if (!flipped.length) break;
+    for (const t of flipped) for (const c of S.touched.get(t)) if (c.ok && c.from <= c.took) {
+      c.from = c.took + 1;
+      if (c.from >= TRIES) { c.ok = false; st.cornerFieldFlip++; }
+    }
+  }
+  st.corners = S.added.length + S.marked.length;
+  const out = [];
+  for (let t = 0; t < T.length / 3; t++) subdivide(T, t, S.splitOf, ekey, out);
+  return { out, added: S.added, marked: S.marked, P: S.P, N: S.N };
+}
+
+// A corner candidate's tries, in order: an end within CORNER_MERGE·edge of the point is moved
+// onto it; the edge is split at the point; the nearer end, then the other, is moved onto it. A
+// move takes the corner's normal, is at most SHARP_MAX_MOVE·edge and never moves a held, pinned
+// or crease vertex.
+const TRIES = 4;
+
+// The kept corner candidates, committed in order, each by its first try (from `c.from`) that
+// makes no flip or sliver. A point within CORNER_MERGE·edge of an earlier corner point is that
+// vertex: nothing more when it is an end of the edge, else the edge is split at it if it is next
+// to the edge (the apex of a triangle on it, or the split point of another edge of one), so a
+// shared corner never pinches the mesh; a vertex not next to it gets a new one. Returns the
+// positions, normals and splits, the candidates that made a vertex (`added`), the vertices made
+// corners (`marked`) and, for each changed triangle, the candidates that changed it.
+function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, st }) {
+  // Room for a vertex per candidate; `nv` is the count so far.
+  const cap = P1.length / 3 + cand.length, P = new Float64Array(3 * cap), N = new Float64Array(3 * cap);
+  P.set(P1); N.set(N1);
+  let nv = P1.length / 3;
+  const splitOf = new Map(), made = [], added = [], marked = [], moved = new Set(), touched = new Map();
+  for (const k of ["cornerSplits", "cornerMoves", "cornerFlip", "cornerSliver", "cornerApart"]) st[k] = 0;
+  const R2 = CORNER_MERGE * edge * CORNER_MERGE * edge, M2 = SHARP_MAX_MOVE * edge * SHARP_MAX_MOVE * edge;
+  const d2 = (v, p) => { const x = P[3 * v] - p[0], y = P[3 * v + 1] - p[1], z = P[3 * v + 2] - p[2]; return x * x + y * y + z * z; };
+  const touch = (tris, c) => { for (const t of tris) (touched.get(t) ?? touched.set(t, []).get(t)).push(c); };
+  // Whether v is the apex of a triangle on c's edge, or the split point of another of its edges.
+  const nextTo = (v, c) => byEdge.get(ekey(c.a, c.b)).some((t) => {
+    const x = T[3 * t], y = T[3 * t + 1], z = T[3 * t + 2];
+    return x === v || y === v || z === v || splitOf.get(ekey(x, y)) === v || splitOf.get(ekey(y, z)) === v || splitOf.get(ekey(z, x)) === v;
+  });
+  // Move v onto the corner point, if free and the fan stays sound; true when done.
+  const moveTo = (v, c) => {
+    if (moved.has(v) || !free(v) || d2(v, c.p) > M2) return false;
+    const was = P.slice(3 * v, 3 * v + 3), wn = N.slice(3 * v, 3 * v + 3);
+    for (let i = 0; i < 3; i++) { P[3 * v + i] = c.p[i]; N[3 * v + i] = c.n[i]; }
+    const bad = checkTris(T, fan.get(v), splitOf, ekey, P, N);
+    if (bad) {
+      for (let i = 0; i < 3; i++) { P[3 * v + i] = was[i]; N[3 * v + i] = wn[i]; }
+      st[bad === "flip" ? "cornerFlip" : "cornerSliver"]++;
+      return false;
+    }
+    moved.add(v); marked.push(v); made.push({ v, p: c.p }); touch(fan.get(v), c); st.cornerMoves++;
+    return true;
+  };
+  for (const c of cand) {
+    if (!c.ok) continue;
+    c.took = -1;
+    let v = -1;
+    for (const q of made) if (d2(q.v, c.p) <= R2) { v = q.v; break; }
+    if (v === c.a || v === c.b) { c.took = c.from; continue; }   // already the corner
+    // A corner vertex not next to the edge: a new vertex here, or an end moved here, would sit on top of it.
+    if (v >= 0 && !nextTo(v, c)) { st.cornerApart++; continue; }
+    const near = d2(c.a, c.p) <= d2(c.b, c.p) ? c.a : c.b, far = near === c.a ? c.b : c.a;
+    for (let k = c.from; k < TRIES && c.took < 0; k++) {
+      if (k === 0) { if (v < 0 && d2(near, c.p) <= R2 && moveTo(near, c)) c.took = k; continue; }
+      if (k === 2 || k === 3) { if (v < 0 && moveTo(k === 2 ? near : far, c)) c.took = k; continue; }
+      // k === 1: split, at the shared vertex when there is one.
+      const fresh = v < 0, key = ekey(c.a, c.b), u = fresh ? nv : v;
+      if (fresh) for (let i = 0; i < 3; i++) { P[3 * u + i] = c.p[i]; N[3 * u + i] = c.n[i]; }
+      splitOf.set(key, u);
+      const bad = checkTris(T, byEdge.get(key), splitOf, ekey, P, N);
+      if (bad) {
+        splitOf.delete(key);
+        st[bad === "flip" ? "cornerFlip" : "cornerSliver"]++;
+        continue;
+      }
+      if (fresh) { nv++; made.push({ v: u, p: c.p }); added.push(c); }
+      touch(byEdge.get(key), c); st.cornerSplits++; c.took = k;
+    }
+  }
+  return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, added, marked, touched };
+}
