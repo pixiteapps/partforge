@@ -105,7 +105,7 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
   // Commit in candidate order, checked as step 4 checks; then the field-flip rounds, as there,
   // except that a candidate whose change flipped one goes on to its next try.
   let S;
-  const apart = apartIndex(P, nv1, edge);
+  const apart = apartIndex(P, nv1, edge, cand.filter((c) => c.ok).map((c) => c.p));
   for (;;) {
     S = commitCorners(cand, { P, N, T, ekey, fan, byEdge, free, edge, st, apart });
     const flipped = fieldFlips(store, S, [...S.touched.keys()], { VL0: VL, T, ekey, edge });

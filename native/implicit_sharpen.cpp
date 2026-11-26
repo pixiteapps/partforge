@@ -276,19 +276,49 @@ struct ApartCells {
 
 struct ApartBase {
   double ap = 0, size = 0, A2 = 0;
+  size_t nv = 0;
+  const double* P = nullptr;
   ApartCells cells;
+  // The asked cells (their exact indices, keyed by hash: a hash shared by two cells answers the
+  // second by the full test, never by a cell list it did not file), the 27 cells around each, and
+  // their x indices.
+  flat::Map<uint32_t> asked{64};
+  std::vector<int64_t> askedCell;
+  flat::Map<uint8_t> want{64}, wantX{64};
   bool cellOf(double x, double y, double z, int64_t* c) const {
     const double q[3] = {std::floor(x / size), std::floor(y / size), std::floor(z / size)};
     for (int i = 0; i < 3; i++) if (!(std::fabs(q[i]) <= 9007199254740991.0)) return false;   // NaN fails too
     for (int i = 0; i < 3; i++) c[i] = (int64_t)q[i];
     return true;
   }
-  void build(const double* P, size_t nv, double edge) {
+  // `asks`: the points the commit will ask about, 3 doubles each.
+  void build(const double* PP, size_t n, double edge, const std::vector<double>& asks) {
+    P = PP; nv = n;
     ap = SHARP_APART * edge; size = 2 * ap; A2 = ap * ap;
-    for (size_t v = 0; v < nv; v++) {
+    for (size_t q = 0; q + 2 < asks.size(); q += 3) {
       int64_t c[3];
-      if (cellOf(P[3 * v], P[3 * v + 1], P[3 * v + 2], c)) cells.file(ApartCells::key(c[0], c[1], c[2]), (uint32_t)v);
+      if (!cellOf(asks[q], asks[q + 1], asks[q + 2], c)) continue;
+      bool inserted = false;
+      asked.insert(ApartCells::key(c[0], c[1], c[2]), (uint32_t)(askedCell.size() / 3), &inserted);
+      if (inserted) askedCell.insert(askedCell.end(), c, c + 3);
+      for (int i = -1; i <= 1; i++) {
+        wantX.insert(ApartCells::key(c[0] + i, 0, 0), 1);
+        for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) want.insert(ApartCells::key(c[0] + i, c[1] + j, c[2] + k), 1);
+      }
     }
+    if (!want.size()) return;
+    for (size_t v = 0; v < nv; v++) {
+      const double qx = std::floor(P[3 * v] / size);
+      if (!(std::fabs(qx) <= 9007199254740991.0) || !wantX.find(ApartCells::key((int64_t)qx, 0, 0))) continue;
+      int64_t c[3];
+      if (!cellOf(P[3 * v], P[3 * v + 1], P[3 * v + 2], c)) continue;
+      const uint64_t k = ApartCells::key(c[0], c[1], c[2]);
+      if (want.find(k)) cells.file(k, (uint32_t)v);
+    }
+  }
+  bool isAsked(const int64_t* c) {
+    const uint32_t* i = asked.find(ApartCells::key(c[0], c[1], c[2]));
+    return i && askedCell[3 * (size_t)*i] == c[0] && askedCell[3 * (size_t)*i + 1] == c[1] && askedCell[3 * (size_t)*i + 2] == c[2];
   }
 };
 
@@ -297,23 +327,32 @@ struct ApartView {
   ApartBase& b;
   const double* Q;
   ApartCells over;
+  std::vector<uint32_t> placed;
   ApartView(ApartBase& base, const double* q) : b(base), Q(q) {}
   void add(uint32_t v) {
+    placed.push_back(v);
     int64_t c[3];
     if (b.cellOf(Q[3 * (size_t)v], Q[3 * (size_t)v + 1], Q[3 * (size_t)v + 2], c)) over.file(ApartCells::key(c[0], c[1], c[2]), v);
+  }
+  bool near(uint32_t v, const double* p) const {
+    const double x = Q[3 * (size_t)v] - p[0], y = Q[3 * (size_t)v + 1] - p[1], z = Q[3 * (size_t)v + 2] - p[2];
+    return x * x + y * y + z * z < b.A2;
   }
   bool has(const double* p, int64_t skip) {
     int64_t c[3];
     if (!b.cellOf(p[0], p[1], p[2], c)) return false;
+    // A point the index was not built for: every vertex (sharpen-mesh.js apartIndex says why the
+    // answer is the same).
+    if (!b.isAsked(c)) {
+      for (size_t v = 0; v < b.nv; v++) if ((int64_t)v != skip && near((uint32_t)v, p)) return true;
+      for (const uint32_t v : placed) if ((int64_t)v != skip && near(v, p)) return true;
+      return false;
+    }
     for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
       const uint64_t key = ApartCells::key(c[0] + i, c[1] + j, c[2] + k);
       for (ApartCells* cells : {&b.cells, &over}) {
         const std::vector<uint32_t>* l = cells->get(key);
-        if (l) for (const uint32_t v : *l) {
-          if ((int64_t)v == skip) continue;
-          const double x = Q[3 * (size_t)v] - p[0], y = Q[3 * (size_t)v + 1] - p[1], z = Q[3 * (size_t)v + 2] - p[2];
-          if (x * x + y * y + z * z < b.A2) return true;
-        }
+        if (l) for (const uint32_t v : *l) if ((int64_t)v != skip && near(v, p)) return true;
       }
     }
     return false;
@@ -851,7 +890,11 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   std::unique_ptr<Commit> S;
   std::vector<uint32_t> flipped;
   ApartBase apartBase;
-  apartBase.build(P.data(), nv1, edge);
+  {
+    std::vector<double> asks;
+    for (const KCand& c : cand) if (c.ok) asks.insert(asks.end(), c.p, c.p + 3);
+    apartBase.build(P.data(), nv1, edge, asks);
+  }
   for (;;) {
     S.reset(new Commit((uint64_t)nv1));
     commitCorners(cand, x, adj, *S, apartBase);
@@ -978,7 +1021,11 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   std::vector<MemoEntry> memo(T.size() / 3);
   std::vector<uint32_t> flipped;
   ApartBase apartBase;
-  apartBase.build(P0.data(), nv0, edge);
+  {
+    std::vector<double> asks;
+    for (const ECand& c : cand) if (c.ok) asks.insert(asks.end(), c.p, c.p + 3);
+    apartBase.build(P0.data(), nv0, edge, asks);
+  }
   for (;;) {
     S.reset(new Commit((uint64_t)nv0));
     commit(cand, mesh, adj, *S, freeV, apartBase);

@@ -336,7 +336,7 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const { fan, byEdge } = adj;
   const free = (v) => !(mesh.ownerHeld?.[v]) && !pinned(v) && !creased(v);
   let S;
-  const flipMemo = new Map(), apart = apartIndex(P0, nv0, edge);
+  const flipMemo = new Map(), apart = apartIndex(P0, nv0, edge, cand.filter((c) => c.ok).map((c) => c.p));
   for (;;) {
     S = commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart });
     const flipped = fieldFlips(store, S, [...S.touched.keys()], { VL0, T, ekey, edge }, flipMemo);
