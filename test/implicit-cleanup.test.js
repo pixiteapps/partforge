@@ -10,6 +10,7 @@ import { compileImplicit, meshImplicit } from "../src/framework/geometry/implici
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import { cutCreases, untangle } from "../src/framework/geometry/implicit/crease.js";
 import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js";
+import { sharpenMesh } from "../src/framework/geometry/implicit/sharpen.js";
 import { core, coreStatus, setCoreEnabled } from "../src/framework/core/core.js";
 import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
@@ -137,7 +138,10 @@ describe("cleanup", () => {
 // decimation existed. Each digest is the first 16 hex digits of a sha256 over the
 // meshImplicit result's positions (Float64Array), indices (Uint32Array) and normals
 // (Float64Array) bytes, in that order, for the case's spec and grid; they were
-// recorded from commit 1882699c, the last before decimation, JS and core alike. The hand (a contact
+// recorded from commit 1882699c, the last before decimation, JS and core alike, and re-recorded
+// when the sharpen stage (sharpen.js) joined every mesh: the vase's k 0 repeat and its gyroid's
+// k 0 intersect are real creases, and the stage puts 1,157 edge points and 14 corners on them at
+// 1.2 mm (bd023b59990de4ed before it). The hand (a contact
 // root) meshes through the owner path, whose tier behaviour the "hand" test below holds without a
 // golden digest. A deliberate change to print-tier meshing changes the digests: re-record by printing
 // digest(meshImplicit(compiled, edge, { tier: "print" })) for each case.
@@ -151,11 +155,11 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "bd023b59990de4ed", null]];
+  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "7ea92c82211b3f0e", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);
-      let mesh = cleanupMesh(store, meshStore(store), { ...PREVIEW_CLEANUP, decimateFrac: 0 });
+      let mesh = sharpenMesh(store, cleanupMesh(store, meshStore(store), { ...PREVIEW_CLEANUP, decimateFrac: 0 }));
       if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
       expect(digest(mesh)).toBe(pinned);
       expect(digest(withCoreOff(() => meshImplicit(compiled, edge, { tier: "print" })))).toBe(pinned);
@@ -188,7 +192,7 @@ describe("tiers", () => {
     expect(compiled.ownerRoot).toBeGreaterThanOrEqual(0);
     const store = evaluateLeaves(planLeaves(compiled, edge));
     let ref = cleanupMesh(store, meshStoreOwners(store, { gap: node.gap }), { ...PREVIEW_CLEANUP, decimateFrac: 0 });
-    ref = untangle(store, cutCreases(store, ref, node.attWorld));
+    ref = untangle(store, sharpenMesh(store, cutCreases(store, ref, node.attWorld)));
     if (compiled.detail.length) ref = applySurfaceDetail(store, ref, compiled);
     const want = digest(ref);
     try {

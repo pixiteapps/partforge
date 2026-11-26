@@ -8,9 +8,9 @@
 // It runs once, in JS only. It uses pfAtan2 and hypot3 (never Math.atan2, Math.acos
 // or Math.hypot) so its output is the same on every engine.
 
-import { buildBVH } from "../../oracle/bvh.js";
+import { buildBVH, insideByParity } from "../../oracle/bvh.js";
 import { hypot3, pfAtan2 } from "../js-math.js";
-import { NORMALS_PER_TRI, MeshFieldError } from "./mesh-field.js";
+import { NORMALS_PER_TRI, MeshFieldError, meshDistance } from "./mesh-field.js";
 
 // A position's identity: its three coordinates. Number-to-string is exact and
 // injective on doubles, so two keys are equal exactly when the coordinates are
@@ -30,12 +30,131 @@ function digestBytes(u8) {
   return (h1 >>> 0).toString(36).padStart(7, "0") + (h2 >>> 0).toString(36).padStart(7, "0");
 }
 
+// Folds. The sign test (mesh-field.js) holds for a closed mesh that does not pass
+// through itself. A mesh that folds back on itself can break it. Where a strip of the
+// surface runs past an edge and folds back flat under itself (a fin, common in a
+// damaged STL), the unit normals of the two layers cancel in the edge and corner
+// sums and leave a tiny vector that points nowhere in particular. Every point whose
+// nearest surface point is that corner then takes its sign from that vector, so a
+// wedge that runs from the fold far out into space can read inside. The field is
+// then not a distance, the sampler's cull (which trusts a 1-Lipschitz field) steps
+// past the surface, and the result mesh is open ("Not manifold"). Re-signing those
+// sums from a probe does not cure it: where two layers overlap only in part, one
+// face normal is right over one part of a triangle and wrong over the rest. So a
+// fold that breaks the sign is found and recorded on the field (`folds`).
+//
+// Not every fold breaks it. A k.implicit result has a few small flipped triangles
+// on a sharp rim, and its field is still right a little way off the surface. So a
+// fold is recorded only on evidence: the sign meshDistance gives at a point off the
+// fold disagrees with ray parity (oracle/bvh.js insideByParity) there. Even then the
+// wrong region is often a thin prism over a tiny triangle that the sampler never
+// reaches, and the build is sound. So nothing is refused here: the kernel's
+// k.implicit (manifold-backend.js) refuses a leaf with `folds` only when the kernel
+// build fails, and warns when it builds.
+//
+// Suspects: the triangles of a manifold edge whose two unit normals' dot is below
+// FOLD_DOT (they face away from each other: a fold, or a sound edge sharper than
+// 60°). Probe points: from the face centre along ±the face normal; from each corner
+// along ±its pseudonormal and along the direction out of the triangle between its
+// two edges; from each edge's midpoint along ±its pseudonormal and along the
+// direction out of the triangle across that edge. Each at the distances PROBE_NEAR
+// and PROBE_MID mean edge lengths and PROBE_FAR of the mesh's diagonal (those below
+// PROBE_NEAR mean edges dropped). The mesh field knows no grid, so the mean edge
+// stands in for it: a k.implicit result's edges are about a cell, and a fold's local
+// error (within a fold's own size) is closer in than that. A sound mesh's sign is
+// right at every point, so its probes always agree, however thin the solid is: there
+// is no "a hair in front is outside" assumption to break. A probe whose rays all
+// graze an edge proves nothing and is skipped (no winding-number fallback, so the
+// decision is the same on every engine), and so does one that ends near the surface
+// (closer than PROBE_CLEAR of its distance), where neither sign means anything. A triangle is folded when one of its probes
+// disagrees; it stops at its first.
+//
+// A clean mesh has no suspect edge, so it never probes and gives exactly the arrays
+// it gave before. A fold changes no array and not the digest: it only adds `folds`. Cost: at most
+// MAX_PROBED suspect triangles (the first in triangle order) take up to 60 probes
+// each, a nearest-point query and up to four ray casts per probe. Suspects past the
+// cap are not checked. Not checked at all: a fold whose two normals' dot is above
+// FOLD_DOT, and a mesh that passes through itself without a folded edge.
+const FOLD_DOT = -0.5;
+const PROBE_NEAR = 2, PROBE_MID = 6, PROBE_FAR = 0.05;
+const MAX_PROBED = 1024;
+// A probe counts only when it ends at least PROBE_CLEAR of its distance from the surface.
+const PROBE_CLEAR = 0.25;
+
+// Probe directions for triangle t, as [origin, unit direction] pairs, in a fixed order.
+function probeRays(V, N, t) {
+  const o = t * 9, f = t * NORMALS_PER_TRI, rays = [];
+  const P = (k) => [V[o + 3 * k], V[o + 3 * k + 1], V[o + 3 * k + 2]];
+  const unit = (x, y, z) => { const l = hypot3(x, y, z); return l > 0 ? [x / l, y / l, z / l] : null; };
+  const both = (at, x, y, z) => { const d = unit(x, y, z); if (d) rays.push([at, d], [at, [-d[0], -d[1], -d[2]]]); };
+  const one = (at, x, y, z) => { const d = unit(x, y, z); if (d) rays.push([at, d]); };
+  const c = [0, 1, 2].map((i) => (V[o + i] + V[o + 3 + i] + V[o + 6 + i]) / 3);
+  both(c, N[f], N[f + 1], N[f + 2]);
+  for (let k = 0; k < 3; k++) {
+    const a = P(k), b = P((k + 1) % 3), x = P((k + 2) % 3);
+    // corner a: its pseudonormal, and out of the triangle between edges a→b and a→x
+    const s = f + 12 + k * 3;
+    both(a, N[s], N[s + 1], N[s + 2]);
+    const ub = unit(b[0] - a[0], b[1] - a[1], b[2] - a[2]), ux = unit(x[0] - a[0], x[1] - a[1], x[2] - a[2]);
+    if (ub && ux) one(a, -(ub[0] + ux[0]), -(ub[1] + ux[1]), -(ub[2] + ux[2]));
+    // edge a→b: its pseudonormal, and out of the triangle across it, in its plane
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], e = f + 3 + k * 3;
+    both(m, N[e], N[e + 1], N[e + 2]);
+    if (ub) {
+      const wx = x[0] - m[0], wy = x[1] - m[1], wz = x[2] - m[2], along = wx * ub[0] + wy * ub[1] + wz * ub[2];
+      one(m, -(wx - along * ub[0]), -(wy - along * ub[1]), -(wz - along * ub[2]));
+    }
+  }
+  return rays;
+}
+
+// The folds found, `{ count, where }` (where: the first folded triangle's probe origin),
+// or null when there are none.
+function findFolds(field, V, N, edges, diagonal) {
+  const tris = V.length / 9, suspect = new Uint8Array(tris);
+  let any = false;
+  for (const ts of edges.values()) {
+    if (ts.length !== 2) continue;
+    const a = ts[0] * NORMALS_PER_TRI, b = ts[1] * NORMALS_PER_TRI;
+    if (N[a] * N[b] + N[a + 1] * N[b + 1] + N[a + 2] * N[b + 2] < FOLD_DOT) { suspect[ts[0]] = 1; suspect[ts[1]] = 1; any = true; }
+  }
+  if (!any) return null;
+  let sum = 0;
+  for (let o = 0; o < V.length; o += 9) {
+    sum += hypot3(V[o + 3] - V[o], V[o + 4] - V[o + 1], V[o + 5] - V[o + 2])
+      + hypot3(V[o + 6] - V[o + 3], V[o + 7] - V[o + 4], V[o + 8] - V[o + 5])
+      + hypot3(V[o] - V[o + 6], V[o + 1] - V[o + 7], V[o + 2] - V[o + 8]);
+  }
+  const meanEdge = sum / (3 * tris), near = PROBE_NEAR * meanEdge;
+  const dists = [near, PROBE_MID * meanEdge, PROBE_FAR * diagonal].filter((s) => s >= near);
+  let count = 0, probed = 0, where = null;
+  for (let t = 0; t < tris && probed < MAX_PROBED; t++) {
+    if (!suspect[t]) continue;
+    probed++;
+    let bad = null;
+    for (const [at, d] of probeRays(V, N, t)) {
+      for (const s of dists) {
+        const p = [at[0] + s * d[0], at[1] + s * d[1], at[2] + s * d[2]];
+        // A probe that ends near the surface (one sliding along a face) proves nothing.
+        const v = meshDistance(field, p[0], p[1], p[2]);
+        if (!(Math.abs(v) >= PROBE_CLEAR * s)) continue;
+        const truth = insideByParity(field.bvh, p);
+        if (truth !== null && (v < 0) !== truth) { bad = at; break; }
+      }
+      if (bad) break;
+    }
+    if (bad) { count++; if (!where) where = bad; }
+  }
+  return count === 0 ? null : { count, where };
+}
+
 /**
  * Build the field of a closed triangle mesh: `{ positions, indices? }`, a Manifold
  * soup (9 floats per triangle) or an indexed mesh. Other fields (normals, ...) are
  * ignored. Throws MeshFieldError for an empty mesh, or for a mesh with a directed
- * edge that does not occur as often as its reverse.
- * @returns {{ bvh, tris: number, normals: Float64Array, min: number[], max: number[], digest: string }}
+ * edge that does not occur as often as its reverse. A mesh that folds back on itself
+ * so its sign is wrong off the fold builds, with `folds: { count, where }` (findFolds).
+ * @returns {{ bvh, tris: number, normals: Float64Array, min: number[], max: number[], digest: string, folds?: { count: number, where: number[] } }}
  */
 export function buildMeshField(mesh) {
   const bvh = buildBVH({ positions: mesh.positions, indices: mesh.indices });
@@ -130,6 +249,7 @@ export function buildMeshField(mesh) {
     if (c < min[a]) min[a] = c;
     if (c > max[a]) max[a] = c;
   }
+  const folds = findFolds({ bvh, normals: N }, V, N, edges, hypot3(max[0] - min[0], max[1] - min[1], max[2] - min[2]));
   const digest = digestBytes(new Uint8Array(V.buffer, V.byteOffset, V.byteLength));
-  return { bvh, tris, normals: N, min, max, digest };
+  return { bvh, tris, normals: N, min, max, digest, ...(folds ? { folds } : {}) };
 }

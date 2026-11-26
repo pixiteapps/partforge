@@ -49,7 +49,9 @@ const FACE = 0, EDGE_AB = 1, EDGE_BC = 2, EDGE_CA = 3, CORNER_A = 4, CORNER_B = 
 
 /**
  * A mesh the field cannot be built from. `reason` is "empty", or "open" for a
- * mesh whose directed edges do not pair up (open, or inconsistently wound).
+ * mesh whose directed edges do not pair up (open, or inconsistently wound). A mesh
+ * that folds back on itself is not an error here: its field carries `folds`
+ * (mesh-field-build.js findFolds), and the kernel's k.implicit decides.
  */
 export class MeshFieldError extends Error {
   constructor(reason, message) {

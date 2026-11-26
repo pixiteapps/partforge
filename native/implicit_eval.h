@@ -124,6 +124,13 @@ struct Session {
   std::vector<int32_t> vertOwner;
   std::vector<uint8_t> ownerHeld, pinned, creaseMark;
   std::vector<int32_t> triOwner;   // ip_tri_owners' answer (result.js's triangleOwners)
+
+  // The sharpen stage's tables (implicit_sharpen.cpp, sharpen.js), per vertex, once it has
+  // sharpened the mesh: `sharp` (0 a mesher vertex, 1 an edge point, 2 a corner point) and
+  // `sharpPlanes` (2 per vertex: an edge point's plane vertices, else -1). untangle carries them;
+  // every other stage that makes or changes the mesh clears them (detail drops them, as the JS).
+  std::vector<uint8_t> sharp;
+  std::vector<int32_t> sharpPlanes;
 };
 
 // Can the session run `p`: it passed validate(), and every texture and mesh slot it

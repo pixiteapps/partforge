@@ -1052,12 +1052,23 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
 
+**Additive within v4** (partforge 0.206): `implicit` meshes keep the field's sharp edges
+and corners. A new mesher stage puts a vertex on each one, on every tree and both tiers, in
+JS and in the native core with the same bytes. Before it, every sharp edge was bevelled by
+about a third of a grid cell. A box or cylinder in a tree, a `k: 0` union or intersect, a
+flat cut and the edges of a `solid` leaf now come out sharp. A flat face is still meshed at
+the grid, and a curved face still follows the grid. An edge rounded by less than about a
+tenth of a cell is drawn sharp. The meshes of existing implicit parts change: they have
+more triangles near edges, usually 5% to 15% and up to about 30% on a small part at a
+coarse grid, and different bytes. The stage has no option
+and no switch. No contract bump: the 0.179 precedent, a change inside a mesh-native op.
+
 **Additive within v4** (partforge 0.205): two node kinds join the `implicit` grammar.
 A `solid` leaf (`{ kind: "solid", solid }`) holds a Solid that a kernel op returned. Its
 distance is the exact signed distance to the Solid's mesh, read once at the call. The
-whole result is still one mesh at the tier's grid, so the Solid's sharp edges soften to
-the grid. An open or inconsistently wound mesh, an empty Solid, and a value that is not a
-Solid are `ImplicitSpecError`s. `offset` (`{ child, d }`) moves the child's surface by `d`
+whole result is still one mesh at the tier's grid; in 0.205 the Solid's sharp edges
+softened to the grid (0.206, above, keeps them). An open or inconsistently wound mesh, an
+empty Solid, and a value that is not a Solid are `ImplicitSpecError`s. `offset` (`{ child, d }`) moves the child's surface by `d`
 mm; it is exact over a `solid`, a sphere, a capsule or a box, and a bound elsewhere.
 `round` (`{ child, r }`) is its older name and still builds. The program format grows by
 one opcode (`MESH`, 26). A spec with no `solid` or `offset` node keeps its program bytes

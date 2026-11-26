@@ -397,6 +397,31 @@ export class NativeSession {
     return this.#ownerStage("ip_crease", "the crease cut (no cleaned owner mesh, or no contact set)", readBack);
   }
 
+  /**
+   * sharpenMesh (sharpen.js) on the session's cleaned mesh (an owner mesh after the crease cut):
+   * the mesh with its normals (and owner fields), or null with `readBack: false`. The stage's
+   * tables stay in the session (sharpCounts reads them); only untangle carries them on.
+   */
+  sharpen({ readBack = true } = {}) {
+    const { c } = this;
+    let rc = 0;
+    const out = this.#call(() => {
+      rc = c.x.ip_sharpen(this.id);
+      if (rc !== 0 || !readBack) return null;
+      const m = this.#readMesh();
+      // As cleanup reads them: an empty mesh's normals are an empty array, never absent.
+      return { ...m, normals: this.#normalsOut(m.vertLeaf.length) };
+    });
+    if (rc !== 0) throw refusal("implicit: the core refused to sharpen (no cleaned mesh with normals, or a field read it cannot run)");
+    return out;
+  }
+
+  /** sharpCounts (result.js) of the session mesh: { edges, corners }, before any detail. */
+  sharpCounts() {
+    const { c } = this;
+    return this.#call(() => ({ edges: c.x.ip_sharp_count(this.id, 1), corners: c.x.ip_sharp_count(this.id, 2) }));
+  }
+
   /** untangle on the session's cut owner mesh: the mesh with its owner fields and `crease`. */
   untangle({ readBack = true } = {}) {
     return this.#ownerStage("ip_untangle", "to untangle (no cut owner mesh)", readBack);
@@ -591,7 +616,7 @@ function acceptsPlan(plan) {
  * any, the surface detail, all on one session, with the warnings worded by
  * implicitResult as the JS's are. A contact root (`compiled.ownerRoot ≥ 0`, with
  * `owners`, the default) takes the owner path as meshImplicit does — owner mesher, owner
- * cleanup, crease cut, untangle and the detail's seam fade — and its result gains
+ * cleanup, crease cut, sharpen, untangle and the detail's seam fade — and its result gains
  * `vertOwner`, `ownerHeld`, `pinned`, `crease` and `triOwner`. Returns null when the JS must
  * answer instead: the core is off or unavailable, its full build is not loaded yet (core.js
  * fullCore, which asks for it), it refused the plan (counted, not reported),
@@ -606,7 +631,7 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners 
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }
   const flat = compiled.detail.length ? flattenDetail(compiled) : null;
   const ownerPath = owners && compiled.ownerRoot >= 0;
-  let s = null, mesh, clipped, cacheHits = 0, triOwner = null;
+  let s = null, mesh, clipped, cacheHits = 0, triOwner = null, sharp = null;
   try {
     s = new NativeSession(c);
     // Plan order: a leaf's progIndex and a program's texture and mesh slots are session
@@ -621,11 +646,17 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners 
       s.meshOwners({ readBack: false });
       s.cleanup(opts, { readBack: false });
       s.crease({ readBack: false });
-      mesh = flat ? (s.untangle({ readBack: false }), s.detail(flat)) : s.untangle();
+      s.sharpen({ readBack: false });
+      mesh = s.untangle({ readBack: !flat });
+      sharp = s.sharpCounts();
+      if (flat) mesh = s.detail(flat);
       triOwner = s.triOwners();
     } else {
       s.mesh({ readBack: false });
-      mesh = flat ? (s.cleanup(opts, { readBack: false }), s.detail(flat)) : s.cleanup(opts);
+      s.cleanup(opts, { readBack: false });
+      mesh = s.sharpen({ readBack: !flat });
+      sharp = s.sharpCounts();
+      if (flat) mesh = s.detail(flat);
     }
   } catch (err) {
     if (err === CORE_FAULT) return null;   // poisoned and reported already
@@ -636,7 +667,7 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners 
     s?.destroy();
   }
   // Outside the try: pure JS, so a throw here can never poison the core.
-  const result = implicitResult(compiled, edge, plan, mesh, clipped);
+  const result = implicitResult(compiled, edge, plan, mesh, clipped, sharp);
   result.stats.cacheHits = cacheHits;
   if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner });
   return result;

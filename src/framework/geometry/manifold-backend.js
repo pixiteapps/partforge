@@ -9,6 +9,7 @@ import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
 import { meshFieldBuilder } from "./implicit/mesh-field-loader.js";
+import { foldedLeafError, foldedLeafWarning } from "./implicit/ir.js";
 import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
 import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
@@ -1295,13 +1296,28 @@ export function createManifoldKernel(wasm, { quality = "preview", meshFieldBudge
         const pieces = out.triOwner ? compiled.ownerK : 1;
         const first = wasm.Manifold.reserveIDs(pieces), ids = Array.from({ length: pieces }, (_, i) => first + i);
         const extra = binds ? { per: BIND_PROPS, data: encodeBindingProps(bindVertices(compiled, out.positions, edge), slot) } : null;
-        const m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
-          : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
+        // A solid leaf whose mesh folds so its field's sign is wrong off the fold
+        // (compiled.foldedLeaves, mesh-field-build.js findFolds) usually still builds: the
+        // wrong region is thin and the sampler rarely reaches it. So such a leaf is refused
+        // only when Manifold refuses the mesh ("Not manifold"), with the first folded leaf's
+        // place (the original error kept as `cause`), and otherwise the build warns once.
+        // Only Manifold's NotManifold is replaced: any other error passes through. Compared by
+        // name, not instanceof, because the error class belongs to one wasm module.
+        const folded = compiled.foldedLeaves ?? [];
+        let m;
+        try {
+          m = T(out.triOwner ? manifoldFromWeldedMesh(wasm, out.positions, out.indices, undefined, out.triOwner, ids, extra)
+            : manifoldFromWeldedMesh(wasm, out.positions, out.indices, first, null, null, extra));
+        } catch (e) {
+          if (folded.length > 0 && e?.name === "ManifoldError" && e.code === "NotManifold") throw Object.assign(foldedLeafError(folded[0]), { cause: e });
+          throw e;
+        }
+        const warnings = folded.length > 0 ? [...out.warnings, foldedLeafWarning(folded[0])] : out.warnings;
         const policy = out.triOwner ? Object.freeze({ ...ORGANIC, group: first }) : ORGANIC;
         for (const id of ids) oidPolicies.set(id, policy);
         implicitMs.add(m); // a union with this operand may be delivered in two stages
         const value = wrap(m, key);
-        implicitWarnings.set(value, out.warnings);
+        implicitWarnings.set(value, warnings);
         implicitIds.set(value, ids);
         return { value, pin: m, dispose: () => { for (const id of ids) oidPolicies.delete(id); m.delete?.(); } };
       });

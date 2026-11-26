@@ -6,6 +6,7 @@ import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { cleanupMesh, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
 import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js";
+import { sharpenMesh } from "../src/framework/geometry/implicit/sharpen.js";
 import { evalNodeAt } from "../src/framework/geometry/implicit/reference.js";
 import { attachWeight, ATTACH_STRIDE } from "../src/framework/geometry/implicit/contact.js";
 import { planLeaves, evaluateLeaves, sampleField, LEAF } from "../src/framework/geometry/implicit/sparse.js";
@@ -282,7 +283,7 @@ describe("through meshImplicit", () => {
     const compiled = exact(SEAM_CASES.find((c) => c.name === "hand default gap 0").spec);
     const out = meshImplicit(compiled, 1.5, { tier: "preview", owners: false });
     const store = sampleField(compiled, 1.5);
-    let ref = cleanupMesh(store, meshStore(store), PREVIEW_CLEANUP);
+    let ref = sharpenMesh(store, cleanupMesh(store, meshStore(store), PREVIEW_CLEANUP));
     ref = applySurfaceDetail(store, ref, compiled);
     expect(out.vertOwner).toBeUndefined();
     expect(out.indices.length).toBe(ref.indices.length);

@@ -65,6 +65,15 @@ const defaultMeshFieldOf = (solid) => meshFieldBuilder()(solid.toMesh());
 const meshFieldProblem = (e) => (e.reason === "empty" ? "the solid is empty"
   : e.reason === "open" ? e.message.replace(/^the mesh/, "the solid's mesh") : e.message);
 
+// A solid leaf whose field has `folds` (mesh-field-build.js findFolds), as lowerSpec lists
+// it in `foldedLeaves`: `{ path, folds: { count, where } }`. The kernel's k.implicit
+// throws the error when its build fails and records the warning when it builds.
+const fmtPoint = (p) => p.map((v) => String(Math.round(v * 100) / 100 + 0)).join(", ");
+export const foldedLeafError = ({ path, folds: { count, where } }) => new ImplicitSpecError(
+  `${path}.solid: the solid's mesh folds back on itself: ${count} triangle${count === 1 ? " is" : "s are"} folded, the first near (${fmtPoint(where)}), so its inside cannot be told from its outside there: repair the mesh in a mesh tool and import it again, or, for a solid built in this part, build it at a finer grid`);
+export const foldedLeafWarning = ({ path, folds: { count, where } }) =>
+  `implicit: ${path}.solid: the solid's mesh has ${count} folded triangle${count === 1 ? "" : "s"} near (${fmtPoint(where)}). The result built, but check it near there.`;
+
 // A probe solid's leaf box. Lint's geometry-free probe has no mesh to bound, so its
 // `meshFieldOf` gives null and the leaf takes this box (any real part fits inside it).
 export const PROBE_MESH_BOX = Object.freeze({ min: Object.freeze([-1e3, -1e3, -1e3]), max: Object.freeze([1e3, 1e3, 1e3]) });
@@ -78,6 +87,9 @@ export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshF
   // (lint's probe) is kept as null and marks the result `hasProbeMesh`: such a result is
   // for lint's static rules only, and nothing may evaluate it (compileImplicit refuses it).
   const meshes = [], meshSlotOf = new Map();
+  // The solid leaves whose field has `folds`, `{ path, folds }`, in first-use order (a slot
+  // used again adds nothing). Kept here, not on the field: the field is memoized across specs.
+  const foldedLeaves = [];
   let hasProbeMesh = false;
   const meshSlot = (solid, path) => {
     const key = typeof solid?._hash === "string" ? solid._hash : null;
@@ -86,6 +98,7 @@ export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshF
     try { field = meshFieldOf(solid); }
     catch (e) { if (e instanceof MeshFieldError) throw new ImplicitSpecError(`${path}.solid: ${meshFieldProblem(e)}`); throw e; }
     if (field == null) { field = null; hasProbeMesh = true; }
+    else if (field.folds) foldedLeaves.push({ path, folds: field.folds });
     meshes.push(field);
     if (key !== null) meshSlotOf.set(key, meshes.length - 1);
     return meshes.length - 1;
@@ -334,7 +347,7 @@ export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshF
   const ownerK = ownerRoot >= 0 ? nodes[ownerRoot].children.length : 0;
   const frameNames = Object.keys(spec.frames ?? {});   // the pose bindings' frame table (bindings.js)
   return { ir: { nodes, root }, frameNames, ownerRoot, ownerK, textures, meshes, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings,
-    ...(hasProbeMesh ? { hasProbeMesh } : {}) };
+    foldedLeaves, ...(hasProbeMesh ? { hasProbeMesh } : {}) };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

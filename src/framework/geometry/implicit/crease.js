@@ -506,10 +506,19 @@ export function untangle(store, mesh) {
     out.push(map[v]);
   }
   const pick = (arr, w, Ctor) => { const r = new Ctor(keepV.length * w); keepV.forEach((v, i) => { for (let k = 0; k < w; k++) r[i * w + k] = arr[v * w + k]; }); return r; };
-  return {
+  const res = {
     ...mesh, indices: Uint32Array.from(out), positions: pick(P, 3, Float64Array), normals: pick(N, 3, Float64Array),
     vertLeaf: pick(VL, 1, Int32Array), vertOwner: pick(VO, 1, Int32Array), ownerHeld: pick(HELD, 1, Uint8Array), pinned: pick(PIN, 1, Uint8Array), crease: pick(CR, 1, Uint8Array),
   };
+  // The sharpen stage's tables (sharpen.js), when present: `sharp` picked, and `sharpPlanes`' vertex
+  // ids renumbered (−1 for a dropped vertex). A mesh without them comes out as before.
+  if (mesh.sharp) res.sharp = pick(mesh.sharp, 1, Uint8Array);
+  if (mesh.sharpPlanes) {
+    const sp = mesh.sharpPlanes, r = new Int32Array(2 * keepV.length);
+    keepV.forEach((v, i) => { for (let k = 0; k < 2; k++) { const w = sp[2 * v + k]; r[2 * i + k] = w >= 0 ? map[w] : -1; } });
+    res.sharpPlanes = r;
+  }
+  return res;
 }
 
 /** Newton steps (4) taking each point onto its owner's share zero (the field's, for owner −1); each step at most 2·|value| and 0.25·edge. */

@@ -87,8 +87,8 @@ implicit: OCCT cannot build k.implicit (it is mesh-native) — this part reached
   (AP242's `TESSELLATED_SOLID`), with its name and colour, so the file carries a closed
   mesh body beside the exact ones. A sub-part that calls `k.implicit` anywhere is one mesh
   body, including any ordinary ops in it. The pin does not change this split. Expect
-  about 40 bytes per triangle: the reference hand (`src/parts/organic-hand.js`, ~116k triangles
-  at its print grid) adds about 4 MB. A sub-part that calls both
+  about 40 bytes per triangle: the reference hand (`src/parts/organic-hand.js`, ~590k triangles
+  at its print grid) adds about 22 MB. A sub-part that calls both
   `k.implicit` and `shell` cannot export; use an `onion` node for a hollow organic body.
 - A kernel with no implicit engine at all (a host's own kernel) throws
   `implicit: this kernel has no implicit engine — build the part on the Manifold backend`.
@@ -181,7 +181,7 @@ An unknown field is an error. "axis" fields take `"x"`, `"y"`, `"z"` or a non-ze
 | `taper` | `child`, `from`, `to` | `axis` | Scales the child's cross-section along `axis` (default `"z"`): `from: [position, scale]` to `to: [position, scale]`, linear between, held beyond. Scales must be > 0 and the positions must differ. |
 | `repeat` | `child` | `linear`, `polar` | Copies of the child. Exactly one of `linear: { step: [x, y, z], count }` (copy i at `i × step`) or `polar: { count, axis? }` (equal turns about `axis`, default `"z"`). `count` is 1 to 256. |
 | `expr` | `sdf`, `box` | `uniforms`, `textures`, `lipschitz` | A distance formula. See "Formulas". |
-| `solid` | `solid` | | A solid you already built: an ordinary solid, a `k.subdiv` body, an import, or another `k.implicit` result. Its distance is exact. It is read once, at the call. The whole result is one mesh at the grid, so the solid's sharp edges soften to the grid. See "Solids in a tree". |
+| `solid` | `solid` | | A solid you already built: an ordinary solid, a `k.subdiv` body, an import, or another `k.implicit` result. Its distance is exact. It is read once, at the call. The whole result is one mesh at the grid. The solid's sharp edges and corners are kept. See "Solids in a tree". |
 
 `round` (`{ child, r }`) is an older name for `offset` with `d = r`. It still builds.
 
@@ -223,10 +223,15 @@ shrink a solid, or to texture one.
 - The leaf's distance is exact. It is the distance to the solid's mesh.
 - The leaf reads the solid as it is when you call `k.implicit`. For example, a cage you
   edit after `k.subdiv` does not change a solid already built from it.
-- The whole result is one mesh at the grid. The sharp edges of an ordinary solid soften
-  to the grid, and its flat faces are remeshed too. Use a grid fine enough for the
-  edges you care about.
+- The whole result is one mesh at the grid. The sharp edges and corners of an ordinary
+  solid are kept. Its flat faces are remeshed at the grid, and its curved faces follow
+  the grid, not the solid's own facets. A round smaller than about a tenth of the grid
+  edge is drawn sharp. Use a grid fine enough for the rounds you care about.
 - `frame` and `at` place the solid as they place any node.
+- A solid whose mesh folds back on itself so badly that its inside cannot be told from
+  its outside (some damaged STL files, and a few rim or taper triangles of a `k.implicit`
+  result) usually builds, with a warning that names a point on the fold. If the build
+  fails, it is refused with that point: repair the mesh there in a mesh tool first.
 
 A rounded join between two ordinary solids. A sharp `union` of the same two solids has
 a square corner where the boss meets the plate. The blend fills that corner:
@@ -252,7 +257,7 @@ skin.volume() < bracket.volume();   // true
 
 The offset is much faster than `Solid.offset` on a large mesh (see "Resolution, preview
 and cost"). An outward offset rounds every convex edge with radius `d`. An inward offset
-keeps the solid's convex edges sharp, up to the grid.
+keeps the solid's convex edges sharp.
 
 **A texture on a plain solid.** A `displace` over a `solid` leaf moves the solid's
 surface by a formula. This knurls a cylinder: the first lines make 16 ridges around the
@@ -340,15 +345,42 @@ cells.
 - A result is cached on the spec and each image it reads, per tier. Editing
   `resolution` does not rebuild the preview, and the reverse.
 
-Measured on an Apple M1 Max (`docs/research/organic-shapes.md` §9), the hand fixture
-costs about 0.19 s in the engine at its 1.5 mm preview, about 0.42 s at 0.8 mm and about
-1 s at 0.5 mm. Manifold's import of the mesh adds to that.
+Measured on an Apple M1 Max with `node scripts/bench-implicit.mjs --core on` (CPU
+time), the hand fixture costs about 0.25 s in the engine at its 1.5 mm preview, about
+1.0 s at 0.8 mm and about 2.3 s at 0.5 mm. Manifold's import of the mesh adds to that.
 
 A `solid` leaf costs more than a plain shape. Measured with
 `node scripts/bench-implicit.mjs --core on` (CPU time, 0.6 mm grid), the engine takes
-about 0.43 s for a plate and boss join at preview and about 0.79 s at print. On a
+about 0.47 s for a plate and boss join at preview and about 0.85 s at print. On a
 preview kernel, a 2 mm inward offset of a body of 2,950 triangles takes about 0.47 s
-end to end with `k.implicit`. `Solid.offset(-2)` on the same body takes about 9.6 s.
+end to end with `k.implicit`. `Solid.offset(-2)` on the same body takes about 9.3 s.
+
+**Sharp edges and corners.** The mesh keeps the field's sharp edges and corners: a box
+or cylinder in a tree, a `union` or `intersect` with `k: 0`, a flat cut, and the edges of
+a `solid` leaf. A flat face is still meshed at the grid, and a curved face still follows
+the grid. An edge rounded by less than about a tenth of the grid edge is drawn sharp.
+Shapes made of smooth blends look almost unchanged, but the stage still costs time
+(see below). A `k.implicit` result is shaded with a crease angle of 80°, so an edge
+between about 25° and 80° is sharp in the mesh and in the export but can still look
+smooth on screen.
+
+- Most corners are found. A corner can stay cut by a small facet, more often on a thin
+  shell or a bent shape.
+- Where a curved sharp edge meets nothing, a stray corner point can appear beside it,
+  very close to the surface.
+- Small notches can remain where a sharp edge fades into a blend.
+- A smooth `union` of three or more children has real creases where a third child is
+  within `k`. Those creases are drawn as straight lines.
+- A texture finer than the grid (a `displace` or a knurl) is not sharpened where it is
+  active. Neither is a real edge in that same region.
+- A texture or formula whose creases the grid does resolve is sharpened, and that can
+  more than double the part's build time. On a knurl at a 0.3 mm print grid, keeping the
+  edges took 170% of the time of the meshing before it.
+- A part with a lattice or an `abs` formula whose creases the grid resolves can cost as
+  much as the meshing before it, or more. A gyroid vase at a 1.2 mm preview grid took
+  110% to 125% with the native core.
+- On the hand and the box and cylinder solids measured, with the native core, it adds
+  about 6% to 30% to the time of the meshing before it.
 
 **Thin features.** A feature thinner than two grid cells can break up or grow handles.
 The build warns (see "Errors and warnings"). Thicken the feature, or build it as its own
@@ -411,15 +443,15 @@ Measured on an Apple M1 Max, native core on, the hand part at its 1.5 mm preview
 
 | Step | Time |
 | --- | --- |
-| Bend the mesh (296,946 corners), curl 30 to 31 | 5.3 ms |
-| Bind a build's vertices (the body, 38,895 vertices) | 12.6 ms |
-| Exact rebuild, one finger (`flexIndex` 60 to 62), cold / warm | 723 / 704 ms |
-| Exact rebuild, every finger (`curl` 30 to 32), cold / warm | 767 / 777 ms |
-| First mesh (the pieces), cold / warm | 536 / 526 ms |
-| Real union mesh, cold / warm | 739 / 704 ms |
+| Bend the mesh (297,192 corners), every finger's curl up 0.01 | 5.2 ms |
+| Bind a build's vertices (the body, 38,936 vertices) | 16.2 ms |
+| Exact rebuild, one finger (`indexCurl` up 0.02), cold / warm | 768 / 725 ms |
+| Exact rebuild, every finger (each curl up 0.02), cold / warm | 808 / 753 ms |
+| First mesh (the pieces), cold / warm | 568 / 552 ms |
+| Real union mesh, cold / warm | 768 / 728 ms |
 
-The warm rebuild reuses the preview sample cache: 76% of the one-finger samples hit and
-21% of the all-finger samples. A palm block's program includes the bulge regions of every
+The warm rebuild reuses the preview sample cache: 85% of the one-finger leaves hit and
+59% of the all-finger leaves. A palm block's program includes the bulge regions of every
 finger, so a flex misses the palm's blocks and the saving is small once the nails, the
 union and the mesh import are added. Cold and warm meshes are identical.
 
@@ -561,8 +593,8 @@ other reference part, `src/parts/organic-whale.js`, also lints clean and passes 
 - **`offset` with a positive `d` grows the shape** by `d`, and `onion` makes a shell `2·t` thick centred on the
   surface. Size the child for that.
 - **A `solid` leaf is remeshed at the grid with the rest of the tree.** Its sharp edges
-  soften to the grid. To keep an exact face, build it after meshing with an ordinary
-  boolean.
+  and corners are kept, but its faces are new triangles at the grid. To keep the solid's
+  own faces, build them after meshing with an ordinary boolean.
 - **A probe returns the frame set, not its `report()`.** Calling `report()` in a probe
   fails lint.
 - **Contact is root-only.** Put the other shapes inside it, or build them separately.
@@ -725,8 +757,9 @@ it. It builds on Manifold only (see "Backend: Manifold only").
   pointer (see "The surface: `k.subdiv`"), but it stops where the body would pass through
   itself.
 - To join a cage body to anything else with a smooth blend, put both in one tree as
-  `solid` leaves under a `union` with `k`. The result is one mesh at the grid, so sharp
-  edges of an ordinary solid soften to the grid. Keep the grid fine where that matters.
+  `solid` leaves under a `union` with `k`. The result is one mesh at the grid. Sharp
+  edges of an ordinary solid are kept, but a round smaller than about a tenth of the grid
+  edge is drawn sharp too. Keep the grid fine where that matters.
   An ordinary boolean (`union`, `cut`) also joins them, with a sharp seam.
 
 A cage body grown smoothly out of a post:

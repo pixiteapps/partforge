@@ -1362,6 +1362,9 @@ async function checkPreviewContact(page, url, errors) {
  */
 async function checkPreviewCage(page, url, errors) {
   const box = await openPreviewApp(page, url);
+  // The handle list is filled a moment after the first draw. Wait for it, so a slow
+  // runner does not read it empty. A list that never fills is still the error below.
+  await page.waitForFunction(() => (window.__pfPreview.__preview.visible?.shown ?? []).includes("index"), null, { timeout: 15000, polling: 50 }).catch(() => {});
   const shown = await page.evaluate(() => window.__pfPreview.__preview.visible?.shown ?? []);
   if (!shown.includes("index")) { errors.push(`the cage hand's index handle is not shown on its preview (shown: ${JSON.stringify(shown)})`); return null; }
   const start = await handlePoint(page, "index", PREVIEW);
