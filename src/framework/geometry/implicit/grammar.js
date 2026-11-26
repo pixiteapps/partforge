@@ -33,6 +33,10 @@ const TYPES = {
   box: (v) => (Array.isArray(v) && v.length === 2 && isVec3(v[0]) && isVec3(v[1]) && v[0].every((c, i) => c < v[1][i])
     ? null : "must be [[minX, minY, minZ], [maxX, maxY, maxZ]] with min < max"),
   projection: (v) => (["planar", "cylindrical", "triplanar"].includes(v) ? null : 'must be "planar", "cylindrical" or "triplanar"'),
+  // A solid built by a kernel op: what `toMesh` reads for the leaf's field, and `_hash`
+  // its identity (one mesh slot per distinct hash).
+  solidRef: (v) => (v != null && typeof v === "object" && typeof v._hash === "string" && typeof v.toMesh === "function"
+    ? null : "must be a solid (the result of a kernel op)"),
   uniforms: (v) => (isObj(v) && Object.values(v).every(isNum) ? null : "must be an object of finite numbers"),
   child: (v, path, ctx) => { if (!isObj(v)) return "must be a node object"; walkNode(v, path, ctx); return null; },
   children: (v, path, ctx) => {
@@ -104,6 +108,7 @@ export const NODE_KINDS = {
   taper: { req: { child: "child", from: "taperEnd", to: "taperEnd" }, opt: { axis: "axis" } },
   repeat: { req: { child: "child" }, opt: { linear: "linear", polar: "polar" } },
   expr: { req: { sdf: "source", box: "box" }, opt: { uniforms: "uniforms", textures: "textureMap", lipschitz: "pos" } },
+  solid: { req: { solid: "solidRef" } },
 };
 
 const DETAIL_COMMON = { frame: "string", at: "vec3", radius: "pos", side: "axis" };

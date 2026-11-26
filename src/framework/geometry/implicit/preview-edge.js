@@ -46,7 +46,7 @@ export function previewProbe(compiled) {
   let plan;
   try { plan = planLeaves(compiled, PROBE_EDGE); }
   catch (e) { if (e instanceof ImplicitSizeError) return null; throw e; }
-  const progOps = plan.programs.map(programOps);
+  const progOps = plan.programs.map((p) => programOps(p, compiled.meshes));
   let total = 0;
   for (const leaf of plan.leaves) total += progOps[leaf.progIndex];
   const leaves = plan.leaves.length, ops = leaves ? total / leaves : 0;

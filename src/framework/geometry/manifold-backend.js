@@ -8,6 +8,7 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
+import { buildMeshField } from "./implicit/mesh-field.js";
 import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
 import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
@@ -53,6 +54,8 @@ const emptyProfile = (op) => new Error(
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // Trees whose automatic k.implicit preview edge a kernel remembers (each entry is a hash and a number).
 const AUTO_PREVIEW_MEMO = 256;
+// Solids whose k.implicit mesh field (a BVH and its pseudonormals) a kernel remembers.
+const MESH_FIELD_MEMO = 32;
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 // Full-circle segment counts live in circle-segs.js: preview is a flat SEGS.preview,
@@ -243,6 +246,17 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // k.implicit's automatic preview edge per tree hash (a pure function of the tree, so
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
+  // k.implicit's `solid` leaf fields, by solid `_hash` (a solid's hash names its geometry,
+  // so an entry is never stale). The least recently used entry goes at MESH_FIELD_MEMO.
+  const meshFields = new Map();
+  const meshFieldOf = (solid) => {
+    let f = meshFields.get(solid._hash);
+    if (f !== undefined) { meshFields.delete(solid._hash); meshFields.set(solid._hash, f); return f; }
+    f = buildMeshField(solid.toMesh());
+    if (meshFields.size >= MESH_FIELD_MEMO) meshFields.delete(meshFields.keys().next().value);
+    meshFields.set(solid._hash, f);
+    return f;
+  };
   // k.implicit's leaf samples across builds (implicit/sample-cache.js): a preview build
   // anchors its grid to the world lattice and reuses the samples a pose change did not
   // reach — the same bytes as a cold build. Bounded (SAMPLE_CACHE_BYTES); never used at print.
@@ -1226,7 +1240,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     // the bracket's calls — which is why such a solid's key holds the slot. A frameless
     // call binds nothing: no props, and the key it always had. Print never binds.
     implicit: (spec) => {
-      const compiled = compileImplicit(spec, { images });
+      const compiled = compileImplicit(spec, { images, meshFieldOf });
       const isPreview = quality !== "print";
       let slot = 0, call = null;
       if (isPreview && bracketDepth > 0) {

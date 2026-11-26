@@ -10,7 +10,8 @@
 // onion, displace) cover it only when the child's field grows at least at rate 1, so
 // they pad by amount / G: an ellipsoid grows at min(r)/max(r), an upscaling taper at
 // 1/scale, a twist and a bend slower toward their rims. An `expr` node's declared
-// box is its bound (its author owns it), so it counts as G = 1.
+// box is its bound (its author owns it), so it counts as G = 1. A `solid` leaf's field is
+// its mesh's exact signed distance (mesh-field.js): L = 1 and G = 1, its box the mesh's.
 import { resolveFrames, compose, invert, translation, rotation, axisVector, xformPoint, IDENTITY } from "./frames.js";
 import { compileExprSource } from "./expr-lower.js";
 import { makeTexture, checkTextureBudget } from "./textures.js";
@@ -18,6 +19,7 @@ import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
 import { BULGE_DEFAULT, ATTACH_STRIDE, MAX_OWNER_K } from "./contact.js";
 import { contactRegions, regionDigest } from "./regions.js";
 import { ImplicitSpecError } from "./errors.js";
+import { buildMeshField, MeshFieldError } from "./mesh-field.js";
 
 const INF = Infinity;
 const AXIS_INDEX = { yz: 0, xz: 1, xy: 2 };
@@ -51,10 +53,30 @@ function warpBasis(axis = "z", toward) {
   return isIdentity(B) ? null : B;
 }
 
-export function lowerSpec(spec, { images = new Map() } = {}) {
+/** The field of a solid leaf's solid: its mesh, built once per compile and slot. */
+const defaultMeshFieldOf = (solid) => buildMeshField(solid.toMesh());
+
+// What a MeshFieldError's reason means for a leaf, after `<path>.solid: `.
+const meshFieldProblem = (e) => (e.reason === "empty" ? "the solid is empty"
+  : e.reason === "open" ? e.message.replace(/^the mesh/, "the solid's mesh") : e.message);
+
+export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshFieldOf } = {}) {
   const frames = resolveFrames(spec.frames ?? {});
   const nodes = [];
+  // The solid leaves' fields, one slot per distinct solid `_hash`, in first-use order. The
+  // table rides on the texture list (textures.meshes), so runProgram keeps its signature.
+  const meshes = [], meshSlotOf = new Map();
+  const meshSlot = (solid, path) => {
+    if (meshSlotOf.has(solid._hash)) return meshSlotOf.get(solid._hash);
+    let field;
+    try { field = meshFieldOf(solid); }
+    catch (e) { if (e instanceof MeshFieldError) throw new ImplicitSpecError(`${path}.solid: ${meshFieldProblem(e)}`); throw e; }
+    meshes.push(field);
+    meshSlotOf.set(solid._hash, meshes.length - 1);
+    return meshes.length - 1;
+  };
   const textures = [], slotOf = new Map();
+  textures.meshes = meshes;
   const slot = (imageName) => {
     if (slotOf.has(imageName)) return slotOf.get(imageName);
     const img = images.get(imageName);
@@ -183,7 +205,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         const n = { kind: "contact", children: ids, gap, bulge, att, attWorld };
         // The contact regions (regions.js), from the lowered children: per slot, the bulge
         // regions (BULGE_STRIDE each).
-        const found = contactRegions({ ir: { nodes }, textures }, n, path);
+        const found = contactRegions({ ir: { nodes }, textures, meshes }, n, path);
         n.regions = found.regions; n.L = Lk + found.Lb;
         warnings.push(...found.warnings);
         hasContact = true;
@@ -267,6 +289,11 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
         const lowered = lowerSource(node.sdf, node.uniforms, node.textures, `${path}.sdf`);
         return finish({ kind: "expr", expr: lowered, children: [], L: node.lipschitz ?? 1 }, box(node.box[0].slice(), node.box[1].slice()), INF);
       }
+      case "solid": {
+        // The solid sits in the node's local space: its mesh's box is the leaf's local box.
+        const slot = meshSlot(node.solid, path), f = meshes[slot];
+        return finish({ kind: "mesh", slot, children: [], L: 1 }, box(f.min.slice(), f.max.slice()), INF, 1);
+      }
       default: throw new ImplicitSpecError(`${path}.kind: unknown kind ${JSON.stringify(node.kind)}`);
     }
   }
@@ -288,7 +315,7 @@ export function lowerSpec(spec, { images = new Map() } = {}) {
   if (nodes[ownerRoot].kind !== "contact") ownerRoot = -1;
   const ownerK = ownerRoot >= 0 ? nodes[ownerRoot].children.length : 0;
   const frameNames = Object.keys(spec.frames ?? {});   // the pose bindings' frame table (bindings.js)
-  return { ir: { nodes, root }, frameNames, ownerRoot, ownerK, textures, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
+  return { ir: { nodes, root }, frameNames, ownerRoot, ownerK, textures, meshes, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

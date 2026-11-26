@@ -8,8 +8,9 @@ import { evalPrim, unionN, intersectN, warpPoint, mirrorPoint, sanitize, clampUn
 import { UN, BIN, TER } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
 import { contactValue, clearance, bulgeOffset, ATTACH_STRIDE, BULGE_STRIDE } from "./contact.js";
+import { meshDistance } from "./mesh-field.js";
 
-export const OP = Object.freeze({ END: 0, XFORM: 1, XDIR: 2, PRIM: 3, UNION: 4, INTER: 5, NEG: 6, MIN2: 7, MIRRORP: 8, ADDC: 9, ONION: 10, WARP: 11, DISP: 12, SANITIZE: 13, CONTACT: 14, BULGE: 15, GET: 20, CONST: 21, UN: 22, BIN: 23, TER: 24, TEX: 25 });
+export const OP = Object.freeze({ END: 0, XFORM: 1, XDIR: 2, PRIM: 3, UNION: 4, INTER: 5, NEG: 6, MIN2: 7, MIRRORP: 8, ADDC: 9, ONION: 10, WARP: 11, DISP: 12, SANITIZE: 13, CONTACT: 14, BULGE: 15, GET: 20, CONST: 21, UN: 22, BIN: 23, TER: 24, TEX: 25, MESH: 26 });
 export const UN_NAMES = Object.keys(UN), BIN_NAMES = Object.keys(BIN), TER_NAMES = Object.keys(TER);
 // The fn codes UN/BIN/TER ops carry. Pinned by test: the native tables index these
 // arrays, so reordering or inserting a function is a program-format change.
@@ -54,6 +55,10 @@ export function emitExprProgram(L) {
 //     slot's owner and piece (as does the core's ip_eval_contact).
 //   [BULGE, dst, src, p, nR, (cx, cy, cz, A, rho) × nR]   → src − bulgeOffset(...)
 //     emitted on a kept slot's register when that slot has regions, before CONTACT reads it.
+// And the solid leaf's:
+//   [MESH, dst, p, slot]   → meshDistance(textures.meshes[slot], p)
+//     the mesh table rides on the texture list (ir.js sets textures.meshes), as TEX's
+//     images do, so runProgram's signature is unchanged.
 export function emitProgram(compiled, dec) {
   const code = [];
   let nP = 1, nV = 0;
@@ -72,6 +77,7 @@ export function emitProgram(compiled, dec) {
     switch (n.kind) {
       case "prim": { const v = newV(); code.push(OP.PRIM, n.prim.code, v, p, n.prim.P.length, ...n.prim.P); return v; }
       case "expr": { const r = emitExpr(n.expr, p), v = newV(); code.push(OP.SANITIZE, v, r); return v; }
+      case "mesh": { const v = newV(); code.push(OP.MESH, v, p, n.slot); return v; }
       case "union": case "intersect": case "subtract": {
         const vs = [];
         d.kids.forEach((kd, i) => {
@@ -145,10 +151,12 @@ export function emitProgram(compiled, dec) {
 
 /**
  * A program's per-sample work, in instructions: one per instruction, plus one per operand of an
- * n-ary op (UNION/INTER/CONTACT), per contact attachment and per bulge region. Walks the same
- * layouts runProgram reads; the preview-grid chooser weighs leaves by it (preview-edge.js).
+ * n-ary op (UNION/INTER/CONTACT), per contact attachment and per bulge region, and
+ * ceil(log2(tris)) per MESH op (its BVH descent; `meshes` is the compiled mesh table). Walks
+ * the same layouts runProgram reads; the preview-grid chooser weighs leaves by it
+ * (preview-edge.js).
  */
-export function programOps(prog) {
+export function programOps(prog, meshes = []) {
   let pc = 2, ops = 0;
   for (;;) {
     const op = prog[pc];
@@ -164,6 +172,7 @@ export function programOps(prog) {
       case OP.MIN2: case OP.MIRRORP: case OP.ADDC: case OP.ONION: case OP.GET: case OP.UN: pc += 4; break;
       case OP.DISP: case OP.BIN: case OP.TEX: pc += 5; break;
       case OP.TER: pc += 6; break;
+      case OP.MESH: { const f = meshes[prog[pc + 3]]; if (!f) throw new Error(`implicit: no mesh in slot ${prog[pc + 3]}`); ops += Math.ceil(Math.log2(f.tris)); pc += 4; break; }
       default: throw new Error(`implicit: bad opcode ${op} at ${pc}`);
     }
   }
@@ -267,6 +276,12 @@ export function runProgram(prog, textures, X, Y, Z, n, out, cap = null, off = 0)
         const d = V[prog[pc + 1]], t = textures[prog[pc + 2]], u = V[prog[pc + 3]], v = V[prog[pc + 4]];
         for (let i = 0; i < n; i++) d[i] = sampleTexture(t, u[i], v[i]);
         pc += 5; break;
+      }
+      case OP.MESH: {
+        const d = V[prog[pc + 1]], s = prog[pc + 2], f = textures.meshes[prog[pc + 3]];
+        const sx = PX[s], sy = PY[s], sz = PZ[s];
+        for (let i = 0; i < n; i++) d[i] = meshDistance(f, sx[i], sy[i], sz[i]);
+        pc += 4; break;
       }
       default: throw new Error(`implicit: bad opcode ${op} at ${pc}`);
     }

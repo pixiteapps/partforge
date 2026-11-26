@@ -176,6 +176,7 @@ An unknown field is an error. "axis" fields take `"x"`, `"y"`, `"z"` or a non-ze
 | `taper` | `child`, `from`, `to` | `axis` | Scales the child's cross-section along `axis` (default `"z"`): `from: [position, scale]` to `to: [position, scale]`, linear between, held beyond. Scales must be > 0 and the positions must differ. |
 | `repeat` | `child` | `linear`, `polar` | Copies of the child. Exactly one of `linear: { step: [x, y, z], count }` (copy i at `i × step`) or `polar: { count, axis? }` (equal turns about `axis`, default `"z"`). `count` is 1 to 256. |
 | `expr` | `sdf`, `box` | `uniforms`, `textures`, `lipschitz` | A distance formula. See "Formulas". |
+| `solid` | `solid` | | A solid you already built: an ordinary solid, a `k.subdiv` body, an import, or another `k.implicit` result. Its distance is exact. It is read once, at the call. The whole result is one mesh at the grid, so the solid's sharp edges soften to the grid. |
 
 `round` (`{ child, r }`) is an older name for `offset` with `d = r`. It still builds.
 

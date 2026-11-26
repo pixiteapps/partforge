@@ -571,6 +571,9 @@ function acceptsPlan(plan) {
  * on the session (NativeSession.sample): `result.stats.cacheHits` counts the leaves it served.
  */
 export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners = true, cache = null } = {}) {
+  // TEMPORARY (Task 5 removes it): the core has no MESH op yet, so a spec with a solid leaf
+  // meshes in JS.
+  if (compiled.meshes?.length) return null;
   const c = fullCore();
   if (!c) return null;
   if (!acceptsPlan(plan)) { countRefusedMesh(); return null; }

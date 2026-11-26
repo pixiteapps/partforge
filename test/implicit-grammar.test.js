@@ -78,3 +78,14 @@ test("round stays accepted but is not a documented kind", () => {
   expect(organic.IMPLICIT_NODE_KINDS).toContain("offset");
   expect(organic.IMPLICIT_NODE_KINDS).not.toContain("round");
 });
+
+test("a solid leaf takes a value with a string _hash and a toMesh function", () => {
+  const solid = { _hash: "abc", toMesh: () => ({ positions: [] }) };
+  expect(issues({ root: { kind: "solid", solid } })).toEqual([]);
+  expect(issues({ root: { kind: "solid", solid, at: [1, 2, 3], label: "s" } })).toEqual([]);
+  for (const bad of [{}, { _hash: 3, toMesh: () => null }, { _hash: "x" }, { _hash: "x", toMesh: 1 }, "solid", null]) {
+    expect(issues({ root: { kind: "solid", solid: bad } })).toEqual(["root.solid: must be a solid (the result of a kernel op)"]);
+  }
+  expect(issues({ root: { kind: "solid", solid, r: 1 } })).toEqual(['root: unknown field "r"']);
+});
+
