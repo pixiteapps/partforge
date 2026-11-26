@@ -107,3 +107,28 @@ test("round and offset(d = r) emit the same program", () => {
   const child = { kind: "box", size: [10, 8, 6] };
   expect(prog({ kind: "offset", d: 1.5, child })).toEqual(prog({ kind: "round", r: 1.5, child }));
 });
+
+describe("a solid leaf with no field (lint's geometry-free probe)", () => {
+  const stub = (extra = {}) => ({ toMesh: () => { throw new Error("lint never meshes"); }, ...extra });
+  const noField = () => null;
+  test("lowers to a mesh leaf on the placeholder box and marks the result", () => {
+    const c = lowerSpec({ root: { kind: "solid", solid: stub({ _hash: "p" }), at: [5, 0, 0] } }, { meshFieldOf: noField });
+    expect(c.hasProbeMesh).toBe(true);
+    expect(c.meshes).toEqual([null]);
+    expect(c.ir.nodes[c.ir.root]).toMatchObject({ kind: "mesh", slot: 0, thin: Infinity, G: 1 });
+    expect(c.ir.nodes[c.ir.root].box).toEqual({ min: [-995, -1e3, -1e3], max: [1005, 1e3, 1e3] });
+  });
+  test("a stub without a _hash takes its own slot, each", () => {
+    const c = lowerSpec({ root: { kind: "union", children: [{ kind: "solid", solid: stub() }, { kind: "solid", solid: stub() }] } }, { meshFieldOf: noField });
+    expect(c.ir.nodes.filter((n) => n.kind === "mesh").map((n) => n.slot)).toEqual([0, 1]);
+  });
+  test("a contact group over a probe solid skips the region search", () => {
+    const c = lowerSpec({ root: { kind: "contact", children: [
+      { kind: "solid", solid: stub({ _hash: "p" }), label: "a" }, { kind: "sphere", r: 4, label: "b" }] } }, { meshFieldOf: noField });
+    expect(c.hasProbeMesh).toBe(true);
+    expect(c.ir.nodes[c.ownerRoot].regions.map((r) => r.length)).toEqual([0, 0]);
+  });
+  test("a spec without a solid leaf is not marked", () => {
+    expect(lowerSpec({ root: { kind: "sphere", r: 2 } })).not.toHaveProperty("hasProbeMesh");
+  });
+});

@@ -197,3 +197,9 @@ describe("solid leaf call ids: the pose probe and the worker agree", () => {
     expect(low).toBeGreaterThan(0);
   });
 });
+
+test("compileImplicit refuses a meshFieldOf that gives no field: only lint lowers a probe solid", () => {
+  const solid = { _hash: "p", toMesh: () => ({ positions: new Float32Array(0) }) };
+  expect(() => compileImplicit({ root: leaf(solid) }, { meshFieldOf: () => null }))
+    .toThrow("implicit: a solid leaf has no mesh field (only lint's probe lowers one without)");
+});

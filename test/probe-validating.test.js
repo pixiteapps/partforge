@@ -147,3 +147,23 @@ test("Solid topology queries return numbers, not a handle", () => {
   expect(r.throws).toEqual([]);
   expect(r.issues).toEqual([]);
 });
+
+test("a solid inside a k.implicit spec is recorded by path; the JSON copy alone reads it as {}", () => {
+  const build = (k) => k.implicit({ root: { kind: "union", children: [
+    { kind: "sphere", r: 2 }, { kind: "solid", solid: k.box({ size: [1, 1, 1] }) }, { kind: "solid", solid: {} }] } });
+  const call = runValidatingProbe(partWith(build), {}, {}).calls.find((c) => c.op === "implicit");
+  expect(JSON.parse(call.args[0]).root.children[1].solid).toEqual({});
+  expect(call.solids).toEqual([["root", "children", 1, "solid"]]);
+});
+
+test("a call with no probe solid in its spec carries no solids field", () => {
+  const r = runValidatingProbe(partWith((k) => k.implicit({ root: { kind: "sphere", r: 2 } })), {}, {});
+  expect(r.calls.find((c) => c.op === "implicit")).not.toHaveProperty("solids");
+  expect(r.calls.find((c) => c.op === "implicit")).toEqual({ scope: "kernel", op: "implicit", args: ['{"root":{"kind":"sphere","r":2}}'] });
+});
+
+test("the probe's solid handle names itself with a string _hash; a 2D shape does not", () => {
+  const p = createValidatingProbe();
+  expect(typeof p.kernel.box({ size: [1, 1, 1] })._hash).toBe("string");
+  expect(p.kernel.shape2d([[0, 0], [1, 0], [1, 1]])._hash).toBeUndefined();
+});

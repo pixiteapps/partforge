@@ -76,6 +76,7 @@ test("offset takes a child and a signed, non-zero d", () => {
 test("round stays accepted but is not a documented kind", () => {
   expect(() => validateSpec({ root: { kind: "round", r: 1, child: { kind: "sphere", r: 5 } } })).not.toThrow();
   expect(organic.IMPLICIT_NODE_KINDS).toContain("offset");
+  expect(organic.IMPLICIT_NODE_KINDS).toContain("solid");
   expect(organic.IMPLICIT_NODE_KINDS).not.toContain("round");
 });
 

@@ -13,5 +13,8 @@ export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6 });
 // by default); the manifold kernel passes one that memoizes per solid `_hash`.
 export function compileImplicit(spec, { images = new Map(), meshFieldOf } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
-  return lowerSpec(spec, { images, meshFieldOf });   // contact regions are found while lowering (regions.js)
+  const compiled = lowerSpec(spec, { images, meshFieldOf });   // contact regions are found while lowering (regions.js)
+  // A null field is lint's probe stand-in (ir.js); every caller here goes on to evaluate.
+  if (compiled.hasProbeMesh) throw new Error("implicit: a solid leaf has no mesh field (only lint's probe lowers one without)");
+  return compiled;
 }

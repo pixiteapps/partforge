@@ -60,19 +60,29 @@ const defaultMeshFieldOf = (solid) => buildMeshField(solid.toMesh());
 const meshFieldProblem = (e) => (e.reason === "empty" ? "the solid is empty"
   : e.reason === "open" ? e.message.replace(/^the mesh/, "the solid's mesh") : e.message);
 
+// A probe solid's leaf box. Lint's geometry-free probe has no mesh to bound, so its
+// `meshFieldOf` gives null and the leaf takes this box (any real part fits inside it).
+export const PROBE_MESH_BOX = Object.freeze({ min: Object.freeze([-1e3, -1e3, -1e3]), max: Object.freeze([1e3, 1e3, 1e3]) });
+
 export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshFieldOf } = {}) {
   const frames = resolveFrames(spec.frames ?? {});
   const nodes = [];
   // The solid leaves' fields, one slot per distinct solid `_hash`, in first-use order. The
   // table rides on the texture list (textures.meshes), so runProgram keeps its signature.
+  // A solid with no string `_hash` (a stub) takes a slot of its own each time. A null field
+  // (lint's probe) is kept as null and marks the result `hasProbeMesh`: such a result is
+  // for lint's static rules only, and nothing may evaluate it (compileImplicit refuses it).
   const meshes = [], meshSlotOf = new Map();
+  let hasProbeMesh = false;
   const meshSlot = (solid, path) => {
-    if (meshSlotOf.has(solid._hash)) return meshSlotOf.get(solid._hash);
+    const key = typeof solid?._hash === "string" ? solid._hash : null;
+    if (key !== null && meshSlotOf.has(key)) return meshSlotOf.get(key);
     let field;
     try { field = meshFieldOf(solid); }
     catch (e) { if (e instanceof MeshFieldError) throw new ImplicitSpecError(`${path}.solid: ${meshFieldProblem(e)}`); throw e; }
+    if (field == null) { field = null; hasProbeMesh = true; }
     meshes.push(field);
-    meshSlotOf.set(solid._hash, meshes.length - 1);
+    if (key !== null) meshSlotOf.set(key, meshes.length - 1);
     return meshes.length - 1;
   };
   const textures = [], slotOf = new Map();
@@ -205,7 +215,10 @@ export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshF
         const n = { kind: "contact", children: ids, gap, bulge, att, attWorld };
         // The contact regions (regions.js), from the lowered children: per slot, the bulge
         // regions (BULGE_STRIDE each).
-        const found = contactRegions({ ir: { nodes }, textures, meshes }, n, path);
+        // The search evaluates the children's fields, so a probe solid (no field) skips it:
+        // every slot gets no region, as a pair with too much overlap does.
+        const found = hasProbeMesh ? { regions: ids.map(() => new Float64Array(0)), pad: 0, Lb: 0, warnings: [] }
+          : contactRegions({ ir: { nodes }, textures, meshes }, n, path);
         n.regions = found.regions; n.L = Lk + found.Lb;
         warnings.push(...found.warnings);
         hasContact = true;
@@ -291,7 +304,7 @@ export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshF
       }
       case "solid": {
         // The solid sits in the node's local space: its mesh's box is the leaf's local box.
-        const slot = meshSlot(node.solid, path), f = meshes[slot];
+        const slot = meshSlot(node.solid, path), f = meshes[slot] ?? PROBE_MESH_BOX;
         return finish({ kind: "mesh", slot, children: [], L: 1 }, box(f.min.slice(), f.max.slice()), INF, 1);
       }
       default: throw new ImplicitSpecError(`${path}.kind: unknown kind ${JSON.stringify(node.kind)}`);
@@ -315,7 +328,8 @@ export function lowerSpec(spec, { images = new Map(), meshFieldOf = defaultMeshF
   if (nodes[ownerRoot].kind !== "contact") ownerRoot = -1;
   const ownerK = ownerRoot >= 0 ? nodes[ownerRoot].children.length : 0;
   const frameNames = Object.keys(spec.frames ?? {});   // the pose bindings' frame table (bindings.js)
-  return { ir: { nodes, root }, frameNames, ownerRoot, ownerK, textures, meshes, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings };
+  return { ir: { nodes, root }, frameNames, ownerRoot, ownerK, textures, meshes, bounds: rb, thin: nodes[root].thin, hasExpr, detail, digests, warnings,
+    ...(hasProbeMesh ? { hasProbeMesh } : {}) };
 }
 
 const AXIS_OF = { x: 0, y: 1, z: 2 };

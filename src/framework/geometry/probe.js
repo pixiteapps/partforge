@@ -37,6 +37,17 @@ const SOLID_YIELDING_SHAPE2D_OPS = new Set(["extrude", "revolve"]);
 
 export const MAX_PROBE_OPS = 100000;
 
+// The probe's solid handle answers `_hash` with this string (every other `_` key stays
+// undefined), so a solid-shaped check such as the implicit grammar's `solidRef` accepts
+// it, as it accepts a real solid. JSON never sees it: the handle has no own keys.
+export const PROBE_SOLID_HASH = "probe-solid";
+
+// Kernel ops whose spec may hold a solid as DATA (an implicit `solid` leaf). The JSON
+// copy in `args` writes such a solid as `{}`, as it writes an object the author typed, so
+// the validating probe also records where each probe solid sat (`solids`, key paths).
+const SOLID_IN_SPEC_OPS = new Set(["implicit", "implicitFrames"]);
+const MAX_SPEC_DEPTH = 64;
+
 // Thrown to unwind a runaway build. Never escapes runValidatingProbe.
 export class ProbeRunawayError extends Error {
   constructor(message) { super(message); this.name = "ProbeRunawayError"; }
@@ -109,6 +120,7 @@ function makeProbe(onCall, onQuery = () => {}) {
   // time so the three proxies can reference each other despite declaration order.
   const opProxy = (queries, scope, routeFor) => new Proxy({}, {
     get(_t, key) {
+      if (key === "_hash" && scope === "solid") return PROBE_SOLID_HASH;
       if (ignore(key)) return undefined;
       if (key in queries) {
         return (...args) => {
@@ -180,6 +192,17 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
     try { return JSON.stringify(a) ?? String(a); } catch { return "<unserializable>"; }
   };
 
+  // The key paths of the probe solid inside a plain-data spec, in walk order.
+  const solidPaths = (a, path = [], out = [], depth = 0) => {
+    if (a === solidProxy) { out.push(path); return out; }
+    if (depth > MAX_SPEC_DEPTH || a === null || typeof a !== "object" || a === shape2dProxy || isCage(a)) return out;
+    if (Array.isArray(a)) a.forEach((x, i) => solidPaths(x, [...path, i], out, depth + 1));
+    else if (Object.getPrototypeOf(a) === Object.prototype) {
+      for (const [key, x] of Object.entries(a)) solidPaths(x, [...path, key], out, depth + 1);
+    }
+    return out;
+  };
+
   const onCall = (scope, op, args) => {
     if (++count > maxOps) throw new ProbeRunawayError(`build exceeded ${maxOps} kernel operations`);
     used.add(op);
@@ -201,7 +224,8 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
     // so `args` alone cannot tell `fillet({ r, edges: fn })` from `fillet({ r })`).
     const fn = args.some((a) => hasFn(a));
     if (fn) seen.fnArg = true;
-    calls.push({ scope, op, args: args.map(describe), ...(fn ? { fn: true } : {}) });
+    const solids = scope === "kernel" && SOLID_IN_SPEC_OPS.has(op) && args.length === 1 && args[0] !== solidProxy ? solidPaths(args[0]) : [];
+    calls.push({ scope, op, args: args.map(describe), ...(fn ? { fn: true } : {}), ...(solids.length ? { solids } : {}) });
   };
 
   const onQuery = (scope, op) => {
