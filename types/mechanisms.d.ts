@@ -115,6 +115,12 @@ export interface MechanismLines {
     d: number;
     /** A loop (a belt) when true. */
     closed: boolean;
+    /** The centreline's length, mm (exact, not rounded). */
+    length: number;
+    /** The tightest bend's diameter over the line's diameter, when the source knows it. */
+    bendRatio?: number | null;
+    /** The least bend ratio the line's material allows, or null. */
+    minBendRatio?: number | null;
     /** The centreline, part coordinates; arcs are sampled. */
     points: Point3[];
   }>;
