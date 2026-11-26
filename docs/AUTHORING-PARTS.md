@@ -4322,8 +4322,9 @@ or `{ name, error, at }` at the first value where the source throws. The row say
 not proved between them. Readings call `derive` only, never the kernel: one `derive` per even
 sample serves every line in the view. They have their own time budget, 2000 ms per measure
 (`LINE_SWEEP_BUDGET_MS`), apart from the sweeps' deadline, so a sweep the deadline stops (or
-whose contact pass throws) still gets its lines; a reading the budget stops is `{ name, error:
-"timeout", at }`. A row's `ms` leaves the line pass out. The CLI adds them to the sweep's
+whose contact pass throws) still gets its lines, but never past the deadline plus 1000 ms
+(`LINE_GRACE_MS`), so an inspect report still finishes in time; a reading the budget stops is
+`{ name, error: "timeout", at }`. A row's `ms` leaves the line pass out. The CLI adds them to the sweep's
 line: `sweeps: drive clear (min 1.00mm drum×pulley), rope drift 0.03mm`.
 
 A sweep that moves no piece in the view has no sweep row (there is nothing to collide), but a

@@ -28,6 +28,13 @@ export const LINE_SWEEP_SAMPLES = 33;
  * is `{ name, error: "timeout", at }`.
  */
 export const LINE_SWEEP_BUDGET_MS = 2000;
+/**
+ * How far past the sweeps' deadline a line pass may run (ms). measure() and verify's other
+ * views each end their line pass at `deadline + LINE_GRACE_MS`, one instant for both, so
+ * an inspect's line readings finish inside REPORT_SHARE_MS plus this (6 + 1 s, under
+ * partforge-cloud's 8 s report timeout) however much of LINE_SWEEP_BUDGET_MS is left.
+ */
+export const LINE_GRACE_MS = 1000;
 // An interior extreme of length is refined to a bracket of this share of the motion's range.
 const REFINE_TOL = 1e-4;
 const GOLDEN = (Math.sqrt(5) - 1) / 2;
@@ -36,13 +43,15 @@ const TIMEOUT = "timeout";
 /**
  * A line pass's clock: the time spent inside every sweepLines call handed this budget is
  * charged to it, on `now` (the sweeps' clock), and once `ms` is spent each later read stops.
+ * `end` (a reading of `now`, default Infinity) is a hard stop as well: past it every read
+ * stops, whatever is left of `ms`.
  */
-export function lineBudget({ now = clockNow, ms = LINE_SWEEP_BUDGET_MS } = {}) {
+export function lineBudget({ now = clockNow, ms = LINE_SWEEP_BUDGET_MS, end = Infinity } = {}) {
   let spent = 0;
   return {
     run(fn) {
       const t0 = now();
-      try { return fn(() => spent + (now() - t0) > ms); } finally { spent += now() - t0; }
+      try { return fn(() => { const t = now(); return spent + (t - t0) > ms || t > end; }); } finally { spent += now() - t0; }
     },
   };
 }

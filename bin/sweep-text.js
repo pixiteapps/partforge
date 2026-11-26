@@ -2,6 +2,7 @@
 // function so a test can hold its wording. A row's `ms` is never printed.
 import { pairKey, sweepContactBlocks } from "../src/framework/collide/pairs.js";
 import { TOUCH_TOL_MM } from "../src/framework/collide/depth.js";
+import { lineErrorWhy } from "../src/framework/lines/read.js";
 
 const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 const mm = (d) => `${d.toFixed(2)}mm`;
@@ -49,7 +50,7 @@ function rowText(s) {
 
 /** One declared line's reading: `rope 212.40mm, bend 10.0 (min 8)`, or why it could not be read. */
 export function lineText(l) {
-  if (l.error) return `${l.name} unreadable: ${l.error}`;
+  if (l.error) return `${l.name} unreadable: ${lineErrorWhy(l)}`;
   const bend = l.bendRatio != null
     ? `, bend ${l.bendRatio.toFixed(1)}${l.minBendRatio != null ? ` (min ${l.minBendRatio})` : ""}`
     : "";

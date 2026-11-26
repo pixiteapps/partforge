@@ -19,6 +19,7 @@
 import { PROCESSES } from "./process/registry.js";
 import { DOMAINS } from "./domains/registry.js";
 import { sweepContactBlocks } from "./collide/pairs.js";
+import { lineErrorWhy } from "./lines/read.js";
 
 // `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
 // [x,y,z] }` — so a reader who copies the shape of a measurement gets a legal
@@ -288,10 +289,7 @@ const sweepLineUnread = (r) => lineReadings(r).find(({ reading }) => reading.err
 // The first declared line that could not be read at the measured pose.
 const poseLineUnread = (r) => (r.lines ?? []).find((l) => l.error != null) ?? null;
 // A line error without readLine's own `line "<name>": ` prefix, which the message names already.
-const lineWhy = (reading) => {
-  const prefix = `line "${reading.name}": `;
-  return String(reading.error).startsWith(prefix) ? String(reading.error).slice(prefix.length) : reading.error;
-};
+const lineWhy = lineErrorWhy;
 // Words an unread line: where it failed and why.
 function unreadText(r, { pose = false } = {}) {
   const atPose = pose ? poseLineUnread(r) : null;

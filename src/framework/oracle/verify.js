@@ -1,7 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { runSweeps, normalizeSweeps } from "./sweep.js";
-import { lineBudget } from "./lines.js";
+import { LINE_GRACE_MS, lineBudget } from "./lines.js";
 import { relativePlacements, samePlacements } from "../collide/sweep-targets.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
@@ -325,8 +325,9 @@ function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
   };
   for (const s of entriesIn(view)) if (!s.skip && reported.has(s.name)) remember(s.name, placementsOf(view, s));
   const out = [];
-  // one line-pass budget for every other view's rows (oracle/lines.js LINE_SWEEP_BUDGET_MS)
-  const lines = lineBudget({ now: Date.now });
+  // one line-pass budget for every other view's rows (oracle/lines.js LINE_SWEEP_BUDGET_MS),
+  // ending where measure's does, at the deadline plus LINE_GRACE_MS
+  const lines = lineBudget({ now: Date.now, end: deadline + LINE_GRACE_MS });
   for (const other of Object.keys(part.views ?? {})) {
     if (other === view) continue;
     const run = [], at = new Map();

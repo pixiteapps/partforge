@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/framework/oracle/measure.js";
-import { measureLines, sweepLines, lineBudget, LINE_SWEEP_SAMPLES, LINE_SWEEP_BUDGET_MS } from "../src/framework/oracle/lines.js";
+import { measureLines, sweepLines, lineBudget, LINE_SWEEP_SAMPLES, LINE_SWEEP_BUDGET_MS, LINE_GRACE_MS } from "../src/framework/oracle/lines.js";
 import { runSweeps } from "../src/framework/oracle/sweep.js";
 import { VIEW_METRICS } from "../src/framework/verify-metrics.js";
 import { collideBar } from "./fixtures/collide-bar.js";
@@ -203,6 +203,27 @@ describe("the line pass's cost", () => {
     expect(VIEW_METRICS.lineDrift.extract(r)).toBe(null);
     expect(VIEW_METRICS.lineDrift.withheld(r)).toMatch(/^not evaluated — line "rope" could not be read along sweep "drive" \(at [-\d.]+\): timeout$/);
   });
+  it("stops at its hard end, whatever is left of ms", () => {
+    let t = 0;
+    const { part } = counted(1);
+    const slow = { ...part, derive: (p) => { t += 100; return part.derive(p); } };
+    const budget = lineBudget({ now: () => t, ms: 1e9, end: 450 });
+    const [l] = sweepLines(slow, "assembly", motion, undefined, { budget });
+    expect(l.error).toBe("timeout");
+    expect(t).toBeLessThanOrEqual(600);
+  });
+  it("in measure, ends at the sweep deadline plus LINE_GRACE_MS", () => {
+    let t = 0;
+    const slow = { ...swept(concentricCapstan), derive: (p) => { t += 10; return concentricCapstan.derive(p); } };
+    // 33 readings at 10 ms fit the 2000 ms budget, but the deadline has passed by more than the grace
+    const r = measure(k, slow, "assembly", {}, { now: () => t, deadline: -LINE_GRACE_MS - 1 });
+    expect(r.sweeps[0].lines[0]).toMatchObject({ name: "rope", error: "timeout" });
+    expect(VIEW_METRICS.lineDrift.extract(r)).toBe(null);
+    // the same with the grace still to run: read in full
+    t = 0;
+    const ok = measure(k, slow, "assembly", {}, { now: () => t, deadline: 0 });
+    expect(ok.sweeps[0].lines[0].drift).toBeLessThan(0.2);
+  });
   it("a row's ms leaves the line pass out", () => {
     let t = 0;
     const slow = { ...swept(concentricCapstan), derive: (p) => { t += 1; return concentricCapstan.derive(p); } };
@@ -221,6 +242,10 @@ describe("sweepText with lines", () => {
   });
   it("words an unreadable line", () => {
     expect(sweepText({ ...row, lines: [{ name: "rope", error: "x", at: 51 }], linesSampled: true })).toBe("drive clear, rope unreadable");
+  });
+  it("lineText names the line once in an error", () => {
+    expect(lineText({ name: "rope", error: 'line "rope": boom' })).toBe("rope unreadable: boom");
+    expect(lineText({ name: "rope", error: "timeout" })).toBe("rope unreadable: timeout");
   });
   it("words a line-only row of a sweep that moves no piece", () => {
     expect(lineSweepText({ name: "drive", lines: [{ name: "rope", drift: 20.5 }], linesSampled: true })).toBe("drive skipped (moves no piece), rope drift 20.50mm");

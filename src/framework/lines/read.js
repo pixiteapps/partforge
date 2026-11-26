@@ -24,6 +24,13 @@ export function linesInView(part, view) {
   return normalizeLines(part).filter((e) => e.views == null || e.views.includes(view));
 }
 
+/** A reading's error without readLine's own `line "<name>": ` prefix, for text that names the line already. */
+export function lineErrorWhy(reading) {
+  const err = String(reading.error);
+  const prefix = `line "${reading.name}": `;
+  return err.startsWith(prefix) ? err.slice(prefix.length) : err;
+}
+
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /** Read one declared line out of derive's output; throws a SpecError naming the line. */
