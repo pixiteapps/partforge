@@ -4,6 +4,10 @@ Date: 2026-11-25. Status: approved 2026-11-25, with inward offset added at the o
 `claude/solid-field-spike` (uncommitted engine edits plus `spike/solid-field/`), measured
 on the development desktop at partforge 0.204.0, print tier, JS engine only.
 
+Revised 2026-11-25 (phase 2): goal 3 and section 4 changed from stitching the solid's own
+triangles back in to a sharpen pass in the mesher. Section 4 gives the measurements behind
+the change. Waiting for the owner's approval of this revision.
+
 ## Why
 
 `k.implicit` can blend, offset, shell, texture and lattice a shape, but only a shape that
@@ -53,8 +57,9 @@ Two findings shape this design:
 2. **Every existing node works on it.** `union`/`intersect`/`subtract` with `k`, `offset`,
    `onion`, `displace`, the warps, `mirror`, `repeat`, and `detail`. No node gets a
    special case for a solid child.
-3. **Faces the tree does not change stay exact.** Where the result's surface is one
-   solid's own surface, the output uses that solid's own triangles, sharp edges included.
+3. **Sharp edges and corners stay sharp.** Where the field has a sharp edge or corner, the
+   mesh has a vertex on it. A flat face of a solid leaf comes out flat, and its edges come
+   out straight.
 4. **Same bytes with the native core on and off**, as for every other node.
 5. **Inward and outward offset, as one node.** A new `offset` node takes a signed
    distance. It replaces `round` in the docs.
@@ -71,9 +76,12 @@ Two findings shape this design:
 
 ## Anti-goals
 
-- No change to the bytes or hashes of any spec that has no solid leaf.
+- Phase 1 changes no bytes or hashes of any spec that has no solid leaf. Phase 2 does
+  change meshes: the sharpen pass runs on every tree, so a box or a sharp `intersect` in an
+  existing part gets sharp edges too. The release notes must say so.
 - No option that silently changes what shape is built. Goal 3 changes fidelity only: the
   shape is the same field's zero set either way.
+- No rule that applies to a solid leaf only. One mesher, one behaviour for every node.
 - Part code never passes a function into a spec. The spike's `fn` leaf does not ship.
 
 ## The node
@@ -160,32 +168,91 @@ to the query's answer, plus one normal per edge and per vertex, computed at buil
 - The geometry-free lint probe sees a probe solid with no mesh. It lowers the leaf with the
   probe solid's bounds and skips every rule that needs the field.
 
-### 4. Keeping unchanged faces exact (goal 3)
+### 4. Sharp edges and corners (goal 3)
 
-The interval pass already knows, per block, which leaves can affect the field there. Call a
-block a **passthrough** for solid S when its pruned program is S's leaf alone, with only
-rigid placement and `union`/`intersect`/`subtract` above it. In such a block the result's
-surface is S's surface (reversed, if S is a subtracted child).
+**What was planned, and why it changed.** The first plan was to stitch: take the implicit
+mesh only where the tree changes the surface, and each solid's own triangles elsewhere, by
+booleans. A second spike (`spike/exact-faces/`, preview kernel, core on) measured it:
 
-The build then is:
+- On a curved face the step at the border is small: 0.010 mm on a cylinder and 0.036 mm on
+  a subdivision body at a 0.6 mm grid.
+- Where the border crosses a sharp edge there is a visible notch of about 0.2 mm. The
+  mesher bevels every sharp edge by about a third of a cell, and the exact edge outside
+  the border is not bevelled.
+- Each stitch left 115 to 500 zero-height triangles and small ledge faces on the border.
+- A hand-drawn region missed a 0.5 mm bulge on the far side of a thin plate. Only an
+  automatic region is safe.
+- Keeping the exact body and adding only the blend on top removed the notch on outside
+  edges, but left 3,100 to 8,800 sliver triangles where the two surfaces coincide.
 
-1. Mesh the tree as today.
-2. Collect the blocks that are not a passthrough and that hold surface. Merge them into a
-   small set of boxes, padded by one cell. This is the **changed region**.
-3. Output = (implicit mesh inside the changed region) joined with (each solid's own
-   passthrough part outside it), by ordinary booleans.
+The bevel is the real defect. With it gone there is nothing to stitch.
 
-A tree with no passthrough blocks (an `offset`, `onion`, `displace` or warp over everything)
-skips steps 2 and 3 and is today's path.
+**The sharpen pass.** A new mesher stage, after cleanup and the crease cut, before detail.
+It is the crease cut's method (crease.js: split an edge at a point moved onto a crease)
+with a different test for where a crease is.
 
-This is the automatic form of what the spike did by hand with one box.
+1. Each vertex has the field's unit normal at its position.
+2. **Edges.** A mesh edge whose two ends' normals are more than `SHARP_ANGLE` apart is a
+   candidate. Its crease point is the point nearest the edge's middle on both ends'
+   tangent planes, then moved onto the field's zero set as crease.js moves its points. It
+   is kept if the field there is within `SHARP_TOL` cells of zero and it moved less than
+   `SHARP_MAX_MOVE` cells. A kept point close to an edge end moves that end, as
+   `CREASE_SNAP` does. Otherwise it splits the edge.
+3. **Corners.** A crease point carries its two planes. An edge whose two ends carry three
+   distinct planes between them is split at the point where the three meet, under the
+   same two limits. Corner points at one position are one vertex.
+4. Triangles with one, two or three split edges become two, three or four. A triangle
+   left with a repeated vertex is dropped.
+5. `untangle` runs after it, as after the crease cut.
 
-**Risk to settle first.** At the border of the changed region the implicit mesh meets the
-exact faces. On a flat face the spike measured no step. On a curved face the solid's own
-mesh is flat facets, so the field's surface is those facets, but the grid mesh can cut a
-facet crease and sit off it by a small amount. The implementation must measure that step
-on a cylinder and a subdivision body before the stitching is built on. If it is visible,
-the fix is to snap border vertices onto the solid's own mesh.
+A rounded edge is not a candidate once its radius is large enough for the grid to resolve:
+neighbouring vertices then differ by less than `SHARP_ANGLE`. A round too small for the
+grid fails the `SHARP_TOL` test only when it is larger than about 0.1 cell. Below that it
+is drawn sharp.
+
+**Rules it must keep.**
+
+- It never moves a held, pinned or crease vertex.
+- A new vertex takes the owner, leaf and frame data that the crease cut gives its new
+  vertices, so pose drag and the frame report are unchanged in kind.
+- The mesh stays closed and oriented. Edge splits alone guarantee that.
+- JS and the native core give the same bytes. It is ported to the core in this phase.
+- It runs on every tree and both tiers. It has no option.
+
+**Prototype numbers.** A post-pass in plain JavaScript on the finished mesh
+(`spike/exact-faces/sharpen.mjs`), `SHARP_ANGLE` 25°, `SHARP_TOL` 0.05, `SHARP_MAX_MOVE`
+1.5. The error is the distance of triangle centres from the exact surface, away from the
+blend.
+
+| Case | Grid | 99th percentile before | after | Worst before | after |
+| --- | --- | --- | --- | --- | --- |
+| Boss near a plate's edge | 0.6 | 0.131 | 0.000 | 0.222 | 0.002 |
+| Boss near a plate's edge | 1.0 | 0.280 | 0.000 | 0.361 | 0.002 |
+| Boss in an L bracket's inside corner | 0.6 | 0.147 | 0.000 | 0.230 | 0.040 |
+| Boss in an L bracket's inside corner | 1.0 | 0.293 | 0.000 | 0.364 | 0.003 |
+| Box boss on a cylinder's side | 0.6 | 0.124 | 0.008 | 0.251 | 0.011 |
+| Box boss on a cylinder's side | 1.0 | 0.282 | 0.021 | 0.451 | 0.024 |
+
+- It found exactly the plate's 8 corners. On the bracket it found 12 at 0.6 mm (the true
+  count) and 14 at 1.0 mm, so two points there are spurious.
+- It added 5% to 14% more triangles and took 55 to 660 ms. Most of that time is six field
+  calls per vertex for normals over the whole mesh, which the real stage must not do.
+- The cylinder's own facets (a few degrees apart) were left alone.
+- Every mesh stayed closed and imported as a valid solid.
+
+**What the prototype did not do, and the real stage must.**
+
+- It had no end-snap and no untangle. It left 19 to 54 flipped triangles and 45 to 752
+  triangles thinner than 0.001 mm per body. The real stage must leave none of either.
+- It took one tangent-plane step. That is exact for flat faces only. A crease between two
+  curved surfaces needs the move onto the zero set.
+- It left a few stray marks where the plate's edge fades into the blend. There the true
+  edge is a round that grows from zero radius. The limits above need tuning on this case.
+- It did not run on a cage body, a texture, an `offset`, the print tier, a posed tree or
+  the owner path with its own crease vertices.
+
+**What this does not give.** A flat face stays at grid density, not two triangles. A
+curved face follows the grid, not the solid's own facets. Both are true today.
 
 ### 5. Cost
 
@@ -265,7 +332,7 @@ grid makes every sharp edge of an explicit body look rough.
    lowering, the pseudonormal sign, the `MESH` op in JS and in the
    core, hashing and sample-cache identity, the lint probe, the preview weight, parity
    tests, and the guide section. Delete the spike's `field` leaf.
-2. **Exact unchanged faces.** The border measurement, then the passthrough stitching.
+2. **Sharp edges and corners.** The sharpen pass in the mesher, in JS and in the core.
 3. **Docs and prompt.** The guide's recipes (join, offset, shell, knurl, clipped lattice),
    one reference part, and the cloud prompt sentence with a cloud eval case.
 
@@ -283,8 +350,9 @@ an `offset` node over a `solid` leaf is the fast route, by the author's choice.
 
 ## Open questions
 
-1. Should phase 2's stitching be always on, as written, or an explicit option on
-   `k.implicit`? I chose always on, because it changes fidelity and not the shape.
+1. Should the sharpen pass run on every tree, as written, or only on a tree with a solid
+   leaf? I chose every tree. It is one rule, and a box in a tree deserves sharp edges as
+   much as a solid leaf does. The cost is that meshes of existing parts change.
 2. Is `solid` the right name for the node, given that `Solid` is also the type?
 
 Settled: inward offset is in, as the signed `offset` node (owner, 2026-11-25).
@@ -293,6 +361,5 @@ Settled: inward offset is in, as the signed `offset` node (owner, 2026-11-25).
 
 - The preview tier, pose drag, STEP export, and an imported scan.
 - Any native-core timing.
-- The border step on a curved face (the risk in section 4).
 - The renders were judged by eye. Only the offset volumes and the flat-face error are
   measured.
