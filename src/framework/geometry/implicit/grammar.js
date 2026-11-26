@@ -12,6 +12,7 @@ const isObj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 // recurse receive (value, path, ctx).
 const TYPES = {
   pos: (v) => (isNum(v) && v > 0 ? null : "must be a number > 0"),
+  nonzero: (v) => (isNum(v) && v !== 0 ? null : "must be a finite number other than 0"),
   nonneg: (v) => (isNum(v) && v >= 0 ? null : "must be a number ≥ 0"),
   num: (v) => (isNum(v) ? null : "must be a finite number"),
   vec3: (v) => (isVec3(v) ? null : "must be [x, y, z]"),
@@ -32,6 +33,10 @@ const TYPES = {
   box: (v) => (Array.isArray(v) && v.length === 2 && isVec3(v[0]) && isVec3(v[1]) && v[0].every((c, i) => c < v[1][i])
     ? null : "must be [[minX, minY, minZ], [maxX, maxY, maxZ]] with min < max"),
   projection: (v) => (["planar", "cylindrical", "triplanar"].includes(v) ? null : 'must be "planar", "cylindrical" or "triplanar"'),
+  // A solid built by a kernel op: what `toMesh` reads for the leaf's field, and `_hash`
+  // its identity (one mesh slot per distinct hash).
+  solidRef: (v) => (v != null && typeof v === "object" && typeof v._hash === "string" && typeof v.toMesh === "function"
+    ? null : "must be a solid (the result of a kernel op)"),
   uniforms: (v) => (isObj(v) && Object.values(v).every(isNum) ? null : "must be an object of finite numbers"),
   child: (v, path, ctx) => { if (!isObj(v)) return "must be a node object"; walkNode(v, path, ctx); return null; },
   children: (v, path, ctx) => {
@@ -78,6 +83,9 @@ const TYPES = {
 
 const COMMON = { frame: "string", at: "vec3", label: "string" };
 
+// An older name that still builds and is not documented.
+export const LEGACY_NODE_KINDS = { round: { req: { child: "child", r: "pos" } } };
+
 export const NODE_KINDS = {
   sphere: { req: { r: "pos" } },
   ellipsoid: { req: { r: "pos3" } },
@@ -92,7 +100,7 @@ export const NODE_KINDS = {
   subtract: { req: { children: "children" }, opt: { k: "nonneg" } },
   contact: { req: { children: "children" }, opt: { gap: "nonneg", bulge: "nonneg", attach: "attach" } },
   mirror: { req: { child: "child" }, opt: { plane: "plane" } },
-  round: { req: { child: "child", r: "pos" } },
+  offset: { req: { child: "child", d: "nonzero" } },
   onion: { req: { child: "child", t: "pos" } },
   displace: { req: { child: "child", amount: "pos", by: "exprSpec" } },
   twist: { req: { child: "child", degPerMm: "num" }, opt: { axis: "axis" } },
@@ -100,6 +108,7 @@ export const NODE_KINDS = {
   taper: { req: { child: "child", from: "taperEnd", to: "taperEnd" }, opt: { axis: "axis" } },
   repeat: { req: { child: "child" }, opt: { linear: "linear", polar: "polar" } },
   expr: { req: { sdf: "source", box: "box" }, opt: { uniforms: "uniforms", textures: "textureMap", lipschitz: "pos" } },
+  solid: { req: { solid: "solidRef" } },
 };
 
 const DETAIL_COMMON = { frame: "string", at: "vec3", radius: "pos", side: "axis" };
@@ -155,7 +164,8 @@ function checkContact(node, path, ctx) {
 }
 
 function walkNode(node, path, ctx) {
-  const schema = Object.hasOwn(NODE_KINDS, node.kind) ? NODE_KINDS[node.kind] : null;
+  const schema = Object.hasOwn(NODE_KINDS, node.kind) ? NODE_KINDS[node.kind]
+    : Object.hasOwn(LEGACY_NODE_KINDS, node.kind) ? LEGACY_NODE_KINDS[node.kind] : null;
   if (!schema) {
     ctx.issues.push(`${path}.kind: unknown kind ${JSON.stringify(node.kind)} (expected one of ${Object.keys(NODE_KINDS).join(", ")})`);
     return;

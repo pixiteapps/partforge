@@ -5,6 +5,7 @@ import { ORIENTATIONS, cameraOrbitProblem, cameraPoseForView, cameraCueLabel } f
 import { buildView } from "../framework/oracle/build.js";
 import { renderStyled } from "../framework/softrender/index.js";
 import { getRenderStyle } from "../framework/renderStyles.js";
+import { loadMeshFieldBuilder } from "../framework/geometry/implicit/mesh-field-loader.js";
 
 // Canonical view directions in MODEL space (Z-up). `dir` is the direction from
 // the part centre toward the camera; `up` is the camera up vector.
@@ -78,6 +79,7 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
     const v = Number(opacity[name]);
     return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1; // a junk value renders solid
   };
+  await loadMeshFieldBuilder(); // a k.implicit `solid` leaf's builder: it builds the caller's part
   const subparts = buildView(kernel, part, view, params) // meshes are JS-owned: safe after cleanup
     .map((b) => ({ name: b.name, mesh: b.mesh, display: part.parts?.[b.name]?.display, opacity: opacityOf(b.name) }));
   kernel.cleanup?.();

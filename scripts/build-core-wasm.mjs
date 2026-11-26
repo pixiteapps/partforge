@@ -33,7 +33,9 @@ const OUT = join(ROOT, "src", "framework", "core", "core-wasm.js");
 const OUT_FULL = join(ROOT, "src", "framework", "core", "core-full-wasm.js");
 
 // The base build's translation units; every other native/*.cpp is the implicit engine,
-// which only the full build carries. The implicit sources include none of these.
+// which only the full build carries. These depend on none of the implicit sources; an
+// implicit source may call their C API (implicit_eval.cpp calls bvh.h), since the full
+// build compiles every source.
 export const BASE_SOURCES = ["blend_surfaces.cpp", "bvh.cpp", "creased_normals.cpp"];
 
 export const BASE_EXPORTS = [
@@ -46,12 +48,13 @@ export const BASE_EXPORTS = [
 export const EXPORTS = [
   ...BASE_EXPORTS,
   "ip_math_probe", "ip_bracket_probe",
-  "ip_session_create", "ip_session_destroy", "ip_tex_add", "ip_prog_add", "ip_eval", "ip_eval_contact",
+  "ip_session_create", "ip_session_destroy", "ip_tex_add", "ip_mesh_field_add", "ip_prog_add", "ip_eval", "ip_eval_contact",
   "ip_sample", "ip_sample_cached", "ip_leaf_vals", "ip_leaf_owners", "ip_clipped",
   "ip_mesh", "ip_vertex_count", "ip_positions", "ip_index_count", "ip_indices", "ip_vert_leaf",
   "ip_mesh_load", "ip_project", "ip_cleanup", "ip_normals", "ip_detail",
   "ip_set_contact", "ip_mesh_owners", "ip_crease", "ip_untangle",
   "ip_vert_owner", "ip_owner_held", "ip_pinned", "ip_crease_marks", "ip_tri_owners",
+  "ip_sharpen", "ip_sharp_count", "ip_sharpen_constants", "ip_flip_probe",
 ];
 // -ffp-contract=off: the core must round every operation exactly as the JS does
 // (see native/js_math.h). WebAssembly has no FMA to fuse into, but say so anyway.

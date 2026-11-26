@@ -15,8 +15,48 @@ export function stripFrames(spec) {
   return rest;
 }
 
-/** The hash of a spec's shape (its spec less frames). */
-export const implicitShapeHash = (spec) => h("implicit-shape", stripFrames(spec));
+/**
+ * The spec as it is hashed. With `identity` (the default: the geometry-cache key,
+ * index.js implicitHashable) every `solid` leaf's `solid` field becomes the string
+ * `"solid:" + solid._hash`, so the key names the solid by its geometry and never walks the
+ * solid object. A solid with no `_hash` (a stub, such as the lint probe's JSON copy, where
+ * a solid reads as `{}`) becomes `"solid:?"`; the build itself refuses it (grammar.js
+ * `solidRef`). With `identity: false` (the call id, below) the field becomes the constant
+ * `"solid"`: the pose probe's solids are tokens whose `_hash` is not the kernel's, so the
+ * two sides could never agree on one, and a call id needs only the shape plus an ordinal.
+ * Copy on write: a branch with no solid leaf is the input object itself, so a spec with no
+ * solid leaf comes back unchanged and every hash of it keeps its bytes.
+ */
+export function hashableSpec(spec, { identity = true } = {}) {
+  const name = identity ? (solid) => `solid:${solid?._hash ?? "?"}` : () => "solid";
+  const walk = (v) => {
+    if (Array.isArray(v)) {
+      let out = null;
+      for (let i = 0; i < v.length; i++) {
+        const w = walk(v[i]);
+        if (w !== v[i]) (out ??= v.slice())[i] = w;
+      }
+      return out ?? v;
+    }
+    if (!v || typeof v !== "object" || ArrayBuffer.isView(v)) return v;
+    let out = null;
+    for (const key of Object.keys(v)) {
+      const w = key === "solid" && v.kind === "solid" ? name(v.solid) : walk(v[key]);
+      if (w !== v[key]) (out ??= { ...v })[key] = w;
+    }
+    if (v.kind === "solid" && !("solid" in v)) (out ??= { ...v }).solid = name(undefined);
+    return out ?? v;
+  };
+  return walk(spec);
+}
+
+/**
+ * The hash of a spec's shape (its spec less frames), as the call id uses it: every solid
+ * leaf counts as the same `"solid"`, so the main thread (pose-probe tokens) and the worker
+ * (kernel solids) hash a call alike. Two calls that differ only in their solid share a
+ * shape hash and are told apart by the ordinal.
+ */
+export const implicitShapeHash = (spec) => h("implicit-shape", hashableSpec(stripFrames(spec), { identity: false }));
 
 /** `<shape hash>#<n>`, n = the number of `priorSpecs` with the same shape hash. */
 export function implicitCallId(spec, priorSpecs = []) {

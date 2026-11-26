@@ -3,12 +3,20 @@
 // arguments as JSON, and a spec is plain data, so it parses back whole). Specs are judged
 // at the lint params, i.e. the default pose.
 //
+// A `solid` leaf's solid is the one part of a spec that is not data: the JSON copy writes
+// it as `{}`. The probe also records where each probe solid sat (`call.solids`), and only
+// there does lint put back a stand-in solid. A `{}` the author wrote stays `{}` and gets
+// the grammar's "must be a solid". The stand-in has no mesh, so the spec lowers with
+// `hasProbeMesh` (ir.js): a rule that would evaluate the field or predict its cost skips
+// that part of its check.
+//
 // Imports: lint/finding.js and nothing else from lint (the registry rule), and only the
 // engine's pure modules — never implicit/index.js, which loads the mesher and native core.
 import { err, note, warn } from "../../lint/finding.js";
 import { MESH_NATIVE_OPS, ROUTED_CAD_OPS, meshNativeOpsText } from "../../geometry/kernel.js";
 import { validateSpec } from "../../geometry/implicit/grammar.js";
 import { lowerSpec } from "../../geometry/implicit/ir.js";
+import { PROBE_SOLID_HASH } from "../../geometry/probe.js";
 import { IMPLICIT_DEFAULTS } from "../../geometry/implicit/compile.js";
 import { choosePreviewEdge } from "../../geometry/implicit/preview-edge.js";
 import { compileExprSource, evalExprScalar } from "../../geometry/implicit/expr-lower.js";
@@ -31,6 +39,24 @@ function imageNamesIn(value, out = new Set()) {
   return out;
 }
 
+// A stand-in for a probe solid: solid-shaped for the grammar, with no mesh to read.
+const PROBE_SOLID = Object.freeze({
+  _hash: PROBE_SOLID_HASH,
+  toMesh: () => { throw new Error("lint: a probe solid has no mesh"); },
+});
+const noField = () => null;
+
+/** Puts the stand-in back at each recorded solid path of a parsed spec. */
+function restoreSolids(spec, paths = []) {
+  for (const path of paths) {
+    if (path.length === 0) continue;
+    let at = spec;
+    for (const key of path.slice(0, -1)) at = at?.[key];
+    if (at && typeof at === "object") at[path[path.length - 1]] = PROBE_SOLID;
+  }
+  return spec;
+}
+
 /**
  * The distinct recorded specs, each compiled once: `{ op, spec, compiled, error }`, where
  * `error` is the ImplicitSpecError / ImplicitSizeError the build would throw. Image names
@@ -45,16 +71,20 @@ export function implicitCalls({ part, probe }) {
     : new Set(part?.images && typeof part.images === "object" ? Object.keys(part.images) : []);
   const seen = new Set(), out = [];
   for (const call of run.calls) {
-    if (call.scope !== "kernel" || !SPEC_OPS.has(call.op) || seen.has(call.args[0])) continue;
-    seen.add(call.args[0]);
+    if (call.scope !== "kernel" || !SPEC_OPS.has(call.op)) continue;
+    // The same JSON with and without a probe solid is two different specs.
+    const key = call.solids ? `${call.args[0]}\u0000${JSON.stringify(call.solids)}` : call.args[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
     let spec;
     try { spec = JSON.parse(call.args[0]); } catch { continue; }
     if (!spec || typeof spec !== "object") continue;
+    restoreSolids(spec, call.solids);
     let compiled = null, error = null;
     try {
       validateSpec(spec, { imageNames: known });
       const images = new Map([...imageNamesIn(spec)].map((name) => [name, STUB_IMAGE]));
-      compiled = lowerSpec(spec, { images });
+      compiled = lowerSpec(spec, { images, meshFieldOf: noField });
     } catch (e) {
       if (e?.code !== "IMPLICIT_SPEC" && e?.code !== "IMPLICIT_SIZE") throw e;
       error = e;
@@ -68,9 +98,11 @@ export function implicitCalls({ part, probe }) {
 const compiledCalls = (ctx) => implicitCalls(ctx).filter((c) => c.compiled && c.op === "implicit");
 const mm = (v) => `${v.toFixed(2)} mm`;
 
-// Kinds a sharp-edged CAD model is made of; any other kind (a sphere, a warp, round,
-// onion, displace, expr, contact) is what k.implicit is for.
-const CAD_KINDS = new Set(["box", "cylinder", "halfspace", "union", "intersect", "subtract", "mirror", "repeat"]);
+// Kinds a sharp-edged CAD model is made of; any other kind (a sphere, a warp, offset,
+// onion, displace, expr, contact) is what k.implicit is for. A `solid` leaf counts as CAD:
+// a solid joined to others by sharp booleans (or alone) is what k.union and k.cut build
+// exactly, so meshing it again through a field only loses detail.
+const CAD_KINDS = new Set(["box", "cylinder", "halfspace", "union", "intersect", "subtract", "mirror", "repeat", "solid"]);
 /** Every node of a raw spec tree, through `root`, `children` and `child`. */
 function* specNodes(node) {
   if (!node || typeof node !== "object") return;
@@ -170,8 +202,11 @@ export const ORGANIC_LINT_RULES = [
   {
     id: "implicit-thin-feature",
     run: (ctx) => compiledCalls(ctx).flatMap(({ spec, compiled }) => {
+      // The automatic preview grid comes from a cost prediction over the field, which a
+      // probe solid does not have: with one, only a declared `preview` is judged.
+      const preview = spec.preview ?? (compiled.hasProbeMesh ? null : choosePreviewEdge(compiled));
       const tiers = [
-        ["preview", spec.preview ?? choosePreviewEdge(compiled)],
+        ...(preview == null ? [] : [["preview", preview]]),
         ["print", spec.resolution ?? IMPLICIT_DEFAULTS.resolution],
       ].filter(([, edge]) => compiled.thin < 2 * edge);
       if (tiers.length === 0) return [];
@@ -210,10 +245,16 @@ export const ORGANIC_LINT_RULES = [
   },
   {
     id: "implicit-csg-in-disguise",
-    run: (ctx) => compiledCalls(ctx).filter(({ spec }) => plainCsg(spec)).map(() => note("implicit-csg-in-disguise",
-      "k.implicit builds only boxes, cylinders and halfspaces with sharp booleans — plain CAD, meshed approximately",
-      "Build it with the standard ops (k.box, k.cylinder, union/cut): they are exact, faster, and export a true STEP. Keep k.implicit for blended, organic forms.",
-      "parts")),
+    run: (ctx) => compiledCalls(ctx).filter(({ spec }) => plainCsg(spec)).map(({ spec }) => (
+      [...specNodes(spec.root)].some((n) => n.kind === "solid")
+        ? note("implicit-csg-in-disguise",
+          "k.implicit builds only solid leaves, boxes, cylinders and halfspaces with sharp booleans. It remeshes solids you already have, and the result is approximate.",
+          "Join the solids with the standard ops (union, cut, k.box, k.cylinder). They are exact and faster. Keep a solid leaf for what k.implicit adds: a blend (k > 0), an offset, an onion, a displace or detail.",
+          "parts")
+        : note("implicit-csg-in-disguise",
+          "k.implicit builds only boxes, cylinders and halfspaces with sharp booleans — plain CAD, meshed approximately",
+          "Build it with the standard ops (k.box, k.cylinder, union/cut): they are exact, faster, and export a true STEP. Keep k.implicit for blended, organic forms.",
+          "parts"))),
   },
   {
     id: "implicit-lipschitz-low",

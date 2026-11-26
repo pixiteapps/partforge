@@ -179,6 +179,10 @@ const bootKernel = async (part, params = {}) => {
   const { vectorsFor } = await importVectors();
   const opts = { fonts: fontsFor(part, p), imports: part.imports, images, vectors: vectorsFor(part, p) };
   const backend = process.env.PARTFORGE_BACKEND || detectBackend(part); // env: crash()'s NEEDS_OCCT retry
+  // A k.implicit `solid` leaf (and k.implicitFrames on either backend) needs the mesh
+  // field builder, which loads on demand. Every command that builds boots here.
+  const { loadMeshFieldBuilder } = await import("../src/framework/geometry/implicit/mesh-field-loader.js");
+  await loadMeshFieldBuilder();
   if (backend === "occt") {
     const { bootOcctKernel } = await import("../src/testing/occt.js");
     return bootOcctKernel(opts);

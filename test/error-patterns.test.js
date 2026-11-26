@@ -100,6 +100,9 @@ const BASELINE_IDS = [
   "implicit-lipschitz-low",
   "implicit-thin-feature",
   "implicit-step-export",
+  "implicit-solid-empty",
+  "implicit-solid-not-a-solid",
+  "implicit-solid-open",
   "motion-unswept",
   "sweep-bad-clearance",
   "line-drift",
@@ -315,5 +318,24 @@ describe("the partforge-vector entries match the errors actually thrown", () => 
     expect(message, `${id}: expected an error, got none`).toBeTruthy();
     expect(matchPattern(message, live), `${id} does not match:\n  ${message}`).toEqual(
       expect.objectContaining({ id }));
+  });
+});
+
+// The solid-leaf entries: k.implicit's own messages, at a nested path, find them.
+describe("the solid-leaf entries match the errors k.implicit throws", () => {
+  const live = parsePatterns(doc);
+  const thrown = async (root) => {
+    const { bootManifoldKernel } = await import("../src/testing/manifold.js");
+    const k = await bootManifoldKernel({ meshFields: true });
+    const leaf = (solid) => ({ kind: "solid", solid });
+    const make = { empty: () => leaf(k.sphere(5).intersect(k.sphere(5).translate([20, 0, 0]))), notSolid: () => leaf(5),
+      open: () => leaf({ _hash: "open", toMesh: () => ({ positions: Float32Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0) }) }) };
+    try { k.implicit({ root: { kind: "union", children: [{ kind: "sphere", r: 1 }, make[root]()] } }); } catch (e) { return e.message; }
+    return null;
+  };
+  test.each([["implicit-solid-empty", "empty"], ["implicit-solid-not-a-solid", "notSolid"], ["implicit-solid-open", "open"]])("%s", async (id, root) => {
+    const message = await thrown(root);
+    expect(message).toMatch(/^implicit: root\.children\[1\]\.solid: /);
+    expect(matchPattern(message, live)).toEqual(expect.objectContaining({ id }));
   });
 });

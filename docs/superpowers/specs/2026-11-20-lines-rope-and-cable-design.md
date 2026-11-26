@@ -267,13 +267,13 @@ Each phase is one PR with its own version bump.
 | 4 | `partforge/wiring`: `harness`, fixed segments, planar `slack.js`, the three crossing helpers, its lint rules, `src/parts/cable-arm.js` | `domains/wiring/`, `lines/slack.js`, registry, `package.json` exports |
 | 5 | Out-of-plane slack, bundles, cut list in the kit | `lines/slack.js`, `export/kit/` |
 
-Phase 1 as built (0.205.0): `lines/taut.js` (open and closed lines, parallel axes),
+Phase 1 as built (0.207.0): `lines/taut.js` (open and closed lines, parallel axes),
 `lines/materials.js` (one sourced preset, `uhmwpe`), `capstan()` with `lineInfo()` and
 `report()`, the guide section, types and tests. Left for its own PR: the reference
 part `src/parts/capstan-joint.js`, and a public `partforge/lines` entry for
 `line()` (the solver is internal until a second caller needs it).
 
-Phase 2 as built (0.206.0): the top-level `lines` block (`{ <name>: { on, line?, views? } }`,
+Phase 2 as built (0.208.0): the top-level `lines` block (`{ <name>: { on, line?, views? } }`,
 read by `lines/read.js`); `measure().lines` at the pose and each sweep row's `lines` with
 `linesSampled: true` (`oracle/lines.js`), and the CLI's `lines:` line and `, rope drift …`
 on the sweep line; the `lineDrift` and `lineBend` gates in core `VIEW_METRICS`; lint
@@ -346,12 +346,12 @@ pose and, through a probe sampled by the part, over a range.
 4. **Where the gates live.** Core `VIEW_METRICS` (recommended, since the sweep
    engine is core and reads the lines) or wiring `oracle.metrics` (which today
    merge into sub-part metrics only, so that route needs a registry change first).
-   *Taken as recommended in phase 2 (0.206.0): `lineDrift` and `lineBend` are core
+   *Taken as recommended in phase 2 (0.208.0): `lineDrift` and `lineBend` are core
    `VIEW_METRICS`.*
 5. **Capstan in mechanisms, cable in a new domain** (recommended), or one
    `partforge/lines` domain holding both.
 6. **Withholding the verdict.** Should a line riding a moving frame with no sweep
    hold `verify.ok` at null, as an unswept motion does, or only warn? Recommended:
    warn in phase 2, revisit after the capstan joint has been through it.
-   *Taken as recommended in phase 2 (0.206.0): `line-unswept` is a lint warning and never
+   *Taken as recommended in phase 2 (0.208.0): `line-unswept` is a lint warning and never
    withholds `verify.ok`.*

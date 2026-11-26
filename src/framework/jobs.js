@@ -23,6 +23,7 @@ import { desugar } from "./panel/legacy.js";
 import { probeSubPartPose } from "./pose-probe-core.js";
 import { concatMeshPayloads } from "./geometry/mesh-concat.js";
 import { NEEDS_FULL_CORE, setFullCoreRequired } from "./core/core-status.js";
+import { NEEDS_MESH_FIELD } from "./geometry/implicit/mesh-field-slot.js";
 
 export const FONT_SOURCE_CACHE_MAX = 4;
 
@@ -195,25 +196,43 @@ function nudgedFor(part, p) {
 // first k.implicit call in a worker that has only the base build throws
 // NEEDS_FULL_CORE, and the job is run again once the build is loaded — so an organic
 // part meshes natively from its first preview, and a part with no k.implicit never
-// downloads the engine. The retry starts the job over (sub-parts already built are
-// cache hits; a staged or partial delivery is posted again, which a host applies by
-// sub-part name). One retry: after it the build is loaded, or its load failed and
-// the JS engine answers.
+// downloads the engine. A k.implicit `solid` leaf is the same with the mesh field
+// builder (geometry/implicit/mesh-field-loader.js), which imports the oracle's BVH: its
+// first use throws NEEDS_MESH_FIELD, and the job runs again once the builder is loaded.
+// The retry starts the job over (sub-parts already built are cache hits; a staged or
+// partial delivery is posted again, which a host applies by sub-part name). At most one
+// retry per code: after it the full build is loaded, or its load failed and the JS
+// engine answers; the builder has no fallback, so a builder that cannot load fails the
+// job, and a second NEEDS_MESH_FIELD is reported as the job's error. loadFullCore never
+// rejects; a core module that cannot be imported rejects out of handle() to worker.js's
+// error boundary, as it did before the builder.
+const LOADERS = {
+  [NEEDS_FULL_CORE]: async () => { await (await import("./core/core.js")).loadFullCore(); },
+  [NEEDS_MESH_FIELD]: async () => { await (await import("./geometry/implicit/mesh-field-loader.js")).loadMeshFieldBuilder(); },
+};
+
 export async function handle(kernel, part, msg, post, opts = {}) {
   const was = setFullCoreRequired(true);
-  let retry = false;
+  const retryable = new Set(Object.keys(LOADERS));
   try {
-    retry = (await runJob(kernel, part, msg, post, opts)) === NEEDS_FULL_CORE;
-    if (retry) {
-      await (await import("./core/core.js")).loadFullCore();
-      await runJob(kernel, part, msg, post, opts);
+    let code = await runJob(kernel, part, msg, post, opts, retryable);
+    while (code !== undefined) {
+      retryable.delete(code);
+      if (code === NEEDS_MESH_FIELD) {
+        try { await LOADERS[code](); }
+        catch (err) {
+          post({ type: "error", message: `implicit: the mesh field builder could not be loaded: ${String(err?.message || err)}`, jobId: msg.jobId });
+          return;
+        }
+      } else await LOADERS[code]();
+      code = await runJob(kernel, part, msg, post, opts, retryable);
     }
   } finally {
     setFullCoreRequired(was);
   }
 }
 
-async function runJob(kernel, part, msg, post, opts) {
+async function runJob(kernel, part, msg, post, opts, retryable) {
   const isStale = opts.isStale ?? (() => false);
   const onProgress = (phase) => post({ type: "progress", phase, jobId: msg.jobId });
   const label = (name) => part.parts[name].label ?? name;
@@ -785,7 +804,7 @@ async function runJob(kernel, part, msg, post, opts) {
     const err = describeKernelThrow(thrown, { evidence: kernel._throwEvidence?.(thrown) });
     // `subparts` (generate jobs only) tells the reroute policy which sub-parts the
     // failed job covered, so only those latch to OCCT — not the whole part.
-    if (err?.code === NEEDS_FULL_CORE) return NEEDS_FULL_CORE; // handle() loads it and runs the job again
+    if (retryable.has(err?.code)) return err.code; // handle() loads what it needs and runs the job again
     if (err?.code === "NEEDS_IMPORT_MESH") post({ type: "needs-import-mesh", jobId: msg.jobId, subparts: msg.subparts });
     else if (err?.code === "NEEDS_OCCT") post({ type: "needs-occt", jobId: msg.jobId, subparts: msg.subparts });
     else post({ type: "error", message: String(err?.message || err), jobId: msg.jobId });

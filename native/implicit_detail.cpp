@@ -261,6 +261,7 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
   if (!s.meshed || s.normals.size() != s.positions.size() || count < 0 || progCount < 0) return 1;
   const bool owned = s.ownerMesh;
   if (owned && !s.contactSet) return 1;
+  ipm_mesh::clear_sharp(s);   // applySurfaceDetail's result carries no sharpen tables
   if (owned && !s.hasCrease) { s.creaseMark.assign(s.vertOwner.size(), 0); s.hasCrease = true; }   // `mesh.crease ?? zeros`
   Ctx c{s, F, count, std::vector<const ipe::Program*>((size_t)count, nullptr)};
   // Refuse before touching the mesh: every texture an entry reads and every expr
@@ -276,7 +277,7 @@ int detail(ipe::Session& s, const double* F, int count, const int32_t* progIndex
       const int32_t pi = progIndex[(size_t)q];
       if (pi < 0 || (size_t)pi >= s.programs.size()) return 3;
       const ipe::Program& p = s.programs[(size_t)pi];
-      if (!p.ok || p.maxSlot >= (int)s.textures.size()) return 3;
+      if (!ipe::runnable(s, p)) return 3;
       c.progs[(size_t)k] = &p;
     }
   }

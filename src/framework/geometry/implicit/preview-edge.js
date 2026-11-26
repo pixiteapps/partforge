@@ -34,6 +34,11 @@ export const OWNER_FACTOR = 2;
  * about 14% from each. The ball pressed by a board (r 20 sphere, 80×80×6 box, round 1)
  * then previews at 0.6 mm and the vase fixture at 0.75 mm — what a ~300 ms limit on the
  * measured times picks too.
+ * The ~330 ms figure predates the sharpen stage (sharpen.js), which the model does not
+ * weigh. Measured after it (scripts/bench-implicit.mjs, core on, CPU ms, preview tier), the
+ * stage adds about 5% to the hand's 1.5 mm engine time, about 12% to a solid plate and boss
+ * join at 0.6 mm, and about 110% to the vase fixture at 1.2 mm (its gyroid's creases are
+ * resolved). The budget is unchanged: it picks the grid, not a time limit.
  */
 export const PREVIEW_BUDGET = 19_000;
 
@@ -46,7 +51,7 @@ export function previewProbe(compiled) {
   let plan;
   try { plan = planLeaves(compiled, PROBE_EDGE); }
   catch (e) { if (e instanceof ImplicitSizeError) return null; throw e; }
-  const progOps = plan.programs.map(programOps);
+  const progOps = plan.programs.map((p) => programOps(p, compiled.meshes));
   let total = 0;
   for (const leaf of plan.leaves) total += progOps[leaf.progIndex];
   const leaves = plan.leaves.length, ops = leaves ? total / leaves : 0;

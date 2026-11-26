@@ -1,12 +1,13 @@
 // The implicit engine's field evaluator — the C++ twin of
 // src/framework/geometry/implicit/{primitives.js, frames.js (xformPoint/xformDir),
 // expr-lower.js (the UN/BIN/TER tables), textures.js (sampleTexture),
-// contact.js (contactValue/bulgeOffset), program.js (runProgram/evalBatch/evalBatchContact)}. Bit-identical to the JS: the same
+// contact.js (contactValue/bulgeOffset), mesh-field.js (meshDistance: the MESH op), program.js (runProgram/evalBatch/evalBatchContact)}. Bit-identical to the JS: the same
 // operation order, Math.min/max as jsmath::jsmin/jsmax, the ported pf_* trig,
 // float32 texels promoted to double, first-wins ties (native/README.md).
 //
 // A SESSION holds what one meshing run needs on the native side: the part's
-// textures (slots in add order, matching compiled.textures), its emitted
+// textures (slots in add order, matching compiled.textures), its mesh fields
+// (slots in add order, matching compiled.meshes), its emitted
 // programs (indices in add order) and the interpreter's register blocks, reused
 // across calls so the hot loop never allocates. Several sessions may be live at
 // once; the C ABI addresses them by id.
@@ -14,6 +15,8 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+
+struct BVH;   // native/bvh.h's index (the base build's C API, which the full build links)
 
 namespace ipe {
 
@@ -24,6 +27,22 @@ constexpr int MAX_OWNER_K = 127; // contact.js's MAX_OWNER_K: a contact's child 
 struct Texture {
   int width = 0, height = 0;
   std::vector<float> data;      // textures.js stores float32 in 0..1
+};
+
+// mesh-field.js's field of a closed triangle mesh (a `solid` leaf), handed in from JS:
+// its 9 coordinates per triangle in mesh order (bvh.js's triangleVertices, as doubles)
+// and its 21 pseudonormal doubles per triangle (buildMeshField's `normals`: face, edges
+// AB, BC, CA, corners A, B, C). The session builds its own BVH over the vertices with
+// bvh.cpp's build (the JS's tree, node for node) and frees it with the field.
+struct MeshField {
+  int tris = 0;
+  std::vector<double> verts;    // 9 per triangle, mesh order (regionOf reads these)
+  std::vector<double> normals;  // 21 per triangle (NORMALS_PER_TRI)
+  BVH* bvh = nullptr;
+  MeshField() = default;
+  MeshField(const MeshField&) = delete;
+  MeshField& operator=(const MeshField&) = delete;
+  ~MeshField();
 };
 
 // One op of a validated program, decoded once (validate) so the interpreter
@@ -43,12 +62,14 @@ struct Program {
   bool ok = false;              // passed validate(): every op well-formed
   int nP = 0, nV = 0;
   int maxSlot = -1;             // highest texture slot a TEX op reads
+  int maxMesh = -1;             // highest mesh slot a MESH op reads
   int maxKid = -1;              // highest child index a CONTACT's child map names
   std::vector<Inst> insts;      // the decoded ops, END last (only when ok)
 };
 
 struct Session {
   std::vector<Texture> textures;
+  std::vector<std::unique_ptr<MeshField>> meshes;
   std::vector<Program> programs;
   // Register files: nP point registers (x, y, z) and nV value registers, each a
   // block of BATCH lanes; grown on demand, never shrunk, reused across runs.
@@ -103,7 +124,18 @@ struct Session {
   std::vector<int32_t> vertOwner;
   std::vector<uint8_t> ownerHeld, pinned, creaseMark;
   std::vector<int32_t> triOwner;   // ip_tri_owners' answer (result.js's triangleOwners)
+
+  // The sharpen stage's tables (implicit_sharpen.cpp, sharpen.js), per vertex, once it has
+  // sharpened the mesh: `sharp` (0 a mesher vertex, 1 an edge point, 2 a corner point) and
+  // `sharpPlanes` (2 per vertex: an edge point's plane vertices, else -1). untangle carries them;
+  // every other stage that makes or changes the mesh clears them (detail drops them, as the JS).
+  std::vector<uint8_t> sharp;
+  std::vector<int32_t> sharpPlanes;
 };
+
+// Can the session run `p`: it passed validate(), and every texture and mesh slot it
+// reads is present. Every caller checks this before run().
+bool runnable(const Session& s, const Program& p);
 
 // Checks a program's structure once (op codes, operand counts, register and fn
 // indices, primitive parameter counts) so the interpreter can trust it; a
@@ -122,14 +154,13 @@ struct Capture {
   double* shares = nullptr;
 };
 
-// runProgram over n <= BATCH lanes. The program must be ok and its texture
-// slots present (eval checks both). `cap` (null on the hot path) captures the
-// contact op's lanes at offset `off`.
+// runProgram over n <= BATCH lanes. The program must be runnable (eval checks).
+// `cap` (null on the hot path) captures the contact op's lanes at offset `off`.
 void run(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
          const Capture* cap = nullptr, int off = 0);
 
 // evalBatch: any n, in chunks of BATCH. Returns 0, or nonzero for a malformed
-// program / missing texture slot (nothing written then).
+// program / missing texture or mesh slot (nothing written then).
 int eval(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out);
 
 // evalBatchContact: eval, also capturing into `cap` after filling its arrays' first
@@ -141,6 +172,7 @@ int eval_contact(Session& s, const Program& p, const double* X, const double* Y,
 // The scalar building blocks, exposed for the later stages (detail heights).
 double eval_prim(int code, const double* P, double x, double y, double z);
 double sample_texture(const Texture& t, double u, double v);
+double mesh_distance(const MeshField& f, double x, double y, double z);
 
 // The session table (ids >= 1); null for an unknown or destroyed id.
 Session* session(int id);

@@ -43,6 +43,8 @@ export { minWall } from "./framework/oracle/min-wall.js";
 // The native core's switch (framework/core/core.js): bit-identical either way, so
 // this is a performance and kill switch, never a behaviour choice.
 export { setCoreEnabled, coreStatus, onCoreFallback, CORE_FALLBACK_REASONS, loadFullCore } from "./framework/core/core.js";
+// The mesh field builder that a k.implicit `solid` leaf needs, loaded on demand.
+export { loadMeshFieldBuilder } from "./framework/geometry/implicit/mesh-field-loader.js";
 export { overhang } from "./framework/oracle/overhang.js";
 // Mesh file parsers — the import pipeline's own readers, browser-safe pure
 // functions; the oracle package's corpus tests read real files through them.

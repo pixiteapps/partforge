@@ -1,7 +1,8 @@
 // C++ port of the implicit engine's evaluator: primitives.js, frames.js's
 // xformPoint/xformDir, expr-lower.js's UN/BIN/TER tables, textures.js's
 // sampleTexture, contact.js's contactValue/bulgeOffset (the CONTACT and BULGE
-// ops) and program.js's runProgram/evalBatch/evalBatchContact. See implicit_eval.h.
+// ops), mesh-field.js's meshDistance/regionOf (the MESH op) and program.js's
+// runProgram/evalBatch/evalBatchContact. See implicit_eval.h.
 //
 // What bit-exact parity needs, beyond native/README.md's rules:
 //   - every expression keeps the JS's association: `a - b + c` is (a - b) + c,
@@ -21,7 +22,16 @@
 //     2-operand unionN in attachment order; BULGE sums its regions in order
 //     from +0;
 //   - CONTACT, under eval_contact, captures per lane after its value, from that
-//     lane's own c_i and weights, in captureOwner's loop order (capture_owner).
+//     lane's own c_i and weights, in captureOwner's loop order (capture_owner);
+//   - MESH is meshDistance per lane: bvh.cpp's closestPoint (the JS's tree and
+//     traversal, so the same triangle on a tie, the same point and distance),
+//     +Infinity when it finds no triangle, +0 for a zero distance, else regionOf's
+//     branches (closestOnTri's, in its order) pick the pseudonormal JS computed
+//     and handed in, and the sign is that of (p - q) . n summed x, y, z in order.
+//     The session's BVH is built over the vertices as doubles where a Manifold
+//     soup's JS BVH holds float32: every value bvh.cpp stores in the vertex type
+//     is a vertex coordinate (a box corner is one), so both convert exactly and
+//     all arithmetic is double either way; the tree and every answer are the same.
 // Structure differs from the JS, never a lane's arithmetic: register files are
 // flat vectors of BATCH-lane blocks; a validated program is decoded once into
 // Insts (integer registers and sub-codes); each op dispatches its primitive or
@@ -33,6 +43,8 @@
 
 #include <cmath>
 #include <cstring>
+
+#include "bvh.h"
 
 #include "implicit_math.h"
 #include "js_math.h"
@@ -46,7 +58,8 @@ using jsmath::jsmin;
 namespace {
 
 enum Op { END = 0, XFORM = 1, XDIR = 2, PRIM = 3, UNION = 4, INTER = 5, NEG = 6, MIN2 = 7, MIRRORP = 8, ADDC = 9,
-          ONION = 10, WARP = 11, DISP = 12, SANITIZE = 13, CONTACT = 14, BULGE = 15, GET = 20, CONST = 21, UN = 22, BIN = 23, TER = 24, TEX = 25 };
+          ONION = 10, WARP = 11, DISP = 12, SANITIZE = 13, CONTACT = 14, BULGE = 15, GET = 20, CONST = 21, UN = 22, BIN = 23, TER = 24, TEX = 25,
+          MESH = 26 };
 
 // FN_CODES (program.js), pinned by test/implicit-program.test.js.
 enum Un { U_NEG, U_ABS, U_FLOOR, U_FRACT, U_SQRT, U_SIN, U_COS, U_NOT, U_COUNT };
@@ -252,6 +265,35 @@ inline double bulge_offset(const double* R, int nR, double x, double y, double z
   return s;
 }
 
+// mesh-field.js's NORMALS_PER_TRI and region codes (a region is its normal's slot).
+constexpr int NORMALS_PER_TRI = 21;
+enum Region { FACE = 0, EDGE_AB = 1, EDGE_BC = 2, EDGE_CA = 3, CORNER_A = 4, CORNER_B = 5, CORNER_C = 6 };
+
+// mesh-field.js's regionOf: closestOnTri's branches, on the same expressions, in the same order.
+inline int region_of(double px, double py, double pz, const double* V, size_t base) {
+  const double ax = V[base], ay = V[base + 1], az = V[base + 2];
+  const double bx = V[base + 3], by = V[base + 4], bz = V[base + 5];
+  const double cx = V[base + 6], cy = V[base + 7], cz = V[base + 8];
+  const double abx = bx - ax, aby = by - ay, abz = bz - az;
+  const double acx = cx - ax, acy = cy - ay, acz = cz - az;
+  const double apx = px - ax, apy = py - ay, apz = pz - az;
+  const double d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz;
+  if (d1 <= 0 && d2 <= 0) return CORNER_A;
+  const double bpx = px - bx, bpy = py - by, bpz = pz - bz;
+  const double d3 = abx * bpx + aby * bpy + abz * bpz, d4 = acx * bpx + acy * bpy + acz * bpz;
+  if (d3 >= 0 && d4 <= d3) return CORNER_B;
+  const double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) return EDGE_AB;
+  const double cpx = px - cx, cpy = py - cy, cpz = pz - cz;
+  const double d5 = abx * cpx + aby * cpy + abz * cpz, d6 = acx * cpx + acy * cpy + acz * cpz;
+  if (d6 >= 0 && d5 <= d6) return CORNER_C;
+  const double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) return EDGE_CA;
+  const double va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) return EDGE_BC;
+  return FACE;
+}
+
 std::vector<Session*> g_sessions;   // id = index + 1; null once destroyed
 
 }  // namespace
@@ -305,6 +347,26 @@ __attribute__((always_inline)) inline double prim_at(int code, const double* P, 
 
 double eval_prim(int code, const double* P, double x, double y, double z) { return prim_at(code, P, x, y, z); }
 
+MeshField::~MeshField() { bvh_destroy(bvh); }
+
+// mesh-field.js's meshDistance.
+double mesh_distance(const MeshField& f, double x, double y, double z) {
+  const double p[3] = {x, y, z};
+  double r[4];   // [qx, qy, qz, dist]
+  const int32_t tri = bvh_closest_point(f.bvh, p, r);
+  if (tri < 0) return INFINITY;   // no triangle found: NaN, infinite or overflowing input
+  const double d = r[3];
+  if (d == 0) return 0;           // +0, whatever the sign test would say
+  const size_t n = (size_t)tri * NORMALS_PER_TRI + (size_t)region_of(x, y, z, f.verts.data(), (size_t)tri * 9) * 3;
+  const double* N = f.normals.data();
+  const double s = (x - r[0]) * N[n] + (y - r[1]) * N[n + 1] + (z - r[2]) * N[n + 2];
+  return s < 0 ? -d : d;
+}
+
+bool runnable(const Session& s, const Program& p) {
+  return p.ok && p.maxSlot < (int)s.textures.size() && p.maxMesh < (int)s.meshes.size();
+}
+
 double sample_texture(const Texture& t, double u, double v) {
   const double uc = u > 0 ? (u < 1 ? u : 1) : 0;   // NaN fails `u > 0` -> 0
   const double vc = v > 0 ? (v < 1 ? v : 1) : 0;
@@ -322,6 +384,7 @@ double sample_texture(const Texture& t, double u, double v) {
 void validate(Program& p) {
   p.ok = false;
   p.maxSlot = -1;
+  p.maxMesh = -1;
   p.maxKid = -1;
   const std::vector<double>& c = p.code;
   const size_t len = c.size();
@@ -427,6 +490,10 @@ void validate(Program& p) {
         if (!has(5) || !isV(pc + 1) || !is_index(c[pc + 2], 1e9) || !isV(pc + 3) || !isV(pc + 4)) return;
         if ((int)c[pc + 2] > p.maxSlot) p.maxSlot = (int)c[pc + 2];
         pc += 5; break;
+      case MESH:   // [MESH, dst, p, slot]
+        if (!has(4) || !isV(pc + 1) || !isP(pc + 2) || !is_index(c[pc + 3], 1e9)) return;
+        if ((int)c[pc + 3] > p.maxMesh) p.maxMesh = (int)c[pc + 3];
+        pc += 4; break;
       default: return;
     }
   }
@@ -487,6 +554,7 @@ void decode(Program& p) {
         I.c = (int32_t)c[pc + 5]; pc += 6; break;
       case TEX:
         I.sub = (int32_t)c[pc + 2]; I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 3]; I.b = (int32_t)c[pc + 4]; pc += 5; break;
+      case MESH: I.d = (int32_t)c[pc + 1]; I.a = (int32_t)c[pc + 2]; I.sub = (int32_t)c[pc + 3]; pc += 4; break;
       default: return;   // unreachable: decode runs on validated programs only
     }
     out.push_back(I);
@@ -803,13 +871,20 @@ void run(Session& s, const Program& p, const double* X, const double* Y, const d
         for (int i = 0; i < n; i++) d[i] = sample_texture(t, u[i], v[i]);
         break;
       }
+      case MESH: {
+        double* d = vr(I.d);
+        const MeshField& f = *s.meshes[(size_t)I.sub];
+        const double *sx = px(I.a), *sy = py(I.a), *sz = pz(I.a);
+        for (int i = 0; i < n; i++) d[i] = mesh_distance(f, sx[i], sy[i], sz[i]);
+        break;
+      }
       default: return;   // unreachable for a validated program
     }
   }
 }
 
 int eval(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out) {
-  if (!p.ok || p.maxSlot >= (int)s.textures.size() || n < 0) return 1;
+  if (!runnable(s, p) || n < 0) return 1;
   for (int at = 0; at < n; at += BATCH) {
     const int m = n - at < BATCH ? n - at : BATCH;
     run(s, p, X + at, Y + at, Z + at, m, out + at);
@@ -819,7 +894,7 @@ int eval(Session& s, const Program& p, const double* X, const double* Y, const d
 
 int eval_contact(Session& s, const Program& p, const double* X, const double* Y, const double* Z, int n, double* out,
                  const Capture& cap) {
-  if (!p.ok || p.maxSlot >= (int)s.textures.size() || n < 0) return 1;
+  if (!runnable(s, p) || n < 0) return 1;
   if (cap.K < 1 || cap.K > MAX_OWNER_K || p.maxKid >= cap.K) return 3;
   const size_t nk = (size_t)n * (size_t)cap.K;
   for (int i = 0; i < n; i++) {
@@ -873,6 +948,22 @@ int ip_tex_add(int id, int width, int height, const float* data) {
   t.data.assign(data, data + (size_t)width * (size_t)height);
   s->textures.push_back(std::move(t));
   return (int)s->textures.size() - 1;
+}
+
+// mesh-field.js's field (see MeshField): copies `tris` triangles' 9 vertex doubles and 21
+// pseudonormal doubles and builds the BVH; returns the slot, or -1 (unknown session, no
+// triangles, a null array). Slots are the add order, which must be compiled.meshes'.
+int ip_mesh_field_add(int id, const double* verts9, int tris, const double* normals21) {
+  ipe::Session* s = ipe::session(id);
+  if (!s || tris < 1 || !verts9 || !normals21) return -1;
+  std::unique_ptr<ipe::MeshField> f(new ipe::MeshField());
+  f->tris = tris;
+  f->verts.assign(verts9, verts9 + (size_t)tris * 9);
+  f->normals.assign(normals21, normals21 + (size_t)tris * ipe::NORMALS_PER_TRI);
+  // bvh_build only reads the source (adopt 0): it copies the triangles into leaf order.
+  f->bvh = bvh_build(f->verts.data(), (uint32_t)tris, 1, 0);
+  s->meshes.push_back(std::move(f));
+  return (int)s->meshes.size() - 1;
 }
 
 // Copies the program and validates it; returns its index, or -1 for an

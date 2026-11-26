@@ -664,6 +664,19 @@ export function insideShared(other, w, mOther) {
   return Math.abs(windingNumber(V, p)) > 0.5;
 }
 
+// Is p inside `index` (its own frame), by ray parity alone: true or false, or null when every
+// direction grazed. No winding-number fallback, so the answer uses only + − × ÷ and
+// comparisons and is the same on every engine. For a caller that must not guess (the mesh
+// field's fold check, implicit/mesh-field-build.js).
+export function insideByParity(index, p) {
+  const V = index.vertices ?? index.jsIndex().vertices;
+  for (const dir of INSIDE_DIRS) {
+    const n = crossings(index, V, p, dir);
+    if (n >= 0) return n % 2 === 1;
+  }
+  return null;
+}
+
 // The generalized winding number of the triangles in V about p: the sum of their signed solid
 // angles seen from p (Van Oosterom–Strackee), over 4π. About ±1 inside a closed mesh (the sign
 // is its winding), 0 outside, about ±0.5 on its surface — which reads as outside, as a resting

@@ -33532,6 +33532,43 @@
     "declared": 0,
     "evaluated": 0
   },
+  "solid-leaf-demo.js#main": {
+    "ok": null,
+    "view": "main",
+    "cases": [
+      {
+        "name": "defaults",
+        "params": {
+          "demo": 0,
+          "blend": 8,
+          "offset": -2,
+          "knurl": 0.7,
+          "cell": 10
+        },
+        "checks": []
+      }
+    ],
+    "failures": [],
+    "warnings": [
+      {
+        "case": null,
+        "scope": "part",
+        "subpart": null,
+        "metric": "expectations",
+        "kind": "warn",
+        "expr": "evaluated",
+        "actual": 0,
+        "status": "warn",
+        "pass": null,
+        "message": "no expectations declared",
+        "hint": "nothing was verified — pin the dimensions and features the part is meant to have in verify.expect (and a process profile for bed fit and min wall), so every edit re-checks them"
+      }
+    ],
+    "costs": [],
+    "unevaluated": [],
+    "declared": 0,
+    "evaluated": 0
+  },
   "text-smoke.js#text": {
     "ok": null,
     "view": "text",

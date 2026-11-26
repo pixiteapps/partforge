@@ -6,8 +6,10 @@ import { meshStoreOwners } from "./mesher-owners.js";
 import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "./cleanup.js";
 import { cutCreases, untangle } from "./crease.js";
 import { applySurfaceDetail } from "./detail.js";
-import { implicitResult, triangleOwners } from "./result.js";
+import { sharpenMesh } from "./sharpen.js";
+import { implicitResult, sharpCounts, triangleOwners } from "./result.js";
 import { meshImplicitCore } from "../../core/implicit-core.js";
+import { hashableSpec } from "./call-id.js";
 
 export { choosePreviewEdge } from "./preview-edge.js";
 
@@ -21,7 +23,9 @@ export { compileImplicit, IMPLICIT_DEFAULTS } from "./compile.js";
 // A contact root (`compiled.ownerRoot ≥ 0`) meshes through the owner mesher
 // (mesher-owners.js) and owner-aware cleanup, and its result gains `vertOwner`,
 // `ownerHeld`, `pinned`, `crease` and `triOwner` (the crease cut, crease.js, after cleanup and before detail),
-// on the core as in JS. `owners: false` meshes the same field with the plain mesher instead: the seam baseline.
+// on the core as in JS. Every mesh then takes the sharpen stage (sharpen.js: vertices on the field's
+// sharp edges and corners), after the crease cut and before untangle and detail; `stats.sharpEdges`
+// and `stats.sharpCorners` count its points. `owners: false` meshes the same field with the plain mesher instead: the seam baseline.
 //
 // `cache` (a createSampleCache(), sample-cache.js — the preview kernel's) anchors the grid to
 // the world lattice (planLeaves `anchor`) and lets a leaf take its samples from an earlier
@@ -38,12 +42,17 @@ export function meshImplicit(compiled, edge, { tier, owners = true, cache } = {}
   const node = ownerPath ? compiled.ir.nodes[compiled.ownerRoot] : null;
   const raw = ownerPath ? meshStoreOwners(store, { gap: node.gap }) : meshStore(store);
   let mesh = cleanupMesh(store, raw, opts);
-  if (ownerPath) mesh = untangle(store, cutCreases(store, mesh, node.attWorld));
+  if (ownerPath) mesh = cutCreases(store, mesh, node.attWorld);
+  mesh = sharpenMesh(store, mesh);
+  if (ownerPath) mesh = untangle(store, mesh);
+  const sharp = sharpCounts(mesh);
   if (compiled.detail.length) mesh = applySurfaceDetail(store, mesh, compiled);
-  const result = implicitResult(compiled, edge, plan, mesh, store.clipped);
+  const result = implicitResult(compiled, edge, plan, mesh, store.clipped, sharp);
   result.stats.cacheHits = store.cacheHits;
   if (ownerPath) Object.assign(result, { vertOwner: mesh.vertOwner, ownerHeld: mesh.ownerHeld, pinned: mesh.pinned, crease: mesh.crease, triOwner: triangleOwners(mesh) });
   return result;
 }
 
-export const implicitHashable = (spec, compiled) => ({ spec, digests: compiled.digests });
+// The geometry-cache identity of a call: the spec with each solid leaf named by its hash
+// (hashableSpec), and the textures' content digests.
+export const implicitHashable = (spec, compiled) => ({ spec: hashableSpec(spec), digests: compiled.digests });

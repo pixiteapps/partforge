@@ -75,7 +75,7 @@ function toScript(block) {
 
 let k, scope;
 beforeAll(async () => {
-  k = await bootManifoldKernel();
+  k = await bootManifoldKernel({ meshFields: true }); // the guide's solid-leaf examples (a worker job loads it by itself)
   const checked = [];
   const check = (src, run, text) => {
     expect(plain(run()), src).toEqual(evalValue(text));
@@ -88,7 +88,7 @@ beforeAll(async () => {
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(65);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(70);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -138,10 +138,13 @@ test("every quoted error and warning is the code's own", () => {
     () => k.implicitFrames({ root: { kind: "sphere", r: 5 }, detail: [{ kind: "texture", image: "skin", amplitude: 0.3, size: [20, 20] }] }),
     () => k.implicit({ root: { kind: "subtract", children: [{ kind: "sphere", r: 2 }, { kind: "sphere", r: 5 }] }, preview: 1 }),
     () => k.implicit({ root: { kind: "box", size: [1000, 1000, 1000] }, preview: 0.05 }),
+    // A solid with no volume, and a mesh with one open triangle (a host kernel's solid).
+    () => k.implicit({ root: { kind: "solid", solid: k.sphere(5).intersect(k.sphere(5).translate([20, 0, 0])) } }),
+    () => k.implicit({ root: { kind: "solid", solid: { _hash: "open", toMesh: () => ({ positions: Float32Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0) }) } } }),
   ];
   const caught = triggers.map((f) => { try { f(); } catch (e) { return e; } throw new Error(`no throw: ${f}`); });
   expect(caught.map((e) => e.message)).toEqual(errorBlock);
-  expect(caught.map((e) => e.name)).toEqual([...Array(5).fill("ImplicitSpecError"), "Error", "ImplicitSizeError"]);
+  expect(caught.map((e) => e.name)).toEqual([...Array(5).fill("ImplicitSpecError"), "Error", "ImplicitSizeError", "ImplicitSpecError", "ImplicitSpecError"]);
   expect(caught[6]).toBeInstanceOf(organic.ImplicitSizeError);
   expect(caught[6].code).toBe("IMPLICIT_SIZE");
   expect(caught[0]).toBeInstanceOf(organic.ImplicitSpecError);
@@ -159,6 +162,11 @@ test("every quoted error and warning is the code's own", () => {
   expect(v.message).toBe(`implicit: ${v.issues.join("; ")}`);
   expect(b.message).toBe(v.message);
   expect(b.code).toBe("IMPLICIT_SPEC");
+  // The structural solid-leaf issue the prose quotes.
+  const notSolid = /structural issue, which\s+`validateImplicit` also finds: `([^`]+)`/.exec(errors)[1];
+  let ns;
+  try { organic.validateImplicit({ root: { kind: "solid", solid: 5 } }); } catch (e) { ns = e; }
+  expect(ns.issues).toEqual([notSolid]);
   expect(errors).toContain("`implicit-limbs-miss-target`");
   expect(read("../docs/ERROR-PATTERNS.md")).toContain("\n## implicit-limbs-miss-target\n");
 });
@@ -473,4 +481,12 @@ test("the backend section's subdiv messages are the code's own", () => {
   const fallback = /no\s+subdivision engine throws\s+`([^`]+)`/.exec(backend)[1];
   expect(() => finishKernel({}).subdiv(k.cage({ box: { size: [1, 1, 1] } }))).toThrow(fallback);
   expect(finishKernel({}).cage({ box: { size: [2, 2, 2] } }).centroid("+z:0,0")).toEqual([0, 0, 1]);
+});
+
+test("the guide joins a cage and a tree with a blend, not only a sharp seam", () => {
+  expect(guide).not.toMatch(/Do not plan on a smooth join between a cage and a tree/);
+  const when = section("When a cage, and when an implicit tree", "###");
+  expect(when.replace(/\s+/g, " ")).toContain("put both in one tree as `solid` leaves under a `union` with `k`");
+  // The cage-on-a-post example is in that section, and it blends a k.subdiv body.
+  expect(fences("js", when).join("")).toMatch(/k\.subdiv\([\s\S]*kind: "union", k: 4/);
 });
