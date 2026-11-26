@@ -29,6 +29,7 @@
 //     order decide nothing; it is asked at the same places, in the same order, as the JS asks it.
 //   - Reads past an array's end in the JS keep their JS meaning: a vertex past the round's input
 //     count is free and has no mesher plane (its N0 entry is undefined, so unit gives null).
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -159,6 +160,23 @@ void subdivide(const std::vector<uint32_t>& T, uint32_t t, SplitMap& sp, std::ve
   const int64_t A = v[r], B = v[(r + 1) % 3], C = v[(r + 2) % 3], sAB = s[r], sCA = s[(r + 2) % 3];
   if (n == 1) { put(A, sAB, C); put(sAB, B, C); }
   else { put(A, sAB, sCA); put(sAB, B, C); put(sAB, C, sCA); }
+}
+
+// retriangulate: T split at sp's points, as subdivide over every triangle in order gives it. The
+// triangles in `cut` (those on a split edge, any order, repeats allowed) are subdivided and every
+// other one is copied as it is, since a triangle on no split edge subdivides to itself.
+void retriangulate(const std::vector<uint32_t>& T, std::vector<uint32_t> cut, SplitMap& sp, std::vector<uint32_t>& out) {
+  std::sort(cut.begin(), cut.end());
+  cut.erase(std::unique(cut.begin(), cut.end()), cut.end());
+  out.clear();
+  out.reserve(T.size() + 9 * cut.size());
+  size_t from = 0;
+  for (const uint32_t t : cut) {
+    out.insert(out.end(), T.begin() + 3 * from, T.begin() + 3 * (size_t)t);
+    subdivide(T, t, sp, out);
+    from = (size_t)t + 1;
+  }
+  out.insert(out.end(), T.begin() + 3 * from, T.end());
 }
 
 // triNormal: the (unnormalized) normal, or false when an altitude is under MIN_ALTITUDE.
@@ -552,6 +570,7 @@ struct Commit {
   std::vector<double> planeN;
   std::vector<uint32_t> added;    // candidate indices, in vertex order
   std::vector<uint32_t> marked;   // corners: the vertices made corners where they are or by a move
+  std::vector<uint32_t> cut;      // the triangles on a split edge
   Touched touched;
   size_t nv = 0;
   explicit Commit(uint64_t keyNv) : sp(keyNv) {}
@@ -628,6 +647,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     nv++; S.sharp[v] = 1; S.planes[2 * v] = (int32_t)c.a; S.planes[2 * v + 1] = (int32_t)c.b; setPlanes(v, c); S.added.push_back(kept[q]);
     apart.add((uint32_t)v);
     for (const uint32_t t : edgeTris) S.touched.add(t, (int32_t)kept[q], -1);
+    S.cut.insert(S.cut.end(), edgeTris.begin(), edgeTris.end());
   }
   S.nv = nv;
   S.P.resize(3 * nv); S.N.resize(3 * nv); S.sharp.resize(nv); S.planes.resize(2 * nv); S.planeN.resize(6 * nv);
@@ -742,6 +762,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
       }
       if (fresh) { nv++; made.push_back(Made{(uint32_t)u}); S.added.push_back((uint32_t)ci); apart.add((uint32_t)u); }
       for (const uint32_t t : tris) S.touched.add(t, (int32_t)ci, 0);
+      S.cut.insert(S.cut.end(), tris.begin(), tris.end());
       c.took = k;
     }
   }
@@ -911,8 +932,7 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
       }
     }
   }
-  res.out.clear();
-  for (size_t t = 0; t < T.size() / 3; t++) subdivide(T, (uint32_t)t, S->sp, res.out);
+  retriangulate(T, S->cut, S->sp, res.out);
   for (const uint32_t ci : S->added) { res.addedLeaf.push_back(cand[ci].leaf); res.addedEv.push_back(cand[ci].ev); }
   res.marked = S->marked;
   x.P.swap(S->P);
@@ -1040,7 +1060,7 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   // 5. Re-triangulate. A new vertex takes its evaluating end's leaf and owner.
   Mesh res;
   res.owner = mesh.owner; res.hasCrease = mesh.hasCrease; res.hasSharp = true;
-  for (size_t t = 0; t < T.size() / 3; t++) subdivide(T, (uint32_t)t, S->sp, res.T);
+  retriangulate(T, S->cut, S->sp, res.T);
   res.VL = VL0;
   if (mesh.owner) { res.VO = mesh.VO; res.held = mesh.held; res.pin = mesh.pin; }
   if (mesh.hasCrease) res.crease = mesh.crease;

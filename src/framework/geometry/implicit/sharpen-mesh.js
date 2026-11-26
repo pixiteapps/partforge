@@ -73,6 +73,27 @@ export function subdivide(T, t, splitOf, ekey, out) {
   else { put(A, sAB, sCA); put(sAB, B, C); put(sAB, C, sCA); }
 }
 
+// T split at splitOf's points, as subdivide over every triangle in order gives it: the triangles in
+// `cut` (those on a split edge, in any order, repeats allowed) are subdivided and every other one is
+// copied as it is, since a triangle on no split edge subdivides to itself. A new Uint32Array.
+export function retriangulate(T, cut, splitOf, ekey) {
+  const tris = Uint32Array.from(new Set(cut)).sort(), pieces = [], ends = [];
+  for (const t of tris) { subdivide(T, t, splitOf, ekey, pieces); ends.push(pieces.length); }
+  const out = new Uint32Array(T.length - 3 * tris.length + pieces.length);
+  let o = 0, from = 0, p = 0;
+  const copy = (a, b) => {
+    if (ArrayBuffer.isView(T)) out.set(T.subarray(a, b), o); else for (let j = a; j < b; j++) out[o + j - a] = T[j];
+    o += b - a;
+  };
+  tris.forEach((t, i) => {
+    copy(3 * from, 3 * t);
+    for (; p < ends[i]; p++) out[o++] = pieces[p];
+    from = t + 1;
+  });
+  copy(3 * from, T.length);
+  return out;
+}
+
 // "flip" (a triangle against the sum of its corners' normals), "sliver" (an altitude under
 // MIN_ALTITUDE) or null, over the triangles `tris` of T become when split at `splitOf`.
 export function checkTris(T, tris, splitOf, ekey, P, N) {

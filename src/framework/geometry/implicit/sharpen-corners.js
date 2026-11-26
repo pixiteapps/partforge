@@ -3,7 +3,7 @@
 // for the core port.
 import { hypot3 } from "../js-math.js";
 import { SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_CORNER_DET, CORNER_MERGE } from "./sharpen.js";
-import { evalField, dot, unit, adjacency, subdivide, checkTris, fieldFlips, apartIndex } from "./sharpen-mesh.js";
+import { evalField, dot, unit, adjacency, retriangulate, checkTris, fieldFlips, apartIndex } from "./sharpen-mesh.js";
 
 // Step 6 on the split mesh `T` (positions P, normals N, leaves VL, all grown by step 5; P and N
 // change here). A plane is (n, n·x): an edge point's two are the side gradients Newton ended on
@@ -116,8 +116,7 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
     }
   }
   st.corners = S.added.length + S.marked.length;
-  const out = [];
-  for (let t = 0; t < T.length / 3; t++) subdivide(T, t, S.splitOf, ekey, out);
+  const out = retriangulate(T, S.cut, S.splitOf, ekey);
   return { out, added: S.added, marked: S.marked, P: S.P, N: S.N };
 }
 
@@ -145,7 +144,7 @@ function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, s
   P.set(P1); N.set(N1);
   const apart = index(P);
   let nv = P1.length / 3;
-  const splitOf = new Map(), made = [], added = [], marked = [], moved = new Set(), touched = new Map();
+  const splitOf = new Map(), made = [], added = [], marked = [], moved = new Set(), touched = new Map(), cut = [];
   for (const k of ["cornerSplits", "cornerMoves", "cornerFlip", "cornerSliver", "cornerApart", "cornerNear"]) st[k] = 0;
   const R2 = CORNER_MERGE * edge * CORNER_MERGE * edge, M2 = SHARP_MAX_MOVE * edge * SHARP_MAX_MOVE * edge;
   const d2 = (v, p) => { const x = P[3 * v] - p[0], y = P[3 * v + 1] - p[1], z = P[3 * v + 2] - p[2]; return x * x + y * y + z * z; };
@@ -195,8 +194,8 @@ function commitCorners(cand, { P: P1, N: N1, T, ekey, fan, byEdge, free, edge, s
         continue;
       }
       if (fresh) { nv++; made.push({ v: u, p: c.p }); added.push(c); apart.add(u); }
-      touch(byEdge.get(key), c); st.cornerSplits++; c.took = k;
+      touch(byEdge.get(key), c); cut.push(...byEdge.get(key)); st.cornerSplits++; c.took = k;
     }
   }
-  return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, added, marked, touched };
+  return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, added, marked, touched, cut };
 }

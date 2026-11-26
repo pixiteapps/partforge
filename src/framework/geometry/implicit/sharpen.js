@@ -53,7 +53,7 @@
 // several edges only drops the triangles it collapses. Native-portable arithmetic only
 // (js-math.js), for the core port.
 import { hypot3 } from "../js-math.js";
-import { evalField, dot, det3, unit, adjacency, subdivide, checkTris, fieldFlips, apartIndex } from "./sharpen-mesh.js";
+import { evalField, dot, det3, unit, adjacency, retriangulate, checkTris, fieldFlips, apartIndex } from "./sharpen-mesh.js";
 import { cornerPass } from "./sharpen-corners.js";
 
 // Every constant of the stage, here and in sharpen-corners.js, has a mirror in
@@ -346,9 +346,9 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const { splitOf, planeN, added } = S;
   let { P, N } = S;
 
-  // 5. Re-triangulate. A new vertex takes its evaluating end's leaf and owner.
-  let out = [];
-  for (let t = 0; t < T.length / 3; t++) subdivide(T, t, splitOf, ekey, out);
+  // 5. Re-triangulate (only the triangles on a split edge change). A new vertex takes its
+  // evaluating end's leaf and owner.
+  let out = retriangulate(T, S.cut, splitOf, ekey);
   const VL = Array.from(VL0);
   const extra = ["vertOwner", "ownerHeld", "pinned", "crease"].filter((f) => mesh[f]).map((f) => ({ f, a: Array.from(mesh[f]) }));
   const grow = (c) => {
@@ -409,7 +409,7 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
   P.set(P0); N.set(N0);
   const apart = index(P);
   let nv = nv0;
-  const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map(), how = new Map();
+  const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map(), how = new Map(), cut = [];
   if (mesh.sharp) { sharp.set(mesh.sharp); planes.set(mesh.sharpPlanes); }
   // Each edge point's two plane normals (the side gradients Newton ended on); 0 otherwise.
   const planeN = new Float64Array(6 * cap);
@@ -458,8 +458,9 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
     nv++; sharp[v] = 1; planes[2 * v] = c.a; planes[2 * v + 1] = c.b; setPlanes(v, c); added.push(c);
     apart.add(v);
     touch(byEdge.get(key), c, -1);
+    cut.push(...byEdge.get(key));
     st.split++;
   });
   return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, sharp: sharp.subarray(0, nv), planes: planes.subarray(0, 2 * nv),
-    planeN: planeN.subarray(0, 6 * nv), added, touched, how };
+    planeN: planeN.subarray(0, 6 * nv), added, touched, how, cut };
 }
