@@ -3,7 +3,7 @@
 // checks every change passes. Native-portable arithmetic only (js-math.js), for the core port.
 import { evalBatch } from "./program.js";
 import { hypot3 } from "../js-math.js";
-import { DIFF, FLIP_NEAR, MIN_ALTITUDE } from "./sharpen.js";
+import { DIFF, FLIP_NEAR, MIN_ALTITUDE, SHARP_APART } from "./sharpen.js";
 
 // The field at the points, each evaluated with its leaf's program (crease.js's evalPoints).
 export function evalField(store, pts, leafOf) {
@@ -129,4 +129,45 @@ export function fieldFlips(store, S, tris, { VL0, T, ekey, edge }, memo = null) 
   owner.forEach((t, q) => { if (d[4 * q] - d[4 * q + 1] < 0 || d[4 * q + 2] - d[4 * q + 3] < 0) flipped.add(t); });
   if (memo && S.how) for (const t of fresh) memo.set(t, { by: S.touched.get(t).slice(), how: S.how.get(t).slice(), bad: flipped.has(t) });
   return tris.filter((t) => known.has(t) || flipped.has(t));
+}
+
+// The SHARP_APART guard's index: the first `nv` vertices of P in a hash grid of cells
+// 2·SHARP_APART·edge wide (so a point within SHARP_APART·edge of a vertex is in one of the 27
+// cells around it), built once. `over(Q)` gives one commit's view: Q is that commit's live
+// positions, `add(v)` files a vertex it placed or moved, and `has(p, skip)` says whether any vertex
+// other than `skip` lies within SHARP_APART·edge of p at its position in Q. A question of whether
+// one exists, so no order decides it.
+export function apartIndex(P, nv, edge) {
+  const ap = SHARP_APART * edge, size = 2 * ap, A2 = ap * ap, base = new Map();
+  const cell = (x) => Math.floor(x / size);
+  // A cell index that is not a safe integer (a non-finite or absurd position) is never filed and never near.
+  const finite = (x, y, z) => Number.isSafeInteger(cell(x)) && Number.isSafeInteger(cell(y)) && Number.isSafeInteger(cell(z));
+  const file = (cells, Q, v) => {
+    const x = Q[3 * v], y = Q[3 * v + 1], z = Q[3 * v + 2];
+    if (!finite(x, y, z)) return;
+    const k = `${cell(x)},${cell(y)},${cell(z)}`, l = cells.get(k);
+    if (l) l.push(v); else cells.set(k, [v]);
+  };
+  for (let v = 0; v < nv; v++) file(base, P, v);
+  return (Q) => {
+    const over = new Map();
+    const has = (p, skip) => {
+      const x = p[0], y = p[1], z = p[2];
+      if (!finite(x, y, z)) return false;
+      const ix = cell(x), iy = cell(y), iz = cell(z);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+        const key = `${ix + i},${iy + j},${iz + k}`;
+        for (const cells of [base, over]) {
+          const l = cells.get(key);
+          if (l) for (const v of l) {
+            if (v === skip) continue;
+            const a = Q[3 * v] - x, b = Q[3 * v + 1] - y, c = Q[3 * v + 2] - z;
+            if (a * a + b * b + c * c < A2) return true;
+          }
+        }
+      }
+      return false;
+    };
+    return { add: (v) => file(over, Q, v), has };
+  };
 }

@@ -234,6 +234,15 @@ with a different test for where a crease is.
      candidates behind a triangle that faces against the field are dropped, and the
      commit runs again. The near read catches a centre that sits on a crease of a rough
      field, such as a knurl.
+   - **No two vertices at one position** (`SHARP_APART`, 0.001 cells). A split, an end move
+     or a corner point is refused when its point lies within `SHARP_APART` cells of any
+     other vertex of the mesh, old or placed earlier in the same commit. The vertex a move
+     replaces does not count, nor the corner vertex a corner split reuses. The earlier
+     candidate in the fixed order keeps its place. The test is a hash grid of cells twice
+     `SHARP_APART` wide, asked whether any vertex is near, so no order of the grid decides
+     anything. A refused edge change is counted as `apart`. In the corner passes a refused
+     try counts as `cornerNear` and the next try is taken. Two vertices at one position can
+     weld when the kernel builds the solid and break it.
 3. **Corners.** An edge with an edge point at one end, whose two ends carry three distinct
    planes between them, is a corner candidate at the point where the three meet, under
    the same two limits. A mesher vertex gives its normal as its one plane. A pinned or
@@ -256,11 +265,14 @@ with a different test for where a crease is.
      crease (a rim) meet just off the surface. A candidate within `CORNER_MERGE` of a corner
      the first pass made is not made, and no corner point moves. The tries are the first
      pass's. Where the first pass found every corner, the second changes nothing.
-   - This is the only path known to make two vertices at one position. An edge point lies
-     within 1.5 cells of its own edge's middle, on that edge's own crease. Two edge points
-     meet only where two creases meet, at a corner, and there the corner pass merges its
-     estimates and refuses the case above. The tests count vertex pairs closer than
-     1e-6 mm on every case, and find none.
+   - The refusal of a corner vertex not next to its edge (`cornerApart`) stays. It is not
+     the only path to two vertices at one position. On the knurl at the print grid 0.3 mm,
+     two splits on unrelated edges met: the edges share no vertex and no triangle, and lie
+     about 0.02 mm apart, mirror images across the plane x = y on either side of a ridge
+     on the top cap. Both Newton solves ended on the same ridge point, within 1e-7 mm.
+     Three such pairs appeared. The `SHARP_APART` guard above refuses the later split of
+     each pair, and it changes no byte on any other measured case. The tests count vertex
+     pairs closer than 1e-6 mm on every case, the knurl at 0.3 mm included, and find none.
 4. Triangles with one, two or three split edges become two, three or four. A triangle
    left with a repeated vertex is dropped.
 5. **A second edge round** runs after corners, on edges with neither end an edge or corner
@@ -323,8 +335,12 @@ blend.
 **Constants.** The five named constants keep their first values: `SHARP_ANGLE_COS`
 0.9063077870366499 (25°), `SHARP_TOL` 0.05, `SHARP_MAX_MOVE` 1.5, `SHARP_SNAP` 0.15 and
 `SHARP_CORNER_DET` 0.05. The hard cases below passed with them, so none was changed. The
-stage's internal values are `CORNER_MERGE` 0.05 cells, the Newton stop `1e-5` cells, three
-flat reads, and the flip test's two steps, `1e-4` and `0.005` cells.
+stage's internal values are `CORNER_MERGE` 0.05 cells, `ACROSS_TOL` 0.005 cells (the second
+corner pass's field limit), `SHARP_APART` 0.001 cells, the Newton stop `1e-5` cells, three
+flat reads, and the flip test's two steps, `1e-4` and `0.005` cells. `SHARP_APART` is 1e-4 mm
+at a 0.1 mm grid, far above the 1e-6 mm the tests call coincident, and 50 times below
+`CORNER_MERGE`. The native core mirrors every constant as a literal, and
+`test/implicit-sharpen-native.test.js` checks that the two agree.
 
 The density rule's share, one fifth (`SHARP_DENSE_DIV` 5), was chosen from the share of
 candidate edges per leaf program, at 0.6 and 1.0 mm. Where real edges and corners are (the
@@ -370,6 +386,33 @@ process, so it also counts the garbage collector's helper threads.
 - The second corner pass adds about 10 to 25 ms (one more scan of the edges).
 - The knurl's 38,936 candidate edges (about half of all its edges) are all skipped by the
   density rule. What is left is one pass over the edges.
+
+**Stage numbers, native core.** The same stage on the core (the SIMD build), against the core's
+sample, mesh and cleanup, wall milliseconds, median of 3 after a warm-up.
+
+| Case | Before | Stage | Stage / before |
+| --- | --- | --- | --- |
+| Boss near a plate's edge | 376 | 68 | 18.2% |
+| Boss in an L bracket's inside corner | 348 | 59 | 16.9% |
+| Box boss on a cylinder's side | 220 | 30 | 13.8% |
+| Knurled cylinder (`displace`) | 397 | 7 | 1.6% |
+
+The `SHARP_APART` guard costs about 2 to 3 points of that share: each round and corner pass
+files every vertex in its grid once.
+
+**A known cost: the knurl at the print grid.** At 0.3 mm the knurl's ridges are resolved. Its
+share of candidate edges falls under a fifth, so the density rule does not skip it, and it is
+sharpened in full. Those points are real creases. The stage then costs about one and a half
+times the stages before it. The rule is not changed for it.
+
+| Grid (print tier) | Before | Stage | Stage / before | Edge points | Corners | Triangles |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.3 mm | 1716 | 2914 | 170% | 26,356 | 129 | 361,080 to 404,828 |
+| 0.6 mm (dense, skipped) | 387 | 7 | 1.7% | 0 | 0 | 82,680, unchanged |
+
+At 0.3 mm the result is sound: no open edge, no pinched vertex, no coincident pair, and no
+flip or sliver among the triangles the stage made. The mesher's own flips fall from 3,661 to
+3,218 and its slivers from 43 to 41.
 
 **Hard cases.** Tests in `test/implicit-sharpen.test.js`, 0.6 mm grid unless named.
 

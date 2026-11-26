@@ -348,7 +348,8 @@ describe("the sharpen stage runs on the core", () => {
       [`posed, gap 0, at ${edge} ${tier}`, () => posed(0), edge, tier, true],
       [`posed, gap 0.05, at ${edge} ${tier}`, () => posed(0.05), edge, tier, true],
       // The density rule skips the knurl at 0.6. At 0.3 its share of crease edges is under a
-      // fifth, so it is sharpened (26,359 edge points).
+      // fifth, so it is sharpened in full. Parity sees bytes only: its soundness (no coincident
+      // vertices among them) is test/implicit-sharpen.test.js's "knurl at print 0.3".
       [`knurl at ${edge} ${tier}`, () => ({ root: knurl() }), edge, tier, edge === 0.3],
     ]),
     // The four parked sweep cases (one corner cut), and four that find all eight.

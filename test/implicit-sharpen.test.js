@@ -335,6 +335,17 @@ describe("sharpenMesh, hard cases", () => {
     expect(t2 - t1).toBeLessThan(0.25 * (t1 - t0));
   }, 240_000);
 
+  // At the print grid the knurl's ridges are resolved: it is not dense and is sharpened in full.
+  // Two splits on unrelated edges, mirror images across x = y on either side of a ridge on the
+  // top cap, once converged onto one point (three such pairs); SHARP_APART refuses the later.
+  test("knurl at print 0.3: sharpened in full, sound, no two vertices at one position", () => {
+    const r = run(knurl(), 0.3, "print");
+    expect(r.stats.dense).toBe(0);
+    expect(r.stats.apart).toBeGreaterThan(0);
+    expect(cornerVerts(r.mesh).length).toBeGreaterThan(0);
+    expectSound(r);
+  }, 600_000);
+
   // The density rule's floor: a small part has a high share of crease edges but few of them.
   for (const edge of GRIDS) {
     test(`small: cubes 3 to 6 cells wide keep all 8 corners (grid ${edge})`, () => {

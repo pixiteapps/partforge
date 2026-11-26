@@ -26,7 +26,8 @@
 //      of it moved. Moves go first. A change that would make a triangle face against its
 //      corners' normals, or one thinner than MIN_ALTITUDE, is dropped; so is one whose
 //      triangles, in their final form, face against the field at their centre (read along the
-//      normal at FLIP_NEAR·edge and at DIFF·edge).
+//      normal at FLIP_NEAR·edge and at DIFF·edge), or one whose point is within SHARP_APART·edge
+//      of another vertex (two splits on unrelated edges can meet on one ridge point).
 //   5. Triangles with one, two or three split edges become 2, 3 or 4 triangles.
 //   6. Corners (`corners`, on by default). Each vertex carries its tangent planes: an edge point
 //      the two side gradients Newton ended on, through its own position; a mesher vertex its
@@ -52,7 +53,7 @@
 // several edges only drops the triangles it collapses. Native-portable arithmetic only
 // (js-math.js), for the core port.
 import { hypot3 } from "../js-math.js";
-import { evalField, dot, det3, unit, adjacency, subdivide, checkTris, fieldFlips } from "./sharpen-mesh.js";
+import { evalField, dot, det3, unit, adjacency, subdivide, checkTris, fieldFlips, apartIndex } from "./sharpen-mesh.js";
 import { cornerPass } from "./sharpen-corners.js";
 
 // Every constant of the stage, here and in sharpen-corners.js, has a mirror in
@@ -84,6 +85,12 @@ export const FLIP_NEAR = 1e-4;
 export const CONVERGED = 1e-5;
 /** Corner points this close (cells) are one vertex. */
 export const CORNER_MERGE = 0.05;
+/**
+ * No change may put a point closer than this (cells) to another vertex (apartIndex): two vertices
+ * at one position can weld when the kernel builds the solid. It is 1e-4 mm at a 0.1 mm grid,
+ * far above the 1e-6 mm the tests call coincident, and 50 times below CORNER_MERGE.
+ */
+export const SHARP_APART = 0.001;
 // Per side per read: six points, DIFF·edge each way along each axis. Their differences are the
 // gradient (central differences); their mean is the side's value.
 export const SIDE_PTS = 6;
@@ -245,9 +252,9 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const prior = (v) => (mesh.sharp ? mesh.sharp[v] : 0);
   const normal = (v) => [N0[3 * v], N0[3 * v + 1], N0[3 * v + 2]], pos = (v) => [P0[3 * v], P0[3 * v + 1], P0[3 * v + 2]];
   for (const name of ["candidates", "dense", "split", "moved", "offField", "tooFar", "notSharp", "unsolved"]) st[name] = 0;
-  for (const name of ["snapBlocked", "endMoved", "flip", "sliver", "fieldFlip"]) st[name] = 0;
+  for (const name of ["snapBlocked", "endMoved", "flip", "sliver", "fieldFlip", "apart"]) st[name] = 0;
   for (const name of ["cornerCandidates", "corners", "cornerSplits", "cornerDet", "cornerFar", "cornerOffField"]) st[name] = 0;
-  for (const name of ["cornerMoves", "cornerFlip", "cornerSliver", "cornerFieldFlip"]) st[name] = 0;
+  for (const name of ["cornerMoves", "cornerFlip", "cornerSliver", "cornerFieldFlip", "cornerNear"]) st[name] = 0;
 
   // 1. The candidate edges, in the order the triangle list first names them.
   const adj = adjacency(T, nv0);
@@ -313,9 +320,9 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const { fan, byEdge } = adj;
   const free = (v) => !(mesh.ownerHeld?.[v]) && !pinned(v) && !creased(v);
   let S;
-  const flipMemo = new Map();
+  const flipMemo = new Map(), apart = apartIndex(P0, nv0, edge);
   for (;;) {
-    S = commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh });
+    S = commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart });
     const flipped = fieldFlips(store, S, [...S.touched.keys()], { VL0, T, ekey, edge }, flipMemo);
     if (!flipped.length) break;
     for (const t of flipped) for (const c of S.touched.get(t)) if (c.ok) { c.ok = false; st.fieldFlip++; }
@@ -353,7 +360,7 @@ function sharpenRound(store, mesh, corners, st, retry) {
     // corner point made so far never moves.
     const sh = sharpNow();
     st.across = {};
-    for (const name of ["cornerCandidates", "corners", "cornerDet", "cornerFar", "cornerOffField", "cornerFieldFlip"]) st.across[name] = 0;
+    for (const name of ["cornerCandidates", "corners", "cornerDet", "cornerFar", "cornerOffField", "cornerFieldFlip", "cornerNear"]) st.across[name] = 0;
     const D = cornerPass(store, { P, N, T: out, VL, P0, N0, sharp: sh, planeN, noPlane, free: (v) => free(v) && sh[v] !== 2,
       edge, st: st.across, across: true });
     ({ out, P, N } = D);
@@ -374,22 +381,24 @@ function sharpenRound(store, mesh, corners, st, retry) {
 }
 
 // The kept candidates (c.ok), committed in order: every move, then every split on an edge with
-// neither end moved. Returns the positions, normals, splits, the
+// neither end moved. A change whose point is within SHARP_APART·edge of another vertex (old, or
+// placed by this commit so far) is refused (`apart`): the earlier candidate keeps its place. Returns the positions, normals, splits, the
 // `sharp` and `sharpPlanes` tables, the split candidates in vertex order (`added`), and for each
 // changed triangle the candidates that changed it (`touched`) and what each did (`how`: the moved
 // end, or −1 for a split).
-function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh }) {
+function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart: index }) {
   const kept = cand.filter((c) => c.ok), cap = nv0 + kept.length;
   // Room for a vertex per kept candidate; `nv` is the count so far.
   const P = new Float64Array(3 * cap), N = new Float64Array(3 * cap), splitOf = new Map(), moved = new Uint8Array(nv0);
   P.set(P0); N.set(N0);
+  const apart = index(P);
   let nv = nv0;
   const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map(), how = new Map();
   if (mesh.sharp) { sharp.set(mesh.sharp); planes.set(mesh.sharpPlanes); }
   // Each edge point's two plane normals (the side gradients Newton ended on); 0 otherwise.
   const planeN = new Float64Array(6 * cap);
   const setPlanes = (v, c) => { for (let i = 0; i < 3; i++) { planeN[6 * v + i] = c.uA[i]; planeN[6 * v + 3 + i] = c.uB[i]; } };
-  for (const k of ["split", "moved", "endMoved", "snapBlocked", "flip", "sliver"]) st[k] = 0;
+  for (const k of ["split", "moved", "endMoved", "snapBlocked", "flip", "sliver", "apart"]) st[k] = 0;
   const check = (tris) => checkTris(T, tris, splitOf, ekey, P, N);
   const touch = (tris, c, v) => {
     for (const t of tris) { (touched.get(t) ?? touched.set(t, []).get(t)).push(c); (how.get(t) ?? how.set(t, []).get(t)).push(v); }
@@ -409,18 +418,21 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh }) {
     if (moved[c.a] || moved[c.b]) { st.endMoved++; return; }
     // A move that cannot be made is tried as a split below.
     if (!free(end)) { st.snapBlocked++; ends[q] = -1; return; }
+    if (apart.has(c.p, end)) { st.apart++; return; }   // not tried as a split either: same point
     const was = [P[3 * end], P[3 * end + 1], P[3 * end + 2]];
     P[3 * end] = c.p[0]; P[3 * end + 1] = c.p[1]; P[3 * end + 2] = c.p[2];
     const bad = check(fan.get(end));
     if (bad) { P[3 * end] = was[0]; P[3 * end + 1] = was[1]; P[3 * end + 2] = was[2]; st[bad]++; ends[q] = -1; return; }
     // The moved end keeps its normal: the crease point is on its own plane too.
     moved[end] = 1; sharp[end] = 1; planes[2 * end] = c.a; planes[2 * end + 1] = c.b; setPlanes(end, c); st.moved++;
+    apart.add(end);
     touch(fan.get(end), c, end);
   });
   // Then splits, on edges with neither end moved.
   kept.forEach((c, q) => {
     if (ends[q] >= 0) return;
     if (moved[c.a] || moved[c.b]) { st.endMoved++; return; }
+    if (apart.has(c.p, -1)) { st.apart++; return; }
     const v = nv, key = ekey(c.a, c.b);
     const n = unit([0, 1, 2].map((i) => N0[3 * c.a + i] + N0[3 * c.b + i])) ?? [0, 0, 0];
     for (let i = 0; i < 3; i++) { P[3 * v + i] = c.p[i]; N[3 * v + i] = n[i]; }
@@ -428,6 +440,7 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh }) {
     const bad = check(byEdge.get(key));
     if (bad) { splitOf.delete(key); st[bad]++; return; }   // v is not counted: the next split writes over it
     nv++; sharp[v] = 1; planes[2 * v] = c.a; planes[2 * v + 1] = c.b; setPlanes(v, c); added.push(c);
+    apart.add(v);
     touch(byEdge.get(key), c, -1);
     st.split++;
   });

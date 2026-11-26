@@ -25,6 +25,8 @@
 //     new mesh's edge order.
 //   - A JS Map's delete (splitOf) is a -1 sentinel in flat::Map, and get of a deleted or absent
 //     key is -1, as `?? -1` gives; set after delete writes the slot again.
+//   - The SHARP_APART guard (ApartView) is a question of existence, so its grid's layout and
+//     order decide nothing; it is asked at the same places, in the same order, as the JS asks it.
 //   - Reads past an array's end in the JS keep their JS meaning: a vertex past the round's input
 //     count is free and has no mesher plane (its N0 entry is undefined, so unit gives null).
 #include <cmath>
@@ -57,6 +59,7 @@ constexpr double DIFF = 0.005, MIN_ALTITUDE = 0.001;
 constexpr double FLIP_NEAR = 1e-4;
 constexpr double CONVERGED = 1e-5;
 constexpr double CORNER_MERGE = 0.05;
+constexpr double SHARP_APART = 0.001;
 constexpr int SIDE_PTS = 6;
 constexpr int FLAT_READS = 3;
 // sharpen-corners.js
@@ -248,6 +251,74 @@ int fieldFlips(ipe::Session& s, const double* P, SplitMap& sp, const Touched& tc
   for (const uint32_t t : tc.keys) if (known[t] || bad[t]) flipped.push_back(t);
   return 0;
 }
+
+// The SHARP_APART guard's index (sharpen-mesh.js apartIndex): a hash grid of cells
+// 2·SHARP_APART·edge wide. The JS keys a cell by its integer coordinates as a string; here a hash
+// of them keys a flat map, and two cells that share a hash share a list, which only adds vertices
+// to the exact distance test. Whether a vertex is near is a question of existence, so no order
+// decides it. A cell index that is not a safe integer is never filed and never near (the JS's
+// Number.isSafeInteger), which also keeps the cast defined.
+struct ApartCells {
+  flat::Map<uint32_t> idx{64};
+  std::vector<std::vector<uint32_t>> lists;
+  static uint64_t key(int64_t i, int64_t j, int64_t k) {
+    const uint64_t h = (uint64_t)i * 0x9E3779B97F4A7C15ULL ^ (uint64_t)j * 0xC2B2AE3D27D4EB4FULL ^ (uint64_t)k * 0x165667B19E3779F9ULL;
+    return h == flat::Map<uint32_t>::EMPTY ? h - 1 : h;
+  }
+  void file(uint64_t k, uint32_t v) {
+    bool inserted = false;
+    const uint32_t i = idx.insert(k, (uint32_t)lists.size(), &inserted);
+    if (inserted) lists.emplace_back();
+    lists[i].push_back(v);
+  }
+  const std::vector<uint32_t>* get(uint64_t k) { const uint32_t* i = idx.find(k); return i ? &lists[*i] : nullptr; }
+};
+
+struct ApartBase {
+  double ap = 0, size = 0, A2 = 0;
+  ApartCells cells;
+  bool cellOf(double x, double y, double z, int64_t* c) const {
+    const double q[3] = {std::floor(x / size), std::floor(y / size), std::floor(z / size)};
+    for (int i = 0; i < 3; i++) if (!(std::fabs(q[i]) <= 9007199254740991.0)) return false;   // NaN fails too
+    for (int i = 0; i < 3; i++) c[i] = (int64_t)q[i];
+    return true;
+  }
+  void build(const double* P, size_t nv, double edge) {
+    ap = SHARP_APART * edge; size = 2 * ap; A2 = ap * ap;
+    for (size_t v = 0; v < nv; v++) {
+      int64_t c[3];
+      if (cellOf(P[3 * v], P[3 * v + 1], P[3 * v + 2], c)) cells.file(ApartCells::key(c[0], c[1], c[2]), (uint32_t)v);
+    }
+  }
+};
+
+// One commit's view: Q its live positions, `over` the vertices it placed or moved.
+struct ApartView {
+  ApartBase& b;
+  const double* Q;
+  ApartCells over;
+  ApartView(ApartBase& base, const double* q) : b(base), Q(q) {}
+  void add(uint32_t v) {
+    int64_t c[3];
+    if (b.cellOf(Q[3 * (size_t)v], Q[3 * (size_t)v + 1], Q[3 * (size_t)v + 2], c)) over.file(ApartCells::key(c[0], c[1], c[2]), v);
+  }
+  bool has(const double* p, int64_t skip) {
+    int64_t c[3];
+    if (!b.cellOf(p[0], p[1], p[2], c)) return false;
+    for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
+      const uint64_t key = ApartCells::key(c[0] + i, c[1] + j, c[2] + k);
+      for (ApartCells* cells : {&b.cells, &over}) {
+        const std::vector<uint32_t>* l = cells->get(key);
+        if (l) for (const uint32_t v : *l) {
+          if ((int64_t)v == skip) continue;
+          const double x = Q[3 * (size_t)v] - p[0], y = Q[3 * (size_t)v + 1] - p[1], z = Q[3 * (size_t)v + 2] - p[2];
+          if (x * x + y * y + z * z < b.A2) return true;
+        }
+      }
+    }
+    return false;
+  }
+};
 
 // ---------------------------------------------------------------------------
 // The edge rounds (sharpen.js)
@@ -449,13 +520,14 @@ struct Commit {
 
 // commit: the kept candidates (ok), in order: every move, then every split on an edge with
 // neither end moved.
-int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, const std::vector<uint8_t>& freeV) {
+int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, const std::vector<uint8_t>& freeV, ApartBase& apartBase) {
   const size_t nv0 = mesh.P.size() / 3;
   std::vector<uint32_t> kept;
   for (size_t q = 0; q < C.size(); q++) if (C[q].ok) kept.push_back((uint32_t)q);
   const size_t cap = nv0 + kept.size();
   S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
   for (size_t i = 0; i < mesh.P.size(); i++) { S.P[i] = mesh.P[i]; S.N[i] = mesh.N[i]; }
+  ApartView apart(apartBase, S.P.data());   // S.P is never resized before the end
   std::vector<uint8_t> moved(nv0, 0);
   size_t nv = nv0;
   S.sharp.assign(cap, 0); S.planes.assign(2 * cap, -1);
@@ -483,6 +555,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     if (end < 0) continue;
     if (moved[c.a] || moved[c.b]) continue;
     if (!freeV[(size_t)end]) { ends[q] = -1; continue; }
+    if (apart.has(c.p, end)) continue;   // not tried as a split either: the same point
     const size_t e3 = 3 * (size_t)end;
     const double was[3] = {S.P[e3], S.P[e3 + 1], S.P[e3 + 2]};
     S.P[e3] = c.p[0]; S.P[e3 + 1] = c.p[1]; S.P[e3 + 2] = c.p[2];
@@ -493,6 +566,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     }
     moved[(size_t)end] = 1; S.sharp[(size_t)end] = 1; S.planes[2 * (size_t)end] = (int32_t)c.a; S.planes[2 * (size_t)end + 1] = (int32_t)c.b;
     setPlanes((size_t)end, c);
+    apart.add((uint32_t)end);
     for (const uint32_t* t = adj.fanBegin((uint32_t)end); t != adj.fanEnd((uint32_t)end); t++) S.touched.add(*t, (int32_t)kept[q], (int32_t)end);
   }
   // Then splits, on edges with neither end moved.
@@ -500,6 +574,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     const ECand& c = C[kept[q]];
     if (ends[q] >= 0) continue;
     if (moved[c.a] || moved[c.b]) continue;
+    if (apart.has(c.p, -1)) continue;
     const size_t v = nv;
     const double sum[3] = {N0[3 * (size_t)c.a] + N0[3 * (size_t)c.b], N0[3 * (size_t)c.a + 1] + N0[3 * (size_t)c.b + 1], N0[3 * (size_t)c.a + 2] + N0[3 * (size_t)c.b + 2]};
     double n[3];
@@ -512,6 +587,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
       continue;
     }
     nv++; S.sharp[v] = 1; S.planes[2 * v] = (int32_t)c.a; S.planes[2 * v + 1] = (int32_t)c.b; setPlanes(v, c); S.added.push_back(kept[q]);
+    apart.add((uint32_t)v);
     for (const uint32_t t : edgeTris) S.touched.add(t, (int32_t)kept[q], -1);
   }
   S.nv = nv;
@@ -561,10 +637,11 @@ struct CornerCtx {
 };
 
 // commitCorners: the kept candidates, each by its first try (from c.from) with no flip or sliver.
-void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& S) {
+void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& S, ApartBase& apartBase) {
   const size_t nv1 = x.P.size() / 3, cap = nv1 + C.size();
   S.P.assign(3 * cap, 0); S.N.assign(3 * cap, 0);
   for (size_t i = 0; i < x.P.size(); i++) { S.P[i] = x.P[i]; S.N[i] = x.N[i]; }
+  ApartView apart(apartBase, S.P.data());   // S.P is never resized before the end
   size_t nv = nv1;
   struct Made { uint32_t v; };
   std::vector<Made> made;
@@ -587,6 +664,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
   auto moveTo = [&](uint32_t v, size_t ci) {
     const KCand& c = C[ci];
     if (moved[v] || !x.freeV[v] || d2(v, c.p) > M2) return false;
+    if (apart.has(c.p, v)) return false;
     const size_t o = 3 * (size_t)v;
     const double was[3] = {S.P[o], S.P[o + 1], S.P[o + 2]}, wn[3] = {S.N[o], S.N[o + 1], S.N[o + 2]};
     for (int i = 0; i < 3; i++) { S.P[o + i] = c.p[i]; S.N[o + i] = c.n[i]; }
@@ -595,6 +673,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
       return false;
     }
     moved[v] = 1; S.marked.push_back(v); made.push_back(Made{v});
+    apart.add(v);
     for (const uint32_t* t = adj.fanBegin(v); t != adj.fanEnd(v); t++) S.touched.add(*t, (int32_t)ci, 0);
     return true;
   };
@@ -613,6 +692,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
       // k == 1: split, at the shared vertex when there is one.
       const bool fresh = v < 0;
       const size_t u = fresh ? nv : (size_t)v;
+      if (fresh && apart.has(c.p, -1)) continue;
       if (fresh) for (int i = 0; i < 3; i++) { S.P[3 * u + i] = c.p[i]; S.N[3 * u + i] = c.n[i]; }
       S.sp.set(c.a, c.b, (int64_t)u);
       adj.byEdge(c.a < c.b ? c.a : c.b, c.a < c.b ? c.b : c.a, edgeTris);
@@ -621,7 +701,7 @@ void commitCorners(std::vector<KCand>& C, CornerCtx& x, const Adj& adj, Commit& 
         S.sp.del(c.a, c.b);
         continue;
       }
-      if (fresh) { nv++; made.push_back(Made{(uint32_t)u}); S.added.push_back((uint32_t)ci); }
+      if (fresh) { nv++; made.push_back(Made{(uint32_t)u}); S.added.push_back((uint32_t)ci); apart.add((uint32_t)u); }
       for (const uint32_t t : tris) S.touched.add(t, (int32_t)ci, 0);
       c.took = k;
     }
@@ -770,9 +850,11 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   // Commit, then the field-flip rounds: a candidate whose change flipped one goes on to its next try.
   std::unique_ptr<Commit> S;
   std::vector<uint32_t> flipped;
+  ApartBase apartBase;
+  apartBase.build(P.data(), nv1, edge);
   for (;;) {
     S.reset(new Commit((uint64_t)nv1));
-    commitCorners(cand, x, adj, *S);
+    commitCorners(cand, x, adj, *S, apartBase);
     if (fieldFlips(s, S->P.data(), S->sp, S->touched, false, x.VL, T, edge, nullptr, flipped) != 0) return 2;
     if (flipped.empty()) break;
     for (const uint32_t t : flipped) {
@@ -881,9 +963,11 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   std::unique_ptr<Commit> S;
   std::vector<MemoEntry> memo(T.size() / 3);
   std::vector<uint32_t> flipped;
+  ApartBase apartBase;
+  apartBase.build(P0.data(), nv0, edge);
   for (;;) {
     S.reset(new Commit((uint64_t)nv0));
-    commit(cand, mesh, adj, *S, freeV);
+    commit(cand, mesh, adj, *S, freeV, apartBase);
     if (fieldFlips(s, S->P.data(), S->sp, S->touched, true, VL0, T, edge, &memo, flipped) != 0) return 2;
     if (flipped.empty()) break;
     for (const uint32_t t : flipped) {
@@ -1006,12 +1090,12 @@ int ip_sharpen(int id) {
 // TEST ONLY (test/implicit-sharpen-native.test.js): the stage's constants, in this order:
 // SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_DIV,
 // SHARP_DENSE_MIN, NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
-// CORNER_MERGE, SIDE_PTS, FLAT_READS, ACROSS_TOL, TRIES. Writes them to `out` and returns the count.
+// CORNER_MERGE, SIDE_PTS, FLAT_READS, ACROSS_TOL, TRIES, SHARP_APART. Writes them to `out` and returns the count.
 int ip_sharpen_constants(double* out) {
   using namespace ipm_mesh;
   const double v[] = {SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, (double)SHARP_DENSE_DIV,
                       (double)SHARP_DENSE_MIN, (double)NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
-                      CORNER_MERGE, (double)SIDE_PTS, (double)FLAT_READS, ACROSS_TOL, (double)TRIES};
+                      CORNER_MERGE, (double)SIDE_PTS, (double)FLAT_READS, ACROSS_TOL, (double)TRIES, SHARP_APART};
   const int n = (int)(sizeof v / sizeof v[0]);
   for (int i = 0; i < n; i++) out[i] = v[i];
   return n;
