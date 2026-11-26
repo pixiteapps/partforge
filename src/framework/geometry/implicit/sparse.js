@@ -183,8 +183,10 @@ export function evaluateLeaves(plan, hooks = {}) {
   return { ...plan, leaves, clipped, cacheHits };
 }
 
-// A program's identity for leaf keys: its bytes and the textures it may read, by content
-// (byteAwareReplacer fingerprints the Float64Array). Memoized per program OBJECT, not per
+// A program's identity for leaf keys: its bytes and the textures and mesh fields it may
+// read, by content (byteAwareReplacer fingerprints the Float64Array; a mesh field by its
+// vertex digest, mesh-field.js). The `mesh` member is there only when the plan has mesh
+// fields, so a plan without one keeps its exact key bytes. Memoized per program OBJECT, not per
 // content: safe because each planLeaves call emits fresh program arrays (emitProgram) and
 // nothing writes one afterwards, so an object's digest can never go stale.
 const programDigests = new WeakMap(), programIds = new WeakMap();
@@ -192,7 +194,10 @@ export function programDigest(plan, i) {
   const prog = plan.programs[i];
   let d = programDigests.get(prog);
   if (d === undefined) {
-    d = JSON.stringify({ prog, tex: plan.textures.map((t) => t.digest) }, byteAwareReplacer);
+    const meshes = plan.textures.meshes ?? [];
+    const id = meshes.length ? { prog, tex: plan.textures.map((t) => t.digest), mesh: meshes.map((m) => m.digest) }
+      : { prog, tex: plan.textures.map((t) => t.digest) };
+    d = JSON.stringify(id, byteAwareReplacer);
     programDigests.set(prog, d);
   }
   return d;

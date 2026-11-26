@@ -13,11 +13,12 @@ import { emitProgram, evalBatch } from "./program.js";
  * The signed distance (negative inside) to `node`, in part coordinates. The node is a
  * k.implicit root (validated and lowered once, here; a bad one throws ImplicitSpecError).
  * It names no frames — there are none to resolve. `images` maps the image names an
- * expr's textures read to their decoded grids, as a Map or a plain object.
+ * expr's textures read to their decoded grids, as a Map or a plain object. `meshFieldOf`
+ * gives a `solid` leaf's field (compileImplicit's; the kernel passes its memoized one).
  */
-export function implicitDistance(node, { images } = {}) {
+export function implicitDistance(node, { images, meshFieldOf } = {}) {
   const map = images instanceof Map ? images : new Map(Object.entries(images ?? {}));
-  const compiled = compileImplicit({ root: node }, { images: map });
+  const compiled = compileImplicit({ root: node }, { images: map, meshFieldOf });
   const prog = emitProgram(compiled, fullDecision(compiled));
   // One set of 1-element buffers per returned function, reused by every call: the function is
   // not reentrant (calling it from inside itself would clobber them) — fine for grip's

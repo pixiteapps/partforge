@@ -71,7 +71,7 @@ int sample(ipe::Session& s, const int32_t* leaves, int count, const double* orig
     const int32_t pi = leaves[4 * L + 3];
     if (pi < 0 || (size_t)pi >= s.programs.size()) return 2;
     const ipe::Program& p = s.programs[(size_t)pi];
-    if (!p.ok || p.maxSlot >= (int)s.textures.size()) return 3;
+    if (!ipe::runnable(s, p)) return 3;
     if (ownerK > 0 && p.maxKid >= ownerK) return 5;   // a child the owner store cannot name
   }
   s.sampled = false;

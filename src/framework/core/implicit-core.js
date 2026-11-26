@@ -23,6 +23,7 @@ const isFault = (err) => (typeof WebAssembly === "object" && err instanceof WebA
 const isNumbers = (a) => ArrayBuffer.isView(a) || Array.isArray(a);
 const isInt32 = (v) => Number.isInteger(v) && v >= -0x80000000 && v <= 0x7fffffff;
 const LEAF_SAMPLES = 125;   // (LEAF + 1)³, sparse.js's LEAF = 4
+const NORMALS_PER_TRI = 21; // mesh-field.js's NORMALS_PER_TRI (the C++'s too)
 const MAX_OWNER_K = 127;    // contact.js's MAX_OWNER_K (the C++'s too)
 
 /** Thrown when the core faulted (or is already poisoned): run the JS path instead. */
@@ -79,6 +80,35 @@ export class NativeSession {
     return slot;
   }
 
+  /**
+   * A buildMeshField() result (mesh-field.js: `bvh.vertices`, 9 per triangle in mesh order,
+   * `tris`, `normals`, 21 per triangle); returns its slot. The session builds its own BVH
+   * over the vertices (as doubles: a float32 soup converts exactly, and bvh.cpp's tree over
+   * the same values is the JS's tree) and frees it when the session is destroyed.
+   */
+  addMesh(field) {
+    const { c } = this;
+    const V = field?.bvh?.vertices, N = field?.normals, tris = field?.tris;
+    if (!Number.isInteger(tris) || tris < 1 || !(V instanceof Float32Array || V instanceof Float64Array) || V.length !== tris * 9
+      || !(N instanceof Float64Array) || N.length !== tris * NORMALS_PER_TRI) {
+      throw refusal(`implicit: a mesh field needs tris ≥ 1, 9 float vertex coordinates and ${NORMALS_PER_TRI} float64 normals per triangle`);
+    }
+    const verts = V instanceof Float64Array ? V : Float64Array.from(V);
+    const slot = this.#call(() => {
+      let pv = 0, pn = 0;
+      try {
+        pv = c.copyIn(verts);
+        pn = c.copyIn(N);
+        return c.x.ip_mesh_field_add(this.id, pv, tris, pn);
+      } finally {
+        if (pv) c.x.free(pv);
+        if (pn) c.x.free(pn);
+      }
+    });
+    if (slot < 0) throw refusal(`implicit: the core refused a mesh field of ${tris} triangles`);
+    return slot;
+  }
+
   /** An emitted program (program.js's Float64Array format); returns its index. */
   addProgram(prog) {
     const { c } = this;
@@ -118,7 +148,7 @@ export class NativeSession {
       rc = c.x.ip_eval(this.id, progIndex, base, base + cap * 8, base + cap * 16, n, base + cap * 24);
       return rc === 0 ? c.copyOut(Float64Array, base + cap * 24, n) : null;
     });
-    if (rc !== 0) throw refusal(`implicit: the core refused program ${progIndex} (malformed, or a texture slot it lacks)`);
+    if (rc !== 0) throw refusal(`implicit: the core refused program ${progIndex} (malformed, or a texture or mesh slot it lacks)`);
     return out;
   }
 
@@ -168,7 +198,7 @@ export class NativeSession {
         c.x.free(base);
       }
     });
-    if (rc !== 0) throw refusal(`implicit: the core refused program ${progIndex} (malformed, a texture slot it lacks, or a child index past cap.K)`);
+    if (rc !== 0) throw refusal(`implicit: the core refused program ${progIndex} (malformed, a texture or mesh slot it lacks, or a child index past cap.K)`);
     return out;
   }
 
@@ -579,9 +609,11 @@ export function meshImplicitCore(compiled, edge, plan, opts = CLEANUP, { owners 
   let s = null, mesh, clipped, cacheHits = 0, triOwner = null;
   try {
     s = new NativeSession(c);
-    // Plan order: a leaf's progIndex and a program's texture slots are session indices
-    // (plan.textures IS compiled.textures, so the detail's slots name the same ones).
+    // Plan order: a leaf's progIndex and a program's texture and mesh slots are session
+    // indices (plan.textures IS compiled.textures, so the detail's slots name the same ones,
+    // and plan.textures.meshes IS compiled.meshes, in first-use order).
     plan.textures.forEach((t, i) => { if (s.addTexture(t) !== i) throw refusal("implicit: the core numbered a texture out of plan order"); });
+    (plan.textures.meshes ?? []).forEach((f, i) => { if (s.addMesh(f) !== i) throw refusal("implicit: the core numbered a mesh field out of plan order"); });
     plan.programs.forEach((p, i) => { if (s.addProgram(p) !== i) throw refusal("implicit: the core numbered a program out of plan order"); });
     if (ownerPath) s.setContact(compiled.ir.nodes[compiled.ownerRoot]);
     ({ clipped, cacheHits } = s.sample(plan, { readBack: false, cache }));

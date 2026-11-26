@@ -6,6 +6,7 @@ import { createSkinDrag } from "../src/framework/skin/skin-drag.js";
 import { frameMotions, skinVertices } from "../src/framework/skin/deform.js";
 import { implicitCallId } from "../src/framework/geometry/implicit/call-id.js";
 import { TWO_BONE } from "./fixtures/skin-fixtures.js";
+import { probeSubPartPose } from "../src/framework/pose-probe-core.js";
 
 const id = implicitCallId(TWO_BONE(0), []);
 const frames = [null, `${id}:root`, `${id}:child`];
@@ -189,4 +190,37 @@ test("nothing left deformed ends the drag", () => {
   edit({ r: 6 });
   skin.deform();
   expect(skin.isDragging()).toBe(false);
+});
+
+// The call id counts every solid leaf as the same "solid" (call-id.js), so framesOnlyChange
+// passes a change that swaps only a solid leaf's solid. The real probe's shapeHash is what
+// refuses it (skinnableBetween), and a frames-only change of the same part still skins.
+test("a change of only a solid leaf's solid is not skinnable; a frames-only change is", () => {
+  const spec = (solid, bend) => ({
+    frames: { arm: { at: [0, 0, 0] }, tip: { parent: "arm", at: [0, 0, 20], rotate: [{ axis: [1, 0, 0], deg: bend }] } },
+    root: { kind: "union", k: 2, children: [
+      { kind: "capsule", a: [0, 0, 0], b: [0, 0, 20], r: 3, frame: "arm" },
+      { kind: "sphere", r: 3, frame: "tip" },
+      { kind: "solid", solid, at: [0, 0, -4] },
+    ] },
+  });
+  const sub = { build: (k, p) => k.implicit(spec(k.box({ min: [-p.w, -p.w, -5], max: [p.w, p.w, 0] }), p.bend)) };
+  const params = { bend: 0, w: 5 };
+  let version = 0;
+  const viewer = { setSubVertices: vi.fn(() => true), hasSubMesh: () => true };
+  const probe = vi.fn((_part, view, p) => new Map([["body", probeSubPartPose(sub, { view, p, d: {} })]]));
+  const skin = createSkinDrag({ parts: { body: {} }, views: {} }, viewer, {
+    params, getView: () => "v", getParamsVersion: () => version, probe,
+  });
+  const edit = (patch) => { Object.assign(params, patch); version++; };
+  const cid = implicitCallId(spec({}, 0), []);
+  skin.recordDelivered("body", delivery({ bindings: { ...delivery().bindings, frames: [null, `${cid}:arm`, `${cid}:tip`] } }),
+    { view: "v", params: { bend: 0, w: 5 } });
+  expect(skin.hasBase("body")).toBe(true);
+  edit({ bend: 30 });
+  expect(skin.canSkin("body")).toBe(true);        // frames only
+  edit({ bend: 0, w: 6 });
+  expect(skin.canSkin("body")).toBe(false);       // only the solid changed
+  edit({ bend: 30, w: 6 });
+  expect(skin.canSkin("body")).toBe(false);
 });

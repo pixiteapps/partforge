@@ -934,7 +934,7 @@ between the Manifold preview and the OCCT STEP export.
 ## implicit-blend-eats-child
 
 - **Symptom:** A small feature of a `k.implicit` body (a knuckle, a bead, a nail) is gone or has melted into a shapeless lump where it meets its neighbour; lint warns `implicit-blend-eats-child`.
-- **Cause:** The blend width `k` of a `union`/`intersect`/`subtract` (or of a contact `attach` entry) is larger than the thickness of a child it joins. A smooth blend reaches about `k` past the seam, so a child thinner than that is absorbed whole.
+- **Cause:** The blend width `k` of a `union`/`intersect`/`subtract` (or of a contact `attach` entry) is larger than the thickness of a child it joins. A smooth blend reaches about `k` past the seam, so a child thinner than that is absorbed whole. Lint has no geometry for a `solid` leaf, so the rule does not check a solid leaf; it still checks the other children of that blend.
 - **Fix:** Use a `k` smaller than the thinnest child the node joins — the lint message names the node and the child. If the large parts need a wide blend and the small one a narrow one, nest them: blend the small child onto its neighbour with its own small `k` first, then blend that group into the rest.
 
 ## implicit-limbs-miss-target
@@ -948,6 +948,24 @@ between the Manifold preview and the OCCT STEP export.
 - **Symptom:** A `k.implicit` body with an `expr` formula meshes with holes, missing patches or floating crumbs, though the formula looks right; lint warns `implicit-lipschitz-low`.
 - **Cause:** The mesher skips space using the field's value: it assumes the value changes by at most `lipschitz` (default 1) per mm. A formula that changes faster — a scaled distance, a gyroid, a warped field — lets it step past the surface.
 - **Fix:** Set `lipschitz` on the `expr` node to at least the slope lint measured (the hint gives a value), or divide the formula by its scale so it is close to a true distance. Lint samples 512 points, so a clean lint is not a proof: if holes remain, raise `lipschitz` further.
+
+## implicit-solid-empty
+
+- **Symptom:** `.solid: the solid is empty` in an `implicit: ` error that names the leaf's path, for example `implicit: root.children[1].solid: the solid is empty`.
+- **Cause:** A `solid` leaf of a `k.implicit` tree holds a solid with no volume, such as a cut that removed everything or an intersection of solids that do not overlap.
+- **Fix:** Build the solid alone first and check its `volume()`. Correct the operation that emptied it (the cut order, the sizes, the placement). Then put it in the tree. See [docs/domains/organic.md](domains/organic.md), "Solids in a tree".
+
+## implicit-solid-not-a-solid
+
+- **Symptom:** `.solid: must be a solid (the result of a kernel op)` in an `implicit: ` error that names the leaf's path, for example `implicit: root.solid: must be a solid (the result of a kernel op)`.
+- **Cause:** The `solid` field of a `solid` leaf holds a value that no kernel op made: a number, a plain object, a `Shape2D`, a cage, or a mesh written by hand.
+- **Fix:** Pass the `Solid` that a kernel op returns (`k.box(...)`, `k.subdiv(cage)`, an import, another `k.implicit`). For a cage, pass `k.subdiv(cage)`, not the cage. For a 2-D shape, extrude it first. See [docs/domains/organic.md](domains/organic.md), "Solids in a tree".
+
+## implicit-solid-open
+
+- **Symptom:** `.solid: the solid's mesh is not closed:` in an `implicit: ` error that counts the edges, for example `implicit: root.solid: the solid's mesh is not closed: 3 directed edges are not matched by its reverse (the mesh is open or inconsistently wound)`.
+- **Cause:** A `solid` leaf holds a solid whose mesh is open or wound inconsistently, so the leaf has no inside to measure a signed distance from.
+- **Fix:** Repair the solid before you put it in the tree: close its holes and make all its triangles face out. A solid from the Manifold backend's own ops is always closed, so this error usually comes from a solid that a host's own kernel made. See [docs/domains/organic.md](domains/organic.md), "Solids in a tree".
 
 ## implicit-step-export
 

@@ -6,6 +6,7 @@ import { xformPoint, xformDir } from "./frames.js";
 import { evalPrim, warpPoint, mirrorPoint, sanitize } from "./primitives.js";
 import { evalExprScalar } from "./expr-lower.js";
 import { sampleTexture } from "./textures.js";
+import { meshDistance } from "./mesh-field.js";
 import { clearance, contactInterval, attachWeightRange, bulgeRange, ATTACH_STRIDE, BULGE_STRIDE } from "./contact.js";
 
 // Inheriting a parent's decision (planLeaves' child blocks). `parentDec` is the decision of
@@ -70,6 +71,7 @@ function visit(c, id, x, y, z, r, pd) {
   switch (n.kind) {
     case "prim": { const v = evalPrim(n.prim.code, n.prim.P, x, y, z); return { lo: v - n.L * r, hi: v + n.L * r, dec: { id } }; }
     case "expr": { const v = sanitize(evalExprScalar(n.expr, x, y, z, c.textures, sampleTexture)); return { lo: v - n.L * r, hi: v + n.L * r, dec: { id } }; }
+    case "mesh": { const v = meshDistance(c.meshes[n.slot], x, y, z); return { lo: v - n.L * r, hi: v + n.L * r, dec: { id } }; }
     case "union": case "intersect": case "subtract": {
       // union keeps slot i unless lo_i > T = H + k + margin (H = min hi); intersect/subtract
       // (operands after the first negated) unless hi_i < T = Lmax − k − margin (Lmax = max lo).
