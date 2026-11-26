@@ -227,6 +227,8 @@ shrink a solid, or to texture one.
   to the grid, and its flat faces are remeshed too. Use a grid fine enough for the
   edges you care about.
 - `frame` and `at` place the solid as they place any node.
+- A solid whose mesh folds back on itself, as some damaged STL files do, is refused with
+  a point on the fold: repair the mesh there in a mesh tool first.
 
 A rounded join between two ordinary solids. A sharp `union` of the same two solids has
 a square corner where the boss meets the plate. The blend fills that corner:

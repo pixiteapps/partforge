@@ -63,7 +63,7 @@ const defaultMeshFieldOf = (solid) => meshFieldBuilder()(solid.toMesh());
 
 // What a MeshFieldError's reason means for a leaf, after `<path>.solid: `.
 const meshFieldProblem = (e) => (e.reason === "empty" ? "the solid is empty"
-  : e.reason === "open" ? e.message.replace(/^the mesh/, "the solid's mesh") : e.message);
+  : e.reason === "open" || e.reason === "folded" ? e.message.replace(/^the mesh/, "the solid's mesh") : e.message);
 
 // A probe solid's leaf box. Lint's geometry-free probe has no mesh to bound, so its
 // `meshFieldOf` gives null and the leaf takes this box (any real part fits inside it).

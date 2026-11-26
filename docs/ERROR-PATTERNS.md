@@ -955,6 +955,12 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** A `solid` leaf of a `k.implicit` tree holds a solid with no volume, such as a cut that removed everything or an intersection of solids that do not overlap.
 - **Fix:** Build the solid alone first and check its `volume()`. Correct the operation that emptied it (the cut order, the sizes, the placement). Then put it in the tree. See [docs/domains/organic.md](domains/organic.md), "Solids in a tree".
 
+## implicit-solid-folded
+
+- **Symptom:** `.solid: the solid's mesh folds back on itself:` in an `implicit: ` error that counts the triangles and names a point, for example `implicit: root.child.solid: the solid's mesh folds back on itself: 64 triangles face the wrong way, the first near (-11.52, -3.35, 39.88), so its inside cannot be told from its outside there: repair the mesh in a mesh tool (or export it again) and import the repaired file`. Before this check, the same tree failed with `Not manifold`.
+- **Cause:** A `solid` leaf holds a solid whose mesh is closed but folds back on itself: a strip of triangles runs past an edge and lies flat under itself, or a thin triangle faces into the solid, so the leaf's sign test reads inside far out from the fold.
+- **Fix:** Repair the mesh before you import it: in a mesh tool, remove the folds and the thin flipped triangles near the point the error names (a "make manifold" or "remove degenerate faces" repair usually does it), or export the file again from its source. A clean file of the same shape builds. `k.import` accepts such a file and reports its volume, so check a messy STL as a `solid` leaf early. See [docs/domains/organic.md](domains/organic.md), "Solids in a tree".
+
 ## implicit-solid-not-a-solid
 
 - **Symptom:** `.solid: must be a solid (the result of a kernel op)` in an `implicit: ` error that names the leaf's path, for example `implicit: root.solid: must be a solid (the result of a kernel op)`.
