@@ -149,6 +149,11 @@ export function emitProgram(compiled, dec) {
   return Float64Array.from([nP, nV, ...code]);
 }
 
+// A MESH op's weight per BVH level, in program instructions (programOps). Fitted on native-core
+// k.implicit times (design doc "5. Cost"): solid leaves of 12 to 54k triangles then cost 32-47 µs
+// per unit, primitive trees 28-52; a 434k leaf runs about twice over.
+export const MESH_OP_WEIGHT = 16;
+
 /**
  * A program's per-sample work, in instructions: one per instruction, plus one per operand of an
  * n-ary op (UNION/INTER/CONTACT), per contact attachment and per bulge region, and
@@ -156,9 +161,6 @@ export function emitProgram(compiled, dec) {
  * mesh table). Walks the same layouts runProgram reads; the preview-grid chooser weighs
  * leaves by it (preview-edge.js).
  */
-// Fitted on native-core k.implicit times (design doc "5. Cost"): solid leaves of 12 to 54k triangles
-// then cost 32-47 µs per unit, primitive trees 28-52; a 434k leaf runs about twice over.
-export const MESH_OP_WEIGHT = 16;
 export function programOps(prog, meshes = []) {
   let pc = 2, ops = 0;
   for (;;) {
