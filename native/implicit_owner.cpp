@@ -591,6 +591,7 @@ int mesh_owners(ipe::Session& s) {
 
 int crease(ipe::Session& s) {
   if (!s.meshed || !s.ownerMesh || !s.contactSet || s.normals.size() != s.positions.size()) return 1;
+  clear_sharp(s);
   const int K = s.ownerK;
   const double edge = s.edge;
   std::vector<double>& P = s.positions;
@@ -1318,6 +1319,19 @@ int Untangle::run() {
     nVL[i] = VL[v]; nVO[i] = VO[v]; nH[i] = HELD[v]; nPin[i] = PIN[v]; nCR[i] = CR[v];
   }
   T.swap(outT); P.swap(nP); N.swap(nN); VL.swap(nVL); VO.swap(nVO); HELD.swap(nH); PIN.swap(nPin); CR.swap(nCR);
+  // The sharpen stage's tables, when present: `sharp` picked, and `sharpPlanes`' vertex ids
+  // renumbered (-1 for a dropped vertex), as crease.js's untangle does.
+  if (!s.sharp.empty()) {
+    std::vector<uint8_t> nS(nk);
+    std::vector<int32_t> nSP(2 * nk);
+    for (size_t i = 0; i < nk; i++) {
+      const uint32_t v = keepV[i];
+      nS[i] = s.sharp[v];
+      for (int k = 0; k < 2; k++) { const int32_t w = s.sharpPlanes[2 * (size_t)v + k]; nSP[2 * i + k] = w >= 0 ? map[(size_t)w] : -1; }
+    }
+    s.sharp.swap(nS);
+    s.sharpPlanes.swap(nSP);
+  }
   return 0;
 }
 

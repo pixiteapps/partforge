@@ -52,6 +52,7 @@ void clear_owner_mesh(ipe::Session& s) {
   std::vector<uint8_t>().swap(s.pinned);
   std::vector<uint8_t>().swap(s.creaseMark);
   std::vector<int32_t>().swap(s.triOwner);
+  clear_sharp(s);
 }
 
 namespace {
@@ -1072,6 +1073,7 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
             double decimateFrac, int decimatePasses, double guardCos2, double normalCos2, double spreadCos2,
             double minAccept, double minGain) {
   if (!s.meshed) return 1;
+  clear_sharp(s);
   const double edge = s.edge;
   collapse(s, collapseFrac * edge, false, -1, -1, -1, 0);
   if (decimateFrac > 0) {
