@@ -397,8 +397,9 @@ sample, mesh and cleanup, wall milliseconds, median of 3 after a warm-up.
 | Box boss on a cylinder's side | 220 | 30 | 13.8% |
 | Knurled cylinder (`displace`) | 397 | 7 | 1.6% |
 
-The `SHARP_APART` guard costs about 2 to 3 points of that share: each round and corner pass
-files every vertex in its grid once.
+The `SHARP_APART` guard cost about 2 to 3 points of that share: each round and corner pass
+filed every vertex in its grid once. Since 0.207 it files only the vertices near the points it is
+asked about (see "Follow-ups (0.207)" below).
 
 **The vase on the core.** The vase test part (`vaseSpec()`, `test/implicit-cleanup.test.js`)
 at its 1.2 mm preview grid, core on, wall milliseconds, median of 3 after a warm-up
@@ -458,6 +459,46 @@ flip or sliver among the triangles the stage made. The mesher's own flips fall f
 
 **What this does not give.** A flat face stays at grid density, not two triangles. A
 curved face follows the grid, not the solid's own facets. Both are true today.
+
+**Follow-ups (0.207).** The stage's bookkeeping now follows its candidates. Before, a round did
+work over the whole mesh whenever any candidate existed, up to four times (two edge rounds, two
+corner passes). On the hand at a 0.8 mm print grid (347 candidates in 264,580 vertices) field
+reads were about 1% of the stage. Now the first round tests every edge's angle before it builds
+anything, and returns at once when none passes. The apart guard files only the vertices in the 27
+cells around each point its commit will ask about; a point it was not built for is answered by
+testing every vertex, with the same answer. Re-triangulation subdivides only the triangles on a
+split edge and copies the rest in blocks. The corner passes scan only the edge points' fans, and
+step 7 finds each retried edge from its own triangles, at the place a full scan would meet it. The
+commit loops keep their buffers and put back what a dropped commit moved. The output is the same
+on every input, byte for byte: `test/implicit-sharpen-digest.test.js` pins 25 cases (JS and core)
+recorded before the change. What is left on the hand is one pass over the triangles for the angle
+test and one adjacency build per round and per pass. The vase and the knurl at 0.3 mm did not move:
+there the time is solving real creases.
+
+`scripts/bench-implicit.mjs`, CPU milliseconds, median of 3. "Before" is sample, mesh and cleanup
+(the hand's crease cut is not counted in it).
+
+| Case | Core | Before | Stage, old | Share, old | Stage, new | Share, new |
+| --- | --- | --- | --- | --- | --- | --- |
+| Hand, print 0.8 mm | on | 648 | 235 | 36.7% | 46 | 7.1% |
+| Hand, preview 1.5 mm | on | 211 | 13 | 6.3% | 5 | 2.4% |
+| Hand, print 0.5 mm | on | 1548 | 383 | 24.8% | 102 | 6.6% |
+| Boss near a plate's edge, 0.6 mm | on | 391 | 69 | 17.6% | 60 | 15.3% |
+| Boss in an L bracket's corner, 0.6 mm | on | 358 | 60 | 16.8% | 54 | 15.1% |
+| Two blended spheres, 0.6 mm | on | 31 | 0.4 (wall) | 1.8% | 0.1 (wall) | 0.5% |
+| Vase, preview 1.2 mm | on | 145 | 167 | 112% | 136 | 94% |
+| Knurl, preview 0.6 mm (dense) | on | 411 | 7 | 1.8% | 6 | 1.5% |
+| Knurl, print 0.3 mm | on | 1787 | 3097 | 175% | 2885 | 161% |
+| Hand, print 0.8 mm | off | 2927 | 813 | 28.0% | 148 | 5.1% |
+| Hand, preview 1.5 mm | off | 1097 | 180 | 16.8% | 65 | 5.9% |
+| Boss near a plate's edge, 0.6 mm | off | 1302 | 296 | 23.3% | 254 | 19.5% |
+| Boss in an L bracket's corner, 0.6 mm | off | 1197 | 311 | 25.4% | 248 | 20.7% |
+| Vase, preview 1.2 mm | off | 950 | 1486 | 158% | 1295 | 136% |
+| Knurl, print 0.3 mm | off | 5951 | 12551 | 211% | 11581 | 195% |
+
+Each share is against the "Before" of its own runs. The column shows the new runs'; the old runs'
+differ by a few percent. The bench rounds to a millisecond, so the spheres' times are wall times
+from a direct timing of the stage.
 
 ### 5. Cost
 
