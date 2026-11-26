@@ -248,8 +248,8 @@ export const ORGANIC_LINT_RULES = [
     run: (ctx) => compiledCalls(ctx).filter(({ spec }) => plainCsg(spec)).map(({ spec }) => (
       [...specNodes(spec.root)].some((n) => n.kind === "solid")
         ? note("implicit-csg-in-disguise",
-          "k.implicit builds only solid leaves, boxes, cylinders and halfspaces with sharp booleans — it remeshes solids you already have, approximately",
-          "Join the solids with the standard ops (union/cut, k.box, k.cylinder): they are exact and faster. Use a solid leaf where k.implicit changes it: a blend (k > 0), offset, onion, displace or detail.",
+          "k.implicit builds only solid leaves, boxes, cylinders and halfspaces with sharp booleans. It remeshes solids you already have, and the result is approximate.",
+          "Join the solids with the standard ops (union, cut, k.box, k.cylinder). They are exact and faster. Keep a solid leaf for what k.implicit adds: a blend (k > 0), an offset, an onion, a displace or detail.",
           "parts")
         : note("implicit-csg-in-disguise",
           "k.implicit builds only boxes, cylinders and halfspaces with sharp booleans — plain CAD, meshed approximately",

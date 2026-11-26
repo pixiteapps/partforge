@@ -343,7 +343,8 @@ test("implicit-csg-in-disguise: a lone solid leaf, or solids joined sharply, is 
   const lone = lintPart(partWith((k) => k.implicit({ root: { kind: "solid", solid: plate(k) } })));
   const [f, ...rest] = of(lone, "implicit-csg-in-disguise");
   expect(rest).toEqual([]);
-  expect(f.message).toMatch(/solid leaves/);
+  expect(f.message).toBe("k.implicit builds only solid leaves, boxes, cylinders and halfspaces with sharp booleans. It remeshes solids you already have, and the result is approximate.");
+  expect(f.hint).toBe("Join the solids with the standard ops (union, cut, k.box, k.cylinder). They are exact and faster. Keep a solid leaf for what k.implicit adds: a blend (k > 0), an offset, an onion, a displace or detail.");
   const sharp = lintPart(partWith((k) => k.implicit({ root: { kind: "union", children: [
     { kind: "solid", solid: plate(k) }, { kind: "solid", solid: k.sphere(4), at: [0, 0, 6] }] } })));
   expect(of(sharp, "implicit-csg-in-disguise")).toHaveLength(1);
@@ -373,4 +374,15 @@ test("implicit-thin-feature: a thin shell over a solid warns for the print grid,
 test("implicit-thin-feature: a solid-leaf spec with a declared preview judges that grid too", () => {
   const r = lintPart(partWith((k) => k.implicit({ preview: 1, resolution: 0.6, root: { kind: "onion", t: 0.4, child: { kind: "solid", solid: plate(k) } } })));
   expect(of(r, "implicit-thin-feature")[0].message).toMatch(/the preview grid \(1\.00 mm\) and the print grid/);
+});
+
+test("a cyclic value inside a k.implicit spec lints promptly, as it did before solid leaves", () => {
+  // Two self-references double a naive walk at every level; the probe skips the cycle. The
+  // JSON copy of such a spec is "<unserializable>", so lint skips the call, as before.
+  const cyclic = () => { const a = {}; a.x = a; a.y = a; return a; };
+  const t = performance.now();
+  const plain = lintPart(implicitPart({ root: { kind: "sphere", r: 2, junk: cyclic() } }));
+  const withSolid = lintPart(partWith((k) => k.implicit({ root: { kind: "solid", solid: plate(k), junk: cyclic() } })));
+  expect(performance.now() - t).toBeLessThan(2000);
+  for (const r of [plain, withSolid]) expect(r).toEqual({ ok: true, errors: [], warnings: [], notes: [] });
 });

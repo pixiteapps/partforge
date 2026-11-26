@@ -167,3 +167,10 @@ test("the probe's solid handle names itself with a string _hash; a 2D shape does
   expect(typeof p.kernel.box({ size: [1, 1, 1] })._hash).toBe("string");
   expect(p.kernel.shape2d([[0, 0], [1, 0], [1, 1]])._hash).toBeUndefined();
 });
+
+test("a cycle in a k.implicit spec is skipped by the solid walk, and its JSON copy is <unserializable>", () => {
+  const build = (k) => { const a = {}; a.x = a; a.y = a; return k.implicit({ root: { kind: "solid", solid: k.box({ size: [1, 1, 1] }), junk: a } }); };
+  const call = runValidatingProbe(partWith(build), {}, {}).calls.find((c) => c.op === "implicit");
+  expect(call.args).toEqual(["<unserializable>"]);
+  expect(call.solids).toEqual([["root", "solid"]]);
+});

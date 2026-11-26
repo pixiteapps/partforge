@@ -192,14 +192,18 @@ export function createValidatingProbe({ maxOps = MAX_PROBE_OPS } = {}) {
     try { return JSON.stringify(a) ?? String(a); } catch { return "<unserializable>"; }
   };
 
-  // The key paths of the probe solid inside a plain-data spec, in walk order.
-  const solidPaths = (a, path = [], out = [], depth = 0) => {
+  // The key paths of the probe solid inside a plain-data spec, in walk order. `above`
+  // holds the objects on the current path, so a cycle (`a.x = a`) is skipped, not walked
+  // until the depth cap (two self-references would double the walk at every level).
+  const solidPaths = (a, path = [], out = [], depth = 0, above = new Set()) => {
     if (a === solidProxy) { out.push(path); return out; }
-    if (depth > MAX_SPEC_DEPTH || a === null || typeof a !== "object" || a === shape2dProxy || isCage(a)) return out;
-    if (Array.isArray(a)) a.forEach((x, i) => solidPaths(x, [...path, i], out, depth + 1));
+    if (depth > MAX_SPEC_DEPTH || a === null || typeof a !== "object" || a === shape2dProxy || isCage(a) || above.has(a)) return out;
+    above.add(a);
+    if (Array.isArray(a)) a.forEach((x, i) => solidPaths(x, [...path, i], out, depth + 1, above));
     else if (Object.getPrototypeOf(a) === Object.prototype) {
-      for (const [key, x] of Object.entries(a)) solidPaths(x, [...path, key], out, depth + 1);
+      for (const [key, x] of Object.entries(a)) solidPaths(x, [...path, key], out, depth + 1, above);
     }
+    above.delete(a);
     return out;
   };
 
