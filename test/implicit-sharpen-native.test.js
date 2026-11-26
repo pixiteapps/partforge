@@ -9,7 +9,7 @@ import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/compile.js";
 import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
 import * as sharpen from "../src/framework/geometry/implicit/sharpen.js";
-import { ACROSS_TOL, TRIES } from "../src/framework/geometry/implicit/sharpen-corners.js";
+import { ACROSS_TOL, TRIES, CORNER_STEPS, CORNER_SIDE_MAX } from "../src/framework/geometry/implicit/sharpen-corners.js";
 import { fieldFlips } from "../src/framework/geometry/implicit/sharpen-mesh.js";
 
 afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
@@ -17,7 +17,7 @@ afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefi
 const JS_CONSTANTS = [sharpen.SHARP_ANGLE_COS, sharpen.SHARP_TOL, sharpen.SHARP_MAX_MOVE, sharpen.SHARP_SNAP, sharpen.SHARP_CORNER_DET,
   sharpen.SHARP_DENSE_PER_CELL, sharpen.SHARP_DENSE_MIN, sharpen.NEWTON_STEPS, sharpen.STEP_CAP, sharpen.SIDE, sharpen.DIFF,
   sharpen.MIN_ALTITUDE, sharpen.FLIP_NEAR, sharpen.CONVERGED, sharpen.CORNER_MERGE, sharpen.SIDE_PTS, sharpen.FLAT_READS,
-  ACROSS_TOL, TRIES, sharpen.SHARP_APART];
+  ACROSS_TOL, TRIES, sharpen.SHARP_APART, CORNER_STEPS, CORNER_SIDE_MAX];
 
 // The flip memo's fixture: a triangle on the top face of a 40 × 30 × 6 box (z = 3), first with
 // one candidate moving end 0, then with that candidate splitting edge (1, 2) at a point that

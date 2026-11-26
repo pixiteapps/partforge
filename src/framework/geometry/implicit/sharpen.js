@@ -34,11 +34,15 @@
 //   6. Corners (`corners`, on by default). Each vertex carries its tangent planes: an edge point
 //      the two side gradients Newton ended on, through its own position; a mesher vertex its
 //      normal; a pinned or crease vertex none. An edge of step 5's mesh with an edge point at one
-//      end and exactly three distinct planes between its ends is a candidate, at the point where
-//      the three meet, if their determinant is at least SHARP_CORNER_DET and the point is within
-//      SHARP_MAX_MOVE·edge of the edge's middle. Candidates within CORNER_MERGE·edge of each
-//      other are one corner, at the best one's point. It is kept within SHARP_TOL·edge of the
-//      zero set. Then, in order: an end within CORNER_MERGE·edge of it is moved onto it; else the
+//      end and exactly three distinct planes between its ends is a candidate, starting at the
+//      point where the three meet, if their determinant is at least SHARP_CORNER_DET and the point
+//      is within SHARP_MAX_MOVE·edge of the edge's middle. The point is then solved on the field
+//      (sharpen-corners.js solveCorners): each step reads each face's gradient a little way into
+//      that face and moves to where the three faces' planes meet. It is kept if the three
+//      gradients at the final point differ pairwise by more than the angle (a point beside a
+//      curved sharp edge, where two faces meet, is refused), it is within SHARP_TOL·edge of the
+//      zero set and within SHARP_MAX_MOVE·edge of the edge's middle. Candidates within
+//      CORNER_MERGE·edge of each other are one corner, at the best one's point. Then, in order: an end within CORNER_MERGE·edge of it is moved onto it; else the
 //      edge is split there (at an earlier corner vertex there, which must be next to the edge:
 //      else the candidate is refused, so no two vertices share a position); else its nearer
 //      end, then its other end, is moved there. A moved end takes the corner's normal; a held,
@@ -261,7 +265,7 @@ function sharpenRound(store, mesh, corners, st, retry) {
   for (const name of ["candidates", "dense", "split", "moved", "offField", "tooFar", "notSharp", "unsolved"]) st[name] = 0;
   for (const name of ["snapBlocked", "endMoved", "flip", "sliver", "fieldFlip", "apart"]) st[name] = 0;
   for (const name of ["cornerCandidates", "corners", "cornerSplits", "cornerDet", "cornerFar", "cornerOffField"]) st[name] = 0;
-  for (const name of ["cornerMoves", "cornerFlip", "cornerSliver", "cornerFieldFlip", "cornerNear"]) st[name] = 0;
+  for (const name of ["cornerMoves", "cornerFlip", "cornerSliver", "cornerFieldFlip", "cornerNear", "cornerUnsolved", "cornerNotSharp"]) st[name] = 0;
 
   // 1. The candidate edges, in the order the triangle list first names them. The first round
   // tests every edge's angle before it builds anything else, so a mesh with no sharp edge costs
@@ -411,7 +415,9 @@ function sharpenRound(store, mesh, corners, st, retry) {
     const sh = sharpNow(), nvC = P.length / 3, have = [...had, ...C.marked];
     for (let v = nv1; v < nvC; v++) have.push(v);
     st.across = {};
-    for (const name of ["cornerCandidates", "corners", "cornerDet", "cornerFar", "cornerOffField", "cornerFieldFlip", "cornerNear"]) st.across[name] = 0;
+    for (const name of ["cornerCandidates", "corners", "cornerDet", "cornerFar", "cornerOffField", "cornerFieldFlip", "cornerNear", "cornerUnsolved", "cornerNotSharp"]) {
+      st.across[name] = 0;
+    }
     const D = cornerPass(store, { P, N, T: out, VL: leaves(), P0, N0, sharp: sh, planeN, noPlane, free: (v) => free(v) && sh[v] !== 2,
       edge, st: st.across, across: true, pts: pts.filter((v) => sh[v] === 1), have });
     ({ out, P, N } = D);
@@ -516,6 +522,9 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
     cut.push(...byEdge.get(key));
     st.split++;
   });
+  // An earlier commit of the loop may have split more edges: its vertices past this one's count
+  // keep no planes, so a vertex with no entry has none.
+  for (let v = nv; v < work.P.length / 3; v++) planeN.delete(v);
   return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, sharp: sharp.subarray(0, nv), planes: planes.subarray(0, 2 * nv),
     planeN, added, touched, how, cut, pts };
 }

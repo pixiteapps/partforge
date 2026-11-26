@@ -17,6 +17,8 @@ import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { SHARP_TOL } from "../src/framework/geometry/implicit/sharpen.js";
 import { edgeCheck } from "./helpers/mesh-topology.js";
 import { gapHolds, bisectorCrossings } from "./helpers/seam-quality.js";
+import { sharpenMesh } from "../src/framework/geometry/implicit/sharpen.js";
+import { jsStages } from "./helpers/implicit-stages.js";
 import { movedRoot } from "./fixtures/implicit-seam-cases.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
@@ -53,3 +55,16 @@ describe("near-miss sweep: spreads × finger blends × moved root, gap 0.2 at th
     }, 120_000);
   }
 });
+
+// At fingerBlend 2, spread −3.4718, moved, three creases of the palm (a smooth union of four
+// children: where a third child is within k its field has a crease) meet on the surface at
+// (5.8486, −31.3302, 13.1309), where the box, hypothenar and wrist children tie. The faces meet at
+// 24.7°, 26.8° and 45.9°. The sharpen stage's one corner point there is solved on those faces.
+test("near-miss corner: the palm's corner point lies where its three faces meet", () => {
+  const spec = movedRoot(handSpec({ spread: -3.4718, fingerBlend: 2, contactGap: GAP }));
+  const { store, cleaned } = jsStages(spec, EDGE, { tier: "preview" });
+  const mesh = sharpenMesh(store, cleaned), corner = [5.8486, -31.3302, 13.1309], cs = [];
+  for (let v = 0; v < mesh.sharp.length; v++) if (mesh.sharp[v] === 2) cs.push([mesh.positions[3 * v], mesh.positions[3 * v + 1], mesh.positions[3 * v + 2]]);
+  expect(cs.length).toBe(1);
+  expect(Math.hypot(cs[0][0] - corner[0], cs[0][1] - corner[1], cs[0][2] - corner[2]), "mm from the corner").toBeLessThanOrEqual(0.02);
+}, 120_000);

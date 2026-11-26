@@ -3,8 +3,8 @@
 // then sharpenMesh in JS and ip_sharpen on the core, from one plan. The JS output's positions,
 // indices and normals (`mesh`) and its other tables and stats (`tables`) must match the digests
 // recorded here, and the core's positions, indices and normals must match the JS's. The digests
-// were recorded before the stage's bookkeeping was made local (0.207), and re-recorded once for a
-// change to cleanup's output and to the density rule. A speed-up must keep them. Do not re-record a
+// were recorded before the stage's bookkeeping was made local (0.207), and re-recorded for a change
+// to cleanup's output and to the density rule, and for the corner solve. A speed-up must keep them. Do not re-record a
 // digest to make a speed-up pass. Last, a check of the apart index's fallback.
 import { createHash } from "node:crypto";
 import { describe, test, expect, beforeAll } from "vitest";
@@ -68,34 +68,36 @@ const SPECS = {
 };
 
 // [case, grid, tier, mesh digest, tables digest]. Recorded before any speed-up (commit ad1d180b), and
-// re-recorded once (0.207) when cleanup began merging the mesher's vertex clusters and the density
-// rule began measuring candidates per cell of area: those change the stage's input and its skips.
+// re-recorded twice (0.207): once when cleanup began merging the mesher's vertex clusters and the
+// density rule began measuring candidates per cell of area (those change the stage's input and its
+// skips), and once when a corner point began to be solved on its three faces (a moved corner, and
+// two new counts in the stats).
 const CASES = [
-  ["box", 0.6, "preview", "06400bd3d304fa37f4c2aba16ccd21b7", "d71776f265eb2061065bd41bc05696ec"],
-  ["box", 1.0, "preview", "23938f26b55a6fce02da4bcd8b9cdf66", "5288b9d5b57ad0cb125ba8f847b64778"],
-  ["plate-edge", 0.6, "preview", "5de400f84b721558212f8ff2dc34120b", "c47dfc36cf87f83da4ce2f4d78a59cbb"],
-  ["plate-edge", 1.0, "preview", "777de647dfefcfd485557ca32cf4881b", "e18643061e2e5c469d617076b1f28796"],
-  ["bracket-corner", 0.6, "preview", "f89765dbd14f330a4561aaf045e55ce0", "2e0782e06a83d83f557b3be3d4b4a5bb"],
-  ["bracket-corner", 1.0, "preview", "ec77c3496e1de3b4dd9d5fa49c572f84", "4a0f6d6c6aaa87b41ff7db7ba92ada83"],
-  ["cylinder-side", 0.6, "preview", "7793a55a0c74830884c4e945a0dff047", "571f7107ce4ab020509e987e2a628afa"],
-  ["cylinder-side", 1.0, "preview", "76f64dd6bd1ce3b0752cb347cb29e968", "3dbb5c315e4262d22f8877c0be5a04ce"],
-  ["curved-crease", 0.6, "preview", "c59a7bf8c0dc9dba4443331c101dad22", "d9c6cb12c8712daa2266d3ddbcab42f4"],
-  ["curved-crease", 1.0, "preview", "8bc0f777d01f4f22f713f4898d8a42b9", "1ce355c6fc9d9aa6721b864fcc3a86f0"],
-  ["cage", 0.6, "preview", "7e42ac5aed6f6f2067c79a0bb257668d", "81d6cb4bb090bcb3b9212b2c77dc7cb3"],
-  ["offset -2", 0.6, "preview", "8434dffc1c858b8546ae2f400ed784b3", "6f8325588de8e5ea5e8a448ced886fd9"],
-  ["offset +2", 0.6, "preview", "bed5f1c485920c1e7aca21f67b5200dd", "8fd4b5536e73b6a13f8c7bbd02668fbb"],
-  ["knurl", 0.6, "preview", "2e805f62a6327cff76ef60b8a6f01458", "31bdad36860b7b1eb159db6758e04ca0"],
-  ["knurl", 0.3, "print", "93bfb877af8668f4135e442b6de3d722", "eb2893800160947c28c0d11ac15082a8"],
-  ["knurl and box", 0.6, "preview", "82e6b582d918ddc9b5f69472ffdb73c4", "445768cb0f5f04e8720f7f6797af8cdf"],
-  ["posed gap 0", 0.6, "preview", "eba4d56db41ec240d72bdadd20ac89f5", "8ffb7325e65bf8c8cd1b454aa1896980"],
-  ["posed gap 0.05", 0.6, "preview", "4ffb835260f9b2e5808dacab4b56932b", "8ec2848ffbf20939a00f5ebb9ee10dfc"],
-  ["posed gap 0", 1.0, "preview", "66ee21bb7fbe694548d16ecfd2c0740f", "b9e91bec7e57e42f743bbbd105bf580f"],
-  ["posed gap 0.05", 1.0, "preview", "26cf193d5fee4fbf38b4e6a9c6d00cf0", "8a3739553f08dbefaf75b5a637724bb4"],
-  ["hand", 1.5, "preview", "9ac58e9262f80c64c982073ce1aeb453", "62fa4b6c0a0d812fd8ca4082816b6347"],
-  ["hand", 0.8, "print", "052e4a229aad837e10c5ef1bd1bc3c74", "96e09904f409a87df8080ba306d7ba05"],
-  ["vase", 1.2, "preview", "cdf0b1703b974b78eb62554da361afab", "d9442b12bedc9337b72c3a78ae46b30f"],
-  ["spheres", 0.6, "preview", "4e446bca7b4db97129ab2a3e90988002", "455aa2263e14df8bed56353678b35f57"],
-  ["spheres", 1.0, "preview", "ca0035bb5664646364dab210a4d611d7", "9594a0e42915f767808810065dd8bb11"],
+  ["box", 0.6, "preview", "69fdeae954de8c9a16dc3faef88ff7eb", "4bcf24881880651a185f1948d9c91f5b"],
+  ["box", 1.0, "preview", "ab7f9c0465a66ddcba9c46525d76421c", "6538a78fff6a9f03122c12d0ef4d93b7"],
+  ["plate-edge", 0.6, "preview", "d991d460532b92277e7599d920d46fd4", "dd89150f3e2b3780f2b49e03ca7368ef"],
+  ["plate-edge", 1.0, "preview", "5480d2937d3374701e91deaec10f045f", "d5567c89d2b070be96a540d72f4f81f8"],
+  ["bracket-corner", 0.6, "preview", "d53c4eea2d9ae42305fd33270c248832", "93bc1c581fd50b81fd9900704d03fe68"],
+  ["bracket-corner", 1.0, "preview", "601c0179f27b9c0215ed3dae28683231", "a65bea3259956407cb209bb2cc06a755"],
+  ["cylinder-side", 0.6, "preview", "2cb576ca3a801e187ca89d63daf411f5", "eef2b7a1a78e7be9cf264c7654a019a2"],
+  ["cylinder-side", 1.0, "preview", "5fa3e2353b83a35df748d9529edfd69b", "a11547ab23510af24d69b0f975873383"],
+  ["curved-crease", 0.6, "preview", "c59a7bf8c0dc9dba4443331c101dad22", "0809c17b44134731d05d0d16309421fd"],
+  ["curved-crease", 1.0, "preview", "8bc0f777d01f4f22f713f4898d8a42b9", "65a10b737d357046c5d4471ccbf74c68"],
+  ["cage", 0.6, "preview", "7e42ac5aed6f6f2067c79a0bb257668d", "5e8bc7fc9911b212ef36ee73889b128f"],
+  ["offset -2", 0.6, "preview", "8434dffc1c858b8546ae2f400ed784b3", "ec13fa3f175f870b5d8f452639f3d846"],
+  ["offset +2", 0.6, "preview", "bed5f1c485920c1e7aca21f67b5200dd", "0afe80435e51f9a48d473dcc583a2157"],
+  ["knurl", 0.6, "preview", "2e805f62a6327cff76ef60b8a6f01458", "ca27528b5ebb7c777f408140c04277f5"],
+  ["knurl", 0.3, "print", "32953166b2299435b78284b1931be636", "6609c000b9daca821ed539e332c3fa75"],
+  ["knurl and box", 0.6, "preview", "232323d3de16e9f5f187a6003de6245a", "e26fa8bf703d055ba5caebae7c42b6e2"],
+  ["posed gap 0", 0.6, "preview", "8dba7d483af6305202e3a98a00f032a8", "12cc3061deb04c0490a42e28e11512af"],
+  ["posed gap 0.05", 0.6, "preview", "39d1dae984e01ad02baa011c38376478", "b5cfb6a3fea80828ee3be1ce24410764"],
+  ["posed gap 0", 1.0, "preview", "6d7ab5f30474f92bd42ad440075a01ca", "2b60eaad62222d99b572eca2b4df357b"],
+  ["posed gap 0.05", 1.0, "preview", "64832adbdf493f1f7f33e67ed5b5d725", "db03d7e9c146c20a2dd635484430970b"],
+  ["hand", 1.5, "preview", "82d61f4e32f106e24da47c5ab418cb93", "17bd0aaf5b9439ceb36649f31c1214e1"],
+  ["hand", 0.8, "print", "14ecaa445aaa8b328f96f2185b09a350", "815fedebc7784641888fe3debe8c1b24"],
+  ["vase", 1.2, "preview", "207c65551444ff5397b219cfb25abb2c", "23a20bd1a8a26f59704fc5eaf5fbfd34"],
+  ["spheres", 0.6, "preview", "4e446bca7b4db97129ab2a3e90988002", "6347e61579ff392527a10b749519d677"],
+  ["spheres", 1.0, "preview", "ca0035bb5664646364dab210a4d611d7", "fbc55f9f0f918abe62a58fc6894895d4"],
 ];
 
 const bytes = (a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength);

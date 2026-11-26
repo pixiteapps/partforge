@@ -65,6 +65,35 @@ export function foldEdges(mesh) {
 
 const H = 1e-4;
 
+/**
+ * The distinct face normals the field `field(x, y, z)` shows within `r` mm of point `p`: its
+ * gradient (central differences, 1e-4 mm) is read at `n` points spread evenly over the sphere of
+ * radius r around p, and only at those within 0.1·r of the surface (|field| ≤ 0.1·r), where the
+ * gradient is a face's normal. Unit gradients are clustered in order: each joins the first
+ * cluster whose first member is within the sharpen stage's angle (`cos`, SHARP_ANGLE_COS), else
+ * starts one. A cluster with fewer than a twentieth of the kept reads is dropped: a read a hair
+ * from a crease, or beside a convex edge of an exact box (where the gradient turns from one face
+ * to the other), is no face. Returns the kept clusters' first unit gradients; they are pairwise
+ * more than the angle apart. A corner of three faces gives three.
+ */
+export function faceNormals(field, p, r, cos, { n = 2000 } = {}) {
+  const ga = Math.PI * (3 - Math.sqrt(5)), clusters = [];
+  let kept = 0;
+  for (let i = 0; i < n; i++) {
+    const y = 1 - (2 * (i + 0.5)) / n, s = Math.sqrt(1 - y * y), a = ga * i;
+    const x = p[0] + r * s * Math.cos(a), yy = p[1] + r * y, z = p[2] + r * s * Math.sin(a);
+    if (!(Math.abs(field(x, yy, z)) <= 0.1 * r)) continue;
+    const g = [field(x + H, yy, z) - field(x - H, yy, z), field(x, yy + H, z) - field(x, yy - H, z), field(x, yy, z + H) - field(x, yy, z - H)];
+    const l = Math.hypot(g[0], g[1], g[2]);
+    if (!(l > 0)) continue;
+    const u = g.map((c) => c / l);
+    kept++;
+    const c = clusters.find((q) => q.u[0] * u[0] + q.u[1] * u[1] + q.u[2] * u[2] >= cos);
+    if (c) c.count++; else clusters.push({ u, count: 1 });
+  }
+  return clusters.filter((c) => c.count * 20 >= kept).map((c) => c.u);
+}
+
 const NEAR = 1e-6;
 
 // Pairs of vertices used by a triangle that lie closer than NEAR mm: sorted on x, swept.

@@ -67,6 +67,8 @@ constexpr int FLAT_READS = 3;
 // sharpen-corners.js
 constexpr double ACROSS_TOL = 0.005;
 constexpr int TRIES = 4;
+constexpr int CORNER_STEPS = 12;
+constexpr double CORNER_SIDE_MAX = 0.5;
 
 constexpr double INF = INFINITY;
 
@@ -323,7 +325,6 @@ struct ApartCells {
 struct ApartBase {
   double ap = 0, size = 0, A2 = 0;
   size_t nv = 0;
-  const double* P = nullptr;
   ApartCells cells;
   // The asked cells (their exact indices, keyed by hash: a hash shared by two cells answers the
   // second by the full test, never by a cell list it did not file), the 27 cells around each, and
@@ -338,8 +339,8 @@ struct ApartBase {
     return true;
   }
   // `asks`: the points the commit will ask about, 3 doubles each.
-  void build(const double* PP, size_t n, double edge, const std::vector<double>& asks) {
-    P = PP; nv = n;
+  void build(const double* P, size_t n, double edge, const std::vector<double>& asks) {
+    nv = n;
     ap = SHARP_APART * edge; size = 2 * ap; A2 = ap * ap;
     for (size_t q = 0; q + 2 < asks.size(); q += 3) {
       int64_t c[3];
@@ -732,6 +733,9 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     for (const uint32_t t : edgeTris) S.touched.add(t, (int32_t)kept[q], -1);
     S.cut.insert(S.cut.end(), edgeTris.begin(), edgeTris.end());
   }
+  // An earlier commit of the loop may have split more edges: its vertices past this one's count
+  // keep no planes, so a vertex with no entry has none.
+  for (size_t v = nv; v < S.P.size() / 3; v++) S.planeN.clear((uint32_t)v);
   S.nv = nv;
   return 0;
 }
@@ -743,7 +747,13 @@ struct Plane { double n[3]; double d; uint32_t v; };
 
 struct KCand {
   uint32_t a = 0, b = 0;
-  double p[3] = {0, 0, 0}, n[3] = {0, 0, 0};
+  double m[3] = {0, 0, 0}, p[3] = {0, 0, 0}, n[3] = {0, 0, 0};
+  // The solve: the three faces' current unit normals, the read distance, and each face's four
+  // quadrant directions (hasW false: none to read).
+  double u[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+  double h = 0;
+  double W[3][4][3] = {};
+  bool hasW[3][4] = {};
   int rough = 0;
   double clear = INF;
   int32_t leaf = 0;
@@ -751,6 +761,166 @@ struct KCand {
   bool ok = true;
   int from = 0, took = -1;
 };
+
+// The corner solve (sharpen-corners.js readCorners, cornerStep, solveCorners).
+struct CSide { bool present = false; double f = 0, g[3] = {0, 0, 0}, w[3] = {0, 0, 0}; };
+struct CRead { double f = NAN; CSide S[3]; };
+
+// readCorners: one read of `live` (indices into C): each face at its four quadrant points, the face
+// the quadrant whose mean is nearest zero (the first on a tie); with withCentre the point too.
+int readCorners(ipe::Session& s, std::vector<KCand>& C, const std::vector<uint32_t>& live, double edge, bool withCentre, std::vector<CRead>& rs) {
+  static const double QUAD[4][2] = {{-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+  const int per = SIDE_PTS, c0 = withCentre ? 1 : 0, PTS = c0 + 12 * per;
+  const double e = DIFF * edge;
+  Points pts;
+  for (const uint32_t q : live) {
+    KCand& c = C[q];
+    for (int i = 0; i < 3; i++) {
+      const double* ni = c.u[i];
+      const double* nj = c.u[(i + 1) % 3];
+      const double* nk = c.u[(i + 2) % 3];
+      const double dj = dot(ni, nj), dk = dot(ni, nk);
+      const double pa[3] = {nj[0] - dj * ni[0], nj[1] - dj * ni[1], nj[2] - dj * ni[2]};
+      const double pb[3] = {nk[0] - dk * ni[0], nk[1] - dk * ni[1], nk[2] - dk * ni[2]};
+      double a[3], b[3];
+      const bool okA = unit(pa, a), okB = unit(pb, b);
+      for (int t = 0; t < 4; t++) {
+        c.hasW[i][t] = false;
+        if (!okA || !okB) continue;
+        const double sa = QUAD[t][0], sb = QUAD[t][1];
+        const double v[3] = {sa * a[0] + sb * b[0], sa * a[1] + sb * b[1], sa * a[2] + sb * b[2]};
+        c.hasW[i][t] = unit(v, c.W[i][t]);
+      }
+    }
+    const double x = c.p[0], y = c.p[1], z = c.p[2];
+    const int32_t pr = leaf_prog(s, c.leaf);
+    if (withCentre) pts.add(x, y, z, pr);
+    for (int i = 0; i < 3; i++) for (int t = 0; t < 4; t++) {
+      const double zero[3] = {0, 0, 0};
+      const double* w = c.hasW[i][t] ? c.W[i][t] : zero;
+      const double sx = x + c.h * w[0], sy = y + c.h * w[1], sz = z + c.h * w[2];
+      pts.add(sx + e, sy, sz, pr); pts.add(sx - e, sy, sz, pr);
+      pts.add(sx, sy + e, sz, pr); pts.add(sx, sy - e, sz, pr);
+      pts.add(sx, sy, sz + e, pr); pts.add(sx, sy, sz - e, pr);
+    }
+  }
+  std::vector<double> d(pts.size());
+  if (eval_points(s, pts, d.data(), nullptr, nullptr, nullptr) != 0) return 2;
+  rs.assign(live.size(), CRead{});
+  for (size_t q = 0; q < live.size(); q++) {
+    const KCand& c = C[live[q]];
+    const size_t o = (size_t)PTS * q;
+    rs[q].f = withCentre ? d[o] : NAN;
+    for (int i = 0; i < 3; i++) {
+      CSide& best = rs[q].S[i];
+      for (int t = 0; t < 4; t++) {
+        if (!c.hasW[i][t]) continue;
+        const size_t b = o + c0 + (size_t)per * (4 * i + t);
+        const double f0 = d[b], f1 = d[b + 1], f2 = d[b + 2], f3 = d[b + 3], f4 = d[b + 4], f5 = d[b + 5];
+        const double f = (f0 + f1 + f2 + f3 + f4 + f5) / 6;
+        if (!std::isfinite(f) || (best.present && !(std::fabs(f) < std::fabs(best.f)))) continue;
+        best.present = true; best.f = f;
+        best.g[0] = (f0 - f1) / (2 * e); best.g[1] = (f2 - f3) / (2 * e); best.g[2] = (f4 - f5) / (2 * e);
+        for (int k = 0; k < 3; k++) best.w[k] = c.W[i][t][k];
+      }
+    }
+  }
+  return 0;
+}
+
+// cornerStep: 0 (the step cannot be taken), 1 (taken) or 2 (converged: not taken).
+int cornerStep(KCand& c, const CRead& r, double edge) {
+  const CSide& A = r.S[0];
+  const CSide& B = r.S[1];
+  const CSide& Cc = r.S[2];
+  if (!A.present || !B.present || !Cc.present) return 0;
+  const double rA = -A.f + c.h * dot(A.g, A.w), rB = -B.f + c.h * dot(B.g, B.w), rC = -Cc.f + c.h * dot(Cc.g, Cc.w);
+  const double* a = A.g;
+  const double* b = B.g;
+  const double* n = Cc.g;
+  const double D = det3(a, b, n), scale = hypot3(a[0], a[1], a[2]) * hypot3(b[0], b[1], b[2]) * hypot3(n[0], n[1], n[2]);
+  if (!(std::fabs(D) >= SHARP_CORNER_DET * scale)) return 0;
+  const double a0[3] = {rA, a[1], a[2]}, b0[3] = {rB, b[1], b[2]}, n0[3] = {rC, n[1], n[2]};
+  const double a1[3] = {a[0], rA, a[2]}, b1[3] = {b[0], rB, b[2]}, n1[3] = {n[0], rC, n[2]};
+  const double a2[3] = {a[0], a[1], rA}, b2[3] = {b[0], b[1], rB}, n2[3] = {n[0], n[1], rC};
+  const double dx[3] = {det3(a0, b0, n0) / D, det3(a1, b1, n1) / D, det3(a2, b2, n2) / D};
+  const double len = hypot3(dx[0], dx[1], dx[2]);
+  if (!std::isfinite(len)) return 0;
+  const double floor = SIDE * edge;
+  const bool done = c.h <= floor && len <= CONVERGED * edge;
+  const double sc = len > STEP_CAP * edge ? (STEP_CAP * edge) / len : 1;
+  if (!done) for (int k = 0; k < 3; k++) c.p[k] += dx[k] * sc;
+  double uA[3], uB[3], uC[3];
+  const bool okA = unit(a, uA), okB = unit(b, uB), okC = unit(n, uC);
+  if (okA && okB && okC) for (int k = 0; k < 3; k++) { c.u[0][k] = uA[k]; c.u[1][k] = uB[k]; c.u[2][k] = uC[k]; }
+  const double half = c.h / 2;
+  c.h = half > floor ? half : floor;
+  return done ? 2 : 1;
+}
+
+// solveCorners: each candidate solved on the field; sets ok false on those not kept.
+int solveCorners(ipe::Session& s, std::vector<KCand>& C, const std::vector<int32_t>& VL, double edge, double tol) {
+  std::vector<uint32_t> live, next, redo, judged;
+  for (size_t q = 0; q < C.size(); q++) live.push_back((uint32_t)q);
+  std::vector<CRead> reads, rs, r2;
+  for (int it = 0; it < CORNER_STEPS && !live.empty(); it++) {
+    if (readCorners(s, C, live, edge, it == 0, rs) != 0) return 2;
+    if (it == 0) {
+      redo.clear();
+      for (size_t q = 0; q < live.size(); q++) if (!std::isfinite(rs[q].f)) redo.push_back(live[q]);
+      for (const uint32_t q : redo) { C[q].leaf = VL[C[q].b]; C[q].ev = C[q].b; }
+      if (!redo.empty()) {
+        if (readCorners(s, C, redo, edge, true, r2) != 0) return 2;
+        size_t j = 0;
+        for (size_t q = 0; q < live.size(); q++) if (j < redo.size() && live[q] == redo[j]) rs[q] = r2[j++];
+      }
+    }
+    next.clear();
+    for (size_t q = 0; q < live.size(); q++) {
+      KCand& c = C[live[q]];
+      const int st = cornerStep(c, rs[q], edge);
+      if (!st) { c.ok = false; continue; }
+      if (st == 2) { judged.push_back(live[q]); reads.push_back(rs[q]); continue; }
+      next.push_back(live[q]);
+    }
+    live.swap(next);
+  }
+  if (!live.empty()) {
+    if (readCorners(s, C, live, edge, true, rs) != 0) return 2;
+    for (size_t q = 0; q < live.size(); q++) { judged.push_back(live[q]); reads.push_back(rs[q]); }
+  }
+  // The point itself, for those judged on a read without it.
+  {
+    Points pts;
+    std::vector<size_t> at;
+    for (size_t q = 0; q < judged.size(); q++) {
+      const KCand& c = C[judged[q]];
+      if (!std::isfinite(reads[q].f)) { pts.add(c.p[0], c.p[1], c.p[2], leaf_prog(s, c.leaf)); at.push_back(q); }
+    }
+    if (!at.empty()) {
+      std::vector<double> d(pts.size());
+      if (eval_points(s, pts, d.data(), nullptr, nullptr, nullptr) != 0) return 2;
+      for (size_t i = 0; i < at.size(); i++) reads[at[i]].f = d[i];
+    }
+  }
+  for (size_t q = 0; q < judged.size(); q++) {
+    KCand& c = C[judged[q]];
+    const CRead& r = reads[q];
+    double u[3][3];
+    bool okU = true;
+    for (int i = 0; i < 3; i++) okU = (r.S[i].present && unit(r.S[i].g, u[i])) && okU;
+    const double dm = hypot3(c.p[0] - c.m[0], c.p[1] - c.m[1], c.p[2] - c.m[2]);
+    if (!okU || !std::isfinite(r.f)) c.ok = false;
+    else if (!(dm <= SHARP_MAX_MOVE * edge)) c.ok = false;
+    else if (!(std::fabs(r.f) <= tol)) c.ok = false;
+    else if (!(dot(u[0], u[1]) < SHARP_ANGLE_COS && dot(u[1], u[2]) < SHARP_ANGLE_COS && dot(u[0], u[2]) < SHARP_ANGLE_COS)) c.ok = false;
+    else {
+      const double sum[3] = {u[0][0] + u[1][0] + u[2][0], u[0][1] + u[1][1] + u[2][1], u[0][2] + u[1][2] + u[2][2]};
+      if (!unit(sum, c.n)) c.ok = false;
+    }
+  }
+  return 0;
+}
 
 // What a corner pass gives the round: the re-triangulated list, the candidates that made a
 // vertex (their leaf and evaluating end) in vertex order, and the vertices made corners.
@@ -911,22 +1081,27 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
     if (!(std::fabs(det) >= SHARP_CORNER_DET)) return;
     double p[3];
     for (int i = 0; i < 3; i++) p[i] = (set[0]->d * c12[i] + set[1]->d * c20[i] + set[2]->d * c01[i]) / det;
-    const double mx = (P[3 * (size_t)lo] + P[3 * (size_t)hi]) / 2 - p[0], my = (P[3 * (size_t)lo + 1] + P[3 * (size_t)hi + 1]) / 2 - p[1],
-                 mz = (P[3 * (size_t)lo + 2] + P[3 * (size_t)hi + 2]) / 2 - p[2];
-    if (!(hypot3(mx, my, mz) <= SHARP_MAX_MOVE * edge)) return;
+    KCand c;
+    c.m[0] = (P[3 * (size_t)lo] + P[3 * (size_t)hi]) / 2; c.m[1] = (P[3 * (size_t)lo + 1] + P[3 * (size_t)hi + 1]) / 2;
+    c.m[2] = (P[3 * (size_t)lo + 2] + P[3 * (size_t)hi + 2]) / 2;
+    if (!(hypot3(c.m[0] - p[0], c.m[1] - p[1], c.m[2] - p[2]) <= SHARP_MAX_MOVE * edge)) return;
+    // A start on a corner made so far is that corner: not solved again.
     for (const uint32_t v : have) if (hypot3(P[3 * (size_t)v] - p[0], P[3 * (size_t)v + 1] - p[1], P[3 * (size_t)v + 2] - p[2]) <= R) return;
     const double sum[3] = {n0[0] + n1[0] + n2[0], n0[1] + n1[1] + n2[1], n0[2] + n1[2] + n2[2]};
-    KCand c;
-    if (!unit(sum, c.n)) return;   // the three normals cancel: no side to face
+    double sn[3];
+    if (!unit(sum, sn)) return;   // the three normals cancel: no side to face
     int rough = 0;
-    double clear = INF;
+    double clear = INF, reach = 0;
     for (int i = 0; i < 3; i++) {
       const uint32_t w = set[i]->v;
       if (x.sharp[w] != 1) rough++;
-      clear = jsmin(clear, hypot3(P[3 * (size_t)w] - p[0], P[3 * (size_t)w + 1] - p[1], P[3 * (size_t)w + 2] - p[2]));
+      const double dd = hypot3(P[3 * (size_t)w] - p[0], P[3 * (size_t)w + 1] - p[1], P[3 * (size_t)w + 2] - p[2]);
+      clear = jsmin(clear, dd);
+      reach = jsmax(reach, dd);
     }
+    c.h = reach < SIDE * edge ? SIDE * edge : reach > CORNER_SIDE_MAX * edge ? CORNER_SIDE_MAX * edge : reach;
     c.a = lo; c.b = hi;
-    for (int i = 0; i < 3; i++) c.p[i] = p[i];
+    for (int i = 0; i < 3; i++) { c.p[i] = p[i]; c.u[0][i] = n0[i]; c.u[1][i] = n1[i]; c.u[2][i] = n2[i]; }
     c.rough = rough; c.clear = clear; c.leaf = x.VL[lo]; c.ev = lo;
     cand.push_back(c);
   };
@@ -956,6 +1131,20 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
       seen.push_back(w);
       ordered.clear(); planesOf(v, ordered); planesOf(w, ordered); offer(ordered, lo, hi);
     }
+  }
+  // Each candidate solved on the field's faces; then, on the across pass, its solved point clear of
+  // the corners made so far too. Only those kept go on.
+  const double tol = (x.across ? ACROSS_TOL : SHARP_TOL) * edge;
+  if (!cand.empty()) {
+    if (solveCorners(s, cand, x.VL, edge, tol) != 0) return 2;
+    std::vector<KCand> kept;
+    for (const KCand& c : cand) {
+      if (!c.ok) continue;
+      bool near = false;
+      for (const uint32_t v : have) if (hypot3(P[3 * (size_t)v] - c.p[0], P[3 * (size_t)v + 1] - c.p[1], P[3 * (size_t)v + 2] - c.p[2]) <= R) { near = true; break; }
+      if (!near) kept.push_back(c);
+    }
+    cand.swap(kept);
   }
   if (cand.empty()) { res.out = T; return 0; }
   // One point per corner: grouped against each group's first point; the best member's point.
@@ -998,7 +1187,6 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
       if (eval_points(s, pts, d2.data(), nullptr, nullptr, nullptr) != 0) return 2;
     }
     size_t r = 0;
-    const double tol = (x.across ? ACROSS_TOL : SHARP_TOL) * edge;
     for (size_t q = 0; q < cand.size(); q++) {
       const double f = std::isfinite(d[q]) ? d[q] : d2[r++];
       if (!(std::fabs(f) <= tol)) cand[q].ok = false;
@@ -1306,12 +1494,14 @@ int ip_sharpen(int id) {
 // TEST ONLY (test/implicit-sharpen-native.test.js): the stage's constants, in this order:
 // SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_PER_CELL,
 // SHARP_DENSE_MIN, NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
-// CORNER_MERGE, SIDE_PTS, FLAT_READS, ACROSS_TOL, TRIES, SHARP_APART. Writes them to `out` and returns the count.
+// CORNER_MERGE, SIDE_PTS, FLAT_READS, ACROSS_TOL, TRIES, SHARP_APART, CORNER_STEPS, CORNER_SIDE_MAX. Writes them to
+// `out` and returns the count.
 int ip_sharpen_constants(double* out) {
   using namespace ipm_mesh;
   const double v[] = {SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_PER_CELL,
                       (double)SHARP_DENSE_MIN, (double)NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
-                      CORNER_MERGE, (double)SIDE_PTS, (double)FLAT_READS, ACROSS_TOL, (double)TRIES, SHARP_APART};
+                      CORNER_MERGE, (double)SIDE_PTS, (double)FLAT_READS, ACROSS_TOL, (double)TRIES, SHARP_APART,
+                      (double)CORNER_STEPS, CORNER_SIDE_MAX};
   const int n = (int)(sizeof v / sizeof v[0]);
   for (int i = 0; i < n; i++) out[i] = v[i];
   return n;

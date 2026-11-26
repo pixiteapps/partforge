@@ -144,7 +144,9 @@ describe("cleanup", () => {
 // when the sharpen stage (sharpen.js) joined every mesh: the vase's k 0 repeat and its gyroid's
 // k 0 intersect are real creases, and the stage puts 1,157 edge points and 14 corners on them at
 // 1.2 mm (bd023b59990de4ed before it), and again (7ea92c82211b3f0e before) when cleanup began
-// merging the mesher's vertex clusters and sharpen's density rule began counting area (0.207). The hand (a contact
+// merging the mesher's vertex clusters and sharpen's density rule began counting area (0.207), and again
+// (f8fd6dcd91809b27 before) when a sharpen corner point began to be solved on its three faces: the
+// vase's 10 corner points then all sat where fewer than three faces meet, and none is kept. The hand (a contact
 // root) meshes through the owner path, whose tier behaviour the "hand" test below holds without a
 // golden digest. A deliberate change to print-tier meshing changes the digests: re-record by printing
 // digest(meshImplicit(compiled, edge, { tier: "print" })) for each case.
@@ -158,7 +160,7 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "f8fd6dcd91809b27", null]];
+  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "850aca1e6c2d0619", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);

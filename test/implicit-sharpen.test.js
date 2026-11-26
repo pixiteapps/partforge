@@ -16,9 +16,15 @@ import { untangle } from "../src/framework/geometry/implicit/crease.js";
 import { applySurfaceDetail } from "../src/framework/geometry/implicit/detail.js";
 import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field-build.js";
 import { meshDistance } from "../src/framework/geometry/implicit/mesh-field.js";
-import { sharpenMesh, SHARP_TOL } from "../src/framework/geometry/implicit/sharpen.js";
+import { sharpenMesh, SHARP_TOL, SHARP_ANGLE_COS } from "../src/framework/geometry/implicit/sharpen.js";
 import { fieldFlips } from "../src/framework/geometry/implicit/sharpen-mesh.js";
-import { jsStages, meshChecks, meshFieldOf } from "./helpers/implicit-stages.js";
+import { compileImplicit } from "../src/framework/geometry/implicit/compile.js";
+import { planLeaves, evaluateLeaves } from "../src/framework/geometry/implicit/sparse.js";
+import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
+import { cleanupMesh, PREVIEW_CLEANUP } from "../src/framework/geometry/implicit/cleanup.js";
+import { evalReference } from "../src/framework/geometry/implicit/reference.js";
+import { jsStages, meshChecks, meshFieldOf, faceNormals } from "./helpers/implicit-stages.js";
+import { vaseSpec } from "./fixtures/implicit-trees.js";
 
 const GRIDS = [0.6, 1.0];
 let k, wasm;
@@ -376,6 +382,42 @@ describe("sharpenMesh, hard cases", () => {
       });
     }, 120_000);
   }
+
+  // A corner point is solved on its three faces, and kept only where three faces meet. A curved
+  // sharp edge (a hole's rim, a cut torus's rims) has two faces: two tangent planes of one of them
+  // and a plane of the other meet beside the rim, which used to make a stray corner point there
+  // (box minus cylinder 12 at 1.0 mm, cut torus 2 at 1.0 mm print).
+  for (const edge of GRIDS) {
+    test(`hole: a box minus a through cylinder has its 8 box corners and none on the rims (grid ${edge})`, () => {
+      const root = { kind: "subtract", k: 0, children: [{ kind: "box", size: [30, 20, 10] }, { kind: "cylinder", h: 30, r: 4 }] };
+      const r = run(root, edge);
+      expectSound(r);
+      expectCorners(r.mesh, boxCorners([[-15, -10, -5], [15, 10, 5]]));
+    }, 120_000);
+    for (const tier of ["preview", "print"]) {
+      test(`torus: a torus cut by a half-space has no corner point (grid ${edge}, ${tier})`, () => {
+        const root = { kind: "intersect", children: [{ kind: "torus", R: 12, r: 4 }, { kind: "halfspace", normal: "z", offset: 1.3 }] };
+        const r = run(root, edge, tier);
+        expectSound(r);
+        expect(r.mesh.sharp ? sharpVerts(r.mesh).length : 0).toBeGreaterThan(0);
+        expect(cornerVerts(r.mesh).length).toBe(0);
+      }, 120_000);
+    }
+  }
+
+  // The vase (test/implicit-cleanup.test.js's tier case, 1.2 mm): every corner point it keeps
+  // has three faces of the field within 0.05 cells of it. Four used to sit 0.017 to 0.139 mm
+  // beside a curved crease, where only two faces meet.
+  test("vase: every corner point has three faces of the field around it (grid 1.2)", () => {
+    const vase = vaseSpec(), compiled = compileImplicit(vase.spec, { images: vase.images }), edge = 1.2;
+    const store = evaluateLeaves(planLeaves(compiled, edge));
+    const mesh = sharpenMesh(store, cleanupMesh(store, meshStore(store), { ...PREVIEW_CLEANUP, decimateFrac: 0 }));
+    const field = (x, y, z) => evalReference(compiled, x, y, z);
+    for (const v of cornerVerts(mesh)) {
+      const p = vert(mesh, v);
+      expect(faceNormals(field, p, 0.05 * edge, SHARP_ANGLE_COS).length, `corner at ${p.map((x) => x.toFixed(3))}`).toBeGreaterThanOrEqual(3);
+    }
+  }, 240_000);
 
   test("small: a 4 mm boss on a plate keeps its own edges and corners (grid 1.0)", () => {
     const root = { kind: "union", k: 0, children: [{ kind: "box", size: [40, 30, 6] }, { kind: "box", size: [4, 4, 4], at: [0, 0, 5] }] };
