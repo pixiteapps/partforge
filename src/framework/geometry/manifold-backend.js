@@ -54,8 +54,12 @@ const emptyProfile = (op) => new Error(
 const PLANE_NORMAL = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
 // Trees whose automatic k.implicit preview edge a kernel remembers (each entry is a hash and a number).
 const AUTO_PREVIEW_MEMO = 256;
-// Solids whose k.implicit mesh field (a BVH and its pseudonormals) a kernel remembers.
+// Solids whose k.implicit mesh field (a BVH and its pseudonormals) a kernel remembers,
+// bounded by count and by estimated bytes. A field keeps about 263 bytes per triangle
+// (measured: 85 MB for 323k triangles), estimated here as 270.
 const MESH_FIELD_MEMO = 32;
+const MESH_FIELD_BYTES = 192 * 1024 * 1024;
+const MESH_FIELD_BYTES_PER_TRI = 270;
 // 'preview' = interactive view (fast); 'print' = STL export (high-res, used only
 // by the export path — Manifold meshing is cheap, so we tessellate generously).
 // Full-circle segment counts live in circle-segs.js: preview is a flat SEGS.preview,
@@ -78,7 +82,8 @@ function axisAngleMat4(axis, deg) {
 
 const BYTES_PER_TRI = 160, BYTES_PER_VERT = 24;
 
-export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
+// `meshFieldBudget` (bytes) bounds the mesh field memo; tests set a small one.
+export function createManifoldKernel(wasm, { quality = "preview", meshFieldBudget = MESH_FIELD_BYTES } = {}) {
   const { Manifold, CrossSection } = wasm;
   const segs = SEGS[quality], tube = TUBE[quality];
   // Per-radius count for every site that facets a circle it knows the radius of; the
@@ -247,17 +252,28 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   // never stale); cleared whole when it reaches AUTO_PREVIEW_MEMO trees.
   const autoPreviewEdges = new Map();
   // k.implicit's `solid` leaf fields, by solid `_hash` (a solid's hash names its geometry,
-  // so an entry is never stale). The least recently used entry goes at MESH_FIELD_MEMO.
-  const meshFields = new Map();
+  // so an entry is never stale). Least recently used entries go first, while the memo holds
+  // MESH_FIELD_MEMO entries or the new field would take it over meshFieldBudget bytes. A
+  // field larger than the budget is built and returned but not kept. An evicted field that
+  // is needed again is simply built again. dropCache empties the memo.
+  const meshFields = new Map();   // _hash -> { field, bytes }
+  let meshFieldBytes = 0;
   const meshFieldOf = (solid) => {
-    let f = meshFields.get(solid._hash);
-    if (f !== undefined) { meshFields.delete(solid._hash); meshFields.set(solid._hash, f); return f; }
+    const hit = meshFields.get(solid._hash);
+    if (hit !== undefined) { meshFields.delete(solid._hash); meshFields.set(solid._hash, hit); return hit.field; }
     // The builder loads on demand: not loaded yet, this throws code NEEDS_MESH_FIELD
     // (jobs.js loads it and runs the job again).
-    f = meshFieldBuilder()(solid.toMesh());
-    if (meshFields.size >= MESH_FIELD_MEMO) meshFields.delete(meshFields.keys().next().value);
-    meshFields.set(solid._hash, f);
-    return f;
+    const field = meshFieldBuilder()(solid.toMesh());
+    const bytes = field.tris * MESH_FIELD_BYTES_PER_TRI;
+    if (bytes > meshFieldBudget) return field;
+    while (meshFields.size >= MESH_FIELD_MEMO || meshFieldBytes + bytes > meshFieldBudget) {
+      const [oldest, entry] = meshFields.entries().next().value;
+      meshFields.delete(oldest);
+      meshFieldBytes -= entry.bytes;
+    }
+    meshFields.set(solid._hash, { field, bytes });
+    meshFieldBytes += bytes;
+    return field;
   };
   // k.implicit's leaf samples across builds (implicit/sample-cache.js): a preview build
   // anchors its grid to the world lattice and reuses the samples a pose change did not
@@ -1473,6 +1489,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     },
     _acceptsMesh: true,
     _sampleCache: sampleCache,   // tests and the bench: k.implicit's preview sample cache
+    _meshFieldMemo: () => ({ entries: meshFields.size, bytes: meshFieldBytes }),   // tests: the mesh field memo's size
     shape2d,
     // Backend-internal region adapter: the shared native engine (contour-offset.js)
     // that Shape2D.offset itself runs on — published here for callers that want the
@@ -1493,7 +1510,7 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
     beginProvenance: (prov) => { activeProv = prov; },
     endProvenance: () => { activeProv = null; },
     sweepCache: () => cache.sweep(),
-    dropCache: () => { cache.clear(); sampleCache.clear(); },
+    dropCache: () => { cache.clear(); sampleCache.clear(); meshFields.clear(); meshFieldBytes = 0; },
     setCacheBudget: (bytes) => cache.setBudget(bytes),
     trimCache: () => cache.trim(),
     cacheBytes: () => cache.retainedBytes(),
