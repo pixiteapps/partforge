@@ -152,10 +152,13 @@ export function emitProgram(compiled, dec) {
 /**
  * A program's per-sample work, in instructions: one per instruction, plus one per operand of an
  * n-ary op (UNION/INTER/CONTACT), per contact attachment and per bulge region, and
- * ceil(log2(tris)) per MESH op (its BVH descent; `meshes` is the compiled mesh table). Walks
- * the same layouts runProgram reads; the preview-grid chooser weighs leaves by it
- * (preview-edge.js).
+ * MESH_OP_WEIGHT × ceil(log2(tris)) per MESH op (its BVH descent; `meshes` is the compiled
+ * mesh table). Walks the same layouts runProgram reads; the preview-grid chooser weighs
+ * leaves by it (preview-edge.js).
  */
+// Fitted on native-core k.implicit times (design doc "5. Cost"): solid leaves of 12 to 54k triangles
+// then cost 32-47 µs per unit, primitive trees 28-52; a 434k leaf runs about twice over.
+export const MESH_OP_WEIGHT = 16;
 export function programOps(prog, meshes = []) {
   let pc = 2, ops = 0;
   for (;;) {
@@ -172,7 +175,7 @@ export function programOps(prog, meshes = []) {
       case OP.MIN2: case OP.MIRRORP: case OP.ADDC: case OP.ONION: case OP.GET: case OP.UN: pc += 4; break;
       case OP.DISP: case OP.BIN: case OP.TEX: pc += 5; break;
       case OP.TER: pc += 6; break;
-      case OP.MESH: { const f = meshes[prog[pc + 3]]; if (!f) throw new Error(`implicit: no mesh in slot ${prog[pc + 3]}`); ops += Math.ceil(Math.log2(f.tris)); pc += 4; break; }
+      case OP.MESH: { const f = meshes[prog[pc + 3]]; if (!f) throw new Error(`implicit: no mesh in slot ${prog[pc + 3]}`); ops += MESH_OP_WEIGHT * Math.ceil(Math.log2(f.tris)); pc += 4; break; }
       default: throw new Error(`implicit: bad opcode ${op} at ${pc}`);
     }
   }

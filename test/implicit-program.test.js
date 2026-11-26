@@ -3,7 +3,7 @@ import { beforeAll, describe, test, expect } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { blockDecision, fullDecision } from "../src/framework/geometry/implicit/interval.js";
-import { emitProgram, evalBatch, runProgram, programOps, OP, FN_CODES, UN_NAMES, BIN_NAMES, TER_NAMES, BATCH } from "../src/framework/geometry/implicit/program.js";
+import { emitProgram, evalBatch, runProgram, programOps, MESH_OP_WEIGHT, OP, FN_CODES, UN_NAMES, BIN_NAMES, TER_NAMES, BATCH } from "../src/framework/geometry/implicit/program.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/compile.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
@@ -121,7 +121,8 @@ describe("the solid leaf", () => {
     const prog = emitProgram(c, fullDecision(c));
     const tris = c.meshes[0].tris;
     expect(tris).toBeGreaterThan(1);
-    // MESH (1 + ceil(log2 tris)), then END (1).
-    expect(programOps(prog, c.meshes)).toBe(1 + Math.ceil(Math.log2(tris)) + 1);
+    // MESH (1 + MESH_OP_WEIGHT × ceil(log2 tris)), then END (1).
+    expect(MESH_OP_WEIGHT).toBe(16);
+    expect(programOps(prog, c.meshes)).toBe(1 + MESH_OP_WEIGHT * Math.ceil(Math.log2(tris)) + 1);
   });
 });

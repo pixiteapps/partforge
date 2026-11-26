@@ -207,8 +207,36 @@ the fix is to snap border vertices onto the solid's own mesh.
 - The core makes these cases about three times faster. Sample and cleanup take most of the
   time. Compile includes `buildMeshField`.
 - The preview-grid chooser (`preview-edge.js`) weighs a program by its op count. A `MESH`
-  op needs a weight that grows with the mesh's triangle count (about log n), measured, so
-  the automatic preview grid stays inside its budget.
+  op weighs `MESH_OP_WEIGHT × ceil(log2(tris))` (program.js), with `MESH_OP_WEIGHT` 16.
+  The weight comes from the times below: `k.implicit` end to end, CPU ms, core on, warm
+  field memo, no `preview` set, the median of three runs (measured in Task 9). A
+  unit is one leaf unit of the cost model. With a weight of 1, the solid join predicted
+  1.19 times the primitive join and took about 4.5 to 5 times as long.
+
+  | Tree | Triangles | Chosen edge | Predicted | ms | µs per unit |
+  | --- | --- | --- | --- | --- | --- |
+  | Plate and boss join, primitives | none | 0.5 | 4,157 | 150 | 36 |
+  | Sphere r 30, primitive | none | 0.5 | 6,723 | 342 | 51 |
+  | `offset` 1 over a primitive sphere | none | 0.5 | 7,462 | 386 | 52 |
+  | Box 60 × 40 × 6, primitive | none | 0.5 | 2,662 | 75 | 28 |
+  | Box solid | 12 | 0.5 | 5,939 | 191 | 32 |
+  | Plate and boss join, solids | 12 and 460 | 0.5 | 18,924 | 722 | 38 |
+  | Blob shrink | 2,950 | 0.5 | 10,976 | 500 | 46 |
+  | Sphere solid r 30 | 3,872 | 0.75 | 14,020 | 520 | 37 |
+  | `offset` 1 over the sphere solid | 3,872 | 0.75 | 15,332 | 604 | 39 |
+  | Sphere solid (a `k.implicit` sphere) | 53,580 | 0.75 | 16,778 | 795 | 47 |
+  | Sphere solid (a `k.implicit` sphere) | 433,914 | 1 | 10,989 | 1027 | 94 |
+
+- The primitive trees cost 28 to 52 µs per unit. Solid leaves up to about 50k triangles
+  cost 32 to 47 µs per unit, so the weight puts them in the same range. A weight of 14
+  fits the same cases; 16 is the conservative choice.
+- A log term does not track a very large leaf. At a fixed 0.6 mm grid, after the weight,
+  the 53,580 triangle leaf costs 1.2 times as much per unit as the 3,872 triangle leaf, and
+  the 433,914 triangle leaf costs 1.9 times as much. Each build also pays a fixed cost of
+  about 0.85 µs per triangle that does not depend on the grid (368 ms for the largest leaf
+  at a 3 mm grid). The model does not include it. Without it the largest leaf still costs
+  1.7 times as much per unit. So a leaf above about 100k triangles previews slower than
+  the budget intends.
 - The proposed target was the plate and boss join at the preview tier in under 300 ms with
   the core on. It takes about 420 ms, so it misses the target. This task did no tuning.
 

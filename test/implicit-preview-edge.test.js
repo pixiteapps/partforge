@@ -9,6 +9,7 @@ import { programOps, emitProgram } from "../src/framework/geometry/implicit/prog
 import { fullDecision } from "../src/framework/geometry/implicit/interval.js";
 import { setCoreEnabled } from "../src/framework/core/core.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { meshFieldBuilder } from "../src/framework/geometry/implicit/mesh-field-loader.js";
 import { handSpec, HAND_POSES, vaseSpec, BALL_BOARD } from "./fixtures/implicit-trees.js";
 import { capsulePress, threePress, fingersOnPalm } from "./fixtures/implicit-seam-cases.js";
 
@@ -89,5 +90,35 @@ describe("k.implicit uses the automatic preview edge", () => {
     const explicit = k.implicit({ ...spec, preview: 2 });
     expect(explicit._hash).not.toBe(auto._hash);
     expect(explicit._m.numTri()).toBeLessThan(auto._m.numTri());
+  });
+});
+
+// A MESH op (a solid leaf) weighs MESH_OP_WEIGHT × ceil(log2 tris) (program.js), fitted on
+// native times (design doc "5. Cost"): the solid join costs about 4.5 times the same join
+// built from primitives. Trees without a MESH op keep the picks pinned above.
+describe("the cost model weighs a solid leaf", () => {
+  let k;
+  beforeAll(async () => { k = await bootManifoldKernel({ meshFields: true }); });
+  const leaf = (solid) => ({ kind: "solid", solid });
+  const compiled = (spec) => compileImplicit(spec, { meshFieldOf: (s) => meshFieldBuilder()(s.toMesh()) });
+  const solidJoin = () => ({ root: { kind: "union", k: 8, children: [
+    leaf(k.box({ min: [-30, -20, 0], max: [30, 20, 6] })), leaf(k.cylinder({ r: 8, h: 26 }).at([0, 0, 4])),
+  ] } });
+  const primJoin = { root: { kind: "union", k: 8, children: [
+    { kind: "box", size: [60, 40, 6], at: [0, 0, 3] }, { kind: "cylinder", r: 8, h: 26, at: [0, 0, 17] },
+  ] } };
+
+  test("the plate and boss join previews at 0.5 mm, and a solid sphere at 0.75", () => {
+    expect(choosePreviewEdge(compiled(solidJoin()))).toBe(0.5);
+    expect(choosePreviewEdge(compiled({ root: leaf(k.sphere(30)) }))).toBe(0.75);
+    expect(choosePreviewEdge(compileImplicit({ root: { kind: "sphere", r: 30 } }))).toBe(0.5);
+  });
+  test("a solid-leaf join predicts at least 3 times the same join from primitives", () => {
+    const solid = previewProbe(compiled(solidJoin())), prim = previewProbe(compileImplicit(primJoin));
+    for (const edge of [0.5, 1, 2]) expect(solid.cost(edge)).toBeGreaterThanOrEqual(3 * prim.cost(edge));
+  });
+  test("k.implicit picks the same edge as the chooser for a solid leaf", () => {
+    const spec = { root: leaf(k.sphere(30)) };
+    expect(k.implicit(spec)._hash).toBe(k.implicit({ ...spec, preview: 0.75 })._hash);
   });
 });
