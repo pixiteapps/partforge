@@ -15,7 +15,7 @@ import handling.
 
 This directory is its **own git repo** (`pixiteapps/partforge`), independent of
 the surrounding Robot KB wiki. The retired `drum.js` example now lives in the
-separate Drum-Machine repo; `src/parts/` now has thirty: `demo.js` (minimal
+separate Drum-Machine repo; `src/parts/` now has thirty-one: `demo.js` (minimal
 spacer), `planter.js` (rich - facets/taper/twist/verify block), `filleted-box.js`
 (fillet/chamfer dress-ups, mesh-native since contract v3), `bracket.js` (Shape2D union/intersect/cut toolkit),
 `gasket.js` (the profile-editing reference part - curve-native `pathProfile`,
@@ -83,8 +83,8 @@ drawer, which only re-places it - each opening a percentage of its `depth - 10` 
 no value of it is dead, and each drawer's handle swept and gated; `drawer-box.html`, dev-only and not in `rollupOptions.input`), `capstan-joint.js` (the lines reference part and the
 worked example of the capstan section of `docs/domains/mechanisms.md` - a motor drum and an
 output pulley placed by one `capstan` in `derive`, the rope declared in `lines`, a
-`motorAngle` sweep gated by `lineDrift` and `sweepContacts`, the rope report in a probe;
-no demo page), and `material-swatches.js` (not a reference part: the dev-only
+`motorAngle` sweep gated by `lineDrift` and `sweepContacts`, a rotary handle on the drum,
+the rope report in a `rope` probe; no demo page), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).

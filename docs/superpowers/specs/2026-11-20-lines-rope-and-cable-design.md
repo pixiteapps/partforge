@@ -296,8 +296,10 @@ from section 4:
   view (each line's refinement then derives on its own), and run on the line pass's own
   budget, `LINE_SWEEP_BUDGET_MS` (2000 ms per measure() call, on the sweeps' clock), apart
   from the sweep's deadline: a row the clock stopped, or whose contact pass threw, still
-  carries its `lines` while that budget lasts, and a reading it stops is `{ name, error:
-  "timeout", at }`, which withholds both gates. A row's `ms` excludes the line pass.
+  carries its `lines` while that budget lasts. The pass never runs past the sweep deadline
+  plus `LINE_GRACE_MS` (1000 ms), one end shared by measure() and verify's other views, so
+  an inspect report still finishes inside partforge-cloud's 8 s timeout. A reading either
+  limit stops is `{ name, error: "timeout", at }`, which withholds both gates. A row's `ms` excludes the line pass.
 - A sweep that moves no piece in the view has no sweep row, but is still read for lines
   (a line changes through derive alone): `measure().lineSweeps`, which the line gates read
   with the rows and `sweepContacts` never does. Only the measured view's sweeps get this;
