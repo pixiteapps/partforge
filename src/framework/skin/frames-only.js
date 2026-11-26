@@ -12,6 +12,10 @@ const sameKeys = (a, b) => {
 /**
  * True when both builds made the same k.implicit calls (same count, same shape per call, same
  * frame names in the same order) and nothing differs but values inside `frames`.
+ *
+ * A solid leaf's identity is NOT part of the call id (call-id.js counts every solid leaf as
+ * the same "solid"), so two builds that differ only in the solid a call holds pass here. Only
+ * the probe's shapeHash equality in skinnableBetween (skin-drag.js) refuses that change.
  */
 export function framesOnlyChange(oldSpecs, newSpecs) {
   if (!Array.isArray(oldSpecs) || !Array.isArray(newSpecs)) return false;

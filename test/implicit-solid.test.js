@@ -131,6 +131,7 @@ describe("solid leaf identity", () => {
     const a = k.sphere(8), b = k.sphere(9);
     const spec = (s) => ({ frames: { f: { at: [0, 0, 0] } }, root: leaf(s) });
     expect(hashableSpec(spec(a), { identity: false }).root).toEqual({ kind: "solid", solid: "solid" });
+    expect(hashableSpec({ root: { kind: "solid" } }, { identity: false })).toEqual({ root: { kind: "solid", solid: "solid" } });
     expect(implicitShapeHash(spec(a))).toBe(implicitShapeHash(spec(b)));
     expect(implicitShapeHash(spec(a))).toBe(implicitShapeHash(spec({})));   // a probe stub, too
     expect(implicitCallId(spec(b), [spec(a)])).toBe(`${implicitShapeHash(spec(a))}#1`);
@@ -138,14 +139,14 @@ describe("solid leaf identity", () => {
     expect(hashableSpec(spec(a)).root.solid).not.toBe(hashableSpec(spec(b)).root.solid);
   });
   test("k.implicitFrames builds a solid leaf's field at most once across two calls", () => {
-    const real = k.sphere(7);
+    const real = k.sphere(7.123);   // a solid no other test builds, so its field is not cached yet
     let meshes = 0;
     const counted = Object.create(real, { toMesh: { value: () => { meshes++; return real.toMesh(); } } });
     const spec = { frames: { tip: { at: [0, 0, 7] } }, root: { kind: "offset", d: 1, child: leaf(counted), label: "ball" } };
     const r1 = k.implicitFrames(spec).report(), r2 = k.implicitFrames(spec).report();
     expect(r2).toEqual(r1);
     expect(r1.frames.tip.origin).toEqual([0, 0, 7]);
-    expect(meshes).toBeLessThanOrEqual(1);
+    expect(meshes).toBe(1);
   });
   test("implicitFrames takes a meshFieldOf option and lowers through it", () => {
     const s = k.sphere(5), seen = [];
