@@ -4,6 +4,8 @@ import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/compile.js";
 import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field.js";
+import { hashableSpec, implicitShapeHash, implicitCallId } from "../src/framework/geometry/implicit/call-id.js";
+import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
 
 let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
 const leaf = (solid, extra = {}) => ({ kind: "solid", solid, ...extra });
@@ -88,6 +90,64 @@ describe("solid leaf", () => {
     const s = k.sphere(3), seen = [];
     const meshFieldOf = (solid) => { seen.push(solid._hash); return buildMeshField(solid.toMesh()); };
     compileImplicit({ root: { kind: "union", children: [leaf(s), leaf(s, { at: [5, 0, 0] })] } }, { meshFieldOf });
+    expect(seen).toEqual([s._hash]);
+  });
+});
+
+describe("solid leaf identity", () => {
+  test("the same tree over different solids is two results; over the same solid, one", () => {
+    const a = k.sphere(8), b = k.sphere(9);
+    const build = (s) => k.implicit({ resolution: 0.6, root: { kind: "offset", d: 1, child: leaf(s) } });
+    // The geometry cache serves a hit only inside a sub-part bracket (solid-cache.js).
+    k.beginSubPart("identity");
+    try {
+      expect(build(a)).toBe(build(a));                                  // geometry-cache hit
+      expect(build(a).volume()).not.toBeCloseTo(build(b).volume(), 0);
+      expect(build(a)._hash).not.toBe(build(b)._hash);
+    } finally { k.endSubPart(); }
+  });
+  test("the spec hash names a solid by its hash, not by its object", () => {
+    const s = k.sphere(8);
+    expect(hashableSpec({ root: leaf(s) })).toEqual({ root: { kind: "solid", solid: `solid:${s._hash}` } });
+    // Deep in the tree, beside other nodes and frames; the input is not changed.
+    const spec = { frames: { f: { at: [1, 0, 0] } }, root: { kind: "union", k: 2, children: [{ kind: "sphere", r: 3 }, leaf(s, { at: [4, 0, 0] })] } };
+    const out = hashableSpec(spec);
+    expect(out.root.children[1]).toEqual({ kind: "solid", solid: `solid:${s._hash}`, at: [4, 0, 0] });
+    expect(out.root.children[0]).toBe(spec.root.children[0]);
+    expect(out.frames).toBe(spec.frames);
+    expect(spec.root.children[1].solid).toBe(s);
+  });
+  test("a spec with no solid leaf is returned as it is", () => {
+    const spec = { frames: { f: { at: [1, 0, 0] } }, root: { kind: "union", children: [{ kind: "sphere", r: 3 }, { kind: "box", size: [1, 2, 3] }] } };
+    expect(hashableSpec(spec)).toBe(spec);
+  });
+  test("a solid without a _hash (a probe stub) hashes as solid:? and does not throw", () => {
+    expect(hashableSpec({ root: leaf({}) })).toEqual({ root: { kind: "solid", solid: "solid:?" } });
+    expect(hashableSpec({ root: { kind: "solid" } })).toEqual({ root: { kind: "solid", solid: "solid:?" } });
+    expect(() => implicitShapeHash({ root: leaf({}) })).not.toThrow();
+  });
+  test("the shape hash and call id tell two solids apart and ignore the solid object", () => {
+    const a = k.sphere(8), b = k.sphere(9);
+    const spec = (s) => ({ frames: { f: { at: [0, 0, 0] } }, root: leaf(s) });
+    expect(implicitShapeHash(spec(a))).not.toBe(implicitShapeHash(spec(b)));
+    // A different object with the same _hash is the same shape.
+    expect(implicitShapeHash(spec(a))).toBe(implicitShapeHash(spec({ _hash: a._hash })));
+    expect(implicitCallId(spec(a), [spec(b), spec(a)])).toBe(`${implicitShapeHash(spec(a))}#1`);
+  });
+  test("k.implicitFrames builds a solid leaf's field at most once across two calls", () => {
+    const real = k.sphere(7);
+    let meshes = 0;
+    const counted = Object.create(real, { toMesh: { value: () => { meshes++; return real.toMesh(); } } });
+    const spec = { frames: { tip: { at: [0, 0, 7] } }, root: { kind: "offset", d: 1, child: leaf(counted), label: "ball" } };
+    const r1 = k.implicitFrames(spec).report(), r2 = k.implicitFrames(spec).report();
+    expect(r2).toEqual(r1);
+    expect(r1.frames.tip.origin).toEqual([0, 0, 7]);
+    expect(meshes).toBeLessThanOrEqual(1);
+  });
+  test("implicitFrames takes a meshFieldOf option and lowers through it", () => {
+    const s = k.sphere(5), seen = [];
+    const meshFieldOf = (solid) => { seen.push(solid._hash); return buildMeshField(solid.toMesh()); };
+    implicitFrames({ root: leaf(s, { label: "s" }) }, { meshFieldOf });
     expect(seen).toEqual([s._hash]);
   });
 });

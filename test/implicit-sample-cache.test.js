@@ -10,6 +10,9 @@ import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { planLeaves, LEAF, TOP } from "../src/framework/geometry/implicit/sparse.js";
 import { createSampleCache, leafKeys, SAMPLE_CACHE_BYTES } from "../src/framework/geometry/implicit/sample-cache.js";
+import { implicitHashable } from "../src/framework/geometry/implicit/index.js";
+import { implicitShapeHash, implicitCallId } from "../src/framework/geometry/implicit/call-id.js";
+import { h } from "../src/framework/geometry/solid-hash.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { TWO_BONE } from "./fixtures/skin-fixtures.js";
 import { handSpec } from "./fixtures/implicit-trees.js";
@@ -133,4 +136,28 @@ test("the Manifold preview kernel reuses samples across a frames-only rebuild; t
   expect(k._sampleCache.stats().hits).toBeGreaterThan(0);
   const kp = await bootManifoldKernel({ quality: "print" }); kp.beginSubPart("t"); kp.implicit(TWO_BONE(0)); kp.implicit(TWO_BONE(40));
   expect(kp._sampleCache.size).toBe(0);
+});
+
+test("a preview sample cache does not serve one solid's samples for another", async () => {
+  const kp = await bootManifoldKernel({ quality: "preview" });
+  const spec = (s) => ({ preview: 1, root: { kind: "union", k: 2, children: [{ kind: "solid", solid: s }, { kind: "sphere", r: 4, at: [9, 0, 0] }] } });
+  const v1 = kp.implicit(spec(kp.box({ min: [-6, -6, -6], max: [6, 6, 6] }))).volume();
+  const v2 = kp.implicit(spec(kp.box({ min: [-6, -6, -6], max: [6, 6, 9] }))).volume();
+  expect(v2).toBeGreaterThan(v1 * 1.1);
+});
+
+// Pinned on the code before the solid leaf had an identity of its own (Task 4): a spec with
+// no solid leaf keeps every key's exact bytes (its leaf keys, its geometry-cache key, its
+// shape hash and call id).
+test("a plan with no meshes keeps its leaf-key bytes", () => {
+  const spec = TWO_BONE(0), c = compileImplicit(spec);
+  expect(c.meshes).toEqual([]);
+  const keys = leafKeys(planLeaves(c, 1, { anchor: true })).filter((x) => x !== null);
+  expect(keys).toHaveLength(108);
+  expect(keys[0]).toBe("leaf|1py4gvu.5m9vz2.43|-4,-4,-8|1|0");
+  expect(keys[keys.length - 1]).toBe("leaf|9i98xa.1agqaci.42|0,40,0|1|0");
+  expect(createHash("sha256").update(keys.join("\n")).digest("hex")).toBe("8fa6c2fa5848aa4ca127f04382dce378cc2a601377c35b6978c9a0ef5b9e275c");
+  expect(h("implicit", implicitHashable({ ...spec, preview: 1 }, c), "preview")).toBe("wbdnbt");
+  expect(implicitShapeHash(spec)).toBe("5yfxrr");
+  expect(implicitCallId(spec, [spec])).toBe("5yfxrr#1");
 });

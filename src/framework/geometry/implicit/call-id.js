@@ -15,8 +15,38 @@ export function stripFrames(spec) {
   return rest;
 }
 
+/**
+ * The spec as it is hashed: every `solid` leaf's `solid` field becomes the string
+ * `"solid:" + solid._hash`, so a hash names the solid by its geometry and never walks the
+ * solid object. Copy on write: a branch with no solid leaf is the input object itself, so a
+ * spec with no solid leaf comes back unchanged and every hash of it keeps its bytes. A solid
+ * with no `_hash` (a stub, such as the lint probe's JSON copy, where a solid reads as `{}`)
+ * becomes `"solid:?"`; the build itself refuses it (grammar.js `solidRef`).
+ */
+export function hashableSpec(spec) {
+  const walk = (v) => {
+    if (Array.isArray(v)) {
+      let out = null;
+      for (let i = 0; i < v.length; i++) {
+        const w = walk(v[i]);
+        if (w !== v[i]) (out ??= v.slice())[i] = w;
+      }
+      return out ?? v;
+    }
+    if (!v || typeof v !== "object" || ArrayBuffer.isView(v)) return v;
+    let out = null;
+    for (const key of Object.keys(v)) {
+      const w = key === "solid" && v.kind === "solid" ? `solid:${v.solid?._hash ?? "?"}` : walk(v[key]);
+      if (w !== v[key]) (out ??= { ...v })[key] = w;
+    }
+    if (v.kind === "solid" && !("solid" in v)) (out ??= { ...v }).solid = "solid:?";
+    return out ?? v;
+  };
+  return walk(spec);
+}
+
 /** The hash of a spec's shape (its spec less frames). */
-export const implicitShapeHash = (spec) => h("implicit-shape", stripFrames(spec));
+export const implicitShapeHash = (spec) => h("implicit-shape", hashableSpec(stripFrames(spec)));
 
 /** `<shape hash>#<n>`, n = the number of `priorSpecs` with the same shape hash. */
 export function implicitCallId(spec, priorSpecs = []) {

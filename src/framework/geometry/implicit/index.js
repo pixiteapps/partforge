@@ -8,6 +8,7 @@ import { cutCreases, untangle } from "./crease.js";
 import { applySurfaceDetail } from "./detail.js";
 import { implicitResult, triangleOwners } from "./result.js";
 import { meshImplicitCore } from "../../core/implicit-core.js";
+import { hashableSpec } from "./call-id.js";
 
 export { choosePreviewEdge } from "./preview-edge.js";
 
@@ -46,4 +47,6 @@ export function meshImplicit(compiled, edge, { tier, owners = true, cache } = {}
   return result;
 }
 
-export const implicitHashable = (spec, compiled) => ({ spec, digests: compiled.digests });
+// The geometry-cache identity of a call: the spec with each solid leaf named by its hash
+// (hashableSpec), and the textures' content digests.
+export const implicitHashable = (spec, compiled) => ({ spec: hashableSpec(spec), digests: compiled.digests });

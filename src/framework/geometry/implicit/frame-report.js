@@ -87,10 +87,14 @@ function frameSet(base, A, mirrored) {
   }, SUGAR));
 }
 
-/** The frame set of a k.implicit spec: its named frames and labelled nodes, untransformed. */
-export function implicitFrames(spec, { images = new Map() } = {}) {
+/**
+ * The frame set of a k.implicit spec: its named frames and labelled nodes, untransformed.
+ * `meshFieldOf` gives a solid leaf's field (ir.js lowerSpec); a kernel passes its memoized
+ * one, so a frames probe does not rebuild each solid's field.
+ */
+export function implicitFrames(spec, { images = new Map(), meshFieldOf } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
-  const { ir, detail } = lowerSpec(spec, { images });
+  const { ir, detail } = lowerSpec(spec, { images, meshFieldOf });
   const world = resolveFrames(spec.frames ?? {});
   const frames = new Map(Object.keys(spec.frames ?? {}).map((name) => [name, world.get(name).world]));
   return frameSet({ frames, labels: labelBoxes(ir, detailPad(detail)) }, IDENTITY, false);

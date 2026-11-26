@@ -1294,8 +1294,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
       return solid;
     },
     // Where a k.implicit spec's frames and labelled nodes end up (implicit/frame-report.js).
-    // Pure and mesh-free, so it is not cached.
-    implicitFrames: (spec) => implicitFrames(spec, { images }),
+    // Pure (it never meshes the spec), so it is not cached; a solid leaf's field comes from the same
+    // memo as k.implicit's (meshFieldOf), so a frames probe does not rebuild it.
+    implicitFrames: (spec) => implicitFrames(spec, { images, meshFieldOf }),
     // A subdivision cage (subdiv/cage.js): plain data the build edits in place. Pure, not cached.
     cage: (opts) => createCage(opts),
     // Cage → smooth solid (subdiv/): Catmull-Clark at the level the tier's tolerance needs
