@@ -957,9 +957,11 @@ between the Manifold preview and the OCCT STEP export.
 
 ## implicit-solid-folded
 
-- **Symptom:** `.solid: the solid's mesh folds back on itself:` in an `implicit: ` error that counts the triangles and names a point, for example `implicit: root.child.solid: the solid's mesh folds back on itself: 64 triangles face the wrong way, the first near (-11.52, -3.35, 39.88), so its inside cannot be told from its outside there: repair the mesh in a mesh tool (or export it again) and import the repaired file`. Before this check, the same tree failed with `Not manifold`.
-- **Cause:** A `solid` leaf holds a solid whose mesh is closed but folds back on itself: a strip of triangles runs past an edge and lies flat under itself, or a thin triangle faces into the solid, so the leaf's sign test reads inside far out from the fold.
+- **Symptom:** `.solid: the solid's mesh folds back on itself:` in an `implicit: ` error that counts the triangles and names a point, for example `implicit: root.child.solid: the solid's mesh folds back on itself: 22 triangles are folded, the first near (-11.55, -3.27, 40), so its inside cannot be told from its outside there: repair the mesh in a mesh tool (or export it again) and import the repaired file`. Before this check, the same tree failed with `Not manifold`.
+- **Cause:** A `solid` leaf holds a solid whose mesh is closed but folds back on itself (a strip of triangles runs past an edge and lies flat under itself, or a thin triangle faces into the solid) so badly that the leaf reads inside at points out in the air, which a check against ray casts found.
 - **Fix:** Repair the mesh before you import it: in a mesh tool, remove the folds and the thin flipped triangles near the point the error names (a "make manifold" or "remove degenerate faces" repair usually does it), or export the file again from its source. A clean file of the same shape builds. `k.import` accepts such a file and reports its volume, so check a messy STL as a `solid` leaf early. See [docs/domains/organic.md](domains/organic.md), "Solids in a tree".
+
+The check looks only at folds where two neighbouring triangles face away from each other (an angle between their normals over 120°); a gentler fold, or a mesh that passes through itself without a folded edge, is not checked and can still end in `Not manifold`.
 
 ## implicit-solid-not-a-solid
 

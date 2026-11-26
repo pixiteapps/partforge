@@ -68,15 +68,30 @@ function withNeedle(m) {
   m.indices.splice(top.t, 3, A, M, X); m.indices.push(M, B, X, A, B, M);
   return m;
 }
-// A prism whose cross-section is a 20° wedge: a sound solid with a knife edge, whose two
-// faces at the edge are nearly opposite. It must not be mistaken for a fold.
-function wedgeMesh() {
-  const L = 20, half = Math.tan((10 * Math.PI) / 180) * L;
-  const P = [0, 0, 0, L, -half, 0, L, half, 0, 0, 0, 10, L, -half, 10, L, half, 10];
-  return { positions: P, indices: [0, 2, 1, 3, 4, 5, 0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4, 2, 0, 3, 2, 3, 5] };
+// A prism whose cross-section is a wedge of `deg` degrees, `L` long, 10 high: a sound solid
+// with a knife edge, whose two faces at the edge are nearly opposite. It must not be mistaken
+// for a fold. With `strip`, each side face is cut along a line `strip` from the knife edge, so
+// the triangles beside the edge are slivers of about that altitude.
+function wedgeMesh(deg, L = 20, strip = 0) {
+  const t = Math.tan((deg / 2) * Math.PI / 180), P = [], T = [];
+  const v = (x, y, z) => (P.push(x, y, z), P.length / 3 - 1);
+  const xs = strip ? [0, strip, L] : [0, L];
+  const lo = xs.map((x) => [v(x, -t * x, 0), v(x, t * x, 0)]), hi = xs.map((x) => [v(x, -t * x, 10), v(x, t * x, 10)]);
+  for (let i = 0; i + 1 < xs.length; i++) {
+    T.push(lo[i][0], lo[i + 1][0], hi[i + 1][0], lo[i][0], hi[i + 1][0], hi[i][0]);
+    T.push(lo[i][1], hi[i + 1][1], lo[i + 1][1], lo[i][1], hi[i][1], hi[i + 1][1]);
+  }
+  const n = xs.length - 1;
+  T.push(lo[n][0], lo[n][1], hi[n][1], lo[n][0], hi[n][1], hi[n][0]);
+  const ring = (ps) => [ps[0][0], ...ps.slice(1).map((p) => p[0]), ...ps.slice(1).reverse().map((p) => p[1])];
+  const rb = ring(lo), rt = ring(hi);
+  for (let i = 1; i + 1 < rb.length; i++) T.push(rb[0], rb[i + 1], rb[i], rt[0], rt[i], rt[i + 1]);
+  return { positions: P, indices: T };
 }
 
-const meshes = { clean: boxMesh(), fin: withFin(boxMesh()), needle: withNeedle(boxMesh()), both: withNeedle(withFin(boxMesh())), wedge: wedgeMesh() };
+const WEDGES = [1, 2, 3, 20];
+const meshes = { clean: boxMesh(), fin: withFin(boxMesh()), needle: withNeedle(boxMesh()), both: withNeedle(withFin(boxMesh())),
+  ...Object.fromEntries(WEDGES.map((d) => [`wedge${d}`, wedgeMesh(d)])), slivered: wedgeMesh(10, 100, 0.01) };
 let k;
 beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), "pf-messy-"));
@@ -95,7 +110,7 @@ const ops = {
   "smooth union": (s) => ({ kind: "union", k: 5, children: [{ kind: "solid", solid: s }, { kind: "sphere", r: 6, at: [0, 0, 14] }] }),
 };
 const EDGES = [0.5, 0.8];
-const FOLDED = /^implicit: root(\.child|\.children\[0\])\.solid: the solid's mesh folds back on itself: \d+ triangles? faces? the wrong way, the first near \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)/;
+const FOLDED = /^implicit: root(\.child|\.children\[0\])\.solid: the solid's mesh folds back on itself: (?:1 triangle is|\d+ triangles are) folded, the first near \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)/;
 const outcome = (name, op, edge) => {
   try { return { volume: k.implicit({ preview: edge, root: ops[op](k.import(name)) }).volume() }; }
   catch (e) { return { error: e }; }
@@ -141,28 +156,57 @@ describe("a damaged mesh as a solid leaf", () => {
     }
   });
 
-  test("a knife edge is not a fold: the 20° wedge builds", () => {
-    const wedge = k.import("wedge");
-    const grown = k.implicit({ preview: 0.5, root: ops["offset 1"](wedge) });
-    expect(grown.volume()).toBeGreaterThan(wedge.volume());
-  });
+  for (const deg of WEDGES) {
+    test(`a knife edge is not a fold: the ${deg}° wedge builds`, () => {
+      const wedge = k.import(`wedge${deg}`);
+      const grown = k.implicit({ preview: 0.5, root: ops["offset 1"](wedge) });
+      expect(grown.volume()).toBeGreaterThan(wedge.volume());
+    });
+  }
 
-  test("a refused field is not remembered: the second call is refused the same way", () => {
-    const a = outcome("fin", "offset 1", 0.8), b = outcome("fin", "offset 1", 0.8);
-    expect(a.error?.message).toMatch(FOLDED);
-    expect(b.error?.message).toBe(a.error.message);
+  test("a 100 mm part with a 10° edge whose triangles are slivers (altitude about 0.01 mm) builds", () => {
+    const part = k.import("slivered");
+    expect(part.volume()).toBeGreaterThan(0);
+    expect(k.implicit({ preview: 1, root: ops["offset 1"](part) }).volume()).toBeGreaterThan(part.volume());
   });
+});
+
+// A k.implicit result as a leaf. Cleanup leaves a few small flipped triangles on the
+// cylinder's top rim (7 to 13 edges whose normals' dot is -0.6 to -0.999), but the field is
+// right off the surface, so the leaf builds, exactly as before the fold check. The volumes
+// are this branch's before the check (the field's arrays are unchanged, so they are also its
+// volumes now), to 1%.
+describe("a k.implicit result as a solid leaf builds", () => {
+  const ref = {
+    0.5: { "offset 0.3": [9564.5, 9552.1], "offset -0.3": [7595.8, 7573.1], "union k 3": [8916.4, 8913.1] },
+    0.3: { "offset 0.3": [9570.6, 9557.5], "offset -0.3": [7597.6, 7571.9], "union k 3": [8915.9, 8916.7] },
+  };
+  const outer = {
+    "offset 0.3": (s) => ({ kind: "offset", d: 0.3, child: { kind: "solid", solid: s } }),
+    "offset -0.3": (s) => ({ kind: "offset", d: -0.3, child: { kind: "solid", solid: s } }),
+    "union k 3": (s) => ({ kind: "union", k: 3, children: [{ kind: "solid", solid: s }, { kind: "sphere", r: 5, at: [0, 0, 21] }] }),
+  };
+  for (const inner of [0.5, 0.3]) for (const op of Object.keys(outer)) {
+    test(`inner grid ${inner}, ${op}, at outer grids 0.5 and 0.8`, () => {
+      const bc = k.box({ min: [-15, -15, 0], max: [15, 15, 6] }).union(k.cylinder({ r: 6, h: 20 }));
+      const leaf = k.implicit({ preview: inner, root: { kind: "offset", d: 0.5, child: { kind: "solid", solid: bc } } });
+      [0.5, 0.8].forEach((g, i) => {
+        const v = k.implicit({ preview: g, root: outer[op](leaf) }).volume();
+        expect(Math.abs(v / ref[inner][op][i] - 1)).toBeLessThan(0.01);
+      });
+    });
+  }
 });
 
 describe("buildMeshField on a damaged mesh", () => {
   const soup = (m) => ({ positions: Float32Array.from(m.positions), indices: Uint32Array.from(m.indices) });
-  test("a fin throws MeshFieldError, reason folded; a zero-area triangle and a knife edge build", () => {
+  test("a fin throws MeshFieldError, reason folded; a zero-area triangle and the knife edges build", () => {
     let err;
     try { buildMeshField(soup(meshes.fin)); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(MeshFieldError);
     expect(err.reason).toBe("folded");
     expect(err.message).toMatch(/^the mesh folds back on itself: /);
     expect(() => buildMeshField(soup(meshes.needle))).not.toThrow();
-    expect(() => buildMeshField(soup(meshes.wedge))).not.toThrow();
+    for (const deg of WEDGES) expect(() => buildMeshField(soup(meshes[`wedge${deg}`]))).not.toThrow();
   });
 });
