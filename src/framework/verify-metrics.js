@@ -278,19 +278,34 @@ function sweepContacts(r) {
 }
 
 // The declared lines' readings along the sweep rows (oracle/lines.js `sweepLines`, one per
-// line per row that read lines).
-const lineReadings = (r) => (r.sweeps ?? []).flatMap((s) => s.lines ?? []);
-// The first reading that could not be read along its motion, and why.
-const lineUnread = (r) => lineReadings(r).find((l) => l.error != null) ?? null;
+// line per row that read lines), each with the row it came from.
+const lineReadings = (r) => (r.sweeps ?? []).flatMap((s) => (s.lines ?? []).map((reading) => ({ reading, row: s })));
+// The first line reading that could not be read along its motion, with its row.
+const sweepLineUnread = (r) => lineReadings(r).find(({ reading }) => reading.error != null) ?? null;
+// The first declared line that could not be read at the measured pose.
+const poseLineUnread = (r) => (r.lines ?? []).find((l) => l.error != null) ?? null;
+// Words an unread line: where it failed and why.
+function unreadText(r, { pose = false } = {}) {
+  const atPose = pose ? poseLineUnread(r) : null;
+  if (atPose) return `line "${atPose.name}" could not be read at the measured pose: ${atPose.error}`;
+  const hit = sweepLineUnread(r);
+  if (!hit) return null;
+  const { reading, row } = hit;
+  const where = `sweep "${row.name}"${row.view ? ` in view "${row.view}"` : ""}`;
+  return `line "${reading.name}" could not be read along ${where}${reading.at != null ? ` (at ${reading.at})` : ""}: ${reading.error}`;
+}
+const LINE_UNREAD_HINT = "a declared line could not be read, so this gate has no verdict and verify.ok is withheld — fix the line's source so it reads at the measured pose and at every value the sweep passes through (see `lines` in npx partforge measure)";
 function lineDrift(r) {
   if (!r.lines || !r.sweeps) return null;
   if (!r.sweeps.length) return 0;
-  if (lineUnread(r)) return null;
-  const drifts = lineReadings(r).map((l) => l.drift).filter((v) => typeof v === "number");
+  if (sweepLineUnread(r)) return null;
+  const drifts = lineReadings(r).map(({ reading }) => reading.drift).filter((v) => typeof v === "number");
   return drifts.length ? Math.max(...drifts) : null;
 }
 function lineBend(r) {
-  const ratios = [...lineReadings(r).map((l) => l.bendMin), ...(r.lines ?? []).map((l) => l.bendRatio)]
+  // any unread line withholds it, whatever the other lines read: its ratio is unknown
+  if (poseLineUnread(r) || sweepLineUnread(r)) return null;
+  const ratios = [...lineReadings(r).map(({ reading }) => reading.bendMin), ...(r.lines ?? []).map((l) => l.bendRatio)]
     .filter((v) => typeof v === "number");
   return ratios.length ? Math.min(...ratios) : null;
 }
@@ -331,22 +346,22 @@ export const VIEW_METRICS = {
   lineDrift: { kind: "gate", extract: lineDrift,
     withheld: (r) => {
       if (!r.lines || !r.sweeps?.length || lineDrift(r) !== null) return null;
-      const bad = lineUnread(r);
-      return bad ? `not evaluated — line "${bad.name}" could not be read along a declared sweep${bad.at != null ? ` (at ${bad.at})` : ""}: ${bad.error}`
-        : "not evaluated — no declared sweep read a line";
+      const bad = unreadText(r);
+      return bad ? `not evaluated — ${bad}` : "not evaluated — no declared sweep read a line";
     },
-    withheldHint: (r) => (lineUnread(r)
-      ? "a declared line could not be read along a declared motion, so this gate has no verdict and verify.ok is withheld — fix the line's source so it reads at every value the sweep passes through (see `lines` in npx partforge measure)"
-      : SWEEP_WITHHELD_HINT),
+    withheldHint: (r) => (sweepLineUnread(r) ? LINE_UNREAD_HINT : SWEEP_WITHHELD_HINT),
     hint: "the line's span lengths change along the motion, so a rope tensioned at one pose goes slack (or overloads) at another — move the termination onto the drum axis, keep the pulley concentric with its pivot, or tension the line at the pose where it is shortest (lengthMinAt)",
     skipMessage: "not measured — lineDrift reads the declared lines along the declared sweeps, which verify runs on one case only (the first it measures); it needs a `lines` entry in this view and verify.sweeps",
     pattern: "line-drift",
     locate: () => null },
   // The smallest bend ratio (sheave diameter over line diameter) a declared line meets: at
   // the measured pose (`r.lines`) and along the declared sweeps (each reading's `bendMin`).
-  // Read from `r.lines` alone on a case or a quick lap without sweeps. A skip when no line
-  // wraps anything that has a ratio.
+  // Read from `r.lines` alone on a case or a quick lap without sweeps. Withheld when any
+  // declared line could not be read (at the pose or along a sweep), whatever the others
+  // read; a skip when no line wraps anything that has a ratio.
   lineBend: { kind: "gate", extract: lineBend,
+    withheld: (r) => { const bad = unreadText(r, { pose: true }); return bad ? `not evaluated — ${bad}` : null; },
+    withheldHint: LINE_UNREAD_HINT,
     hint: "the line bends round a drum or pulley too small for its diameter (the ratio is sheave diameter over line diameter) — it wears and loses strength there; enlarge that drum or pulley, or use a thinner, more flexible line",
     skipMessage: "not measured — no declared line in this view wraps a drum or pulley with a bend ratio",
     pattern: "line-bend" },

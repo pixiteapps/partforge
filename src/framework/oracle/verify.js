@@ -738,9 +738,10 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     let checks = evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept, flex, rootFillet, strain: strainLimit, flexTilt });
     // A quick lap never sweeps (jobs.js): a declared sweep gate it could not read is
     // withheld, as its min-wall gate is, never a skip that lets ok stand. lineDrift reads
-    // the sweep rows too; lineBend reads the measured pose's lines, so it is still evaluated.
+    // the sweep rows too, when the view has a line (with none it skips, as on a full run);
+    // lineBend reads the measured pose's lines, so it is still evaluated.
     if (quick && !facts.sweeps && part.verify?.sweeps) {
-      checks = checks.map((c) => ((c.metric === "sweepContacts" || c.metric === "lineDrift") && c.status === "skip"
+      checks = checks.map((c) => ((c.metric === "sweepContacts" || (c.metric === "lineDrift" && facts.lines)) && c.status === "skip"
         ? { ...c, unevaluated: true, message: "not measured (quick check)", hint: "sweeps do not run on a quick lap — re-run this check without `quick` to evaluate the declared sweeps" }
         : c));
     }

@@ -1013,13 +1013,13 @@ between the Manifold preview and the OCCT STEP export.
 
 - **Symptom:** `_view lineDrift <=0.2` fails in verify (`19.8… not <= 0.2`), and measure's `sweeps:` line ends `rope drift 19.80mm`; `report.measure.sweeps[i].lines[j].drift` is the difference between that row's `lengthMax` and `lengthMin`.
 - **Cause:** A declared line (a `lines` entry, read from a source such as a `capstan` in `derive`) changes length along a declared sweep: an anchor or a pulley moves off the axis the drive turns about (an eccentric pulley, a termination clamped off the drum's axis), so the spans grow and shrink with the motion. A rope tensioned at one pose goes slack, or overloads, at another. The row's `lengthMinAt` and `lengthMaxAt` say where along the motion the extremes are.
-- **Fix:** Move the termination onto the drum's axis, keep the pulley concentric with the axis it turns about, or, when the drift is the design, tension the line at the pose where it is shortest (`lengthMinAt`) and relax the expectation to the drift you allow. When the gate is withheld instead (`not evaluated — line "rope" could not be read along a declared sweep`), the line's source throws at the value it names: fix the source so it reads over the whole range of the sweep.
+- **Fix:** Move the termination onto the drum's axis, keep the pulley concentric with the axis it turns about, or, when the drift is the design, tension the line at the pose where it is shortest (`lengthMinAt`) and relax the expectation to the drift you allow. When the gate is withheld instead (`not evaluated — line "rope" could not be read along sweep "drive" (at 51): …`), the line's source throws at the value it names: fix the source so it reads over the whole range of the sweep.
 
 ## line-bend
 
 - **Symptom:** `_view lineBend >=12` fails in verify (`10 not >= 12`), and measure's `lines:` line reads `rope 286.51mm, bend 10.0`.
 - **Cause:** A declared line wraps a drum or a pulley whose diameter is too small for the line's diameter. The bend ratio is the sheave diameter divided by the line diameter (a 12 mm drum under a 1.2 mm rope is 10). The gate reads the smallest ratio at the measured pose and along every declared sweep. A line bent too tightly wears and loses strength at that drum.
-- **Fix:** Make that drum or pulley larger, or use a thinner or more flexible line (a smaller `d`, or a material whose minimum ratio is lower). The line material's `minBendRatio`, when it has one, is the value to gate against.
+- **Fix:** Make that drum or pulley larger, or use a thinner or more flexible line (a smaller `d`, or a material whose minimum ratio is lower). The line material's `minBendRatio`, when it has one, is the value to gate against. When the gate is withheld instead (`not evaluated — line "rope" could not be read at the measured pose` or `along sweep "<name>"`), a declared line's source throws there, and its ratio is unknown even if other lines read: fix the source so every line reads at the measured pose and over the whole range of each sweep.
 
 ## handle-source-unread
 
