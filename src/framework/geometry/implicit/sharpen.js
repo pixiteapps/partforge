@@ -16,7 +16,7 @@
 //      differ by more than the angle. The last test refuses a point on a thin wall's other face
 //      and a round the grid can resolve.
 //   4. A kept point within SHARP_SNAP of an edge end moves that end (once; never a held, pinned or
-//      crease vertex); else it splits the edge. A change that would make a triangle face against
+//      crease vertex); else it splits the edge, unless an end of it moved. Moves go first. A change that would make a triangle face against
 //      its corners' normals, or one thinner than MIN_ALTITUDE, is dropped; so is one whose
 //      triangles, in their final form, face against the field's gradient at their centre.
 //   5. Triangles with one, two or three split edges become 2, 3 or 4 triangles.
@@ -86,7 +86,8 @@ function readSides(store, cand, edge) {
   return cand.map((c, q) => {
     const o = PTS * q, side = (s) => {
       const b = o + 1 + 7 * s;
-      return { f: d[b], g: [(d[b + 1] - d[b + 2]) / (2 * e), (d[b + 3] - d[b + 4]) / (2 * e), (d[b + 5] - d[b + 6]) / (2 * e)] };
+      const gx = (d[b + 1] - d[b + 2]) / (2 * e), gy = (d[b + 3] - d[b + 4]) / (2 * e), gz = (d[b + 5] - d[b + 6]) / (2 * e);
+      return { f: d[b], g: [gx, gy, gz] };
     };
     return { f: d[o], A: side(0), B: side(1) };
   });
@@ -99,10 +100,15 @@ function newtonStep(c, r, edge) {
   const rA = -A.f + h * dot(A.g, c.w[0]), rB = -B.f + h * dot(B.g, c.w[1]);
   let dx = null;
   if (c.pn) {
-    const D = det3(A.g, B.g, c.pn), scale = hypot3(...A.g) * hypot3(...B.g);
+    const a = A.g, b = B.g, n = c.pn;
+    const D = det3(a, b, n), scale = hypot3(a[0], a[1], a[2]) * hypot3(b[0], b[1], b[2]);
     if (Math.abs(D) > 1e-6 * scale) {
-      const rhs = [rA, rB, -((c.p[0] - c.m[0]) * c.pn[0] + (c.p[1] - c.m[1]) * c.pn[1] + (c.p[2] - c.m[2]) * c.pn[2])], rows = [A.g, B.g, c.pn];
-      dx = [0, 1, 2].map((k) => { const R = rows.map((row, i) => row.map((x, j) => (j === k ? rhs[i] : x))); return det3(R[0], R[1], R[2]) / D; });
+      const rP = -((c.p[0] - c.m[0]) * n[0] + (c.p[1] - c.m[1]) * n[1] + (c.p[2] - c.m[2]) * n[2]);
+      // Cramer's rule: column k of the rows (a, b, n) replaced by the right-hand side (rA, rB, rP).
+      const dx0 = det3([rA, a[1], a[2]], [rB, b[1], b[2]], [rP, n[1], n[2]]) / D;
+      const dx1 = det3([a[0], rA, a[2]], [b[0], rB, b[2]], [n[0], rP, n[2]]) / D;
+      const dx2 = det3([a[0], a[1], rA], [b[0], b[1], rB], [n[0], n[1], rP]) / D;
+      dx = [dx0, dx1, dx2];
     }
   }
   if (dx === null) {
@@ -124,7 +130,8 @@ function newtonStep(c, r, edge) {
  * Put vertices on the field's sharp edges. `mesh` is cleanupMesh's (or cutCreases') result. Returns
  * it with every per-vertex array grown to the new vertices, plus `sharp` (0 a mesher vertex, 1 an
  * edge point) and `sharpPlanes` (for an edge point, the two vertex ids whose planes it joins; −1
- * otherwise). A mesh with no candidate edge is returned as the same object. `stats`, when given,
+ * otherwise; a moved end lists itself as one of the two, its normal unchanged so its plane stays).
+ * A mesh with no candidate edge is returned as the same object. `stats`, when given,
  * is filled with the candidates' counts by outcome.
  */
 export function sharpenMesh(store, mesh, { corners = true, stats = null } = {}) {
@@ -133,21 +140,24 @@ export function sharpenMesh(store, mesh, { corners = true, stats = null } = {}) 
   const pinned = (v) => (mesh.pinned ? mesh.pinned[v] : 0);
   const normal = (v) => [N0[3 * v], N0[3 * v + 1], N0[3 * v + 2]], pos = (v) => [P0[3 * v], P0[3 * v + 1], P0[3 * v + 2]];
   const st = stats ?? {};
-  Object.assign(st, { candidates: 0, split: 0, moved: 0, offField: 0, tooFar: 0, notSharp: 0, unsolved: 0, snapBlocked: 0, endMoved: 0, flip: 0, sliver: 0, fieldFlip: 0 });
+  for (const name of ["candidates", "split", "moved", "offField", "tooFar", "notSharp", "unsolved"]) st[name] = 0;
+  for (const name of ["snapBlocked", "endMoved", "flip", "sliver", "fieldFlip"]) st[name] = 0;
 
   // 1. The candidate edges, in the order the triangle list first names them.
   const seen = new Set(), cand = [];
   for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
-    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a, key = lo * nv0 + hi;
+    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+    const key = lo * nv0 + hi;   // PORTED: a 64-bit integer key in the core (see ekey)
     if (seen.has(key)) continue;
     seen.add(key);
     if (pinned(lo) || pinned(hi)) continue;
-    const nA = normal(lo), nB = normal(hi), lA = hypot3(...nA), lB = hypot3(...nB);
+    const nA = normal(lo), nB = normal(hi), lA = hypot3(nA[0], nA[1], nA[2]), lB = hypot3(nB[0], nB[1], nB[2]);
     if (!(lA > 0.5 && lB > 0.5) || dot(nA, nB) >= SHARP_ANGLE_COS * lA * lB) continue;
     const uA = nA.map((x) => x / lA), uB = nB.map((x) => x / lB), pA = pos(lo), pB = pos(hi);
     const m = [0, 1, 2].map((i) => (pA[i] + pB[i]) / 2), ab = [0, 1, 2].map((i) => pB[i] - pA[i]);
     // The point nearest the middle on both tangent planes: m + α·nA + β·nB.
     const c = dot(uA, uB), det = 1 - c * c;
+    if (!(det > 1e-9)) continue;   // normals (anti)parallel: the planes do not meet in a line
     const ra = -(uA[0] * (m[0] - pA[0]) + uA[1] * (m[1] - pA[1]) + uA[2] * (m[2] - pA[2]));
     const rb = -(uB[0] * (m[0] - pB[0]) + uB[1] * (m[1] - pB[1]) + uB[2] * (m[2] - pB[2]));
     const al = (ra - c * rb) / det, be = (rb - c * ra) / det;
@@ -189,6 +199,7 @@ export function sharpenMesh(store, mesh, { corners = true, stats = null } = {}) 
   // triangle's final form is read against the field's gradient at its centre, and the candidates
   // that changed one facing against it are dropped and the commit run again. Each new round
   // drops at least one kept candidate, so the loop ends.
+  // PORTED: lo·nv0 + hi is exact in a JS double (below 2^53); the core needs a 64-bit integer key.
   const ekey = (a, b) => (a < b ? a * nv0 + b : b * nv0 + a);
   const fan = new Map(), byEdge = new Map();
   for (let t = 0; t < T.length / 3; t++) for (let k = 0; k < 3; k++) {
@@ -209,7 +220,8 @@ export function sharpenMesh(store, mesh, { corners = true, stats = null } = {}) 
   // 5. Re-triangulate.
   const out = [];
   for (let t = 0; t < T.length / 3; t++) subdivide(T, t, splitOf, ekey, out);
-  const VL = Array.from(VL0), extra = ["vertOwner", "ownerHeld", "pinned", "crease"].filter((f) => mesh[f]).map((f) => ({ f, a: Array.from(mesh[f]) }));
+  const VL = Array.from(VL0);
+  const extra = ["vertOwner", "ownerHeld", "pinned", "crease"].filter((f) => mesh[f]).map((f) => ({ f, a: Array.from(mesh[f]) }));
   for (const c of added) {
     VL.push(c.leaf);
     for (const x of extra) x.a.push(x.f === "vertOwner" ? x.a[c.a] : 0);
@@ -237,7 +249,8 @@ function subdivide(T, t, splitOf, ekey, out) {
   else out.push(A, sAB, sCA, sAB, B, C, sAB, C, sCA);
 }
 
-// The kept candidates (c.ok), committed in order. Returns the positions, normals, splits, the
+// The kept candidates (c.ok), committed in order: every move, then every split on an edge with
+// neither end moved. Returns the positions, normals, splits, the
 // `sharp` and `sharpPlanes` tables, the split candidates in vertex order (`added`), and for each
 // changed triangle the candidates that changed it (`touched`).
 function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st }) {
@@ -258,33 +271,42 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st }) {
     return null;
   };
   const touch = (tris, c) => { for (const t of tris) (touched.get(t) ?? touched.set(t, []).get(t)).push(c); };
-  for (const c of cand) {
-    if (!c.ok) continue;
-    if (moved[c.a] || moved[c.b]) { st.endMoved++; continue; }
-    const pA = [P0[3 * c.a], P0[3 * c.a + 1], P0[3 * c.a + 2]], ab = [0, 1, 2].map((i) => P0[3 * c.b + i] - pA[i]);
-    const s = ((c.p[0] - pA[0]) * ab[0] + (c.p[1] - pA[1]) * ab[1] + (c.p[2] - pA[2]) * ab[2]) / dot(ab, ab);
-    const end = s < SHARP_SNAP ? c.a : s > 1 - SHARP_SNAP ? c.b : -1;
-    if (end >= 0) {
-      if (!free(end)) { st.snapBlocked++; continue; }
-      const was = [P[3 * end], P[3 * end + 1], P[3 * end + 2]];
-      P[3 * end] = c.p[0]; P[3 * end + 1] = c.p[1]; P[3 * end + 2] = c.p[2];
-      const bad = check(fan.get(end));
-      if (bad) { P[3 * end] = was[0]; P[3 * end + 1] = was[1]; P[3 * end + 2] = was[2]; st[bad]++; continue; }
-      // The moved end keeps its normal: the crease point is on its own plane too.
-      moved[end] = 1; sharp[end] = 1; planes[2 * end] = c.a; planes[2 * end + 1] = c.b; st.moved++;
-      touch(fan.get(end), c);
-      continue;
-    }
+  // Which end each kept candidate moves (−1: it splits), from the original positions.
+  const endOf = (c) => {
+    const ax = P0[3 * c.a], ay = P0[3 * c.a + 1], az = P0[3 * c.a + 2];
+    const ux = P0[3 * c.b] - ax, uy = P0[3 * c.b + 1] - ay, uz = P0[3 * c.b + 2] - az;
+    const s = ((c.p[0] - ax) * ux + (c.p[1] - ay) * uy + (c.p[2] - az) * uz) / (ux * ux + uy * uy + uz * uz);
+    return s < SHARP_SNAP ? c.a : s > 1 - SHARP_SNAP ? c.b : -1;
+  };
+  const kept = cand.filter((c) => c.ok), ends = kept.map(endOf);
+  // Moves first, as crease.js does: a split is then never beside an end that moves after it.
+  kept.forEach((c, q) => {
+    const end = ends[q];
+    if (end < 0) return;
+    if (moved[c.a] || moved[c.b]) { st.endMoved++; return; }
+    if (!free(end)) { st.snapBlocked++; return; }
+    const was = [P[3 * end], P[3 * end + 1], P[3 * end + 2]];
+    P[3 * end] = c.p[0]; P[3 * end + 1] = c.p[1]; P[3 * end + 2] = c.p[2];
+    const bad = check(fan.get(end));
+    if (bad) { P[3 * end] = was[0]; P[3 * end + 1] = was[1]; P[3 * end + 2] = was[2]; st[bad]++; return; }
+    // The moved end keeps its normal: the crease point is on its own plane too.
+    moved[end] = 1; sharp[end] = 1; planes[2 * end] = c.a; planes[2 * end + 1] = c.b; st.moved++;
+    touch(fan.get(end), c);
+  });
+  // Then splits, on edges with neither end moved.
+  kept.forEach((c, q) => {
+    if (ends[q] >= 0) return;
+    if (moved[c.a] || moved[c.b]) { st.endMoved++; return; }
     const v = P.length / 3, key = ekey(c.a, c.b);
     const n = unit([0, 1, 2].map((i) => N0[3 * c.a + i] + N0[3 * c.b + i])) ?? [0, 0, 0];
     P.push(c.p[0], c.p[1], c.p[2]); N.push(n[0], n[1], n[2]);
     splitOf.set(key, v);
     const bad = check(byEdge.get(key));
-    if (bad) { P.length -= 3; N.length -= 3; splitOf.delete(key); st[bad]++; continue; }
+    if (bad) { P.length -= 3; N.length -= 3; splitOf.delete(key); st[bad]++; return; }
     sharp.push(1); planes.push(c.a, c.b); added.push(c);
     touch(byEdge.get(key), c);
     st.split++;
-  }
+  });
   return { P, N, splitOf, sharp, planes, added, touched };
 }
 
@@ -307,8 +329,8 @@ function fieldFlips(store, S, tris, { VL0, T, ekey, edge }) {
     subdivide(T, t, S.splitOf, ekey, out);
     for (let i = 0; i < out.length; i += 3) {
       const n = triNormal(S.P, out[i], out[i + 1], out[i + 2]) ?? [0, 0, 0], P = S.P;
-      const cx = (P[3 * out[i]] + P[3 * out[i + 1]] + P[3 * out[i + 2]]) / 3, cy = (P[3 * out[i] + 1] + P[3 * out[i + 1] + 1] + P[3 * out[i + 2] + 1]) / 3;
-      const cz = (P[3 * out[i] + 2] + P[3 * out[i + 1] + 2] + P[3 * out[i + 2] + 2]) / 3;
+      const a = 3 * out[i], b = 3 * out[i + 1], c = 3 * out[i + 2];
+      const cx = (P[a] + P[b] + P[c]) / 3, cy = (P[a + 1] + P[b + 1] + P[c + 1]) / 3, cz = (P[a + 2] + P[b + 2] + P[c + 2]) / 3;
       pts.push(cx + e, cy, cz, cx - e, cy, cz, cx, cy + e, cz, cx, cy - e, cz, cx, cy, cz + e, cx, cy, cz - e);
       for (let k = 0; k < 6; k++) lf.push(VL0[T[3 * t]]);
       parts.push(n); owner.push(t);
@@ -317,7 +339,8 @@ function fieldFlips(store, S, tris, { VL0, T, ekey, edge }) {
   const d = evalField(store, Float64Array.from(pts), lf), bad = [];
   parts.forEach((n, q) => {
     const o = 6 * q;
-    if (n[0] * (d[o] - d[o + 1]) + n[1] * (d[o + 2] - d[o + 3]) + n[2] * (d[o + 4] - d[o + 5]) < 0 && bad[bad.length - 1] !== owner[q]) bad.push(owner[q]);
+    const g = n[0] * (d[o] - d[o + 1]) + n[1] * (d[o + 2] - d[o + 3]) + n[2] * (d[o + 4] - d[o + 5]);
+    if (g < 0 && bad[bad.length - 1] !== owner[q]) bad.push(owner[q]);
   });
   return bad;
 }

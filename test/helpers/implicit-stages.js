@@ -20,12 +20,11 @@ export const meshFieldOf = (solid) => {
 
 /**
  * Compile `spec` and run the JS stages at grid `edge`: plan, evaluate, mesh (the owner mesher
- * for a contact root), clean up, and on the owner path cut the creases. `kernel` is the booted
- * manifold kernel a spec with `solid` leaves was built with (its mesh field builder loaded).
+ * for a contact root), clean up, and on the owner path cut the creases. A spec with `solid` leaves
+ * needs a kernel booted with `meshFields: true` first (its mesh field builder loaded).
  * Returns `{ store, cleaned, compiled }`.
  */
-export function jsStages(spec, edge, { tier = "preview", kernel = null } = {}) {
-  void kernel;
+export function jsStages(spec, edge, { tier = "preview" } = {}) {
   const compiled = compileImplicit(spec, { meshFieldOf });
   const opts = tier === "preview" ? PREVIEW_CLEANUP : CLEANUP;
   const plan = planLeaves(compiled, edge, { anchor: false });

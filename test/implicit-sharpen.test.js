@@ -16,8 +16,15 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel({ quality: "preview", meshFields: true }); }, 60_000);
 
 const leaf = (s) => ({ kind: "solid", solid: s });
-const boxCorners = ([lo, hi]) => { const r = []; for (let i = 0; i < 8; i++) r.push([i & 1 ? hi[0] : lo[0], i & 2 ? hi[1] : lo[1], i & 4 ? hi[2] : lo[2]]); return r; };
-const centre = (m, t) => [0, 1, 2].map((i) => (m.positions[3 * m.indices[3 * t] + i] + m.positions[3 * m.indices[3 * t + 1] + i] + m.positions[3 * m.indices[3 * t + 2] + i]) / 3);
+const boxCorners = ([lo, hi]) => {
+  const r = [];
+  for (let i = 0; i < 8; i++) r.push([i & 1 ? hi[0] : lo[0], i & 2 ? hi[1] : lo[1], i & 4 ? hi[2] : lo[2]]);
+  return r;
+};
+const centre = (m, t) => {
+  const a = 3 * m.indices[3 * t], b = 3 * m.indices[3 * t + 1], c = 3 * m.indices[3 * t + 2], P = m.positions;
+  return [0, 1, 2].map((i) => (P[a + i] + P[b + i] + P[c + i]) / 3);
+};
 const vert = (m, v) => [m.positions[3 * v], m.positions[3 * v + 1], m.positions[3 * v + 2]];
 const dist = (p, q) => Math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2);
 const nearCorner = (p, corners, r) => corners.some((c) => dist(p, c) <= r);
@@ -30,22 +37,25 @@ const sharpVerts = (m) => { const r = []; for (let v = 0; v < m.sharp.length; v+
 const SOLID_CASES = {
   "plate-edge": () => {
     const plate = [[-30, -20, 0], [30, 20, 6]];
-    return { k: 8, a: k.box({ min: plate[0], max: plate[1] }), b: k.cylinder({ r: 8, h: 26 }).at([20, 0, 4]), reach: [[4, -16, -8], [36, 16, 38]], corners: boxCorners(plate) };
+    return { k: 8, a: k.box({ min: plate[0], max: plate[1] }), b: k.cylinder({ r: 8, h: 26 }).at([20, 0, 4]),
+      reach: [[4, -16, -8], [36, 16, 38]], corners: boxCorners(plate) };
   },
   "bracket-corner": () => {
     const plate = [[-30, -20, 0], [30, 20, 6]], wall = [[-30, -20, 0], [-24, 20, 30]];
-    return { k: 6, a: k.box({ min: plate[0], max: plate[1] }).union(k.box({ min: wall[0], max: wall[1] })), b: k.cylinder({ r: 5, h: 20 }).at([-14, 0, 4]),
+    const a = k.box({ min: plate[0], max: plate[1] }).union(k.box({ min: wall[0], max: wall[1] }));
+    return { k: 6, a, b: k.cylinder({ r: 5, h: 20 }).at([-14, 0, 4]),
       reach: [[-25, -11, -6], [-3, 11, 30]], corners: [...boxCorners(plate), ...boxCorners(wall)] };
   },
   "cylinder-side": () => {
     const boss = [[8, -4, 16], [22, 4, 24]];
-    return { k: 4, a: k.cylinder({ r: 12, h: 40 }), b: k.box({ min: boss[0], max: boss[1] }), reach: [[3, -9, 11], [28, 9, 29]], corners: boxCorners(boss) };
+    return { k: 4, a: k.cylinder({ r: 12, h: 40 }), b: k.box({ min: boss[0], max: boss[1] }),
+      reach: [[3, -9, 11], [28, 9, 29]], corners: boxCorners(boss) };
   },
 };
 
 // The cleaned mesh, the sharpened one and the full field.
 function run(root, edge) {
-  const { store, cleaned } = jsStages({ root }, edge, { tier: "preview", kernel: k });
+  const { store, cleaned } = jsStages({ root }, edge, { tier: "preview" });
   const stats = {};
   const mesh = sharpenMesh(store, cleaned, { corners: false, stats });
   return { cleaned, mesh, stats, field: implicitDistance(root, { meshFieldOf }) };
@@ -127,13 +137,17 @@ describe("sharpenMesh, edges", () => {
 
   test("thin-wall: no point is placed on the wall's other face (grid 1.0)", () => {
     const edge = 1.0;
-    const root = { kind: "intersect", children: [{ kind: "onion", t: 0.8, child: { kind: "box", size: [30, 30, 30] } }, { kind: "halfspace", normal: "z", offset: 5 }] };
+    const shell = { kind: "onion", t: 0.8, child: { kind: "box", size: [30, 30, 30] } };
+    const root = { kind: "intersect", children: [shell, { kind: "halfspace", normal: "z", offset: 5 }] };
     const r = run(root, edge);
     expectSound(r);
     for (const v of sharpVerts(r.mesh)) {
       const p = vert(r.mesh, v);
       expect(Math.abs(r.field(...p))).toBeLessThanOrEqual(SHARP_TOL * edge);
-      for (const w of [r.mesh.sharpPlanes[2 * v], r.mesh.sharpPlanes[2 * v + 1]]) expect(dist(p, vert(r.mesh, w))).toBeLessThanOrEqual(1.5 * edge);
+      // A moved end lists itself as one of its two plane vertices: the other is the one to test.
+      const others = [r.mesh.sharpPlanes[2 * v], r.mesh.sharpPlanes[2 * v + 1]].filter((w) => w !== v);
+      expect(others.length).toBeGreaterThan(0);
+      for (const w of others) expect(dist(p, vert(r.mesh, w))).toBeLessThanOrEqual(1.5 * edge);
     }
   }, 60_000);
 
