@@ -257,7 +257,25 @@ function sharpenRound(store, mesh, corners, st, retry) {
   for (const name of ["cornerCandidates", "corners", "cornerSplits", "cornerDet", "cornerFar", "cornerOffField"]) st[name] = 0;
   for (const name of ["cornerMoves", "cornerFlip", "cornerSliver", "cornerFieldFlip", "cornerNear"]) st[name] = 0;
 
-  // 1. The candidate edges, in the order the triangle list first names them.
+  // 1. The candidate edges, in the order the triangle list first names them. The first round
+  // tests every edge's angle before it builds anything else, so a mesh with no sharp edge costs
+  // one pass over its triangles; step 7 with nothing to retry costs nothing.
+  if (retry && !retry.length) return mesh;
+  let hits = null;
+  if (!retry) {
+    // The angle test first, on the raw normals: it refuses most edges. `hits` holds the index in
+    // T of each half-edge that passes (t + k), in triangle order.
+    hits = [];
+    for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+      if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
+      const x = 3 * lo, y = 3 * hi, ax = N0[x], ay = N0[x + 1], az = N0[x + 2], bx = N0[y], by = N0[y + 1], bz = N0[y + 2];
+      const lA = hypot3(ax, ay, az), lB = hypot3(bx, by, bz);
+      if (!(lA > 0.5 && lB > 0.5) || ax * bx + ay * by + az * bz >= SHARP_ANGLE_COS * lA * lB) continue;
+      hits.push(t + k);
+    }
+    if (!hits.length) return mesh;
+  }
   const adj = adjacency(T, nv0);
   let cand = [];
   // PORTED: lo·nv0 + hi is exact in a JS double (below 2^53); the core needs a 64-bit integer key.
@@ -269,19 +287,16 @@ function sharpenRound(store, mesh, corners, st, retry) {
     const a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
     if (a < b) progEdges[progOf(a)]++;   // a closed mesh names each edge once in each direction
   }
-  for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
+  if (again) for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
     const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
-    const key = lo * nv0 + hi;
-    if (again) {
-      const c = again.get(key);
-      if (c && adj.first(t / 3, lo, hi)) { c.ok = true; cand.push(c); }
-      continue;
-    }
-    // The angle test first, on the raw normals: it refuses most edges.
-    const x = 3 * lo, y = 3 * hi, ax = N0[x], ay = N0[x + 1], az = N0[x + 2], bx = N0[y], by = N0[y + 1], bz = N0[y + 2];
-    const lA = hypot3(ax, ay, az), lB = hypot3(bx, by, bz);
-    if (!(lA > 0.5 && lB > 0.5) || ax * bx + ay * by + az * bz >= SHARP_ANGLE_COS * lA * lB || !adj.first(t / 3, lo, hi)) continue;
+    const c = again.get(lo * nv0 + hi);
+    if (c && adj.first(t / 3, lo, hi)) { c.ok = true; cand.push(c); }
+  }
+  if (!again) for (const i of hits) {
+    const t = i - (i % 3), a = T[i], b = T[t + (i % 3 + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+    const lA = hypot3(N0[3 * lo], N0[3 * lo + 1], N0[3 * lo + 2]), lB = hypot3(N0[3 * hi], N0[3 * hi + 1], N0[3 * hi + 2]);
+    if (!adj.first(t / 3, lo, hi)) continue;
     progCand[progOf(lo)]++;
     const nA = normal(lo), nB = normal(hi);
     const uA = nA.map((x) => x / lA), uB = nB.map((x) => x / lB), pA = pos(lo), pB = pos(hi);

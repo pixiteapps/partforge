@@ -892,7 +892,22 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   auto creased = [&](size_t v) { return mesh.hasCrease ? mesh.crease[v] : 0; };
   auto prior = [&](size_t v) { return mesh.hasSharp ? mesh.sharp[v] : 0; };
 
-  // 1. The candidate edges, in the order the triangle list first names them.
+  // 1. The candidate edges, in the order the triangle list first names them. The first round tests
+  // every edge's angle before it builds anything else; step 7 with nothing to retry costs nothing.
+  if (retry && retry->empty()) return 0;
+  std::vector<uint32_t> hits;   // the first round's half-edges past the angle test (t + k), in order
+  if (!retry) {
+    for (size_t t = 0; t < T.size(); t += 3) for (int k = 0; k < 3; k++) {
+      const uint32_t a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+      if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
+      const size_t x = 3 * (size_t)lo, y = 3 * (size_t)hi;
+      const double ax = N0[x], ay = N0[x + 1], az = N0[x + 2], bx = N0[y], by = N0[y + 1], bz = N0[y + 2];
+      const double lA = hypot3(ax, ay, az), lB = hypot3(bx, by, bz);
+      if (!(lA > 0.5 && lB > 0.5) || ax * bx + ay * by + az * bz >= SHARP_ANGLE_COS * lA * lB) continue;
+      hits.push_back((uint32_t)(t + k));
+    }
+    if (hits.empty()) return 0;
+  }
   Adj adj;
   adj.build(T, nv0);
   std::vector<ECand> cand;
@@ -909,19 +924,18 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     const uint32_t a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
     if (a < b) progEdges[progOf(a)]++;   // a closed mesh names each edge once in each direction
   }
-  for (size_t t = 0; t < T.size(); t += 3) for (int k = 0; k < 3; k++) {
+  if (retry) for (size_t t = 0; t < T.size(); t += 3) for (int k = 0; k < 3; k++) {
     const uint32_t a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
-    if (retry) {
-      const uint32_t* q = again.find((uint64_t)lo * nv0 + hi);
-      if (q && adj.first((uint32_t)(t / 3), lo, hi)) { ECand c = (*retry)[*q]; c.ok = true; cand.push_back(c); }
-      continue;
-    }
-    // The angle test first, on the raw normals: it refuses most edges.
+    const uint32_t* q = again.find((uint64_t)lo * nv0 + hi);
+    if (q && adj.first((uint32_t)(t / 3), lo, hi)) { ECand c = (*retry)[*q]; c.ok = true; cand.push_back(c); }
+  }
+  if (!retry) for (const uint32_t i : hits) {
+    const size_t t = i - i % 3;
+    const uint32_t a = T[i], b = T[t + (i % 3 + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     const size_t x = 3 * (size_t)lo, y = 3 * (size_t)hi;
-    const double ax = N0[x], ay = N0[x + 1], az = N0[x + 2], bx = N0[y], by = N0[y + 1], bz = N0[y + 2];
-    const double lA = hypot3(ax, ay, az), lB = hypot3(bx, by, bz);
-    if (!(lA > 0.5 && lB > 0.5) || ax * bx + ay * by + az * bz >= SHARP_ANGLE_COS * lA * lB || !adj.first((uint32_t)(t / 3), lo, hi)) continue;
+    const double lA = hypot3(N0[x], N0[x + 1], N0[x + 2]), lB = hypot3(N0[y], N0[y + 1], N0[y + 2]);
+    if (!adj.first((uint32_t)(t / 3), lo, hi)) continue;
     progCand[progOf(lo)]++;
     ECand c;
     double pA[3], pB[3], ab[3];
