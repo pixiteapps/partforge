@@ -571,6 +571,7 @@ struct Commit {
   std::vector<uint32_t> added;    // candidate indices, in vertex order
   std::vector<uint32_t> marked;   // corners: the vertices made corners where they are or by a move
   std::vector<uint32_t> cut;      // the triangles on a split edge
+  std::vector<uint32_t> pts;      // edge rounds: the vertices made edge points
   Touched touched;
   size_t nv = 0;
   explicit Commit(uint64_t keyNv) : sp(keyNv) {}
@@ -624,7 +625,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
     }
     moved[(size_t)end] = 1; S.sharp[(size_t)end] = 1; S.planes[2 * (size_t)end] = (int32_t)c.a; S.planes[2 * (size_t)end + 1] = (int32_t)c.b;
     setPlanes((size_t)end, c);
-    apart.add((uint32_t)end);
+    apart.add((uint32_t)end); S.pts.push_back((uint32_t)end);
     for (const uint32_t* t = adj.fanBegin((uint32_t)end); t != adj.fanEnd((uint32_t)end); t++) S.touched.add(*t, (int32_t)kept[q], (int32_t)end);
   }
   // Then splits, on edges with neither end moved.
@@ -645,7 +646,7 @@ int commit(std::vector<ECand>& C, const Mesh& mesh, const Adj& adj, Commit& S, c
       continue;
     }
     nv++; S.sharp[v] = 1; S.planes[2 * v] = (int32_t)c.a; S.planes[2 * v + 1] = (int32_t)c.b; setPlanes(v, c); S.added.push_back(kept[q]);
-    apart.add((uint32_t)v);
+    apart.add((uint32_t)v); S.pts.push_back((uint32_t)v);
     for (const uint32_t t : edgeTris) S.touched.add(t, (int32_t)kept[q], -1);
     S.cut.insert(S.cut.end(), edgeTris.begin(), edgeTris.end());
   }
@@ -693,6 +694,8 @@ struct CornerCtx {
   const std::vector<uint8_t>& freeV;     // per current vertex
   double edge;
   bool across;
+  const std::vector<uint32_t>& pts;      // every vertex with sharp 1, any order
+  const std::vector<uint32_t>& have;     // across: every vertex with sharp 2
 };
 
 // commitCorners: the kept candidates, each by its first try (from c.from) with no flip or sliver.
@@ -777,8 +780,7 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   const std::vector<double>& P = x.P;
   const size_t nv1 = P.size() / 3, nv0 = x.noPlane.size();
   const double edge = x.edge;
-  std::vector<uint32_t> have;
-  if (x.across) for (size_t v = 0; v < nv1; v++) if (x.sharp[v] == 2) have.push_back((uint32_t)v);
+  const std::vector<uint32_t>& have = x.have;
   auto planesOf = [&](uint32_t v, std::vector<Plane>& out) {
     if (x.sharp[v] == 1) {
       const double px = P[3 * (size_t)v], py = P[3 * (size_t)v + 1], pz = P[3 * (size_t)v + 2];
@@ -841,7 +843,13 @@ int cornerPass(CornerCtx& x, CornerOut& res) {
   };
   std::vector<Plane> ordered;
   std::vector<uint32_t> seen;
-  for (size_t t = 0; t < T.size(); t += 3) for (int k = 0; k < 3; k++) {
+  // Only a triangle with an edge point can hold a candidate edge: the edge points' fans, in index order.
+  std::vector<uint32_t> near;
+  for (const uint32_t v : x.pts) near.insert(near.end(), adj.fanBegin(v), adj.fanEnd(v));
+  std::sort(near.begin(), near.end());
+  near.erase(std::unique(near.begin(), near.end()), near.end());
+  for (const uint32_t tt : near) for (int k = 0; k < 3; k++) {
+    const size_t t = 3 * (size_t)tt;
     const uint32_t a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     if ((x.sharp[lo] != 1 && x.sharp[hi] != 1) || !adj.first((uint32_t)(t / 3), lo, hi)) continue;
     // The distinct planes: an edge point's first (a mesher vertex's normal is the rougher one).
@@ -987,11 +995,26 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     const uint32_t a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
     if (a < b) progEdges[progOf(a)]++;   // a closed mesh names each edge once in each direction
   }
-  if (retry) for (size_t t = 0; t < T.size(); t += 3) for (int k = 0; k < 3; k++) {
-    const uint32_t a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
-    if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
-    const uint32_t* q = again.find((uint64_t)lo * nv0 + hi);
-    if (q && adj.first((uint32_t)(t / 3), lo, hi)) { ECand c = (*retry)[*q]; c.ok = true; cand.push_back(c); }
+  if (retry) {
+    // Step 7 looks only at its own edges (the first of a repeated one): each where a scan of the
+    // triangle list would first find it (the first triangle holding both ends, the place in it).
+    std::vector<std::pair<size_t, uint32_t>> at;
+    std::vector<uint32_t> tris;
+    for (size_t q = 0; q < retry->size(); q++) {
+      const uint32_t lo = (*retry)[q].a, hi = (*retry)[q].b;
+      const uint32_t* w = again.find((uint64_t)lo * nv0 + hi);
+      if (!w || *w != q) continue;
+      if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
+      adj.byEdge(lo, hi, tris);
+      if (tris.empty()) continue;
+      const size_t t = 3 * (size_t)tris[0];
+      for (int k = 0; k < 3; k++) {
+        const uint32_t a = T[t + k], b = T[t + (k + 1) % 3];
+        if ((a == lo && b == hi) || (a == hi && b == lo)) at.push_back({t + k, (uint32_t)q});
+      }
+    }
+    std::sort(at.begin(), at.end());
+    for (const auto& e : at) { ECand c = (*retry)[e.second]; c.ok = true; cand.push_back(c); }
   }
   if (!retry) for (const uint32_t i : hits) {
     const size_t t = i - i % 3;
@@ -1081,6 +1104,11 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     for (const uint32_t v : marked) r[v] = 2;
     return r;
   };
+  // The edge points for the corner passes: those of an earlier round (a mesh given with `sharp`),
+  // then this commit's. The corner points of an earlier round.
+  std::vector<uint32_t> pts, had;
+  if (mesh.hasSharp) for (size_t v = 0; v < nv0; v++) { if (mesh.sharp[v] == 1) pts.push_back((uint32_t)v); else if (mesh.sharp[v] == 2) had.push_back((uint32_t)v); }
+  pts.insert(pts.end(), S->pts.begin(), S->pts.end());
   if (corners) {
     std::vector<uint8_t> noPlane(nv0);
     for (size_t v = 0; v < nv0; v++) noPlane[v] = pinned(v) || creased(v);
@@ -1089,7 +1117,8 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     {
       std::vector<uint32_t> Tin;
       Tin.swap(res.T);
-      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, S->sharp, S->planeN, noPlane, freeC, edge, false};
+      const std::vector<uint32_t> none;
+      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, S->sharp, S->planeN, noPlane, freeC, edge, false, pts, none};
       CornerOut C;
       if (cornerPass(x, C) != 0) return 2;
       res.T.swap(C.out);
@@ -1100,11 +1129,15 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     // far never moves.
     {
       const std::vector<uint8_t> sh = sharpNow();
+      std::vector<uint32_t> have(had), pts2;
+      have.insert(have.end(), marked.begin(), marked.end());
+      for (size_t v = nv1; v < P.size() / 3; v++) have.push_back((uint32_t)v);
+      for (const uint32_t v : pts) if (sh[v] == 1) pts2.push_back(v);
       std::vector<uint8_t> freeD(sh.size());
       for (size_t v = 0; v < sh.size(); v++) freeD[v] = (v < nv0 ? freeV[v] : 1) && sh[v] != 2;
       std::vector<uint32_t> Tin;
       Tin.swap(res.T);
-      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, sh, S->planeN, noPlane, freeD, edge, true};
+      CornerCtx x{s, P, N, Tin, res.VL, P0, N0, sh, S->planeN, noPlane, freeD, edge, true, pts2, have};
       CornerOut D;
       if (cornerPass(x, D) != 0) return 2;
       res.T.swap(D.out);

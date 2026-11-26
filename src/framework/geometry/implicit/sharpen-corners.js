@@ -10,12 +10,11 @@ import { evalField, dot, unit, adjacency, retriangulate, checkTris, fieldFlips, 
 // (`planeN`) through its own position, exact on flat faces; a mesher vertex's is its normal
 // through its input position (P0, N0). Returns the re-triangulated list, the candidates that
 // made a new vertex in vertex order (`added`, each with its `leaf` and evaluating end `ev`), and
-// the vertices that became corner points where they were or by a move (`marked`).
-export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, edge, st, across = false }) {
+// the vertices that became corner points where they were or by a move (`marked`). `pts` lists
+// every vertex with `sharp` 1, in any order; on the across pass `have` lists every one with
+// `sharp` 2 (the corner points made so far, which its candidates keep clear of).
+export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane, free, edge, st, across = false, pts, have = [] }) {
   const nv1 = P.length / 3;
-  // On the across pass: the corner points the first pass made, which its candidates keep clear of.
-  const have = [];
-  if (across) for (let v = 0; v < nv1; v++) if (sharp[v] === 2) have.push(v);
   // PORTED: lo·nv1 + hi is exact in a JS double (below 2^53); the core needs a 64-bit integer key.
   const ekey = (a, b) => (a < b ? a * nv1 + b : b * nv1 + a);
   const planesOf = (v) => {
@@ -56,8 +55,11 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
     }
     cand.push({ a: lo, b: hi, p, n, rough, clear, leaf: VL[lo], ev: lo, ok: true, from: 0 });
   };
-  for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
-    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
+  // Only a triangle with an edge point can hold a candidate edge: the edge points' fans, in index order.
+  const near = new Set();
+  for (const v of pts) for (const t of adj.fan.get(v)) near.add(t);
+  for (const tt of Uint32Array.from(near).sort()) for (let k = 0; k < 3; k++) {
+    const t = 3 * tt, a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
     if ((sharp[lo] !== 1 && sharp[hi] !== 1) || !adj.first(t / 3, lo, hi)) continue;
     // The distinct planes: an edge point's first (a mesher vertex's normal is the rougher one).
     const v = sharp[lo] === 1 ? lo : hi, u = v === lo ? hi : lo;

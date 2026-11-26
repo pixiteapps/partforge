@@ -287,11 +287,23 @@ function sharpenRound(store, mesh, corners, st, retry) {
     const a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
     if (a < b) progEdges[progOf(a)]++;   // a closed mesh names each edge once in each direction
   }
-  if (again) for (let t = 0; t < T.length; t += 3) for (let k = 0; k < 3; k++) {
-    const a = T[t + k], b = T[t + (k + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
-    if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
-    const c = again.get(lo * nv0 + hi);
-    if (c && adj.first(t / 3, lo, hi)) { c.ok = true; cand.push(c); }
+  if (again) {
+    // Step 7 looks only at its own edges: each where a scan of the triangle list would first find
+    // it (the first triangle holding both ends, the place in it), in that order.
+    const at = [];
+    for (const [key, c] of again) {
+      const lo = c.a, hi = c.b;
+      if (pinned(lo) || pinned(hi) || creased(lo) || creased(hi) || prior(lo) || prior(hi)) continue;
+      const tris = adj.byEdge.get(key);
+      if (!tris.length) continue;
+      const t = 3 * tris[0];
+      for (let k = 0; k < 3; k++) {
+        const a = T[t + k], b = T[t + (k + 1) % 3];
+        if ((a === lo && b === hi) || (a === hi && b === lo)) at.push([t + k, c]);
+      }
+    }
+    at.sort((x, y) => x[0] - y[0]);
+    for (const [, c] of at) { c.ok = true; cand.push(c); }
   }
   if (!again) for (const i of hits) {
     const t = i - (i % 3), a = T[i], b = T[t + (i % 3 + 1) % 3], lo = a < b ? a : b, hi = a < b ? b : a;
@@ -360,6 +372,11 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const nv1 = P.length / 3;
   const marked = [];
   // The `sharp` table for the current vertices: step 5's, then 2 for every corner point so far.
+  // The edge points for the corner passes: those of an earlier round (a mesh given with `sharp`),
+  // then this commit's. The corner points of an earlier round.
+  const pts = [], had = [];
+  if (mesh.sharp) for (let v = 0; v < nv0; v++) { if (mesh.sharp[v] === 1) pts.push(v); else if (mesh.sharp[v] === 2) had.push(v); }
+  pts.push(...S.pts);
   const sharpNow = () => {
     const r = new Uint8Array(P.length / 3).fill(2, nv1);
     r.set(S.sharp);
@@ -368,17 +385,18 @@ function sharpenRound(store, mesh, corners, st, retry) {
   };
   if (corners) {
     const noPlane = (v) => v < nv0 && (pinned(v) || creased(v));
-    const C = cornerPass(store, { P, N, T: out, VL, P0, N0, sharp: S.sharp, planeN, noPlane, free, edge, st });
+    const C = cornerPass(store, { P, N, T: out, VL, P0, N0, sharp: S.sharp, planeN, noPlane, free, edge, st, pts });
     ({ out, P, N } = C);
     marked.push(...C.marked);
     for (const c of C.added) grow(c);
     // 6b. Corners across a bevel vertex, where the first pass made none (see cornerPass). A
     // corner point made so far never moves.
-    const sh = sharpNow();
+    const sh = sharpNow(), nvC = P.length / 3, have = [...had, ...C.marked];
+    for (let v = nv1; v < nvC; v++) have.push(v);
     st.across = {};
     for (const name of ["cornerCandidates", "corners", "cornerDet", "cornerFar", "cornerOffField", "cornerFieldFlip", "cornerNear"]) st.across[name] = 0;
     const D = cornerPass(store, { P, N, T: out, VL, P0, N0, sharp: sh, planeN, noPlane, free: (v) => free(v) && sh[v] !== 2,
-      edge, st: st.across, across: true });
+      edge, st: st.across, across: true, pts: pts.filter((v) => sh[v] === 1), have });
     ({ out, P, N } = D);
     marked.push(...D.marked);
     for (const c of D.added) grow(c);
@@ -409,7 +427,7 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
   P.set(P0); N.set(N0);
   const apart = index(P);
   let nv = nv0;
-  const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map(), how = new Map(), cut = [];
+  const sharp = new Uint8Array(cap), planes = new Int32Array(2 * cap).fill(-1), added = [], touched = new Map(), how = new Map(), cut = [], pts = [];
   if (mesh.sharp) { sharp.set(mesh.sharp); planes.set(mesh.sharpPlanes); }
   // Each edge point's two plane normals (the side gradients Newton ended on); 0 otherwise.
   const planeN = new Float64Array(6 * cap);
@@ -441,7 +459,7 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
     if (bad) { P[3 * end] = was[0]; P[3 * end + 1] = was[1]; P[3 * end + 2] = was[2]; st[bad]++; ends[q] = -1; return; }
     // The moved end keeps its normal: the crease point is on its own plane too.
     moved[end] = 1; sharp[end] = 1; planes[2 * end] = c.a; planes[2 * end + 1] = c.b; setPlanes(end, c); st.moved++;
-    apart.add(end);
+    apart.add(end); pts.push(end);
     touch(fan.get(end), c, end);
   });
   // Then splits, on edges with neither end moved.
@@ -456,11 +474,11 @@ function commit(cand, { P0, N0, T, nv0, ekey, fan, byEdge, free, st, mesh, apart
     const bad = check(byEdge.get(key));
     if (bad) { splitOf.delete(key); st[bad]++; return; }   // v is not counted: the next split writes over it
     nv++; sharp[v] = 1; planes[2 * v] = c.a; planes[2 * v + 1] = c.b; setPlanes(v, c); added.push(c);
-    apart.add(v);
+    apart.add(v); pts.push(v);
     touch(byEdge.get(key), c, -1);
     cut.push(...byEdge.get(key));
     st.split++;
   });
   return { P: P.subarray(0, 3 * nv), N: N.subarray(0, 3 * nv), splitOf, sharp: sharp.subarray(0, nv), planes: planes.subarray(0, 2 * nv),
-    planeN: planeN.subarray(0, 6 * nv), added, touched, how, cut };
+    planeN: planeN.subarray(0, 6 * nv), added, touched, how, cut, pts };
 }
