@@ -24,7 +24,7 @@ import { savePickToken, loadPickToken, clearPickToken, pickTokenPath } from "../
 import { matchPattern } from "../src/testing/error-patterns.js";
 import { lintPart } from "../src/lint.js";
 import { parseSweepBudget } from "./sweep-budget.js";
-import { sweepText } from "./sweep-text.js";
+import { sweepText, lineText } from "./sweep-text.js";
 import { sniffMediaType } from "../src/framework/ingest/sniff.js";
 import { ASSET_KINDS, rowFor, convertFor } from "../src/framework/ingest/registry.js";
 import { installNodeDom } from "../src/framework/ingest/node-dom.js";
@@ -711,6 +711,7 @@ function printMeasure(r) {
     for (const w of r.warnings) console.log(`    ${w.part}: ${w.message}`);
   }
   if (r.sweeps) console.log(`  sweeps: ${r.sweeps.length ? r.sweeps.map(sweepText).join("; ") : "none move anything in this view"}`);
+  if (r.lines) console.log(`  lines: ${r.lines.map(lineText).join("; ")}`);
   if (r.handles) {
     console.log(`  handles:`);
     for (const h of r.handles) {

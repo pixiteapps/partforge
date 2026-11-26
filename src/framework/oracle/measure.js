@@ -20,6 +20,8 @@ import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverha
 import { summarizeContours } from "./shape-probe.js";
 import { DOMAINS } from "../domains/registry.js";
 import { handlesReport } from "./handles.js";
+import { measureLines } from "./lines.js";
+import { linesInView } from "../lines/read.js";
 import { previewHandles } from "../preview-pose.js";
 import { runSweeps } from "./sweep.js";
 import { REPORT_SHARE_MS } from "./changes.js";
@@ -634,6 +636,17 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // params measured. Absent on a part with none, so those reports are unchanged; it
   // never fails the measurement (a handle that cannot be read is listed with an error).
   const handles = opts.handles !== false ? handlesReport(part, view, params) : undefined;
+  // Declared lines (the top-level `lines` block) read at this pose. Present only when the
+  // view has one, so every other report is unchanged; nothing it throws reaches the caller.
+  let lines;
+  try {
+    if (linesInView(part, view).length) {
+      const d = (domainParams ?? poseParams ?? sheetParams ?? resolveParams(part, params)).d;
+      lines = measureLines(part, view, d);
+    }
+  } catch (e) {
+    lines = linesInView(part, view).map((l) => ({ name: l.name, on: l.on, error: String(e?.message || e).split("\n")[0].slice(0, 200) }));
+  }
   // Which of those a kernel-free cached preview of this view would show (and why the
   // rest are hidden), against the sub-parts a GLB of this view would hold: the ones
   // with triangles. The preview is one THIS version writes (encoder version 7): a cage
@@ -796,6 +809,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     // a probe error stays inside its own entry and never reaches `ok` below.
     ...(probes ? { probes } : {}),
     ...(handles ? { handles } : {}),
+    ...(lines ? { lines } : {}),
     ...(previewHandlesReport ? { previewHandles: previewHandlesReport } : {}),
     ...(sweeps ? { sweeps } : {}),
     ...(limbs ? { limbs } : {}),

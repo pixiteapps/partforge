@@ -708,6 +708,11 @@ export interface MeasureReport {
    * absent when the part declares none.
    */
   handles?: HandleFacts[];
+  /** Declared lines read at the measured pose; present only when the view declares one. */
+  lines?: Array<
+    | { name: string; on: string; mode: string; length: number; bendRatio: number | null; minBendRatio: number | null }
+    | { name: string; on: string; error: string }
+  >;
   /**
    * Which of `handles` a kernel-free cached preview of this view would let a visitor
    * drag (`mountPreview({ part })`), and why each other one is hidden. Present only

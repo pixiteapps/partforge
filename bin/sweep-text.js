@@ -35,3 +35,12 @@ export function sweepText(s) {
   const deep = touching && c.depth != null ? ` (${mm(c.depth)} deep)` : "";
   return `${s.name} CONTACT at ${fmtV(c.from)} ${pairKey(c.a, c.b)}${deep}${c.unresolved ? " (unresolved)" : ""} driven by ${c.driver ?? "?"}${free}${more}${capped}`;
 }
+
+/** One declared line's reading: `rope 212.40mm, bend 10.0 (min 8)`, or why it could not be read. */
+export function lineText(l) {
+  if (l.error) return `${l.name} unreadable: ${l.error}`;
+  const bend = l.bendRatio != null
+    ? `, bend ${l.bendRatio.toFixed(1)}${l.minBendRatio != null ? ` (min ${l.minBendRatio})` : ""}`
+    : "";
+  return `${l.name} ${mm(l.length)}${bend}`;
+}
