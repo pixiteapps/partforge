@@ -200,12 +200,20 @@ with a different test for where a crease is.
    `SHARP_MAX_MOVE` cells. A kept point close to an edge end moves that end, as
    `CREASE_SNAP` does. Otherwise it splits the edge.
    - **The density rule.** Each edge belongs to the leaf program of its lower end's
-     sparse-grid leaf. When more than `SHARP_DENSE` (0.2) of a program's edges are
-     candidates, none of that program's candidates is tried. This is decided before any
-     field read. A texture finer than the grid makes half its edges candidates, and its
-     cleaned mesh is already poor. The cost: a fine texture, or facets finer than the
-     grid, stay bevelled as they are today. A plain edge elsewhere in the same part is
-     still sharpened, because its leaves have their own program.
+     sparse-grid leaf. A program is dense when more than a fifth of its edges are
+     candidates (`SHARP_DENSE_DIV * candidates > edges`, with `SHARP_DENSE_DIV` 5, in
+     integers) and it has more than `SHARP_DENSE_MIN` (400) candidates. None of a dense
+     program's candidates is tried. This is decided before any field read.
+   - Why: a texture finer than the grid makes half its edges candidates, and its cleaned
+     mesh is already poor. The rule bounds the stage's cost there.
+   - Why the floor: a small part is one program, and its share of crease edges grows as
+     it shrinks (a cube 4 cells wide has 0.24). A small count costs little whatever its
+     share, so a program with few candidates is always tried.
+   - What it costs: a fine texture, or facets finer than the grid, stay bevelled as they
+     are today. A plain edge elsewhere in the part is still sharpened when its leaves have
+     a different program, for example a box away from a knurled solid. A whole-body
+     `displace`, or a texture over part of one primitive, shares one program with that
+     body, and every edge of that body is skipped.
    - The move is Newton on the two sides of the crease. Each side is read a little way
      along its own plane, away from the other, with six points (central differences).
    - Newton stops when its step is under `1e-5` cells. The point is judged on that read.
@@ -307,12 +315,26 @@ blend.
 stage's internal values are `CORNER_MERGE` 0.05 cells, the Newton stop `1e-5` cells, three
 flat reads, and the flip test's two steps, `1e-4` and `0.005` cells.
 
-`SHARP_DENSE` is 0.2. It was chosen from the share of candidate edges per leaf program, at
-0.6 and 1.0 mm. Where real edges and corners are (the plate, bracket, cylinder, curved
-crease, box, cage post and `offset` −2), the share is 0.015 to 0.122. On the knurl it is
-0.314 at 0.6 mm and 0.51 at 1.0 mm. 0.2 leaves room on both sides. The share per single
+The density rule's share, one fifth (`SHARP_DENSE_DIV` 5), was chosen from the share of
+candidate edges per leaf program, at 0.6 and 1.0 mm. Where real edges and corners are (the
+plate, bracket, cylinder, curved crease, box, cage post and `offset` −2), the share is
+0.015 to 0.122. On the knurl it is 0.314 at 0.6 mm and 0.51 at 1.0 mm. The share per single
 leaf did not separate the two: a leaf is 4 cells across, so one crease through it already
 makes 0.1 to 0.75 of its edges candidates, and knurl leaves range from 0.1 to 1.
+
+`SHARP_DENSE_MIN` is 400. Small parts pass the share test: cubes 3 to 6 cells wide have a
+share of 0.21 to 0.40 with 113 to 249 candidates. From 7 cells up the share is under 0.2.
+Knurled knobs have at least 619 candidates (a cylinder of radius 1 mm, 0.6 mm grid). 400
+is near the middle of 249 and 619 on a ratio scale. With it every cube of 3, 4, 4.5, 5 and
+6 cells, at 0.6 and 1.0 mm, keeps exactly 8 corners, and a 4 mm boss on a plate keeps its
+own corners and edges. A long bar 4 by 4 mm, 20 to 200 mm long, at 1.0 mm, has a share of
+0.16 to 0.18 at every length, so it is never dense.
+
+The worst case the floor lets through is a texture with just under 400 candidates. A
+knurled cylinder of radius 0.6 mm and height 1 mm at 0.6 mm has 283: the stage takes 62 ms
+against 11 ms for the stages before it (546%). It is a small absolute cost. Its mesh is
+sound. A knurled knob of radius 6 mm and height 8 mm at 0.6 mm has 11,748 candidates and is
+dense: the stage takes 7 ms against 266 ms (2.8%).
 
 **Stage numbers.** JS, preview tier, 0.6 mm grid, milliseconds, median of 3 runs. "Before"
 is plan, evaluate, mesh and cleanup. Wall time is the one JS thread. CPU time is the whole

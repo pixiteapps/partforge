@@ -8,8 +8,9 @@
 //      normals more than SHARP_ANGLE_COS apart. Its start is the point nearest the edge's middle
 //      on both ends' tangent planes. A crease point's normal is a bisector, not a field normal.
 //      Each edge belongs to the leaf program of its lower end's sparse-grid leaf. When a
-//      program's candidates are more than SHARP_DENSE of its edges (a texture or facets finer
-//      than the grid), none of them is tried.
+//      program's candidates are more than a fifth of its edges (SHARP_DENSE_DIV) and more than
+//      SHARP_DENSE_MIN (a texture or facets finer than the grid), none of them is tried. The
+//      floor keeps a small part, whose crease share is high but whose cost is small.
 //   2. That point is moved onto the field's zero set and the crease of its two sides: Newton,
 //      NEWTON_STEPS, within the plane holding the edge and the sum of the two normals. Each side
 //      is read SIDE·edge along its own plane, away from the other, so a step sees the two smooth
@@ -61,11 +62,12 @@ export const SHARP_SNAP = 0.15;
 /** The corner pass's least |determinant| of three unit plane normals. */
 export const SHARP_CORNER_DET = 0.05;
 /**
- * The density rule's share: a leaf program whose candidate edges are more than this share of its
- * edges is skipped. Measured (design §4): at most 0.122 where real edges are, at least 0.314 on a
- * knurl.
+ * The density rule: a leaf program is skipped when SHARP_DENSE_DIV times its candidate edges is
+ * more than its edges (a share over one fifth) and it has more than SHARP_DENSE_MIN candidates.
+ * Measured (design §4): a share of at most 0.122 where real edges are, at least 0.314 on a knurl;
+ * small parts reach 0.4 with at most 249 candidates, a knurl has at least 4,839.
  */
-export const SHARP_DENSE = 0.2;
+export const SHARP_DENSE_DIV = 5, SHARP_DENSE_MIN = 400;
 
 const NEWTON_STEPS = 10, STEP_CAP = 0.25, SIDE = 0.02;
 /** Difference steps (cells) and the least altitude (mm), shared with sharpen-mesh.js. */
@@ -283,9 +285,12 @@ function sharpenRound(store, mesh, corners, st, retry) {
     cand.push({ a: lo, b: hi, m, p, uA, uB, sigma: conv > 0 ? 1 : -1, ok: conv !== 0, pn, leaf: VL0[lo], ev: lo });
   }
   if (!again) {
-    // A program whose candidates are more than SHARP_DENSE of its edges is a texture or facets
-    // finer than the grid: none of its candidates is tried.
-    const dense = (c) => progCand[progOf(c.a)] > SHARP_DENSE * progEdges[progOf(c.a)];
+    // A program with many candidates that are more than a fifth of its edges is a texture or
+    // facets finer than the grid: none of its candidates is tried.
+    const dense = (c) => {
+      const n = progCand[progOf(c.a)];
+      return SHARP_DENSE_DIV * n > progEdges[progOf(c.a)] && n > SHARP_DENSE_MIN;
+    };
     st.dense = cand.filter(dense).length;
     if (st.dense) cand = cand.filter((c) => !dense(c));
   }

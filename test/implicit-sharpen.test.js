@@ -288,7 +288,7 @@ function expectSolid(mesh) {
 const KNURL = "vec2 z = normalize(p.xy); for (int i = 0; i < 4; i++) { z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y); } "
   + "float c = cos(p.z * 1.3); float s = sin(p.z * 1.3); return max(z.x * c - z.y * s, z.x * c + z.y * s);";
 // spike/solid-field/run.mjs's d-knurl tree (commit 257500e2), over a solid leaf.
-const knurl = () => ({ kind: "displace", amount: 0.7, child: leaf(k.cylinder({ r: 12, h: 30 })), by: { expr: KNURL } });
+const knurl = (r = 12, h = 30) => ({ kind: "displace", amount: 0.7, child: leaf(k.cylinder({ r, h })), by: { expr: KNURL } });
 // spike/exact-faces/border.mjs's cage-post case: a post blended into a subdivision body's underside.
 const cagePost = () => {
   const c = k.cage({ box: { size: [44, 24, 22], segs: [2, 1, 1] } });
@@ -334,6 +334,40 @@ describe("sharpenMesh, hard cases", () => {
     expect(mesh.indices.length).toBeLessThanOrEqual(1.4 * cleaned.indices.length);
     expect(t2 - t1).toBeLessThan(0.25 * (t1 - t0));
   }, 240_000);
+
+  // The density rule's floor: a small part has a high share of crease edges but few of them.
+  for (const edge of GRIDS) {
+    test(`small: cubes 3 to 6 cells wide keep all 8 corners (grid ${edge})`, () => {
+      for (const n of [3, 4, 4.5, 5, 6]) {
+        const h = (n * edge) / 2, r = run({ kind: "box", size: [2 * h, 2 * h, 2 * h] }, edge);
+        expectSound(r);
+        expect(r.stats.dense, `${n} cells`).toBe(0);
+        expectCorners(r.mesh, boxCorners([[-h, -h, -h], [h, h, h]]));
+      }
+    }, 120_000);
+  }
+
+  test("small: a 4 mm boss on a plate keeps its own edges and corners (grid 1.0)", () => {
+    const root = { kind: "union", k: 0, children: [{ kind: "box", size: [40, 30, 6] }, { kind: "box", size: [4, 4, 4], at: [0, 0, 5] }] };
+    const r = run(root, 1.0);
+    expectSound(r);
+    expect(r.stats.dense).toBe(0);
+    const cs = cornerVerts(r.mesh).map((v) => vert(r.mesh, v));
+    for (const c of boxCorners([[-2, -2, 7], [2, 2, 7]]).slice(0, 4)) expect(cs.some((p) => dist(p, c) <= 0.005)).toBe(true);
+    // Sharp points on each of the boss's four upright edges, away from its ends.
+    for (const [x, y] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
+      expect(sharpVerts(r.mesh).some((v) => { const p = vert(r.mesh, v); return Math.hypot(p[0] - x, p[1] - y) < 0.05 && p[2] > 3.5 && p[2] < 6.5; })).toBe(true);
+    }
+  }, 120_000);
+
+  test("knob: a small knurled knob stays sound, skipped or not (grid 0.6)", () => {
+    const big = run(knurl(6, 8), 0.6);   // dense: 11,748 candidates
+    expect(big.stats.dense).toBeGreaterThan(0);
+    expectSound(big);
+    const tiny = run(knurl(0.6, 1), 0.6);   // under the floor: tried
+    expect(tiny.stats.dense).toBe(0);
+    expectSound(tiny);
+  }, 120_000);
 
   test("dense: a knurled solid does not stop a plain box edge far from it being sharpened (grid 0.6)", () => {
     const root = { kind: "union", children: [knurl(), leaf(k.box({ min: [30, -10, 0], max: [50, 10, 10] }))] }, r = run(root, 0.6);
@@ -381,8 +415,10 @@ describe("sharpenMesh, hard cases", () => {
 });
 
 describe("sharpenMesh, the flip memo", () => {
-  // Two candidates: dropping the first (for a field flip) turns the second's move into a split.
-  // The second still touches the triangle, but its final form changed, so it must be read again.
+  // In the stage, dropping one candidate for a field flip can turn a second one's move into a
+  // split. This drives fieldFlips with that second candidate alone: the same candidate touches the
+  // triangle in both rounds, first as a move, then as a split, so its final form changed and it
+  // must be read again.
   test("a triangle touched by the same candidate in a different way is read again", () => {
     const { store, cleaned } = jsStages({ root: { kind: "box", size: [40, 30, 6] } }, 1.0, { tier: "preview" });
     let near = 0;
