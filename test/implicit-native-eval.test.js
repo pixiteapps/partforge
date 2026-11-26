@@ -413,7 +413,7 @@ describe.each([["SIMD", true], ["scalar", false]])("native MESH op (%s build)", 
   beforeAll(async () => {
     if (!simd) globalThis.PARTFORGE_CORE_SIMD = false;
     setCoreForTesting(undefined);
-    k = await bootManifoldKernel({ quality: "print" });
+    k = await bootManifoldKernel({ quality: "print", meshFields: true });
   });
   afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 

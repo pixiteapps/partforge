@@ -139,7 +139,7 @@ test("the Manifold preview kernel reuses samples across a frames-only rebuild; t
 });
 
 test("a preview sample cache does not serve one solid's samples for another", async () => {
-  const kp = await bootManifoldKernel({ quality: "preview" });
+  const kp = await bootManifoldKernel({ quality: "preview", meshFields: true });
   const spec = (s) => ({ preview: 1, root: { kind: "union", k: 2, children: [{ kind: "solid", solid: s }, { kind: "sphere", r: 4, at: [9, 0, 0] }] } });
   const v1 = kp.implicit(spec(kp.box({ min: [-6, -6, -6], max: [6, 6, 6] }))).volume();
   const v2 = kp.implicit(spec(kp.box({ min: [-6, -6, -6], max: [6, 6, 9] }))).volume();

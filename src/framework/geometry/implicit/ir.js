@@ -19,7 +19,8 @@ import { PRIM, WARP, roundConeParams, primLipschitz } from "./primitives.js";
 import { BULGE_DEFAULT, ATTACH_STRIDE, MAX_OWNER_K } from "./contact.js";
 import { contactRegions, regionDigest } from "./regions.js";
 import { ImplicitSpecError } from "./errors.js";
-import { buildMeshField, MeshFieldError } from "./mesh-field.js";
+import { MeshFieldError } from "./mesh-field.js";
+import { meshFieldBuilder } from "./mesh-field-slot.js";
 
 const INF = Infinity;
 const AXIS_INDEX = { yz: 0, xz: 1, xy: 2 };
@@ -53,8 +54,12 @@ function warpBasis(axis = "z", toward) {
   return isIdentity(B) ? null : B;
 }
 
-/** The field of a solid leaf's solid: its mesh, built once per compile and slot. */
-const defaultMeshFieldOf = (solid) => buildMeshField(solid.toMesh());
+/**
+ * The field of a solid leaf's solid: its mesh, built once per compile and slot. The
+ * builder loads on demand (mesh-field-slot.js): not loaded yet, this throws code
+ * NEEDS_MESH_FIELD. A spec with no solid leaf never calls it.
+ */
+const defaultMeshFieldOf = (solid) => meshFieldBuilder()(solid.toMesh());
 
 // What a MeshFieldError's reason means for a leaf, after `<path>.solid: `.
 const meshFieldProblem = (e) => (e.reason === "empty" ? "the solid is empty"

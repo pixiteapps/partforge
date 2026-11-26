@@ -79,7 +79,7 @@ describe("bytecode", () => {
 
 describe("the solid leaf", () => {
   let k;
-  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
+  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print", meshFields: true }); });
   const spec = (solid) => ({ root: { kind: "union", k: 3, children: [{ kind: "solid", solid, at: [1, 0, 0] }, { kind: "sphere", r: 4, at: [-5, 1, 0] }] } });
 
   test("the batch interpreter and the reference evaluator agree on a solid leaf, to the bit", () => {

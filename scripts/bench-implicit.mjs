@@ -12,7 +12,10 @@ import { cleanupMesh, CLEANUP, PREVIEW_CLEANUP } from "../src/framework/geometry
 import { applySurfaceDetail, flattenDetail } from "../src/framework/geometry/implicit/detail.js";
 import { core, loadFullCore, setCoreEnabled } from "../src/framework/core/core.js";
 
+import { loadMeshFieldBuilder } from "../src/framework/geometry/implicit/mesh-field-loader.js";
+
 await loadFullCore(); // the implicit engine is the core's full build, loaded on demand
+await loadMeshFieldBuilder(); // the solid cases' mesh fields (compileImplicit's buildMeshField), loaded on demand
 import { NativeSession } from "../src/framework/core/implicit-core.js";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { handSpec, vaseSpec } from "../test/fixtures/implicit-trees.js";

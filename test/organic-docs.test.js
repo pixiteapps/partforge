@@ -75,7 +75,7 @@ function toScript(block) {
 
 let k, scope;
 beforeAll(async () => {
-  k = await bootManifoldKernel();
+  k = await bootManifoldKernel({ meshFields: true }); // the guide's solid-leaf examples (a worker job loads it by itself)
   const checked = [];
   const check = (src, run, text) => {
     expect(plain(run()), src).toEqual(evalValue(text));

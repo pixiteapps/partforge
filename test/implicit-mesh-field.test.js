@@ -1,9 +1,12 @@
 // test/implicit-mesh-field.test.js
-import { describe, expect, test, beforeAll } from "vitest";
+import { describe, expect, test, beforeAll, vi } from "vitest";
+import { fileURLToPath } from "node:url";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
-import { buildMeshField, meshDistance } from "../src/framework/geometry/implicit/mesh-field.js";
+import { meshDistance } from "../src/framework/geometry/implicit/mesh-field.js";
+import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field-build.js";
+import { walk, chainTo } from "./helpers/import-graph.js";
 
-let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
+let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print", meshFields: true }); });
 const fieldOf = (s) => buildMeshField(s.toMesh());
 // A fixed-seed generator (Park–Miller), so every run tests the same points.
 const lcg = (seed) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -118,5 +121,98 @@ describe("meshDistance", () => {
       n++;
     }
     expect(n).toBeGreaterThan(3500);
+  });
+});
+
+// The engine's evaluation and lowering modules reach the oracle through nothing, not even
+// a lazy import: they are in the worker's eager closure and the cut & print kit's closure.
+// Only mesh-field-build.js imports the BVH, and only mesh-field-loader.js imports it.
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+describe("layering", () => {
+  for (const name of ["program.js", "interval.js", "reference.js", "ir.js", "mesh-field.js", "mesh-field-slot.js"]) {
+    test(`${name}'s import closure, lazy imports included, has nothing under oracle/`, () => {
+      const entry = `${ROOT}/src/framework/geometry/implicit/${name}`;
+      const { files, importer } = walk(entry, `${name} walk`);
+      const bad = [...files].filter((f) => f.includes("/src/framework/oracle/"));
+      expect(bad.map((f) => chainTo(f, importer, ROOT))).toEqual([]);
+    });
+  }
+  test("the loader reaches the BVH only through its dynamic import of the builder", () => {
+    const entry = `${ROOT}/src/framework/geometry/implicit/mesh-field-loader.js`;
+    expect([...walk(entry, "eager loader walk", { eager: true }).files].filter((f) => f.includes("/oracle/"))).toEqual([]);
+    expect([...walk(entry, "loader walk").files].some((f) => f.endsWith("/src/framework/oracle/bvh.js"))).toBe(true);
+  });
+});
+
+// The "not loaded yet" state: this file loaded the builder at boot, so each test below
+// starts a fresh module graph with vi.resetModules() and imports the slot and the loader
+// again (a fresh slot holds no builder).
+const IMPLICIT = "../src/framework/geometry/implicit";
+const NOT_LOADED = "implicit: a solid leaf needs the mesh field builder, which is not loaded yet — await loadMeshFieldBuilder() and build again";
+const thrown = (f) => { try { f(); } catch (e) { return e; } return null; };
+describe("the mesh field loader", () => {
+  test("the slot alone, with no loader evaluated, throws NEEDS_MESH_FIELD and starts nothing", async () => {
+    vi.resetModules();
+    const slot = await import(`${IMPLICIT}/mesh-field-slot.js`);
+    const e = thrown(() => slot.meshFieldBuilder());
+    expect(e?.code).toBe(slot.NEEDS_MESH_FIELD);
+    expect(slot.NEEDS_MESH_FIELD).toBe("NEEDS_MESH_FIELD");
+    expect(e.message).toBe(NOT_LOADED);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(slot.meshFieldBuilderLoaded()).toBe(false);
+  });
+  test("before a load it throws NEEDS_MESH_FIELD and starts the load; after it, it gives the builder", async () => {
+    vi.resetModules();
+    const L = await import(`${IMPLICIT}/mesh-field-loader.js`);
+    expect(L.meshFieldBuilderLoaded()).toBe(false);
+    const e = thrown(() => L.meshFieldBuilder());
+    expect(e?.code).toBe("NEEDS_MESH_FIELD");
+    expect(e.message).toBe(NOT_LOADED);
+    // The throw asked for the load: a later build finds the builder with no explicit await.
+    await vi.waitFor(() => expect(L.meshFieldBuilderLoaded()).toBe(true));
+    expect(typeof L.meshFieldBuilder()).toBe("function");
+  });
+  test("loadMeshFieldBuilder resolves true, once: a second call is the same promise and imports nothing again", async () => {
+    vi.resetModules();
+    const L = await import(`${IMPLICIT}/mesh-field-loader.js`);
+    const first = L.loadMeshFieldBuilder();
+    expect(L.loadMeshFieldBuilder()).toBe(first);
+    expect(await first).toBe(true);
+    const fn = L.meshFieldBuilder();
+    expect(L.loadMeshFieldBuilder()).toBe(first);
+    await L.loadMeshFieldBuilder();
+    expect(L.meshFieldBuilder()).toBe(fn);
+    const box = k.box({ min: [-1, -1, -1], max: [1, 1, 1] });
+    expect(meshDistance(fn(box.toMesh()), 0, 0, 0)).toBeCloseTo(-1, 12);
+  });
+  test("a builder that cannot be imported rejects, and a later call tries again", async () => {
+    vi.resetModules();
+    vi.doMock(`${IMPLICIT}/mesh-field-build.js`, () => { throw new Error("no builder here"); });
+    try {
+      const L = await import(`${IMPLICIT}/mesh-field-loader.js`);
+      await expect(L.loadMeshFieldBuilder()).rejects.toThrow();
+      expect(L.meshFieldBuilderLoaded()).toBe(false);
+      vi.doUnmock(`${IMPLICIT}/mesh-field-build.js`);
+      expect(await L.loadMeshFieldBuilder()).toBe(true);
+    } finally { vi.doUnmock(`${IMPLICIT}/mesh-field-build.js`); }
+  });
+  test("a kernel booted without the builder: a solid leaf throws NEEDS_MESH_FIELD, a spec with none builds", async () => {
+    vi.resetModules();
+    const { bootManifoldKernel: boot } = await import("../src/testing/manifold.js");
+    const { meshFieldBuilderLoaded } = await import(`${IMPLICIT}/mesh-field-slot.js`);
+    const kk = await boot();
+    expect(meshFieldBuilderLoaded()).toBe(false);
+    expect(kk.implicit({ preview: 1, root: { kind: "sphere", r: 5 } }).volume()).toBeGreaterThan(400);
+    expect(meshFieldBuilderLoaded()).toBe(false);   // no solid leaf, no load
+    const e = thrown(() => kk.implicit({ preview: 1, root: { kind: "solid", solid: kk.box({ size: [8, 8, 8] }) } }));
+    expect(e?.code).toBe("NEEDS_MESH_FIELD");
+    expect(e.message).toBe(NOT_LOADED);
+  });
+  test("bootManifoldKernel({ meshFields: true }) builds a solid leaf on the first try", async () => {
+    vi.resetModules();
+    const { bootManifoldKernel: boot } = await import("../src/testing/manifold.js");
+    const kk = await boot({ meshFields: true });
+    const box = kk.box({ size: [8, 8, 8] });
+    expect(kk.implicit({ resolution: 0.4, root: { kind: "solid", solid: box } }).volume() / box.volume()).toBeCloseTo(1, 1);
   });
 });

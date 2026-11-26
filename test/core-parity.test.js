@@ -97,7 +97,7 @@ const bytes = (a) => (a ? Buffer.from(a.buffer, a.byteOffset, a.byteLength) : nu
 async function run(part, on) {
   setCoreEnabled(on);
   const view = Object.keys(part.views)[0];
-  const kernel = await bootManifoldKernel({ quality: part.testQuality ?? "preview" });
+  const kernel = await bootManifoldKernel({ quality: part.testQuality ?? "preview", meshFields: true });
   for (const [name, im] of part.testImages ?? []) await kernel._registerImage({ name, ...im });
   const built = buildView(kernel, part, view);
   const meshes = built.map(({ name, mesh }) => ({
@@ -259,7 +259,7 @@ describe("owner path: every seam fixture", () => {
 // fields: the core must really have taken them, and answered (nothing refused, no fault).
 describe("solid leaves: the MESH op runs on the core", () => {
   let k;
-  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
+  beforeAll(async () => { k = await bootManifoldKernel({ quality: "print", meshFields: true }); });
   const SOLID_CASES = [
     ["solid join, preview tier", () => solidJoin(k, {}), 0.6, "preview", 2],
     ["solid join, print tier", () => solidJoin(k, {}), 0.6, "print", 2],

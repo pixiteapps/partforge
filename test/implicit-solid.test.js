@@ -3,12 +3,12 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
 import { validateSpec } from "../src/framework/geometry/implicit/grammar.js";
 import { compileImplicit } from "../src/framework/geometry/implicit/compile.js";
-import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field.js";
+import { buildMeshField } from "../src/framework/geometry/implicit/mesh-field-build.js";
 import { hashableSpec, implicitShapeHash, implicitCallId } from "../src/framework/geometry/implicit/call-id.js";
 import { implicitFrames } from "../src/framework/geometry/implicit/frame-report.js";
 import { probeSubPartPose } from "../src/framework/pose-probe-core.js";
 
-let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
+let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print", meshFields: true }); });
 const leaf = (solid, extra = {}) => ({ kind: "solid", solid, ...extra });
 
 describe("solid leaf", () => {
@@ -177,7 +177,7 @@ describe("solid leaf call ids: the pose probe and the worker agree", () => {
     expect(probeIds[0].endsWith("#0") && probeIds[1].endsWith("#1")).toBe(true);
     expect(probeIds[0].split("#")[0]).toBe(probeIds[1].split("#")[0]);
 
-    const kp = await bootManifoldKernel({ quality: "preview" });
+    const kp = await bootManifoldKernel({ quality: "preview", meshFields: true });
     kp.beginSubPart("t");
     let m;
     try { m = build(kp, 30).toMesh(); } finally { kp.endSubPart(); }

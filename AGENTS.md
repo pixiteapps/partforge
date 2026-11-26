@@ -978,7 +978,16 @@ the installed package, so let the publish finish before bumping the dep there.
   must let that error reach `handle` (catching it per sub-part would report it as a
   build failure). `bootManifoldKernel` always loads it, and the tests run with it
   loaded (`test/setup/full-core.js`; `test/core-split.test.js` and
-  `test/core-split-jobs.test.js` cover the base-only realm). Either build is
+  `test/core-split-jobs.test.js` cover the base-only realm). A `k.implicit` `solid`
+  leaf needs the mesh field builder (`implicit/mesh-field-build.js`, which imports the
+  oracle's BVH). It loads on demand the same way: the first solid leaf throws
+  `NEEDS_MESH_FIELD`, and `handle` loads it (`mesh-field-loader.js`) and runs the job
+  again. It has no JS fallback, so a host that builds a solid leaf with a kernel of its
+  own must await `loadMeshFieldBuilder()` (partforge/oracle, partforge/testing) first,
+  or boot with `bootManifoldKernel({ meshFields: true })`. `bootManifoldKernel` does not
+  load it by default, and the tests that build solid leaves pass `meshFields: true`.
+  `ir.js` and everything else in the worker's eager closure or the kit's closure import
+  only `mesh-field-slot.js`, never the loader. Either build is
   instantiated synchronously on first use. `creased-normals.js` dispatches to it
   (well-formed MeshGL only), `implicit/index.js`'s `meshImplicit` runs everything
   after `planLeaves` on one native session (`core/implicit-core.js`'s

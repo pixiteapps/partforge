@@ -9,8 +9,9 @@ import { lowerSpec } from "./ir.js";
 // can read it without loading the mesher.
 export const IMPLICIT_DEFAULTS = Object.freeze({ resolution: 0.6 });
 
-// `meshFieldOf(solid)` gives a solid leaf's field (mesh-field.js's buildMeshField of its mesh
-// by default); the manifold kernel passes one that memoizes per solid `_hash`.
+// `meshFieldOf(solid)` gives a solid leaf's field (mesh-field-build.js's buildMeshField of its
+// mesh by default, which throws code NEEDS_MESH_FIELD until loadMeshFieldBuilder() has loaded
+// it); the manifold kernel passes one that memoizes per solid `_hash`.
 export function compileImplicit(spec, { images = new Map(), meshFieldOf } = {}) {
   validateSpec(spec, { imageNames: new Set(images.keys()) });
   const compiled = lowerSpec(spec, { images, meshFieldOf });   // contact regions are found while lowering (regions.js)

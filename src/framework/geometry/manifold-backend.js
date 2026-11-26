@@ -8,7 +8,7 @@ import { h } from "./solid-hash.js";
 import { ensureOutward, openEdgeCount } from "./mesh-repair.js";
 import { manifoldFromMesh, manifoldFromWeldedMesh, ringStackManifold } from "./mesh-build.js";
 import { compileImplicit, meshImplicit, implicitHashable, choosePreviewEdge, IMPLICIT_DEFAULTS } from "./implicit/index.js";
-import { buildMeshField } from "./implicit/mesh-field.js";
+import { meshFieldBuilder } from "./implicit/mesh-field-loader.js";
 import { createSampleCache } from "./implicit/sample-cache.js";
 import { implicitFrames } from "./implicit/frame-report.js";
 import { bindVertices, MAX_BIND_FRAMES } from "./implicit/bindings.js";
@@ -252,7 +252,9 @@ export function createManifoldKernel(wasm, { quality = "preview" } = {}) {
   const meshFieldOf = (solid) => {
     let f = meshFields.get(solid._hash);
     if (f !== undefined) { meshFields.delete(solid._hash); meshFields.set(solid._hash, f); return f; }
-    f = buildMeshField(solid.toMesh());
+    // The builder loads on demand: not loaded yet, this throws code NEEDS_MESH_FIELD
+    // (jobs.js loads it and runs the job again).
+    f = meshFieldBuilder()(solid.toMesh());
     if (meshFields.size >= MESH_FIELD_MEMO) meshFields.delete(meshFields.keys().next().value);
     meshFields.set(solid._hash, f);
     return f;

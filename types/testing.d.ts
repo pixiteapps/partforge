@@ -40,6 +40,11 @@ export function createManifoldKernel(wasm: any, opts?: { quality?: "preview" | "
 export function bootManifoldKernel(opts?: {
   quality?: "preview" | "print";
   fonts?: Record<string, FontSource>;
+  /**
+   * Also load the mesh field builder (`loadMeshFieldBuilder`) before it returns. A
+   * k.implicit `solid` leaf needs it. Default false.
+   */
+  meshFields?: boolean;
 }): Promise<GeometryKernel>;
 
 /** Boot OCCT/replicad in a Node process and return a ready kernel. */
@@ -328,6 +333,15 @@ export function setCoreEnabled(on: boolean): void;
  * organic build.
  */
 export function loadFullCore(): Promise<boolean>;
+/**
+ * Load the mesh field builder that a k.implicit `solid` leaf needs. It is idempotent.
+ * It rejects if the builder cannot load, because a solid leaf has no fallback. The worker
+ * runtime loads it at a part's first solid leaf and runs that job again. A host that
+ * builds a solid leaf with a kernel it drives itself must await it first (or boot with
+ * `bootManifoldKernel({ meshFields: true })`). If it does not, the build throws an error
+ * with code "NEEDS_MESH_FIELD".
+ */
+export function loadMeshFieldBuilder(): Promise<true>;
 
 /** Why the core stopped answering in this realm — a fixed vocabulary, safe to record. */
 export type CoreFallbackReason = "no_webassembly" | "boot_failed" | "out_of_memory" | "trap" | "error";

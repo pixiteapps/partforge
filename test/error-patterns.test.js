@@ -322,7 +322,7 @@ describe("the solid-leaf entries match the errors k.implicit throws", () => {
   const live = parsePatterns(doc);
   const thrown = async (root) => {
     const { bootManifoldKernel } = await import("../src/testing/manifold.js");
-    const k = await bootManifoldKernel();
+    const k = await bootManifoldKernel({ meshFields: true });
     const leaf = (solid) => ({ kind: "solid", solid });
     const make = { empty: () => leaf(k.sphere(5).intersect(k.sphere(5).translate([20, 0, 0]))), notSolid: () => leaf(5),
       open: () => leaf({ _hash: "open", toMesh: () => ({ positions: Float32Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0) }) }) };
