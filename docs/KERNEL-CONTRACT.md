@@ -1066,8 +1066,8 @@ and no switch. No contract bump: the 0.179 precedent, a change inside a mesh-nat
 A `solid` leaf (`{ kind: "solid", solid }`) holds a Solid that a kernel op returned. Its
 distance is the exact signed distance to the Solid's mesh, read once at the call. The
 whole result is still one mesh at the tier's grid; in 0.205 the Solid's sharp edges
-softened to the grid (0.206, above, keeps them). An open or inconsistently wound mesh, an empty Solid, and a value that is not a
-Solid are `ImplicitSpecError`s. `offset` (`{ child, d }`) moves the child's surface by `d`
+softened to the grid (0.206, above, keeps them). An open or inconsistently wound mesh, an
+empty Solid, and a value that is not a Solid are `ImplicitSpecError`s. `offset` (`{ child, d }`) moves the child's surface by `d`
 mm; it is exact over a `solid`, a sphere, a capsule or a box, and a bound elsewhere.
 `round` (`{ child, r }`) is its older name and still builds. The program format grows by
 one opcode (`MESH`, 26). A spec with no `solid` or `offset` node keeps its program bytes

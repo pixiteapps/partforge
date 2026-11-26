@@ -358,7 +358,8 @@ end to end with `k.implicit`. `Solid.offset(-2)` on the same body takes about 9.
 or cylinder in a tree, a `union` or `intersect` with `k: 0`, a flat cut, and the edges of
 a `solid` leaf. A flat face is still meshed at the grid, and a curved face still follows
 the grid. An edge rounded by less than about a tenth of the grid edge is drawn sharp.
-Shapes made of smooth blends are almost unchanged.
+Shapes made of smooth blends look almost unchanged, but the stage still costs time
+(see below).
 
 - About 1 corner in 100 on a plain box can stay cut by a small facet.
 - Small notches can remain where a sharp edge fades into a blend.
@@ -369,8 +370,11 @@ Shapes made of smooth blends are almost unchanged.
 - A texture or formula whose creases the grid does resolve is sharpened, and that can
   more than double the part's build time. On a knurl at a 0.3 mm print grid, keeping the
   edges took 170% of the time of the meshing before it.
-- On the other parts measured, with the native core, it adds about 6% to 30% to the
-  time of the meshing before it.
+- A part with a lattice or an `abs` formula whose creases the grid resolves can cost as
+  much as the meshing before it, or more. A gyroid vase at a 1.2 mm preview grid took
+  110% to 125% with the native core.
+- On the hand and the box and cylinder solids measured, with the native core, it adds
+  about 6% to 30% to the time of the meshing before it.
 
 **Thin features.** A feature thinner than two grid cells can break up or grow handles.
 The build warns (see "Errors and warnings"). Thicken the feature, or build it as its own
