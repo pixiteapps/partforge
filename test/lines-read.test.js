@@ -43,4 +43,16 @@ describe("readLine", () => {
     expect(() => readLine({ drive: source({ a }) }, { ...decl, line: "x" })).toThrow(/has no line "x"/);
     expect(() => readLine({ drive: source({ rope: { mode: "taut", d: 1, points: [] } }) }, decl)).toThrow(/line "rope": .* has no length/);
   });
+  it("reads only the source's own lines, never a prototype key", () => {
+    const decl = { name: "rope", on: "drive", line: "toString", views: null };
+    expect(() => readLine({ drive: source({ a }) }, decl)).toThrow(/line "rope": derive\(\)\.drive has no line "toString"/);
+  });
+  it("prefixes a source's own throw with the line and names the field", () => {
+    const decl = { name: "rope", on: "drive", line: "rope", views: null };
+    let caught;
+    try { readLine({ drive: { lineInfo() { throw new Error("boom"); } } }, decl); } catch (e) { caught = e; }
+    expect(caught.message).toBe('line "rope": boom');
+    expect(caught.field).toBe("lines.rope");
+    expect(caught.name).toBe("SpecError");
+  });
 });

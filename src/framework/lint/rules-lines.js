@@ -52,6 +52,9 @@ function badSource({ part, d, deriveError }) {
       if (!Array.isArray(e.views)) {
         out.push(err("line-bad-source", `lines.${name}.views is not an array of view names`,
           `List the views the line shows in by their keys of \`views\`: \`views: [${Object.keys(views).map((v) => JSON.stringify(v)).join(", ")}]\`, or leave \`views\` out to show it in every view.`, path));
+      } else if (!e.views.length) {
+        out.push(err("line-bad-source", `lines.${name}.views is empty, so the line is shown in no view`,
+          `List the views the line shows in (${Object.keys(views).map((x) => JSON.stringify(x)).join(", ") || "none declared"}), or leave \`views\` out to show it in every view; remove the entry if the line is not needed.`, path));
       } else {
         for (const v of e.views) {
           if (typeof v === "string" && Object.hasOwn(views, v)) continue;

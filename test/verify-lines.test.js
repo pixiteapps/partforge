@@ -6,7 +6,7 @@ import { bootManifoldKernel } from "../src/testing.js";
 import { verify, VIEW_METRICS } from "../src/framework/oracle/verify.js";
 import { measure } from "../src/framework/oracle/measure.js";
 import { runSweeps } from "../src/framework/oracle/sweep.js";
-import { concentricCapstan, slackCapstan, make } from "./fixtures/capstan-fixtures.js";
+import { concentricCapstan, slackCapstan, staticSlackCapstan, make } from "./fixtures/capstan-fixtures.js";
 import { collideBar } from "./fixtures/collide-bar.js";
 
 let k;
@@ -72,8 +72,32 @@ describe("lineDrift", () => {
     expect(c).toMatchObject({ status: "skip", message: VIEW_METRICS.lineDrift.skipMessage });
     expect(c.unevaluated).toBeUndefined();
   });
-  it("reads 0 when no declared sweep moves anything", () => {
+  it("reads 0 only when no declared sweep runs in the view at all", () => {
     expect(VIEW_METRICS.lineDrift.extract({ lines: [{ name: "rope" }], sweeps: [] })).toBe(0);
+    // a sweep that moves no piece still reads the line (measure's lineSweeps)
+    const still = { lines: [{ name: "rope" }], sweeps: [], lineSweeps: [{ name: "drive", lines: [{ name: "rope", drift: 3 }] }] };
+    expect(VIEW_METRICS.lineDrift.extract(still)).toBe(3);
+  });
+  it("fails a slack drive whose sweep moves no piece", () => {
+    const v = run(gated(staticSlackCapstan, { lineDrift: "<=0.2" }));
+    const c = gateOf(v, "lineDrift");
+    expect(c).toMatchObject({ status: "fail", pattern: "line-drift" });
+    expect(c.actual).toBeGreaterThan(19);
+    expect(v.ok).toBe(false);
+    // and sweepContacts reads exactly what it read before: no row, so 0
+    expect(VIEW_METRICS.sweepContacts.extract({ sweeps: [], lineSweeps: [{ name: "drive", lines: [] }] })).toBe(0);
+  });
+  it("reads a seed's lineSweeps, admitted or grafted onto a re-measure", () => {
+    const admitted = gated(staticSlackCapstan, { lineDrift: "<=0.2" });
+    const seedOf = (part) => ({ params: {}, result: measure(k, part, "assembly", {}, { minWall: false }) });
+    const s1 = seedOf(admitted);
+    expect(s1.result.lineSweeps).toHaveLength(1);
+    expect(gateOf(verify(k, admitted, { view: "assembly", seed: s1 }), "lineDrift").status).toBe("fail");
+    // a min-wall gate the seed did not read: the case is re-measured, the seed's sweeps grafted on
+    const grafted = { ...admitted, verify: { ...admitted.verify, expect: { ...admitted.verify.expect, drum: { minWall: ">=1" } } } };
+    const v = verify(k, grafted, { view: "assembly", seed: seedOf(grafted) });
+    expect(gateOf(v, "lineDrift")).toMatchObject({ status: "fail" });
+    expect(gateOf(v, "lineDrift").actual).toBeGreaterThan(19);
   });
   it("the locate is null", () => {
     expect(VIEW_METRICS.lineDrift.locate({})).toBe(null);
@@ -143,7 +167,7 @@ describe("one unreadable line among several", () => {
     expect(row.clear).toBe(plain.clear);
     expect(row.lines.map((l) => l.name)).toEqual(["rope", "cable"]);
     expect(row.lines[0]).toEqual(plain.lines[0]);
-    expect(row.lines[1]).toMatchObject({ name: "cable", error: "snapped" });
+    expect(row.lines[1]).toMatchObject({ name: "cable", error: 'line "cable": snapped' });
   });
   it("withholds lineDrift and lineBend", () => {
     const v = run(gated(twoLines, { lineDrift: "<=0.2", lineBend: ">=8" }));

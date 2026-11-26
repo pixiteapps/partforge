@@ -66,7 +66,7 @@ import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { motionOf, sweepsInView } from "../collide/sweep-targets.js";
 import { TOUCH_TOL_MM } from "../collide/depth.js";
 import { linesInView } from "../lines/read.js";
-import { sweepLines } from "./lines.js";
+import { lineBudget, sweepLines } from "./lines.js";
 
 export const SWEEP_REBUILD_STEPS = 24;
 export const SWEEP_MAX_STEPS = 2000;
@@ -118,15 +118,16 @@ const clockNow = () => globalThis.performance?.now?.() ?? Date.now();
  * cannot be read (an unknown param, preset or animation; a handle whose point cannot be
  * located) keeps `skip: "unreadable"`, a zero-length animation `skip: "no-motion"`;
  * a sweep that moves nothing in this view, or whose `views` leave it out, is dropped.
- * The reading lives in collide/sweep-targets.js, which lint shares.
+ * The reading lives in collide/sweep-targets.js, which lint shares. `keepStill` keeps a sweep
+ * that moves nothing in this view as `{ …, still: true }` (for the line pass) instead.
  */
-export function normalizeSweeps(part, view, params = {}) {
+export function normalizeSweeps(part, view, params = {}, { keepStill = false } = {}) {
   const decl = part?.verify?.sweeps;
   if (!decl || typeof decl !== "object" || Array.isArray(decl)) return [];
   const full = { ...part.defaults, ...params };
   const declClear = normalizeCollisions(part)?.clearance ?? CONTACT_EPS;
   // `why` (lint's wording) and `animViews` are the reader's; a sweep entry carries neither.
-  return Object.entries(decl).flatMap(([name, spec]) => sweepsInView(part, view, name, spec, full, declClear)
+  return Object.entries(decl).flatMap(([name, spec]) => sweepsInView(part, view, name, spec, full, declClear, undefined, { keepStill })
     .map(({ why: _w, animViews: _v, ...s }) => s));
 }
 
@@ -145,18 +146,27 @@ const emptyRow = (s, extra) => ({
  * steps, as SWEEP_MAX_STEPS does. `entries` (normalizeSweeps' entries for this view,
  * already filtered) runs exactly those instead of reading the declarations again: verify,
  * in another view, runs only the entries no view already swept alike.
+ *
+ * In a view that declares lines, each row also gets `lines` (oracle/lines.js sweepLines),
+ * read on `lineBudget` (default a fresh lineBudget on `now`), apart from the deadline: a row
+ * the deadline stopped, or whose contact pass threw, still gets them while that budget lasts.
+ * A row's `ms` is its contact pass alone, never the line pass. `stillRows` (an array, and
+ * only when `entries` is not given) receives `{ name, lines, linesSampled }` for each sweep
+ * that moves no piece in this view, since a line can change through derive alone; those
+ * never join the returned rows, so the contact rows are what they are without lines.
  */
-export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS, entries = null } = {}) {
+export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity, now = clockNow, skipStill = true, maxSteps = SWEEP_MAX_STEPS, entries = null, lineBudget: budget = null, stillRows = null } = {}) {
   const rows = [];
   const full = { ...part.defaults, ...params };
   const decl = normalizeCollisions(part);
   const lineDecls = linesInView(part, view);
+  const lineClock = lineDecls.length ? budget ?? lineBudget({ now }) : null;
   // The view's declared lines read along the motion (derive only, no kernel), in their own
   // try: a row the deadline stopped, or whose contact pass threw, still gets them.
   const withLines = (row, s) => {
     if (!lineDecls.length) return row;
     try {
-      row.lines = sweepLines(part, view, motionOf(part, view, full, s), lineDecls);
+      row.lines = sweepLines(part, view, motionOf(part, view, full, s), lineDecls, { budget: lineClock });
     } catch (e) {
       const error = String(e?.message || e).split("\n")[0].slice(0, 200);
       row.lines = lineDecls.map((l) => ({ name: l.name, error, at: null }));
@@ -164,7 +174,9 @@ export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity
     row.linesSampled = true;
     return row;
   };
-  for (const s of entries ?? normalizeSweeps(part, view, params)) {
+  const keepStill = !!stillRows && !entries && lineDecls.length > 0;
+  for (const s of entries ?? normalizeSweeps(part, view, params, { keepStill })) {
+    if (s.still) { if (keepStill) stillRows.push(withLines({ name: s.name }, s)); continue; }
     if (s.skip) { rows.push(emptyRow(s, { skipped: s.skip })); continue; }
     if (now() > deadline) { rows.push(withLines(emptyRow(s, { skipped: "timeout" }), s)); continue; }
     const t0 = now();

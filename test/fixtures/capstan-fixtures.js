@@ -42,3 +42,14 @@ export const slackCapstan = {
   meta: { title: "Slack capstan", units: "mm" },
   derive: (p) => ({ drive: makeSlack(p.motorAngle) }),
 };
+
+// The slack drive with its wheels placed fixed (no `d.drive.place`): a motorAngle sweep
+// moves no piece in the view, yet the rope's length still changes through derive.
+export const staticSlackCapstan = {
+  ...slackCapstan,
+  meta: { title: "Static slack capstan", units: "mm" },
+  parts: {
+    drum: { label: "Drum", build: (k) => k.box({ min: [-6, -6, 0], max: [6, 6, 10] }), views: { assembly: (s) => s } },
+    pulley: { label: "Pulley", build: (k) => k.box({ min: [-30, -30, 0], max: [30, 30, 10] }).translate([40, 0, 0]), views: { assembly: (s) => s } },
+  },
+};

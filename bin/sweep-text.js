@@ -19,6 +19,11 @@ export function sweepText(s) {
   return rowText(s) + lines.join("");
 }
 
+/** A sweep that moves no piece in the view, read for its lines alone (measure's `lineSweeps`). */
+export function lineSweepText(s) {
+  return sweepText({ ...s, skipped: "moves no piece" });
+}
+
 function rowText(s) {
   if (s.skipped) return `${s.name} skipped (${s.skipped})`;
   const capped = s.capped ? " (capped)" : "";

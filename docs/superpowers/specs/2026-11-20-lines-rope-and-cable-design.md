@@ -289,8 +289,24 @@ from section 4:
 - `lineBend` is withheld when any declared line cannot be read, at the pose or along a sweep,
   whatever the other lines read; `lineDrift` is withheld when a line cannot be read along a
   sweep, and on a quick lap of a view with lines.
-- Line readings call `derive` only, so they run to the end of the motion outside the sweep's
-  deadline: a row the clock stopped still carries its full `lines` readings.
+- The reading names its smallest bend ratio `bendMin` / `bendMinAt` (a ratio, read on a taut
+  line), not section 4's `minBend` / `minBendAt`, which stays the slack cable's smallest
+  radius for phase 3's wiring.
+- Line readings call `derive` only, ONE derive per even sample shared by every line in the
+  view (each line's refinement then derives on its own), and run on the line pass's own
+  budget, `LINE_SWEEP_BUDGET_MS` (2000 ms per measure() call, on the sweeps' clock), apart
+  from the sweep's deadline: a row the clock stopped, or whose contact pass threw, still
+  carries its `lines` while that budget lasts, and a reading it stops is `{ name, error:
+  "timeout", at }`, which withholds both gates. A row's `ms` excludes the line pass.
+- A sweep that moves no piece in the view has no sweep row, but is still read for lines
+  (a line changes through derive alone): `measure().lineSweeps`, which the line gates read
+  with the rows and `sweepContacts` never does. Only the measured view's sweeps get this;
+  a line shown only in another view does not reach the gate (left for later).
+- On a quick lap (no sweeps), `lineBend` is evaluated from the measured pose alone
+  (`measure().lines`), not withheld: Task 4's choice over the plan's Review Focus 5. So a
+  quick lap can pass `lineBend` that the full verify, reading the bend along the sweeps too,
+  fails when the line bends tighter somewhere else along the motion; the full lap is the
+  verdict to trust for a line whose bend changes with the motion.
 
 Phase 1 is useful by itself: it answers the capstan joint's design questions at one
 pose and, through a probe sampled by the part, over a range.

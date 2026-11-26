@@ -1,11 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { bootManifoldKernel } from "../src/testing.js";
 import { measure } from "../src/framework/oracle/measure.js";
-import { measureLines, sweepLines, LINE_SWEEP_SAMPLES } from "../src/framework/oracle/lines.js";
+import { measureLines, sweepLines, lineBudget, LINE_SWEEP_SAMPLES, LINE_SWEEP_BUDGET_MS } from "../src/framework/oracle/lines.js";
 import { runSweeps } from "../src/framework/oracle/sweep.js";
+import { VIEW_METRICS } from "../src/framework/verify-metrics.js";
 import { collideBar } from "./fixtures/collide-bar.js";
-import { concentricCapstan, slackCapstan, make, makeSlack } from "./fixtures/capstan-fixtures.js";
-import { lineText, sweepText } from "../bin/sweep-text.js";
+import { concentricCapstan, slackCapstan, staticSlackCapstan, make, makeSlack } from "./fixtures/capstan-fixtures.js";
+import { lineText, sweepText, lineSweepText } from "../bin/sweep-text.js";
 
 let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
@@ -30,7 +31,7 @@ describe("measure().lines", () => {
       parts: { a: { label: "A", build: (kk) => kk.box({ min: [0, 0, 0], max: [1, 1, 1] }), views: { assembly: (s) => s } } },
     };
     const r = measure(k, bad, "assembly");
-    expect(r.lines[0]).toEqual({ name: "rope", on: "drive", error: "boom" });
+    expect(r.lines[0]).toEqual({ name: "rope", on: "drive", error: 'line "rope": boom' });
   });
   it("measureLines gives an error entry for a missing source", () => {
     expect(measureLines({ lines: { rope: { on: "nope" } } }, "assembly", {})[0].error).toMatch(/rope/);
@@ -116,6 +117,103 @@ describe("line readings on sweep rows", () => {
   });
 });
 
+describe("a sweep that moves no piece", () => {
+  it("gives no contact row but still reads the line, as measure's lineSweeps", () => {
+    const r = measure(k, swept(staticSlackCapstan), "assembly");
+    expect(r.sweeps).toEqual([]);
+    expect(r.lineSweeps).toHaveLength(1);
+    expect(r.lineSweeps[0]).toMatchObject({ name: "drive", linesSampled: true });
+    expect(r.lineSweeps[0].lines[0].name).toBe("rope");
+    expect(r.lineSweeps[0].lines[0].drift).toBeGreaterThan(19);
+  });
+  it("runSweeps leaves it out of its rows and hands it to stillRows", () => {
+    const stillRows = [];
+    expect(runSweeps(k, swept(staticSlackCapstan), "assembly", {}, { stillRows })).toEqual([]);
+    expect(stillRows.map((r) => r.name)).toEqual(["drive"]);
+    // without a sink (verify's other views) nothing changes
+    expect(runSweeps(k, swept(staticSlackCapstan), "assembly")).toEqual([]);
+  });
+  it("a part with no lines gets no lineSweeps key", () => {
+    const { lines: _l, ...noLines } = swept(staticSlackCapstan);
+    const r = measure(k, noLines, "assembly");
+    expect(r.sweeps).toEqual([]);
+    expect("lineSweeps" in r).toBe(false);
+  });
+});
+
+describe("a row whose contact pass threw", () => {
+  it("is unreadable and still has its line readings", () => {
+    const broken = new Proxy({}, { get: (_t, key) => (key === "then" ? undefined : () => { throw new Error("kernel down"); }) });
+    const [row] = runSweeps(broken, swept(concentricCapstan), "assembly");
+    expect(row.skipped).toBe("unreadable");
+    expect(row.error).toMatch(/kernel down/);
+    expect(row.linesSampled).toBe(true);
+    expect(row.lines[0].name).toBe("rope");
+    expect(row.lines[0].drift).toBeLessThan(0.2);
+  });
+});
+
+// A source carrying `n` lines whose lengths rise with the param (no interior extreme, so no
+// refinement), counting derive's calls.
+function counted(n) {
+  const calls = { n: 0 };
+  const lines = Object.fromEntries(Array.from({ length: n }, (_, i) => [`l${i}`, { on: "drive" }]));
+  const part = {
+    ...concentricCapstan,
+    derive: (p) => {
+      calls.n++;
+      const ls = Object.fromEntries(Array.from({ length: n }, (_, i) => [`l${i}`, { length: 100 + i + p.motorAngle }]));
+      return { drive: { lineInfo: () => ({ kind: "partforge.lines", lines: ls }) } };
+    },
+    lines,
+  };
+  return { part, calls };
+}
+
+describe("the line pass's cost", () => {
+  const motion = { lo: 0, hi: 10, at: (v) => ({ motorAngle: v }) };
+  it("reads every line of a source from one derive per even sample", () => {
+    const { part, calls } = counted(3);
+    const out = sweepLines(part, "assembly", motion);
+    expect(out.map((l) => l.name)).toEqual(["l0", "l1", "l2"]);
+    for (const l of out) expect(l).toMatchObject({ drift: 10, samples: LINE_SWEEP_SAMPLES });
+    expect(calls.n).toBe(LINE_SWEEP_SAMPLES);
+  });
+  it("runs out of its own budget: an unfinished reading is error \"timeout\"", () => {
+    let t = 0;
+    const { part } = counted(2);
+    const slow = { ...part, derive: (p) => { t += 100; return part.derive(p); } };
+    const budget = lineBudget({ now: () => t, ms: LINE_SWEEP_BUDGET_MS });
+    const out = sweepLines(slow, "assembly", motion, undefined, { budget });
+    for (const l of out) {
+      expect(l.error).toBe("timeout");
+      expect(l.at).toBeGreaterThan(0);
+      expect(l.at).toBeLessThan(10);
+    }
+    // the budget is spent: a later pass on it stops at its first reading
+    const again = sweepLines(slow, "assembly", motion, undefined, { budget });
+    expect(again[0]).toEqual({ name: "l0", error: "timeout", at: 0 });
+  });
+  it("in measure, is counted apart from the sweep deadline, and withholds lineDrift", () => {
+    let t = 0;
+    const slow = { ...swept(concentricCapstan), derive: (p) => { t += 100; return concentricCapstan.derive(p); } };
+    const r = measure(k, slow, "assembly", {}, { now: () => t });
+    const [row] = r.sweeps;
+    expect(row.lines[0]).toMatchObject({ name: "rope", error: "timeout" });
+    expect(VIEW_METRICS.lineDrift.extract(r)).toBe(null);
+    expect(VIEW_METRICS.lineDrift.withheld(r)).toMatch(/^not evaluated — line "rope" could not be read along sweep "drive" \(at [-\d.]+\): timeout$/);
+  });
+  it("a row's ms leaves the line pass out", () => {
+    let t = 0;
+    const slow = { ...swept(concentricCapstan), derive: (p) => { t += 1; return concentricCapstan.derive(p); } };
+    // a deadline already passed: no contact pass runs, so the row's ms is 0 though lines were read
+    const [row] = runSweeps(k, slow, "assembly", {}, { deadline: -1, now: () => t });
+    expect(row.skipped).toBe("timeout");
+    expect(row.ms).toBe(0);
+    expect(row.lines[0].drift).toBeLessThan(0.2);
+  });
+});
+
 describe("sweepText with lines", () => {
   const row = { name: "drive", clear: true, clearance: 0.001, contacts: [], minClearance: null };
   it("appends each line's drift", () => {
@@ -123,6 +221,9 @@ describe("sweepText with lines", () => {
   });
   it("words an unreadable line", () => {
     expect(sweepText({ ...row, lines: [{ name: "rope", error: "x", at: 51 }], linesSampled: true })).toBe("drive clear, rope unreadable");
+  });
+  it("words a line-only row of a sweep that moves no piece", () => {
+    expect(lineSweepText({ name: "drive", lines: [{ name: "rope", drift: 20.5 }], linesSampled: true })).toBe("drive skipped (moves no piece), rope drift 20.50mm");
   });
   it("appends lines to a skipped row too", () => {
     expect(sweepText({ ...row, skipped: "timeout", lines: [{ name: "rope", drift: 0 }] })).toBe("drive skipped (timeout), rope drift 0.00mm");

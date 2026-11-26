@@ -277,27 +277,35 @@ function sweepContacts(r) {
   return 0;
 }
 
-// The declared lines' readings along the sweep rows (oracle/lines.js `sweepLines`, one per
-// line per row that read lines), each with the row it came from.
-const lineReadings = (r) => (r.sweeps ?? []).flatMap((s) => (s.lines ?? []).map((reading) => ({ reading, row: s })));
+// The declared lines' readings along the declared sweeps (oracle/lines.js `sweepLines`, one
+// per line per row that read lines), each with the row it came from: the contact rows
+// (`r.sweeps`) and the line-only rows of sweeps that move no piece in the view
+// (`r.lineSweeps`, which sweepContacts never reads).
+const lineRows = (r) => [...(r.sweeps ?? []), ...(r.lineSweeps ?? [])];
+const lineReadings = (r) => lineRows(r).flatMap((s) => (s.lines ?? []).map((reading) => ({ reading, row: s })));
 // The first line reading that could not be read along its motion, with its row.
 const sweepLineUnread = (r) => lineReadings(r).find(({ reading }) => reading.error != null) ?? null;
 // The first declared line that could not be read at the measured pose.
 const poseLineUnread = (r) => (r.lines ?? []).find((l) => l.error != null) ?? null;
+// A line error without readLine's own `line "<name>": ` prefix, which the message names already.
+const lineWhy = (reading) => {
+  const prefix = `line "${reading.name}": `;
+  return String(reading.error).startsWith(prefix) ? String(reading.error).slice(prefix.length) : reading.error;
+};
 // Words an unread line: where it failed and why.
 function unreadText(r, { pose = false } = {}) {
   const atPose = pose ? poseLineUnread(r) : null;
-  if (atPose) return `line "${atPose.name}" could not be read at the measured pose: ${atPose.error}`;
+  if (atPose) return `line "${atPose.name}" could not be read at the measured pose: ${lineWhy(atPose)}`;
   const hit = sweepLineUnread(r);
   if (!hit) return null;
   const { reading, row } = hit;
   const where = `sweep "${row.name}"${row.view ? ` in view "${row.view}"` : ""}`;
-  return `line "${reading.name}" could not be read along ${where}${reading.at != null ? ` (at ${reading.at})` : ""}: ${reading.error}`;
+  return `line "${reading.name}" could not be read along ${where}${reading.at != null ? ` (at ${reading.at})` : ""}: ${lineWhy(reading)}`;
 }
 const LINE_UNREAD_HINT = "a declared line could not be read, so this gate has no verdict and verify.ok is withheld — fix the line's source so it reads at the measured pose and at every value the sweep passes through (see `lines` in npx partforge measure)";
 function lineDrift(r) {
   if (!r.lines || !r.sweeps) return null;
-  if (!r.sweeps.length) return 0;
+  if (!lineRows(r).length) return 0;
   if (sweepLineUnread(r)) return null;
   const drifts = lineReadings(r).map(({ reading }) => reading.drift).filter((v) => typeof v === "number");
   return drifts.length ? Math.max(...drifts) : null;
@@ -339,13 +347,17 @@ export const VIEW_METRICS = {
       return row ? firstBlocking(row)?.at ?? row.minClearance?.at ?? null : null;
     } },
   // How much a declared line's length changes along the declared sweeps (mm): the largest
-  // `drift` over every row's readings. No line in the view, or no `sweeps` key (none
-  // declared, or a case measured without them), is a plain skip; `[]` (no declared sweep
-  // moves anything here) reads 0. A line that could not be read along a motion has no
-  // verdict, so the gate is withheld — and so it is when no row read a line at all.
+  // `drift` over every row's readings, a sweep that moves no piece in this view included
+  // (measure's `lineSweeps`: a line changes through derive alone). No line in the view, or
+  // no `sweeps` key (none declared, or a case measured without them), is a plain skip; it
+  // reads 0 only when no declared sweep runs in this view at all (`sweeps: []` and no
+  // `lineSweeps`: every sweep's `views` leaves the view out, or it drives a goal handle). A
+  // line that could not be read along a motion (an error, or "timeout" when the line pass's
+  // budget ran out) has no verdict, so the gate is withheld — and so it is when no row read
+  // a line at all.
   lineDrift: { kind: "gate", extract: lineDrift,
     withheld: (r) => {
-      if (!r.lines || !r.sweeps?.length || lineDrift(r) !== null) return null;
+      if (!r.lines || !r.sweeps || !lineRows(r).length || lineDrift(r) !== null) return null;
       const bad = unreadText(r);
       return bad ? `not evaluated — ${bad}` : "not evaluated — no declared sweep read a line";
     },

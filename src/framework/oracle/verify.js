@@ -1,6 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { runSweeps, normalizeSweeps } from "./sweep.js";
+import { lineBudget } from "./lines.js";
 import { relativePlacements, samePlacements } from "../collide/sweep-targets.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
@@ -324,6 +325,8 @@ function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
   };
   for (const s of entriesIn(view)) if (!s.skip && reported.has(s.name)) remember(s.name, placementsOf(view, s));
   const out = [];
+  // one line-pass budget for every other view's rows (oracle/lines.js LINE_SWEEP_BUDGET_MS)
+  const lines = lineBudget({ now: Date.now });
   for (const other of Object.keys(part.views ?? {})) {
     if (other === view) continue;
     const run = [], at = new Map();
@@ -337,7 +340,7 @@ function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
     if (!run.length) continue;
     let rows;
     try {
-      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, entries: run });
+      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, entries: run, lineBudget: lines });
     } catch {
       continue;
     }
@@ -681,7 +684,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // `deadline` (the caller's, e.g. the CLI's longer budget, else verify's own) reaches that
   // one measure, and then the sweeps run in other views (sweepsElsewhere).
   const seedSweeps = !seedAdmitted && seed?.result?.view === view && Array.isArray(seed.result.sweeps)
-    ? { params: full(seed.params), rows: seed.result.sweeps } : null;
+    ? { params: full(seed.params), rows: seed.result.sweeps, lineSweeps: seed.result.lineSweeps } : null;
   const sameParams = (a, b) => {
     const ka = Object.keys(a), kb = Object.keys(b);
     return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && JSON.stringify(a[k]) === JSON.stringify(b[k]));
@@ -700,7 +703,10 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     const measured = measureFn(kernel, part, view, params,
       { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps,
         ...(sweeps ? { deadline: sweepDeadline } : {}) });
-    const result = graft ? { ...measured, sweeps: graft } : measured;
+    // a grafted seed's line-only readings (measure's `lineSweeps`) come with its rows
+    const result = graft
+      ? { ...measured, sweeps: graft, ...(seedSweeps.lineSweeps ? { lineSweeps: seedSweeps.lineSweeps } : {}) }
+      : measured;
     entries.push({ params: fp, result });
     return result;
   };

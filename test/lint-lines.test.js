@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { lintPart } from "../src/lint.js";
-import { concentricCapstan, slackCapstan } from "./fixtures/capstan-fixtures.js";
+import { concentricCapstan, slackCapstan, staticSlackCapstan } from "./fixtures/capstan-fixtures.js";
 
 const lineFindings = (part) => {
   const r = lintPart(part);
@@ -25,6 +25,8 @@ test("a moving line with no sweep warns line-unswept naming the param", () => {
 test("a sweep of the param covers the line", () => {
   expect(lineFindings(swept(concentricCapstan))).toEqual([]);
   expect(lineFindings(swept(slackCapstan))).toEqual([]);
+  // a sweep that moves no piece still covers it: verify reads the line along it (lineSweeps)
+  expect(lineFindings(swept(staticSlackCapstan))).toEqual([]);
 });
 
 test("a sweep that runs only in another view does not cover it", () => {
@@ -80,6 +82,14 @@ test("an unknown view is a line-bad-source error", () => {
   const f = lineFindings(swept({ ...concentricCapstan, lines: { rope: { on: "drive", views: ["ghost"] } } }));
   expect(f.map((x) => x.rule)).toEqual(["line-bad-source"]);
   expect(f[0].message).toContain("ghost");
+});
+
+test("an empty views list is a line-bad-source error: the line shows in no view", () => {
+  const f = lineFindings(swept({ ...concentricCapstan, lines: { rope: { on: "drive", views: [] } } }));
+  expect(f.map((x) => x.rule)).toEqual(["line-bad-source"]);
+  expect(f[0].severity).toBe("error");
+  expect(f[0].path).toBe("lines.rope");
+  expect(f[0].message).toBe("lines.rope.views is empty, so the line is shown in no view");
 });
 
 test("a part with no lines block yields nothing", () => {

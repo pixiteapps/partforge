@@ -20,7 +20,7 @@ import { partBedContact, partFootprint, partGatesMinWall, partHasBed, partOverha
 import { summarizeContours } from "./shape-probe.js";
 import { DOMAINS } from "../domains/registry.js";
 import { handlesReport } from "./handles.js";
-import { measureLines } from "./lines.js";
+import { lineBudget, measureLines } from "./lines.js";
 import { linesInView } from "../lines/read.js";
 import { previewHandles } from "../preview-pose.js";
 import { runSweeps } from "./sweep.js";
@@ -714,9 +714,17 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
   // `opts.beforeSweeps({ subparts })` runs first, whether or not any sweep is declared:
   // the inspect job finishes its change tracking there, so the diffs take the shared
   // report deadline before the sweeps do, and the sweeps get only what is left of it.
+  //
+  // In a view with declared lines each row also reads them (sweep.js), on the line pass's
+  // own LINE_SWEEP_BUDGET_MS, one budget for this whole call on the sweeps' clock. A sweep
+  // that moves no piece here gives no row but is still read for lines (a line changes
+  // through derive alone): `lineSweeps`, `{ name, lines, linesSampled }` per such sweep,
+  // present only when there is one, so `sweeps` (and the sweepContacts gate on it) is
+  // exactly what it is without lines.
   opts.beforeSweeps?.({ subparts });
+  const stillRows = [];
   const sweeps = opts.sweeps !== false && part.verify?.sweeps
-    ? runSweeps(kernel, part, view, params, { deadline: sweepDeadline, now: sweepNow })
+    ? runSweeps(kernel, part, view, params, { deadline: sweepDeadline, now: sweepNow, lineBudget: lineBudget({ now: sweepNow }), stillRows })
     : undefined;
   if (sweeps) kernel.cleanup?.();
 
@@ -812,6 +820,7 @@ export function measure(kernel, part, view = Object.keys(part.views)[0], params 
     ...(lines ? { lines } : {}),
     ...(previewHandlesReport ? { previewHandles: previewHandlesReport } : {}),
     ...(sweeps ? { sweeps } : {}),
+    ...(stillRows.length ? { lineSweeps: stillRows } : {}),
     ...(limbs ? { limbs } : {}),
     ok: subparts.every((s) => s.watertight !== false) && overlaps.length === 0,
   };

@@ -630,7 +630,10 @@ export interface SweepRow {
   contacts: SweepContact[];
   /** A param sweep only: the contact-free interval around the param's current value. */
   freeRange: [number, number] | null;
-  /** Wall time in ms. Not deterministic: never compare or hash it. */
+  /**
+   * Wall time in ms of the contact pass alone: the line pass (`lines`) is never counted.
+   * Not deterministic: never compare or hash it.
+   */
   ms: number;
   /** The step cap forced steps longer than the travel bound. */
   capped?: true;
@@ -666,10 +669,25 @@ export type SweepLineReading =
       /** The smallest bend ratio read, `null` when the line reports none. */
       bendMin: number | null;
       bendMinAt: number | null;
-      /** How many derive readings it took: 33 even ones plus the extremes' refinement. */
+      /** How many readings it took: 33 even ones (one derive each, shared by every line) plus the extremes' refinement. */
       samples: number;
     }
+  /**
+   * The line could not be read along the motion: the thrown message, or `"timeout"` when the
+   * line pass's own budget (2000 ms per measure() call) ran out first; `at` is the motion
+   * value being read.
+   */
   | { name: string; error: string; at: number | null };
+
+/**
+ * A declared sweep that moves no piece in the view, read for the view's lines alone
+ * (`MeasureReport.lineSweeps`): a line can change through derive alone.
+ */
+export interface LineSweepRow {
+  name: string;
+  lines: SweepLineReading[];
+  linesSampled: true;
+}
 
 export interface SweepContact {
   /** Motion values (the param's own value, or t in [0, 1] for a path or an animation). */
@@ -754,6 +772,12 @@ export interface MeasureReport {
    * folded into `ok` (`sweepContacts` gates it).
    */
   sweeps?: SweepRow[];
+  /**
+   * The declared sweeps that move no piece in this view (so have no `sweeps` row), each read
+   * for the view's declared lines; `lineDrift` and `lineBend` read them with the rows. Present
+   * only when the view declares a line and such a sweep exists.
+   */
+  lineSweeps?: LineSweepRow[];
   /**
    * For each posed limb the part's `derive` returns (a limb with a parent is skipped), by
    * name: each joint's posed position, its bone's length, and the body's cross-section size

@@ -4319,21 +4319,34 @@ lengthMinAt, lengthMax, lengthMaxAt, drift, bendMin, bendMinAt, samples }`, wher
 `lengthMax − lengthMin` over the motion and each `…At` is the swept value where it happens;
 or `{ name, error, at }` at the first value where the source throws. The row says
 `linesSampled: true`: a line is read at 33 even samples (each interior extreme then refined),
-not proved between them. Readings call `derive` only, never the kernel, so they are cheap and
-run to the end even when the sweep's own deadline stops it. The CLI adds them to the sweep's
+not proved between them. Readings call `derive` only, never the kernel: one `derive` per even
+sample serves every line in the view. They have their own time budget, 2000 ms per measure
+(`LINE_SWEEP_BUDGET_MS`), apart from the sweeps' deadline, so a sweep the deadline stops (or
+whose contact pass throws) still gets its lines; a reading the budget stops is `{ name, error:
+"timeout", at }`. A row's `ms` leaves the line pass out. The CLI adds them to the sweep's
 line: `sweeps: drive clear (min 1.00mm drum×pulley), rope drift 0.03mm`.
+
+A sweep that moves no piece in the view has no sweep row (there is nothing to collide), but a
+rope can still change length through `derive` alone — a pulley centre that moves in `derive`
+while the wheels' placements stay fixed. Such a sweep is still read for the view's lines, in
+`measure().lineSweeps` (`{ name, lines, linesSampled }` each, present only when there is one;
+the CLI prints `line sweeps: drive skipped (moves no piece), rope drift 20.17mm`). The line
+gates read it with the rows; `sweepContacts` never does.
 
 Two view gates read them:
 
 - **`lineDrift`**: the largest `drift` over the declared sweeps, mm. `"<=0.2"` is the capstan
   gate ([line-drift](ERROR-PATTERNS.md#line-drift)). A skip with no line in the view or no
-  declared sweep; withheld when a line could not be read along a sweep, and on a quick lap
-  (which never sweeps).
+  declared sweep; 0 when no declared sweep runs in the view at all (each one's `views` leaves
+  it out); withheld when a line could not be read along a sweep (its budget ran out included),
+  and on a quick lap (which never sweeps).
 - **`lineBend`**: the smallest bend ratio, at the pose and along the sweeps. Gate it against
   the rope maker's minimum (`lineBend: ">=12"`, [line-bend](ERROR-PATTERNS.md#line-bend)).
-  Withheld when any declared line could not be read.
+  Withheld when any declared line could not be read. A quick lap (no sweeps) reads it at the
+  pose alone, so a bend that tightens elsewhere along the motion fails only the full verify.
 
-Lint adds `line-bad-source` (an error: an entry whose `on`, `line` or `views` cannot be read —
+Lint adds `line-bad-source` (an error: an entry whose `on`, `line` or `views` cannot be read,
+or whose `views: []` shows it in no view —
 [line-bad-source](ERROR-PATTERNS.md#line-bad-source)) and `line-unswept` (a warning: a line
 moves with a slider or number param and no sweep moves it in a view the line shows in; the
 hint gives the sweep and a `lineDrift` gate —

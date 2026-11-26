@@ -28,13 +28,16 @@ const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /** Read one declared line out of derive's output; throws a SpecError naming the line. */
 export function readLine(d, decl) {
-  const fail = (msg) => { throw new SpecError(`line "${decl.name}": ${msg}`, { field: decl.name }); };
+  const fail = (msg) => { throw new SpecError(`line "${decl.name}": ${msg}`, { field: `lines.${decl.name}` }); };
   const src = d?.[decl.on];
   if (typeof src?.lineInfo !== "function") fail(`derive().${decl.on} is not a line source (no lineInfo())`);
-  const info = src.lineInfo();
+  let info;
+  // the source's own throw keeps its message, prefixed with the line it was read for
+  try { info = src.lineInfo(); } catch (e) { fail(String(e?.message || e)); }
   if (info?.kind !== "partforge.lines") fail(`derive().${decl.on}.lineInfo() is not a partforge.lines description`);
-  const l = info.lines?.[decl.line];
-  if (!l) fail(`derive().${decl.on} has no line "${decl.line}"`);
+  const lines = info.lines;
+  const l = isObj(lines) && Object.hasOwn(lines, decl.line) ? lines[decl.line] : null;
+  if (!isObj(l)) fail(`derive().${decl.on} has no line "${decl.line}"`);
   const length = num(l.length);
   if (length == null) fail(`derive().${decl.on} line "${decl.line}" has no length`);
   return {
