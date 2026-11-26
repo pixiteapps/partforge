@@ -5,6 +5,14 @@ import { buildMeshField, meshDistance } from "../src/framework/geometry/implicit
 
 let k; beforeAll(async () => { k = await bootManifoldKernel({ quality: "print" }); });
 const fieldOf = (s) => buildMeshField(s.toMesh());
+// A fixed-seed generator (Park–Miller), so every run tests the same points.
+const lcg = (seed) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+// The exact signed distance to an axis-aligned box.
+const boxSd = (p, lo, hi) => {
+  const q = [0, 1, 2].map((a) => Math.max(lo[a] - p[a], p[a] - hi[a]));
+  const out = Math.hypot(...q.map((v) => Math.max(v, 0)));
+  return out > 0 ? out : Math.max(...q);
+};
 
 describe("meshDistance", () => {
   test("a box: the exact box distance, at faces, edges and corners", () => {
@@ -64,8 +72,51 @@ describe("meshDistance", () => {
     expect(a.digest).toBe(fieldOf(k.box({ min: [-1, -2, -3], max: [4, 5, 6] })).digest);
     expect(a.digest).not.toBe(fieldOf(k.box({ min: [-1, -2, -3], max: [4, 5, 7] })).digest);
   });
-  test("an empty mesh and an open mesh are refused", () => {
+  test("an empty mesh, an open mesh and a mesh with one flipped triangle are refused", () => {
     expect(() => buildMeshField({ positions: new Float32Array(0) })).toThrow(/empty/);
     expect(() => buildMeshField({ positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]) })).toThrow(/not closed/);
+    const flipped = k.box({ min: [0, 0, 0], max: [1, 1, 1] }).toMesh().positions.slice();
+    for (let i = 0; i < 3; i++) { const b = flipped[3 + i]; flipped[3 + i] = flipped[6 + i]; flipped[6 + i] = b; }
+    let err;
+    try { buildMeshField({ positions: flipped }); } catch (e) { err = e; }
+    expect(err?.reason).toBe("open");
+    expect(err?.message).toMatch(/not closed.*inconsistently wound/);
+  });
+  test("a NaN, an infinite or an overflowing point reads as +Infinity", () => {
+    const f = fieldOf(k.box({ min: [0, 0, 0], max: [1, 1, 1] }));
+    for (const x of [NaN, Infinity, 1e200]) expect(meshDistance(f, x, 0, 0)).toBe(Infinity);
+  });
+  test("two boxes that touch along an edge: the solid builds and every sign is right", () => {
+    const lo1 = [0, 0, 0], hi1 = [1, 1, 1], lo2 = [1, 1, 0], hi2 = [2, 2, 1];
+    const f = fieldOf(k.box({ min: lo1, max: hi1 }).union(k.box({ min: lo2, max: hi2 })));
+    const rnd = lcg(12345);
+    let n = 0;
+    for (let i = 0; i < 3000; i++) {
+      const p = [0.5 + rnd(), 0.5 + rnd(), -0.5 + 2 * rnd()]; // around the shared edge x = y = 1
+      const a = Math.min(boxSd(p, lo1, hi1), boxSd(p, lo2, hi2));
+      if (Math.abs(a) < 1e-6) continue;
+      const d = meshDistance(f, ...p);
+      expect(Math.sign(d)).toBe(Math.sign(a));
+      if (a > 0) expect(d).toBeCloseTo(a, 6); // outside, the union's distance is the nearer box's
+      n++;
+    }
+    expect(n).toBeGreaterThan(2000);
+  });
+  test("the L shape: every sign matches the analytic one, near the notch edge and saddle corners too", () => {
+    const f = fieldOf(k.box({ min: [0, 0, 0], max: [20, 20, 10] }).cut(k.box({ min: [10, 10, -1], max: [21, 21, 11] })));
+    const sd = (p) => Math.max(boxSd(p, [0, 0, 0], [20, 20, 10]), -boxSd(p, [10, 10, -1], [21, 21, 11]));
+    const rnd = lcg(777);
+    const centres = [[10, 10, 5], [10, 10, 10], [10, 10, 0]];
+    let n = 0;
+    for (let i = 0; i < 4000; i++) {
+      const p = i % 4 === 0
+        ? [-2 + 24 * rnd(), -2 + 24 * rnd(), -2 + 14 * rnd()]          // the whole part
+        : centres[i % 4 - 1].map((c) => c - 1.5 + 3 * rnd());          // near the notch edge and the two saddle corners
+      const a = sd(p);
+      if (Math.abs(a) < 1e-6) continue;
+      expect(Math.sign(meshDistance(f, ...p))).toBe(Math.sign(a));
+      n++;
+    }
+    expect(n).toBeGreaterThan(3500);
   });
 });

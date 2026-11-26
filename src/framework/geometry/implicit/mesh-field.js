@@ -8,7 +8,7 @@
 // its three edges, or one of its three corners. Each region has a pseudonormal n,
 // and p is outside exactly when (p − q) · n > 0:
 //   face    the triangle's unit normal
-//   edge    the sum of the unit normals of the edge's two triangles
+//   edge    the sum of the unit normals of the triangles on the edge
 //   corner  the sum, over every triangle at that position, of that triangle's
 //           unit normal times its angle at the corner
 // No ray parity, no face-normal tolerance: the test is exact for any closed,
@@ -21,6 +21,12 @@
 // it. That is why edges and corners are matched across triangles by exact
 // position (a Manifold soup repeats each position once per triangle).
 //
+// The mesh is accepted when every directed edge a→b occurs exactly as often as its
+// reverse b→a (by exact position). That refuses an open mesh and an inconsistently
+// wound one, and accepts a valid solid whose parts touch along an edge (four
+// triangles on one edge). An edge's pseudonormal sums the unit normals of ALL the
+// triangles on it.
+//
 // PORTED: meshDistance has a C++ twin that must give the same bits. Inside it,
 // use only + − × ÷, Math.sqrt, comparisons and hypot3, in this order. The region
 // branches are closestOnTri's (src/framework/oracle/bvh.js, Ericson's closest
@@ -28,6 +34,9 @@
 // found here is the one closestPoint took. buildMeshField runs once, in JS only;
 // its arrays go to the native side as data. It uses pfAtan2 and hypot3 (never
 // Math.atan2, Math.acos or Math.hypot) so its output is the same on every engine.
+// When closestPoint finds no triangle (a NaN or infinite input, or one so far
+// away that the squared distance overflows), meshDistance returns +Infinity; the
+// C++ twin must return +Infinity in the same case.
 
 import { buildBVH } from "../../oracle/bvh.js";
 import { hypot3, pfAtan2 } from "../js-math.js";
@@ -38,7 +47,10 @@ import { hypot3, pfAtan2 } from "../js-math.js";
 export const NORMALS_PER_TRI = 21;
 const FACE = 0, EDGE_AB = 1, EDGE_BC = 2, EDGE_CA = 3, CORNER_A = 4, CORNER_B = 5, CORNER_C = 6;
 
-/** A mesh the field cannot be built from. `reason` is "empty" or "open". */
+/**
+ * A mesh the field cannot be built from. `reason` is "empty", or "open" for a
+ * mesh whose directed edges do not pair up (open, or inconsistently wound).
+ */
 export class MeshFieldError extends Error {
   constructor(reason, message) {
     super(message);
@@ -61,14 +73,15 @@ function digestBytes(u8) {
     h1 ^= b; h1 = Math.imul(h1, 0x01000193);
     h2 ^= b; h2 = Math.imul(h2, 0x01000193);
   }
-  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+  // Fixed width (2^32 is 7 base-36 digits), so two lane pairs never join to one string.
+  return (h1 >>> 0).toString(36).padStart(7, "0") + (h2 >>> 0).toString(36).padStart(7, "0");
 }
 
 /**
  * Build the field of a closed triangle mesh: `{ positions, indices? }`, a Manifold
  * soup (9 floats per triangle) or an indexed mesh. Other fields (normals, ...) are
- * ignored. Throws MeshFieldError for an empty mesh, or for a mesh with an edge that
- * is not shared by exactly two triangles.
+ * ignored. Throws MeshFieldError for an empty mesh, or for a mesh with a directed
+ * edge that does not occur as often as its reverse.
  * @returns {{ bvh, tris: number, normals: Float64Array, min: number[], max: number[], digest: string }}
  */
 export function buildMeshField(mesh) {
@@ -88,6 +101,9 @@ export function buildMeshField(mesh) {
 
   // Face unit normals, and each corner's angle-weighted share of its position's sum.
   // A degenerate (zero-area) triangle has no normal: it adds nothing anywhere.
+  // That is safe because its face region is empty: closestOnTri reports such a
+  // triangle only in an edge or corner region, and those pseudonormals are shared
+  // sums that its non-degenerate neighbours decide.
   const N = new Float64Array(tris * NORMALS_PER_TRI);
   const corner = new Float64Array(nv * 3);
   const angleAt = (ux, uy, uz, vx, vy, vz) =>
@@ -114,30 +130,42 @@ export function buildMeshField(mesh) {
     }
   }
 
-  // Edges, keyed on their unordered pair of position ids. Each must be used by
-  // exactly two triangles; its pseudonormal is the sum of their unit normals.
-  const edges = new Map();
+  // Directed edges a→b by position id. Each must occur as often as b→a. The
+  // undirected edge keeps its triangles in triangle order; its pseudonormal is the
+  // sum of all their unit normals (two on a manifold edge, four where two parts of
+  // the solid touch along it).
+  const directed = new Map(), edges = new Map();
   for (let t = 0; t < tris; t++) {
     for (let k = 0; k < 3; k++) {
       const i = vid[t * 3 + k], j = vid[t * 3 + ((k + 1) % 3)];
-      const key = i < j ? i * nv + j : j * nv + i;
+      const dk = i * nv + j;
+      directed.set(dk, (directed.get(dk) ?? 0) + 1);
+      const key = i < j ? dk : j * nv + i;
       const e = edges.get(key);
       if (e === undefined) edges.set(key, [t]); else e.push(t);
     }
   }
   let open = 0;
-  for (const e of edges.values()) if (e.length !== 2) open++;
+  for (const [dk, n] of directed) {
+    const i = Math.floor(dk / nv), j = dk - i * nv;
+    if ((directed.get(j * nv + i) ?? 0) !== n) open++;
+  }
   if (open > 0) {
     throw new MeshFieldError("open",
-      `the mesh is not closed: ${open} edge${open === 1 ? " is" : "s are"} not shared by exactly two triangles`);
+      `the mesh is not closed: ${open} directed edge${open === 1 ? " is" : "s are"} not matched by its reverse (the mesh is open or inconsistently wound)`);
+  }
+  const edgeNormal = new Map();
+  for (const [key, ts] of edges) {
+    let x = 0, y = 0, z = 0;
+    for (const t of ts) { const f = t * NORMALS_PER_TRI; x += N[f]; y += N[f + 1]; z += N[f + 2]; }
+    edgeNormal.set(key, [x, y, z]);
   }
   for (let t = 0; t < tris; t++) {
     const f = t * NORMALS_PER_TRI;
     for (let k = 0; k < 3; k++) {
       const i = vid[t * 3 + k], j = vid[t * 3 + ((k + 1) % 3)];
-      const [t0, t1] = edges.get(i < j ? i * nv + j : j * nv + i);
-      const f0 = t0 * NORMALS_PER_TRI, f1 = t1 * NORMALS_PER_TRI, s = f + 3 + k * 3;
-      N[s] = N[f0] + N[f1]; N[s + 1] = N[f0 + 1] + N[f1 + 1]; N[s + 2] = N[f0 + 2] + N[f1 + 2];
+      const en = edgeNormal.get(i < j ? i * nv + j : j * nv + i), s = f + 3 + k * 3;
+      N[s] = en[0]; N[s + 1] = en[1]; N[s + 2] = en[2];
       const c = vid[t * 3 + k] * 3, d = f + 12 + k * 3;
       N[d] = corner[c]; N[d + 1] = corner[c + 1]; N[d + 2] = corner[c + 2];
     }
@@ -185,6 +213,7 @@ function regionOf(px, py, pz, V, base) {
  */
 export function meshDistance(field, x, y, z) {
   const r = field.bvh.closestPoint([x, y, z]);
+  if (r.tri < 0) return Infinity; // no triangle found: NaN, infinite or overflowing input
   const d = r.dist;
   if (d === 0) return 0; // +0, whatever the sign test would say
   const q = r.point, n = r.tri * NORMALS_PER_TRI + regionOf(x, y, z, field.bvh.vertices, r.tri * 9) * 3;
