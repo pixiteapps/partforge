@@ -358,12 +358,11 @@ describe("sharpenMesh, hard cases", () => {
     }, 120_000);
   }
 
-  // Plain boxes 3 to 12 cells wide, placed three ways against the grid. Four cases still miss one
-  // corner, listed here on purpose (task-3-report.md, fix round 3): near that corner the mesher's
-  // bevel joins a face vertex straight to a crease point, so every split or move that would put a
-  // vertex on the corner leaves a triangle that cuts through the solid. Reaching it needs edge
-  // flips, which the stage does not do. Each of those has exactly the other 7 corners.
-  const ONE_CORNER_CUT = new Set(["0.6 8 1", "0.6 9 1", "1 3 1", "1 4 1"]);
+  // Plain boxes 3 to 12 cells wide, placed three ways against the grid. Every one gets all 8
+  // corners. Four used to miss one ("0.6 8 1", "0.6 9 1", "1 3 1", "1 4 1": the mesher's bevel
+  // joined a face vertex straight to a crease point there). Since cleanup merges the vertex
+  // clusters on a face that lies on a grid plane (0.207), that join is gone and none is parked.
+  const ONE_CORNER_CUT = new Set();
   const OFFSETS = [[0, 0, 0], [0.37, 0.11, 0.73], [0.5, 0.5, 0.5]];
   for (const edge of GRIDS) {
     test(`sweep: boxes 3 to 12 cells wide get all 8 corners, wherever the grid falls (grid ${edge})`, () => {

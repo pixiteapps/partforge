@@ -204,17 +204,16 @@ describe("a damaged mesh as a solid leaf", () => {
   });
 });
 
-// Pinned. A k.implicit result of a knife blade two grid cells thick (0.8 mm at grid 0.4, a
-// 20° tip) has a flipped triangle on its thin edge, and its field is wrong off the surface
-// there: meshDistance reads -1.99 at a point 2 mm outside, where ray parity and a winding
-// number both say outside. The wrong region misses every sample that matters, so the build
-// is sound: it builds, with one warning that names the fold. The cause is cleanup's flipped
-// rim triangles upstream.
-describe("a k.implicit blade two grid cells thick, as a leaf, builds with a warning", () => {
-  test("blade t 0.8, tip 20°, inner preview 0.4", () => {
-    const t = 0.8, tip = (t / 2) / Math.tan((10 * Math.PI) / 180);
-    const blade = k.extrude({ profile: { outer: [[0, -t / 2], [10, -t / 2], [10 + tip, 0], [10, t / 2], [0, t / 2]] }, h: 8 });
-    const leaf = k.implicit({ preview: 0.4, root: { kind: "solid", solid: blade } });
+// Pinned. A k.implicit result with folds where its field is wrong off the surface, as a leaf,
+// builds: the wrong region misses every sample that matters, so the build is sound, with one
+// warning that names the fold. This used to be a knife blade two grid cells thick (0.8 mm at
+// preview 0.4); since cleanup merges the mesher's vertex clusters (0.207) the blade has no fold,
+// and the twisted box at preview 0.5 (4 folded triangles, a raw mesher fold on its end faces)
+// stands in for it.
+describe("a k.implicit result with folds, as a preview leaf, builds with a warning", () => {
+  test("twisted box, inner preview 0.5", () => {
+    const leaf = k.implicit({ preview: 0.5, root: { kind: "twist", degPerMm: 2, child: { kind: "box", size: [12, 8, 30] } } });
+    expect(buildMeshField(leaf.toMesh()).folds?.count).toBeGreaterThan(0);
     k.takeBuildWarnings();
     const grown = k.implicit({ preview: 0.5, root: { kind: "offset", d: 0.3, child: { kind: "solid", solid: leaf } } });
     expect(() => buildMeshField(grown.toMesh())).not.toThrow();   // closed
@@ -235,7 +234,8 @@ describe("a k.implicit result with folds, as a leaf, builds with a warning", () 
   beforeAll(async () => { kp = await bootManifoldKernel({ quality: "print", meshFields: true }); });
   const CASES = {
     "tapered cylinder at 0.8": [{ kind: "taper", from: [-10, 1], to: [10, 0.4], child: { kind: "cylinder", h: 20, r: 10 } }, 0.8, 4681.9],
-    "twisted box at 0.5": [{ kind: "twist", degPerMm: 2, child: { kind: "box", size: [12, 8, 30] } }, 0.5, 4433.2],
+    // The twisted box at 0.5 (4433.2) has no fold since cleanup merges vertex clusters (0.207); at 1.2 it still has.
+    "twisted box at 1.2": [{ kind: "twist", degPerMm: 2, child: { kind: "box", size: [12, 8, 30] } }, 1.2, 4431.9],
   };
   for (const [name, [root, grid, grownVolume]] of Object.entries(CASES)) {
     test(`${name}, offset +1`, () => {

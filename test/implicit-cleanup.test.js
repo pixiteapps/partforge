@@ -1,6 +1,6 @@
 // test/implicit-cleanup.test.js
 import { createHash } from "node:crypto";
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, beforeAll } from "vitest";
 import { lowerSpec } from "../src/framework/geometry/implicit/ir.js";
 import { sampleField } from "../src/framework/geometry/implicit/sparse.js";
 import { meshStore } from "../src/framework/geometry/implicit/mesher.js";
@@ -16,6 +16,8 @@ import { handSpec, vaseSpec } from "./fixtures/implicit-trees.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
 import { edgeCheck, eulerChar } from "./helpers/mesh-topology.js";
 import { TREES } from "./fixtures/implicit-small-trees.js";
+import { bootManifoldKernel } from "../src/testing/manifold.js";
+import { foldEdges, meshFieldOf } from "./helpers/implicit-stages.js";
 
 const minAngles = (P, T) => {
   const out = [];
@@ -141,7 +143,8 @@ describe("cleanup", () => {
 // recorded from commit 1882699c, the last before decimation, JS and core alike, and re-recorded
 // when the sharpen stage (sharpen.js) joined every mesh: the vase's k 0 repeat and its gyroid's
 // k 0 intersect are real creases, and the stage puts 1,157 edge points and 14 corners on them at
-// 1.2 mm (bd023b59990de4ed before it). The hand (a contact
+// 1.2 mm (bd023b59990de4ed before it), and again (7ea92c82211b3f0e before) when cleanup began
+// merging the mesher's vertex clusters and sharpen's density rule began counting area (0.207). The hand (a contact
 // root) meshes through the owner path, whose tier behaviour the "hand" test below holds without a
 // golden digest. A deliberate change to print-tier meshing changes the digests: re-record by printing
 // digest(meshImplicit(compiled, edge, { tier: "print" })) for each case.
@@ -155,7 +158,7 @@ describe("tiers", () => {
   const vase = vaseSpec();
   // [name, compile, grid, pinned digest, preview triangles at most this share of print's;
   // null: the probe skips decimation, so preview IS the print-tier mesh]
-  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "7ea92c82211b3f0e", null]];
+  const CASES = [["vase", () => compileImplicit(vase.spec, { images: vase.images }), 1.2, "f8fd6dcd91809b27", null]];
   for (const [name, compile, edge, pinned, maxPreview] of CASES) {
     test(`${name}: print tier is the JS stages run with decimateFrac 0, byte for byte`, () => {
       const compiled = compile(), plan = planLeaves(compiled, edge), store = evaluateLeaves(plan);
@@ -217,4 +220,74 @@ describe("tiers", () => {
     expect(Array.from(P.subarray(0, 3))).toEqual([0, 0, 0]);
     expect(Array.from(P.subarray(3, 6))).not.toEqual([1, 0, 0]);   // vertices with normals still relax
   });
+});
+
+// Cleanup's collapse makes no fold edge (two triangles across an edge whose normals' dot is below
+// -0.5, an inward-facing pleat) out of a vertex cluster. A planar face on a grid plane puts samples
+// a hair from zero, and the mesher leaves clusters of vertices within 1e-6 mm of each other there,
+// joined by triangles with no area. Where the first collapse pass left such a cluster (each vertex
+// merged once per pass), the relaxation pulled it apart into a folded pleat. Each case runs the
+// stages up to cleanup, at both tiers, and counts the fold edges left. Where folds remain, the
+// ceiling is the count measured after the change, and the cause is named: a raw mesher fold (a
+// planar face on a grid plane beside a slanted one, or the contact seam), or projection at a feature
+// about one cell thick or at a rim on a grid-plane face, which cleanup leaves as it was (refusing
+// those moves left vertices up to 0.45 cells off the surface). HEAD's counts are in the comments.
+describe("cleanup makes no fold edge from a vertex cluster", () => {
+  let k;
+  beforeAll(async () => { k = await bootManifoldKernel({ quality: "preview", meshFields: true }); }, 60_000);
+  const leaf = (s) => ({ kind: "solid", solid: s });
+  const wedge = (deg) => {
+    const a = (deg * Math.PI) / 180;
+    return { root: { kind: "intersect", children: [{ kind: "box", size: [60, 30, 30] }, { kind: "halfspace", normal: [0, 1, 0], offset: 0 },
+      { kind: "halfspace", normal: [0, -Math.cos(a), Math.sin(a)], offset: 0 }] } };
+  };
+  const posed = (gap) => ({
+    frames: { fa: { at: [-7.4, 0, 0] }, fb: { at: [7.4, 0, 0], rotate: [{ axis: "y", deg: 6 }] } },
+    root: { kind: "contact", gap, bulge: 0, children: [
+      { kind: "capsule", a: [0, 0, -20], b: [0, 0, 20], r: 8, frame: "fa", label: "a" },
+      { kind: "capsule", a: [0, 0, -20], b: [0, 0, 20], r: 8, frame: "fb", label: "b" },
+      { kind: "box", size: [36, 24, 6], at: [0, 0, 26], label: "c" },
+    ] },
+  });
+  const RAW = "a raw mesher fold", THIN = "a feature about one cell thick (the knife's end)", RIM = "projection at a rim on a grid-plane face";
+  // Six cases end level with HEAD or a fold or two worse: projection near a grid-plane face moves
+  // its folds by one or two as the merged clusters change the geometry there.
+  const NEAR = "projection near a grid-plane face (level with HEAD or up to two worse)";
+  // [name, spec maker, grid, [print, preview] most fold edges, cause]. The box and cylinder is
+  // test/implicit-solid-messy.test.js's leaf.
+  const boxCyl = () => ({ root: { kind: "offset", d: 0.5, child: leaf(k.box({ min: [-15, -15, 0], max: [15, 15, 6] }).union(k.cylinder({ r: 6, h: 20 }))) } });
+  const taper = () => ({ root: { kind: "taper", from: [-10, 1], to: [10, 0.4], child: { kind: "cylinder", h: 20, r: 10 } } });
+  const twist = () => ({ root: { kind: "twist", degPerMm: 2, child: { kind: "box", size: [12, 8, 30] } } });
+  const cylSide = () => ({ root: { kind: "union", k: 4, children: [leaf(k.cylinder({ r: 12, h: 40 })), leaf(k.box({ min: [8, -4, 16], max: [22, 4, 24] }))] } });
+  const CASES = [
+    ["box and cylinder, offset 0.5", boxCyl, 0.5, [0, 0]],                         // HEAD 13, 13
+    ["box and cylinder, offset 0.5", boxCyl, 0.3, [3, 3], NEAR],                    // HEAD 3, 3
+    ["tapered cylinder", taper, 0.5, [35, 37], RAW],                               // HEAD 89, 88
+    ["tapered cylinder", taper, 0.8, [14, 15], RAW],                               // HEAD 40, 42
+    ["tapered cylinder", taper, 1.2, [11, 12], RAW],                               // HEAD 22, 22
+    ["twisted box", twist, 0.5, [13, 12], RAW],                                    // HEAD 17, 17
+    ["twisted box", twist, 1.2, [7, 6], RAW],                                      // HEAD 10, 10
+    ["wedge 25°", () => wedge(25), 0.5, [1, 1], NEAR],                             // HEAD 0, 0
+    ["wedge 25°", () => wedge(25), 0.8, [94, 94], THIN],                           // HEAD 95, 95
+    ["wedge 30°", () => wedge(30), 0.5, [5, 5], THIN],                             // HEAD 244, 244
+    ["wedge 30°", () => wedge(30), 0.8, [0, 0]],                                   // HEAD 0, 0
+    ["wedge 40°", () => wedge(40), 0.5, [2, 2], THIN],                             // HEAD 242, 242
+    ["wedge 40°", () => wedge(40), 0.8, [0, 0]],                                   // HEAD 0, 0
+    ["cylinder-side", cylSide, 0.6, [4, 6], NEAR],                                  // HEAD 13, 6
+    ["cylinder-side", cylSide, 1.0, [0, 0]],                                       // HEAD 2, 2
+    ["posed gap 0", () => posed(0), 0.6, [30, 34], NEAR],                           // HEAD 29, 34
+    ["posed gap 0", () => posed(0), 1.0, [29, 34], NEAR],                           // HEAD 30, 32
+    ["posed gap 0.05", () => posed(0.05), 0.6, [3, 3], RIM],                       // HEAD 5, 5
+    ["posed gap 0.05", () => posed(0.05), 1.0, [6, 9], NEAR],                       // HEAD 6, 8
+  ];
+  for (const [name, make, edge, [print, preview], cause] of CASES) {
+    test(`${name} at ${edge}: ${print || preview ? `at most ${print} and ${preview} fold edges, from ${cause}` : "no fold edge"}, print and preview`, () => {
+      const compiled = compileImplicit(make(), { meshFieldOf });
+      const store = evaluateLeaves(planLeaves(compiled, edge, { anchor: false }), {});
+      const node = compiled.ownerRoot >= 0 ? compiled.ir.nodes[compiled.ownerRoot] : null;
+      const raw = node ? meshStoreOwners(store, { gap: node.gap }) : meshStore(store);
+      expect(foldEdges(cleanupMesh(store, raw, CLEANUP)).length, "print").toBeLessThanOrEqual(print);
+      expect(foldEdges(cleanupMesh(store, raw, PREVIEW_CLEANUP)).length, "preview").toBeLessThanOrEqual(preview);
+    }, 60_000);
+  }
 });

@@ -15,7 +15,7 @@ import { fieldFlips } from "../src/framework/geometry/implicit/sharpen-mesh.js";
 afterAll(() => { delete globalThis.PARTFORGE_CORE_SIMD; setCoreForTesting(undefined); });
 
 const JS_CONSTANTS = [sharpen.SHARP_ANGLE_COS, sharpen.SHARP_TOL, sharpen.SHARP_MAX_MOVE, sharpen.SHARP_SNAP, sharpen.SHARP_CORNER_DET,
-  sharpen.SHARP_DENSE_DIV, sharpen.SHARP_DENSE_MIN, sharpen.NEWTON_STEPS, sharpen.STEP_CAP, sharpen.SIDE, sharpen.DIFF,
+  sharpen.SHARP_DENSE_PER_CELL, sharpen.SHARP_DENSE_MIN, sharpen.NEWTON_STEPS, sharpen.STEP_CAP, sharpen.SIDE, sharpen.DIFF,
   sharpen.MIN_ALTITUDE, sharpen.FLIP_NEAR, sharpen.CONVERGED, sharpen.CORNER_MERGE, sharpen.SIDE_PTS, sharpen.FLAT_READS,
   ACROSS_TOL, TRIES, sharpen.SHARP_APART];
 

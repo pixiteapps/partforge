@@ -3,8 +3,9 @@
 // then sharpenMesh in JS and ip_sharpen on the core, from one plan. The JS output's positions,
 // indices and normals (`mesh`) and its other tables and stats (`tables`) must match the digests
 // recorded here, and the core's positions, indices and normals must match the JS's. The digests
-// were recorded before the stage's bookkeeping was made local (0.207): a speed-up must keep them.
-// Do not re-record a digest to make a speed-up pass. Last, a check of the apart index's fallback.
+// were recorded before the stage's bookkeeping was made local (0.207), and re-recorded once for a
+// change to cleanup's output and to the density rule. A speed-up must keep them. Do not re-record a
+// digest to make a speed-up pass. Last, a check of the apart index's fallback.
 import { createHash } from "node:crypto";
 import { describe, test, expect, beforeAll } from "vitest";
 import { bootManifoldKernel } from "../src/testing/manifold.js";
@@ -66,32 +67,34 @@ const SPECS = {
   "spheres": () => ({ root: { kind: "union", k: 6, children: [{ kind: "sphere", r: 10, at: [-6, 0, 0] }, { kind: "sphere", r: 10, at: [6, 0, 0] }] } }),
 };
 
-// [case, grid, tier, mesh digest, tables digest]. Recorded before any speed-up (commit ad1d180b).
+// [case, grid, tier, mesh digest, tables digest]. Recorded before any speed-up (commit ad1d180b), and
+// re-recorded once (0.207) when cleanup began merging the mesher's vertex clusters and the density
+// rule began measuring candidates per cell of area: those change the stage's input and its skips.
 const CASES = [
-  ["box", 0.6, "preview", "6fd979839473a476307cf0cd714c06d2", "5a536d67585bab2ec47c7f5ae36c6cbc"],
-  ["box", 1.0, "preview", "cdebb18d97c33d63561bc64fe2e6a8da", "4cc31022c08cd3c8e36527b6be86f92a"],
-  ["plate-edge", 0.6, "preview", "08bcb55e5e1db948b1d4d21d8dad2964", "0464c0c20049b5432dc7ee5d307fe37a"],
-  ["plate-edge", 1.0, "preview", "5722cc5c22dd0f07e1a62b4e1e70317f", "590255a1c77535b89b039fbd5fafbb34"],
+  ["box", 0.6, "preview", "06400bd3d304fa37f4c2aba16ccd21b7", "d71776f265eb2061065bd41bc05696ec"],
+  ["box", 1.0, "preview", "23938f26b55a6fce02da4bcd8b9cdf66", "5288b9d5b57ad0cb125ba8f847b64778"],
+  ["plate-edge", 0.6, "preview", "5de400f84b721558212f8ff2dc34120b", "c47dfc36cf87f83da4ce2f4d78a59cbb"],
+  ["plate-edge", 1.0, "preview", "777de647dfefcfd485557ca32cf4881b", "e18643061e2e5c469d617076b1f28796"],
   ["bracket-corner", 0.6, "preview", "f89765dbd14f330a4561aaf045e55ce0", "2e0782e06a83d83f557b3be3d4b4a5bb"],
   ["bracket-corner", 1.0, "preview", "ec77c3496e1de3b4dd9d5fa49c572f84", "4a0f6d6c6aaa87b41ff7db7ba92ada83"],
-  ["cylinder-side", 0.6, "preview", "53983dd98c332e76ce90e28e43724a55", "62216c13921edf86835533f1f27ef393"],
-  ["cylinder-side", 1.0, "preview", "cbcc4ff51c9db8c910bb29d04e0f2d05", "b4e6592e9e08688ed17fd126733adf25"],
+  ["cylinder-side", 0.6, "preview", "7793a55a0c74830884c4e945a0dff047", "571f7107ce4ab020509e987e2a628afa"],
+  ["cylinder-side", 1.0, "preview", "76f64dd6bd1ce3b0752cb347cb29e968", "3dbb5c315e4262d22f8877c0be5a04ce"],
   ["curved-crease", 0.6, "preview", "c59a7bf8c0dc9dba4443331c101dad22", "d9c6cb12c8712daa2266d3ddbcab42f4"],
-  ["curved-crease", 1.0, "preview", "196ba1e7f7f0ffc140b1a7c5269c812d", "b8faa9bf6b87212f8a447cc3e92fdace"],
-  ["cage", 0.6, "preview", "db9a48347390c631016b69a06ced14a4", "6e79d10e035a3520ef178161cb8d4b3a"],
-  ["offset -2", 0.6, "preview", "7b2ba336b2ba37a8be9a16fcb9f6e41c", "3d566f805ca1986303ba40b7d1c366ba"],
-  ["offset +2", 0.6, "preview", "191224c0a339e1c05d6f2be48e685475", "ba7ff9c0113049d0ad21d3dcfeffcfc6"],
-  ["knurl", 0.6, "preview", "a522bba433acf50218c797ca908dcb82", "f0048ce94fa2854b60235211ad046d50"],
-  ["knurl", 0.3, "print", "2c0f87063bace24606c252c750b84c3b", "24061a14c5ea3a5fa684067e2a9c81ce"],
-  ["knurl and box", 0.6, "preview", "58546dfa04c9ea742a21afcb1c08dacf", "af6c0f5e0b5a889c66c90fb3e6a59bcd"],
-  ["posed gap 0", 0.6, "preview", "f756b66491d2bf88463121c546bd44fd", "58827cad23648486de264b79e00965ea"],
-  ["posed gap 0.05", 0.6, "preview", "bf6196bd59d58cdc6454cf738722ce0d", "b67e61bf99f431c1c330bcf3b0f48b18"],
-  ["posed gap 0", 1.0, "preview", "f2adba4ec0d3f24e911106ad61a1e222", "3e8ff9685f79b6eee41169bb2aa16607"],
-  ["posed gap 0.05", 1.0, "preview", "48cd117622fa00d3357770f25d358a49", "aa98c12b614dcea6d70cd6bbf8f7ac77"],
-  ["hand", 1.5, "preview", "34e17d8d70dd6875be376e115fc7d854", "00ce19b2f82ccccbf6ba43a6bd8fb47f"],
-  ["hand", 0.8, "print", "b1ba5a783c93a1735eefa8dd7ec0a45a", "2fc9cbd647d03fd9f795fcc06b99615b"],
-  ["vase", 1.2, "preview", "c6e719e1b30ef7a197817d62bae79d2e", "d19efb4bd6839a5322fa79f892d4f6e5"],
-  ["spheres", 0.6, "preview", "b10fdae08e3f3ab847c9dabb9000f64b", "19873b4965f904aa1e6b09544c9ffb31"],
+  ["curved-crease", 1.0, "preview", "8bc0f777d01f4f22f713f4898d8a42b9", "1ce355c6fc9d9aa6721b864fcc3a86f0"],
+  ["cage", 0.6, "preview", "7e42ac5aed6f6f2067c79a0bb257668d", "81d6cb4bb090bcb3b9212b2c77dc7cb3"],
+  ["offset -2", 0.6, "preview", "8434dffc1c858b8546ae2f400ed784b3", "6f8325588de8e5ea5e8a448ced886fd9"],
+  ["offset +2", 0.6, "preview", "bed5f1c485920c1e7aca21f67b5200dd", "8fd4b5536e73b6a13f8c7bbd02668fbb"],
+  ["knurl", 0.6, "preview", "2e805f62a6327cff76ef60b8a6f01458", "31bdad36860b7b1eb159db6758e04ca0"],
+  ["knurl", 0.3, "print", "93bfb877af8668f4135e442b6de3d722", "eb2893800160947c28c0d11ac15082a8"],
+  ["knurl and box", 0.6, "preview", "82e6b582d918ddc9b5f69472ffdb73c4", "445768cb0f5f04e8720f7f6797af8cdf"],
+  ["posed gap 0", 0.6, "preview", "eba4d56db41ec240d72bdadd20ac89f5", "8ffb7325e65bf8c8cd1b454aa1896980"],
+  ["posed gap 0.05", 0.6, "preview", "4ffb835260f9b2e5808dacab4b56932b", "8ec2848ffbf20939a00f5ebb9ee10dfc"],
+  ["posed gap 0", 1.0, "preview", "66ee21bb7fbe694548d16ecfd2c0740f", "b9e91bec7e57e42f743bbbd105bf580f"],
+  ["posed gap 0.05", 1.0, "preview", "26cf193d5fee4fbf38b4e6a9c6d00cf0", "8a3739553f08dbefaf75b5a637724bb4"],
+  ["hand", 1.5, "preview", "9ac58e9262f80c64c982073ce1aeb453", "62fa4b6c0a0d812fd8ca4082816b6347"],
+  ["hand", 0.8, "print", "052e4a229aad837e10c5ef1bd1bc3c74", "96e09904f409a87df8080ba306d7ba05"],
+  ["vase", 1.2, "preview", "cdf0b1703b974b78eb62554da361afab", "d9442b12bedc9337b72c3a78ae46b30f"],
+  ["spheres", 0.6, "preview", "4e446bca7b4db97129ab2a3e90988002", "455aa2263e14df8bed56353678b35f57"],
   ["spheres", 1.0, "preview", "ca0035bb5664646364dab210a4d611d7", "9594a0e42915f767808810065dd8bb11"],
 ];
 

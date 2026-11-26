@@ -53,7 +53,8 @@ constexpr double SHARP_TOL = 0.05;
 constexpr double SHARP_MAX_MOVE = 1.5;
 constexpr double SHARP_SNAP = 0.15;
 constexpr double SHARP_CORNER_DET = 0.05;
-constexpr int SHARP_DENSE_DIV = 5, SHARP_DENSE_MIN = 400;
+constexpr double SHARP_DENSE_PER_CELL = 2;   // sharpen.js's (see there for the measurements)
+constexpr int SHARP_DENSE_MIN = 400;
 constexpr int NEWTON_STEPS = 10;
 constexpr double STEP_CAP = 0.25, SIDE = 0.02;
 constexpr double DIFF = 0.005, MIN_ALTITUDE = 0.001;
@@ -1087,13 +1088,16 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
   for (size_t L = 0; L < s.leaves.size() / 4; L++) { const int32_t pr = leaf_prog(s, (int32_t)L); if (pr > maxProg) maxProg = pr; }
   const size_t nProg = (size_t)(1 + maxProg);
   auto progOf = [&](size_t v) { return (size_t)leaf_prog(s, VL0[v]); };
-  std::vector<int32_t> progEdges(nProg, 0), progCand(nProg, 0);
+  // And each triangle to its lowest vertex's: progArea sums twice each triangle's area, in triangle order.
+  std::vector<double> progArea(nProg, 0.0);
+  std::vector<int32_t> progCand(nProg, 0);
   if (!retry) {
-    std::vector<int32_t> progV(nv0);
-    for (size_t v = 0; v < nv0; v++) progV[v] = (int32_t)progOf(v);
-    for (size_t i = 0; i < T.size(); i++) {
-      const uint32_t a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
-      if (a < b) progEdges[(size_t)progV[a]]++;   // a closed mesh names each edge once in each direction
+    for (size_t t = 0; t < T.size(); t += 3) {
+      const uint32_t a = T[t], b = T[t + 1], c = T[t + 2], lo = a < b ? (a < c ? a : c) : (b < c ? b : c);
+      const double ux = P0[3 * b] - P0[3 * a], uy = P0[3 * b + 1] - P0[3 * a + 1], uz = P0[3 * b + 2] - P0[3 * a + 2];
+      const double vx = P0[3 * c] - P0[3 * a], vy = P0[3 * c + 1] - P0[3 * a + 1], vz = P0[3 * c + 2] - P0[3 * a + 2];
+      const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      progArea[progOf(lo)] += std::sqrt(nx * nx + ny * ny + nz * nz);
     }
   }
   if (retry) {
@@ -1145,12 +1149,12 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
     cand.push_back(c);
   }
   if (!retry) {
-    // A program with many candidates that are more than a fifth of its edges is a texture or
-    // facets finer than the grid: none of its candidates is tried.
+    // A program with more than SHARP_DENSE_PER_CELL candidates per cell of its area is a texture
+    // or facets finer than the grid: none of its candidates is tried (sharpen.js's dense).
     std::vector<ECand> kept;
     for (const ECand& c : cand) {
       const int32_t n = progCand[progOf(c.a)];
-      if (!((int64_t)SHARP_DENSE_DIV * n > progEdges[progOf(c.a)] && n > SHARP_DENSE_MIN)) kept.push_back(c);
+      if (!(2 * (double)n * (edge * edge) > SHARP_DENSE_PER_CELL * progArea[progOf(c.a)] && n > SHARP_DENSE_MIN)) kept.push_back(c);
     }
     cand.swap(kept);
   }
@@ -1300,12 +1304,12 @@ int ip_sharpen(int id) {
 }
 
 // TEST ONLY (test/implicit-sharpen-native.test.js): the stage's constants, in this order:
-// SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_DIV,
+// SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_PER_CELL,
 // SHARP_DENSE_MIN, NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
 // CORNER_MERGE, SIDE_PTS, FLAT_READS, ACROSS_TOL, TRIES, SHARP_APART. Writes them to `out` and returns the count.
 int ip_sharpen_constants(double* out) {
   using namespace ipm_mesh;
-  const double v[] = {SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, (double)SHARP_DENSE_DIV,
+  const double v[] = {SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_PER_CELL,
                       (double)SHARP_DENSE_MIN, (double)NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
                       CORNER_MERGE, (double)SIDE_PTS, (double)FLAT_READS, ACROSS_TOL, (double)TRIES, SHARP_APART};
   const int n = (int)(sizeof v / sizeof v[0]);

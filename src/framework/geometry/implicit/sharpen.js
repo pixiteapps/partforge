@@ -7,10 +7,12 @@
 //   1. A candidate is a mesh edge whose two ends (neither pinned nor a crease point) have field
 //      normals more than SHARP_ANGLE_COS apart. Its start is the point nearest the edge's middle
 //      on both ends' tangent planes. A crease point's normal is a bisector, not a field normal.
-//      Each edge belongs to the leaf program of its lower end's sparse-grid leaf. When a
-//      program's candidates are more than a fifth of its edges (SHARP_DENSE_DIV) and more than
-//      SHARP_DENSE_MIN (a texture or facets finer than the grid), none of them is tried. The
-//      floor keeps a small part, whose crease share is high but whose cost is small.
+//      Each edge belongs to the leaf program of its lower end's sparse-grid leaf, and each
+//      triangle to its lowest vertex's. When a program has more than SHARP_DENSE_PER_CELL
+//      candidates per grid cell of its surface area and more than SHARP_DENSE_MIN (a texture or
+//      facets finer than the grid), none of them is tried. The floor keeps a small part, whose
+//      crease share is high but whose cost is small. Area, not an edge count: a cluster of
+//      vertices a hair apart adds edges but no area.
 //   2. That point is moved onto the field's zero set and the crease of its two sides: Newton,
 //      NEWTON_STEPS, within the plane holding the edge and the sum of the two normals. Each side
 //      is read SIDE·edge along its own plane, away from the other, so a step sees the two smooth
@@ -69,13 +71,17 @@ export const SHARP_SNAP = 0.15;
 /** The corner pass's least |determinant| of three unit plane normals. */
 export const SHARP_CORNER_DET = 0.05;
 /**
- * The density rule: a leaf program is skipped when SHARP_DENSE_DIV times its candidate edges is
- * more than its edges (a share over one fifth) and it has more than SHARP_DENSE_MIN candidates.
- * Measured (design §4): a share of at most 0.122 where real edges are, at least 0.314 on a knurl;
- * small parts reach 0.4 with at most 249 candidates; the smallest dense knurl measured (r 1, h 1.2,
- * at a 0.6 mm grid) has 619, and the r 6, h 8 knob at 1.0 mm has 4,839.
+ * The density rule: a leaf program is skipped when it has more than SHARP_DENSE_PER_CELL candidate
+ * edges per grid cell of its surface area (area / edge²) and more than SHARP_DENSE_MIN candidates.
+ * Measured (0.207, after cleanup merged the mesher's vertex clusters): boxes 3 to 12 cells wide
+ * at 0.6 and 1.0 mm reach 1.26 per cell where they pass the floor, and the knurl at print 0.3 has
+ * 1.32; both must be sharpened. Every program the old rule skipped stays skipped: the least of
+ * them is the vase's at 2.13 (0.6 mm); the knurl at 0.6 has 3.24, the r 6, h 8 knob 4.64 and the
+ * r 1, h 1.2 knob (619 candidates) 6.74. Two vase programs the old rule kept are now skipped
+ * (2.31 at 1.2 mm, 2.58 at 1.0 mm). The old rule (a share of edges over one fifth) counted the
+ * clusters' zero-area triangles as edges, and a clean small box has a share near 0.3.
  */
-export const SHARP_DENSE_DIV = 5, SHARP_DENSE_MIN = 400;
+export const SHARP_DENSE_PER_CELL = 2, SHARP_DENSE_MIN = 400;
 
 export const NEWTON_STEPS = 10, STEP_CAP = 0.25, SIDE = 0.02;
 /** Difference steps (cells) and the least altitude (mm), shared with sharpen-mesh.js. */
@@ -285,13 +291,15 @@ function sharpenRound(store, mesh, corners, st, retry) {
   const again = retry ? new Map(retry.map((c) => [c.a * nv0 + c.b, c])) : null;
   // The density rule: each edge belongs to the leaf program of its lower end's sparse-grid leaf.
   const nProg = 1 + store.leaves.reduce((m, L) => (L.progIndex > m ? L.progIndex : m), -1);
-  const progOf = (v) => store.leaves[VL0[v]].progIndex, progEdges = new Int32Array(nProg), progCand = new Int32Array(nProg);
+  // And each triangle to its lowest vertex's: progArea sums twice each triangle's area, in triangle order.
+  const progOf = (v) => store.leaves[VL0[v]].progIndex, progArea = new Float64Array(nProg), progCand = new Int32Array(nProg);
   if (!again) {
-    const progV = new Int32Array(nv0);
-    for (let v = 0; v < nv0; v++) progV[v] = progOf(v);
-    for (let i = 0; i < T.length; i++) {
-      const a = T[i], b = T[i - (i % 3) + (i % 3 + 1) % 3];
-      if (a < b) progEdges[progV[a]]++;   // a closed mesh names each edge once in each direction
+    for (let t = 0; t < T.length; t += 3) {
+      const a = T[t], b = T[t + 1], c = T[t + 2], lo = a < b ? (a < c ? a : c) : (b < c ? b : c);
+      const ux = P0[3 * b] - P0[3 * a], uy = P0[3 * b + 1] - P0[3 * a + 1], uz = P0[3 * b + 2] - P0[3 * a + 2];
+      const vx = P0[3 * c] - P0[3 * a], vy = P0[3 * c + 1] - P0[3 * a + 1], vz = P0[3 * c + 2] - P0[3 * a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      progArea[progOf(lo)] += Math.sqrt(nx * nx + ny * ny + nz * nz);
     }
   }
   if (again) {
@@ -333,11 +341,12 @@ function sharpenRound(store, mesh, corners, st, retry) {
     cand.push({ a: lo, b: hi, m, p, uA, uB, sigma: conv > 0 ? 1 : -1, ok: conv !== 0, pn, leaf: VL0[lo], ev: lo });
   }
   if (!again) {
-    // A program with many candidates that are more than a fifth of its edges is a texture or
-    // facets finer than the grid: none of its candidates is tried.
+    // A program with many candidates, more than SHARP_DENSE_PER_CELL per cell of its area, is a
+    // texture or facets finer than the grid: none of its candidates is tried. 2 · n · edge² against
+    // the twice-area sum is n against the area in cells.
     const dense = (c) => {
       const n = progCand[progOf(c.a)];
-      return SHARP_DENSE_DIV * n > progEdges[progOf(c.a)] && n > SHARP_DENSE_MIN;
+      return 2 * n * (edge * edge) > SHARP_DENSE_PER_CELL * progArea[progOf(c.a)] && n > SHARP_DENSE_MIN;
     };
     st.dense = cand.filter(dense).length;
     if (st.dense) cand = cand.filter((c) => !dense(c));
