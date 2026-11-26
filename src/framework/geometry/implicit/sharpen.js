@@ -55,6 +55,8 @@ import { hypot3 } from "../js-math.js";
 import { evalField, dot, det3, unit, adjacency, subdivide, checkTris, fieldFlips } from "./sharpen-mesh.js";
 import { cornerPass } from "./sharpen-corners.js";
 
+// Every constant of the stage, here and in sharpen-corners.js, has a mirror in
+// native/implicit_sharpen.cpp; test/implicit-sharpen-native.test.js checks that they agree.
 /** cos 25°: a mesh edge whose ends' normals are further apart than this is a candidate. */
 export const SHARP_ANGLE_COS = 0.9063077870366499;
 /** A kept point's field, in cells. */
@@ -73,20 +75,20 @@ export const SHARP_CORNER_DET = 0.05;
  */
 export const SHARP_DENSE_DIV = 5, SHARP_DENSE_MIN = 400;
 
-const NEWTON_STEPS = 10, STEP_CAP = 0.25, SIDE = 0.02;
+export const NEWTON_STEPS = 10, STEP_CAP = 0.25, SIDE = 0.02;
 /** Difference steps (cells) and the least altitude (mm), shared with sharpen-mesh.js. */
 export const DIFF = 0.005, MIN_ALTITUDE = 0.001;
 /** The flip test's near step (cells): see fieldFlips. */
 export const FLIP_NEAR = 1e-4;
 /** A Newton step shorter than this (cells) is not taken: the point has converged. */
-const CONVERGED = 1e-5;
+export const CONVERGED = 1e-5;
 /** Corner points this close (cells) are one vertex. */
 export const CORNER_MERGE = 0.05;
 // Per side per read: six points, DIFF·edge each way along each axis. Their differences are the
 // gradient (central differences); their mean is the side's value.
-const SIDE_PTS = 6;
+export const SIDE_PTS = 6;
 /** A candidate whose sides agree within the angle on this many reads in a row is not sharp. */
-const FLAT_READS = 3;
+export const FLAT_READS = 3;
 
 // Each side's direction: along its own plane, away from the other plane. `sigma` is +1 on a
 // convex edge and −1 on a concave one.

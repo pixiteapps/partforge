@@ -965,7 +965,7 @@ int sharpenRound(ipe::Session& s, Mesh& mesh, bool corners, const std::vector<EC
 }  // namespace
 
 int sharpen(ipe::Session& s) {
-  if (!s.meshed || s.normals.size() != s.positions.size()) return 1;
+  if (!s.meshed || s.normals.size() != s.positions.size() || s.vertLeaf.size() * 3 != s.positions.size()) return 1;
   const size_t nv = s.positions.size() / 3;
   if (s.ownerMesh && (s.vertOwner.size() != nv || s.ownerHeld.size() != nv || s.pinned.size() != nv
       || (s.hasCrease && s.creaseMark.size() != nv))) return 1;
@@ -1001,6 +1001,44 @@ int ip_sharpen(int id) {
   ipe::Session* s = ipe::session(id);
   if (!s) return 9;
   return ipm_mesh::sharpen(*s);
+}
+
+// TEST ONLY (test/implicit-sharpen-native.test.js): the stage's constants, in this order:
+// SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, SHARP_DENSE_DIV,
+// SHARP_DENSE_MIN, NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
+// CORNER_MERGE, SIDE_PTS, FLAT_READS, ACROSS_TOL, TRIES. Writes them to `out` and returns the count.
+int ip_sharpen_constants(double* out) {
+  using namespace ipm_mesh;
+  const double v[] = {SHARP_ANGLE_COS, SHARP_TOL, SHARP_MAX_MOVE, SHARP_SNAP, SHARP_CORNER_DET, (double)SHARP_DENSE_DIV,
+                      (double)SHARP_DENSE_MIN, (double)NEWTON_STEPS, STEP_CAP, SIDE, DIFF, MIN_ALTITUDE, FLIP_NEAR, CONVERGED,
+                      CORNER_MERGE, (double)SIDE_PTS, (double)FLAT_READS, ACROSS_TOL, (double)TRIES};
+  const int n = (int)(sizeof v / sizeof v[0]);
+  for (int i = 0; i < n; i++) out[i] = v[i];
+  return n;
+}
+
+// TEST ONLY: fieldFlips with its memo, as the JS unit test "the flip memo" drives it. One
+// triangle (0, 1, 2), its four vertices on leaf `leaf` of the sampled session, one candidate (0):
+// call 1 with positions P1 (3 vertices) and the candidate moving end 0; call 2 with positions P2
+// (4 vertices), edge (1, 2) split at vertex 3 and the candidate splitting (how -1); call 3 the
+// same as call 2 again. out[k] = how many triangles call k + 1 flagged. Returns 0, or nonzero.
+int ip_flip_probe(int id, int leaf, const double* P1, const double* P2, double edge, int32_t* out) {
+  using namespace ipm_mesh;
+  ipe::Session* s = ipe::session(id);
+  if (!s || !s->sampled || leaf < 0 || (size_t)leaf >= s->leaves.size() / 4) return 1;
+  const std::vector<uint32_t> T = {0, 1, 2};
+  const std::vector<int32_t> VL0(4, leaf);
+  std::vector<MemoEntry> memo(1);
+  std::vector<uint32_t> flipped;
+  for (int k = 0; k < 3; k++) {
+    SplitMap sp(4);
+    Touched tc;
+    if (k == 0) tc.add(0, 0, 0);
+    else { sp.set(1, 2, 3); tc.add(0, 0, -1); }
+    if (fieldFlips(*s, k == 0 ? P1 : P2, sp, tc, true, VL0, T, edge, &memo, flipped) != 0) return 2;
+    out[k] = (int32_t)flipped.size();
+  }
+  return 0;
 }
 
 // The sharpen stage's count of vertices with sharp == kind (1 edge points, 2 corner points) in

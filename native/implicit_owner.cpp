@@ -1320,8 +1320,9 @@ int Untangle::run() {
   }
   T.swap(outT); P.swap(nP); N.swap(nN); VL.swap(nVL); VO.swap(nVO); HELD.swap(nH); PIN.swap(nPin); CR.swap(nCR);
   // The sharpen stage's tables, when present: `sharp` picked, and `sharpPlanes`' vertex ids
-  // renumbered (-1 for a dropped vertex), as crease.js's untangle does.
-  if (!s.sharp.empty()) {
+  // renumbered (-1 for a dropped vertex), as crease.js's untangle does. Tables of another length
+  // (never made by the stages) are dropped rather than read past their end.
+  if (!s.sharp.empty() && s.sharp.size() == nvAll && s.sharpPlanes.size() == 2 * nvAll) {
     std::vector<uint8_t> nS(nk);
     std::vector<int32_t> nSP(2 * nk);
     for (size_t i = 0; i < nk; i++) {
@@ -1331,6 +1332,8 @@ int Untangle::run() {
     }
     s.sharp.swap(nS);
     s.sharpPlanes.swap(nSP);
+  } else {
+    clear_sharp(s);
   }
   return 0;
 }

@@ -16,7 +16,7 @@ binds the same C calls into its own JS engine.
 | `implicit_mesh.{h,cpp}` | `implicit/sparse.js` (evaluateLeaves), `mesher.js` (meshStore), `project.js` (projectVertices), `cleanup.js` (cleanupMesh) — sample, mesh and clean on the session |
 | `implicit_detail.cpp` | `implicit/detail.js` (applySurfaceDetail, with the owner path's seamFade) — refine, project and displace for surface detail |
 | `implicit_owner.cpp` | `implicit/mesher-owners.js` (meshStoreOwners), `crease.js` (cutCreases, untangle), `result.js` (triangleOwners) — the owner path of a contact root; its cleanup modes (owner guards in collapse, `project_owned`) are in `implicit_mesh.cpp` |
-| `implicit_sharpen.cpp` | `implicit/sharpen.js` (sharpenMesh), `sharpen-corners.js` and `sharpen-mesh.js` — the sharpen stage: vertices on the field's sharp edges and corners, after cleanup (and the crease cut) and before untangle and detail |
+| `implicit_sharpen.cpp` | `implicit/sharpen.js` (sharpenMesh), `sharpen-corners.js` and `sharpen-mesh.js`: the sharpen stage, which puts vertices on the field's sharp edges and corners after cleanup (and the crease cut) and before untangle and detail. `ip_sharpen_constants` and `ip_flip_probe` are test only |
 | `implicit_bracket.h` | `implicit/bracket.js` (solveBrackets) — the owner path's safeguarded Illinois edge solve, shared by the mesher and the crease cut |
 | `implicit_math.h` | `js-math.js`'s `pfSin`/`pfCos`/`pfAtan2` and `implicit/noise.js` (latticeHash/valueNoise) |
 | `implicit_probe.cpp` | (test only) `ip_math_probe`, which `test/implicit-native-math.test.js` calls to compare `implicit_math.h` with its JS, and `ip_bracket_probe`, which `test/implicit-bracket.test.js` calls to compare `solve_brackets` with `solveBrackets` |

@@ -122,13 +122,13 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
 
 // The field limit (cells) for a corner found across a vertex: its planes are all edge points',
 // exact on flat faces, and two tangent lines of one curved crease (a rim) meet off the surface.
-const ACROSS_TOL = 0.005;
+export const ACROSS_TOL = 0.005;
 
 // A corner candidate's tries, in order: an end within CORNER_MERGE·edge of the point is moved
 // onto it; the edge is split at the point; the nearer end, then the other, is moved onto it. A
 // move takes the corner's normal, is at most SHARP_MAX_MOVE·edge and never moves a held, pinned
 // or crease vertex.
-const TRIES = 4;
+export const TRIES = 4;
 
 // The kept corner candidates, committed in order, each by its first try (from `c.from`) that
 // makes no flip or sliver. A point within CORNER_MERGE·edge of an earlier corner point is that
