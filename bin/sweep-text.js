@@ -11,9 +11,15 @@ const moreText = (n) => (n > 0 ? ` (+${n} more)` : "");
  * Clear with its tightest pair, then (a sweep that may touch or press in) its first allowed
  * rub deeper than TOUCH_TOL_MM, with its depth; or a contact with where it starts, its pair
  * (and, on a sweep that may touch, how deep it presses), the param driving it and (a param
- * sweep) the contact-free range; or why it stopped short.
+ * sweep) the contact-free range; or why it stopped short. Then each declared line's drift
+ * along the motion (`, rope drift 0.03mm`, or `, rope unreadable`).
  */
 export function sweepText(s) {
+  const lines = (s.lines ?? []).map((l) => (l.error ? `, ${l.name} unreadable` : `, ${l.name} drift ${mm(l.drift)}`));
+  return rowText(s) + lines.join("");
+}
+
+function rowText(s) {
   if (s.skipped) return `${s.name} skipped (${s.skipped})`;
   const capped = s.capped ? " (capped)" : "";
   // contacts the row's cap left off (oracle/sweep.js capContacts) are more of them too

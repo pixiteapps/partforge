@@ -65,6 +65,8 @@ import { applyMat, cornerTravel } from "../collide/motion.js";
 import { invertRigid, mulMat4 } from "../geometry/pose.js";
 import { motionOf, sweepsInView } from "../collide/sweep-targets.js";
 import { TOUCH_TOL_MM } from "../collide/depth.js";
+import { linesInView } from "../lines/read.js";
+import { sweepLines } from "./lines.js";
 
 export const SWEEP_REBUILD_STEPS = 24;
 export const SWEEP_MAX_STEPS = 2000;
@@ -148,9 +150,23 @@ export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity
   const rows = [];
   const full = { ...part.defaults, ...params };
   const decl = normalizeCollisions(part);
+  const lineDecls = linesInView(part, view);
+  // The view's declared lines read along the motion (derive only, no kernel), in their own
+  // try: a row the deadline stopped, or whose contact pass threw, still gets them.
+  const withLines = (row, s) => {
+    if (!lineDecls.length) return row;
+    try {
+      row.lines = sweepLines(part, view, motionOf(part, view, full, s), lineDecls);
+    } catch (e) {
+      const error = String(e?.message || e).split("\n")[0].slice(0, 200);
+      row.lines = lineDecls.map((l) => ({ name: l.name, error, at: null }));
+    }
+    row.linesSampled = true;
+    return row;
+  };
   for (const s of entries ?? normalizeSweeps(part, view, params)) {
     if (s.skip) { rows.push(emptyRow(s, { skipped: s.skip })); continue; }
-    if (now() > deadline) { rows.push(emptyRow(s, { skipped: "timeout" })); continue; }
+    if (now() > deadline) { rows.push(withLines(emptyRow(s, { skipped: "timeout" }), s)); continue; }
     const t0 = now();
     let row;
     try {
@@ -159,7 +175,7 @@ export function runSweeps(kernel, part, view, params = {}, { deadline = Infinity
       row = emptyRow(s, { skipped: "unreadable", error: String(e?.message ?? e) });
     }
     row.ms = now() - t0;
-    rows.push(row);
+    rows.push(withLines(row, s));
   }
   return rows;
 }

@@ -26,3 +26,19 @@ export const concentricCapstan = {
   lines: { rope: { on: "drive" } },
 };
 export default concentricCapstan;
+
+// The pulley on a 2 mm eccentric: its centre circles with the motor, so the rope's length
+// changes along a motorAngle sweep (a slack drive the line gates should see).
+export const ECCENTRIC_MM = 2;
+export const makeSlack = (angle) => capstan({
+  rope: { d: 1.2 },
+  input: { name: "drum", radius: 6, center: [0, 0, 0], turns: 3 },
+  output: { name: "pulley", radius: 30, center: [40 + ECCENTRIC_MM * Math.cos((angle * Math.PI) / 180), ECCENTRIC_MM * Math.sin((angle * Math.PI) / 180), 0] },
+  drive: { member: "drum", angle },
+});
+
+export const slackCapstan = {
+  ...concentricCapstan,
+  meta: { title: "Slack capstan", units: "mm" },
+  derive: (p) => ({ drive: makeSlack(p.motorAngle) }),
+};

@@ -640,7 +640,36 @@ export interface SweepRow {
   error?: string;
   /** How many contacts the row left off past its cap (32), allowed and unread ones first. */
   contactsOmitted?: number;
+  /**
+   * Each declared line of the view read along the motion (derive only), present only when
+   * the view declares a line and the entry ran (a timed-out or unreadable row included).
+   */
+  lines?: SweepLineReading[];
+  /** `true` exactly when `lines` is present. */
+  linesSampled?: true;
 }
+
+/**
+ * One declared line along a sweep's motion (src/framework/oracle/lines.js `sweepLines`). The
+ * `…At` values are motion values (the param's own value, or t for a path or an animation).
+ */
+export type SweepLineReading =
+  | {
+      name: string;
+      /** mm, the shortest and longest the line reads along the motion. */
+      lengthMin: number;
+      lengthMinAt: number;
+      lengthMax: number;
+      lengthMaxAt: number;
+      /** mm: lengthMax − lengthMin, the line's range over the motion. */
+      drift: number;
+      /** The smallest bend ratio read, `null` when the line reports none. */
+      bendMin: number | null;
+      bendMinAt: number | null;
+      /** How many derive readings it took: 33 even ones plus the extremes' refinement. */
+      samples: number;
+    }
+  | { name: string; error: string; at: number | null };
 
 export interface SweepContact {
   /** Motion values (the param's own value, or t in [0, 1] for a path or an animation). */
