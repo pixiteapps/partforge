@@ -21,7 +21,7 @@ describe("solid leaf", () => {
     const v = k.implicit({ resolution: 0.4, root: leaf(box) }).volume();
     expect(v / box.volume()).toBeCloseTo(1, 2);
   });
-  test("a blended union lies between the plain union and the plain union grown by k/4", () => {
+  test("a blended union is larger than the plain union, by less than 8%", () => {
     const A = k.box({ min: [-30, -20, 0], max: [30, 20, 6] }), B = k.cylinder({ r: 8, h: 26 }).at([0, 0, 4]);
     const plain = A.union(B).volume();
     const soft = k.implicit({ resolution: 0.5, root: { kind: "union", k: 8, children: [leaf(A), leaf(B)] } }).volume();
@@ -55,7 +55,9 @@ describe("solid leaf", () => {
   test("a cage body and an implicit body are both valid leaves", () => {
     const cage = k.cage({ box: { size: [30, 20, 20], segs: [2, 1, 1] } });
     const body = k.subdiv(cage), ball = k.implicit({ root: { kind: "sphere", r: 8 } });
-    expect(() => k.implicit({ resolution: 0.6, root: { kind: "union", k: 4, children: [leaf(body), leaf(ball, { at: [18, 0, 0] })] } })).not.toThrow();
+    const joined = k.implicit({ resolution: 0.6, root: { kind: "union", k: 4, children: [leaf(body), leaf(ball, { at: [18, 0, 0] })] } });
+    expect(joined.volume()).toBeGreaterThan(body.volume());
+    expect(joined.volume()).toBeGreaterThan(ball.volume());
   });
   test("one solid used twice takes one mesh slot", () => {
     const s = k.sphere(5);
@@ -196,6 +198,34 @@ describe("solid leaf call ids: the pose probe and the worker agree", () => {
     }
     expect(low).toBeGreaterThan(0);
   });
+});
+
+// The workaround the guide gives for a static solid: its own frame, which the pose does not
+// move. Its vertices then bind to that frame alone, so a drag of the arm leaves them in place;
+// without a frame they follow the nearest posed piece (the arm), as above.
+test("a static solid with its own frame binds to that frame, not to the posed piece beside it", async () => {
+  const kp = await bootManifoldKernel({ quality: "preview", meshFields: true });
+  const spec = (frame) => ({ preview: 1,
+    frames: { base: { at: [0, 0, 0] }, arm: { at: [0, 0, 0] }, tip: { parent: "arm", at: [0, 0, 20], rotate: [{ axis: [1, 0, 0], deg: 30 }] } },
+    root: { kind: "union", k: 2, children: [
+      { kind: "capsule", a: [0, 0, 0], b: [0, 0, 20], r: 3, frame: "arm" },
+      { kind: "sphere", r: 3, frame: "tip" },
+      { kind: "solid", solid: kp.box({ min: [-16, -5, -5], max: [-9, 5, 5] }), ...(frame ? { frame } : {}) },
+    ] } });
+  const boxFrames = (frame) => {
+    kp.beginSubPart(`t-${frame}`);
+    let m;
+    try { m = kp.implicit(spec(frame)).toMesh(); } finally { kp.endSubPart(); }
+    const out = new Set();
+    for (let c = 0; c < m.triangles * 3; c++) {
+      if (m.positions[3 * c] > -8) continue;   // the box's own vertices, clear of the blend
+      const a = m.bindings.frames[m.bindings.frameA[c]], b = m.bindings.frames[m.bindings.frameB[c]];
+      out.add(m.bindings.weight[c] === 1 || a === b ? a.slice(a.lastIndexOf(":") + 1) : "blend");
+    }
+    return [...out];
+  };
+  expect(boxFrames("base")).toEqual(["base"]);
+  expect(boxFrames(null)).toEqual(["arm"]);
 });
 
 test("compileImplicit refuses a meshFieldOf that gives no field: only lint lowers a probe solid", () => {

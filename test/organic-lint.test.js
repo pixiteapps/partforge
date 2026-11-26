@@ -116,6 +116,17 @@ test("implicit-blend-eats-child: a contact attach k wider than a piece warns", (
   expect(of(lintPart(implicitPart(spec(1))), "implicit-blend-eats-child")).toEqual([]);
 });
 
+// Lint has no geometry for a solid leaf, so its thickness is unknown: the rule never names a
+// solid leaf, however thin, and still judges the blend's other children.
+test("implicit-blend-eats-child: a solid leaf is never judged; its siblings still are", () => {
+  const foil = (k) => k.box({ size: [40, 40, 0.5] });
+  const spec = (k, sibling) => ({ root: { kind: "union", k: 4, children: [{ kind: "solid", solid: foil(k) }, sibling] } });
+  expect(of(lintPart(partWith((k) => k.implicit(spec(k, { kind: "sphere", r: 10 })))), "implicit-blend-eats-child")).toEqual([]);
+  const [f, ...rest] = of(lintPart(partWith((k) => k.implicit(spec(k, { kind: "sphere", r: 1, at: [0, 0, 2] })))), "implicit-blend-eats-child");
+  expect(rest).toEqual([]);
+  expect(f.message).toContain("root.children[1]");
+});
+
 // --- implicit-csg-in-disguise -----------------------------------------------
 
 const drilled = (extra = {}) => ({ root: { kind: "subtract", children: [

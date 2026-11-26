@@ -856,7 +856,9 @@ the helpers come along unmodified. (`test/kernel-contract.test.js` asserts every
   the engine's own program, in part coordinates; the node names no frames. On the plain
   shapes it equals the kinematics domain's closed forms; for an ellipsoid, a blend or a
   warp it is the engine's bound, not always the true distance. Pure JS (no mesher, no
-  native core), not a kernel op — made for `grip.around`.
+  native core), not a kernel op — made for `grip.around`. A `solid` leaf also needs the
+  mesh field builder: until `loadMeshFieldBuilder()` (from `partforge/oracle`) has
+  resolved, the call throws code `NEEDS_MESH_FIELD`.
 
 **Profile validation on the way in** (0.112). `prism`, `extrude`, `revolve`, `sweep`,
 `loft` (per ring) and `shape2d` (including boolean operands) run `validateProfile` on a

@@ -386,7 +386,9 @@ change to a shape (a radius, a node, the detail, an image) rebuild as before.
 
 **A `solid` leaf during a drag.** A `solid` leaf with its own `frame` moves with that
 frame. A `solid` leaf without a `frame` follows the nearest posed piece until the exact
-build lands.
+build lands. To keep a static solid in place during a drag, give it its own frame that
+the pose does not move. Away from a blend with a posed piece, its vertices then follow
+only that frame.
 
 **How.** Each vertex of a preview mesh remembers which frame or frames it follows. A
 move blends the frames' rigid motions per vertex, so a finger follows its joints and the
@@ -530,7 +532,7 @@ cage, so the build finds a cage that passes through itself (see "Validity").
 | `implicit-spec-invalid` | error | The engine's compiler rejects the spec: a bad node or field, a frame cycle, a formula error, a contact below the root, an attach naming a missing label, an undeclared image. The message is the build's own error. Image names are checked only against a static `images` object. |
 | `implicit-needs-manifold` | error | `k.implicit` or `k.subdiv` (the message names which) in a part that builds on OCCT: `meta.backend: "occt"`, a `shell` that routes the part there, or a `fillet`/`chamfer` with a function selector in any sub-part (whatever the pin). |
 | `implicit-thin-feature` | warning | The thinnest feature is under 2 cells of the preview grid (the spec's `preview`, or the automatic choice) or the print grid. |
-| `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. |
+| `implicit-blend-eats-child` | warning | A blend's `k`, or a contact `attach` entry's `k`, is wider than a child it joins: the child melts into a blob. Lint has no geometry for a `solid` leaf, so the rule does not check a solid leaf. It still checks the other children of that blend. |
 | `implicit-lipschitz-low` | warning | An `expr` formula, sampled on 512 points of its `box`, changes faster per mm than its `lipschitz`. A spot check, not a proof. Formulas that read a texture are skipped. |
 | `implicit-csg-in-disguise` | note | Only boxes, cylinders, halfspaces and `solid` leaves under sharp booleans: plain CAD that the standard ops build exactly. A blend (`k > 0`) or an `offset` clears it. |
 
@@ -682,6 +684,11 @@ const pad = { kind: "union", k: 2, children: [{ kind: "sphere", r: 6 }, { kind: 
 implicitDistance(pad)(0, 0, 10);   // 4
 implicitDistance(pad)(5, 0, 0);    // -1.5
 ```
+
+A node with a `solid` leaf also needs the mesh field builder. Outside a worker job,
+`implicitDistance` throws an error with code `NEEDS_MESH_FIELD` until
+`loadMeshFieldBuilder()` has resolved. `partforge/geometry` does not export it; import it
+from `partforge/oracle`.
 
 The kinematics guide has the defaults, the errors, and a worked hand.
 

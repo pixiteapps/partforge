@@ -934,7 +934,7 @@ between the Manifold preview and the OCCT STEP export.
 ## implicit-blend-eats-child
 
 - **Symptom:** A small feature of a `k.implicit` body (a knuckle, a bead, a nail) is gone or has melted into a shapeless lump where it meets its neighbour; lint warns `implicit-blend-eats-child`.
-- **Cause:** The blend width `k` of a `union`/`intersect`/`subtract` (or of a contact `attach` entry) is larger than the thickness of a child it joins. A smooth blend reaches about `k` past the seam, so a child thinner than that is absorbed whole.
+- **Cause:** The blend width `k` of a `union`/`intersect`/`subtract` (or of a contact `attach` entry) is larger than the thickness of a child it joins. A smooth blend reaches about `k` past the seam, so a child thinner than that is absorbed whole. Lint has no geometry for a `solid` leaf, so the rule does not check a solid leaf; it still checks the other children of that blend.
 - **Fix:** Use a `k` smaller than the thinnest child the node joins — the lint message names the node and the child. If the large parts need a wide blend and the small one a narrow one, nest them: blend the small child onto its neighbour with its own small `k` first, then blend that group into the rest.
 
 ## implicit-limbs-miss-target
