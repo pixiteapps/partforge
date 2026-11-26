@@ -221,8 +221,8 @@ ordinary solids, to join a cage body to other pieces with a smooth blend, to gro
 shrink a solid, or to texture one.
 
 - The leaf's distance is exact. It is the distance to the solid's mesh.
-- The leaf reads the solid once, when you call `k.implicit`. A later change to your
-  variables changes nothing.
+- The leaf reads the solid as it is when you call `k.implicit`. For example, a cage you
+  edit after `k.subdiv` does not change a solid already built from it.
 - The whole result is one mesh at the grid. The sharp edges of an ordinary solid soften
   to the grid, and its flat faces are remeshed too. Use a grid fine enough for the
   edges you care about.
@@ -257,7 +257,8 @@ keeps the solid's convex edges sharp, up to the grid.
 **A texture on a plain solid.** A `displace` over a `solid` leaf moves the solid's
 surface by a formula. This knurls a cylinder: the first lines make 16 ridges around the
 axis, and the turn with `p.z` makes them helical. `max` of two opposite turns crosses
-them:
+them. The two flat ends get the texture too; cut them flat after meshing if they must be
+plain:
 
 ```js
 const knob = k.cylinder({ r: 6, h: 12 });
@@ -344,10 +345,10 @@ costs about 0.19 s in the engine at its 1.5 mm preview, about 0.42 s at 0.8 mm a
 1 s at 0.5 mm. Manifold's import of the mesh adds to that.
 
 A `solid` leaf costs more than a plain shape. Measured with
-`scripts/bench-implicit.mjs` (CPU time, 0.6 mm grid, native core on), a plate and boss
-join takes about 0.42 s at preview and 0.75 s at print. A 2 mm inward offset of a body
-of 4,890 triangles takes about 0.36 s at preview. `Solid.offset` on the same body took
-about 32 s.
+`node scripts/bench-implicit.mjs --core on` (CPU time, 0.6 mm grid), the engine takes
+about 0.43 s for a plate and boss join at preview and about 0.79 s at print. On a
+preview kernel, a 2 mm inward offset of a body of 2,950 triangles takes about 0.47 s
+end to end with `k.implicit`. `Solid.offset(-2)` on the same body takes about 9.6 s.
 
 **Thin features.** A feature thinner than two grid cells can break up or grow handles.
 The build warns (see "Errors and warnings"). Thicken the feature, or build it as its own
@@ -384,8 +385,8 @@ sources on both sides, and a plain operand (a `k.box` in the union) unchanged.
 change to a shape (a radius, a node, the detail, an image) rebuild as before.
 
 **A `solid` leaf during a drag.** A `solid` leaf with its own `frame` moves with that
-frame. A `solid` leaf without a `frame` follows the nearest posed piece until you let go.
-Then the exact shape is built.
+frame. A `solid` leaf without a `frame` follows the nearest posed piece until the exact
+build lands.
 
 **How.** Each vertex of a preview mesh remembers which frame or frames it follows. A
 move blends the frames' rigid motions per vertex, so a finger follows its joints and the

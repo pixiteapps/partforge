@@ -108,3 +108,17 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`k.implicit(hand) end to end, after warm-up: ${tk.toFixed(0)} CPU ms`);
 }
 setCoreEnabled(true);
+
+// The shrink body both ways, on one preview kernel with the core on: the solid's triangle
+// count, k.implicit's offset −2 end to end at a 0.6 mm grid (a fresh kernel, so no cache),
+// and Solid.offset(−2) (Manifold's Minkowski difference) on the same solid.
+{
+  const body = solidShrink.root.child.solid;
+  const m = body.toMesh(), tris = m.indices ? m.indices.length / 3 : m.positions.length / 9;
+  const k = await bootManifoldKernel({ meshFields: true });
+  const [, tf] = time(() => k.implicit({ ...solidShrink, preview: 0.6 }));
+  const [, to] = time(() => body.offset(-2));
+  console.log(`\nshrink body (${tris} triangles), preview kernel, core on:`);
+  console.log(`  k.implicit offset -2 at 0.6 mm, end to end: ${tf.toFixed(0)} CPU ms`);
+  console.log(`  Solid.offset(-2): ${to.toFixed(0)} CPU ms`);
+}

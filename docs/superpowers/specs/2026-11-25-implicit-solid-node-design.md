@@ -22,7 +22,9 @@ That blocks the uses the owner named as the best ones for implicit surfaces:
 ## What the spike showed
 
 A throwaway leaf took a solid's mesh distance (exact nearest-surface distance from the
-oracle BVH). Every case built. 0.5 mm grid unless noted.
+oracle BVH). Every case built. 0.5 mm grid unless noted. These are the spike's numbers:
+the JS engine with no native `MESH` op, on a print-tier kernel. They are not the shipped
+numbers; "5. Cost" has those.
 
 | Case | Result | Time |
 | --- | --- | --- |
@@ -188,7 +190,10 @@ the fix is to snap border vertices onto the solid's own mesh.
 ### 5. Cost
 
 - Measured with `node scripts/bench-implicit.mjs --core both` (CPU ms, edge 0.6 mm, the
-  development desktop). The native `MESH` op gives the same bits as the JS.
+  development desktop). The native `MESH` op gives the same bits as the JS. The blob
+  shrink's body has 2,950 triangles; the script's last lines time `Solid.offset(-2)` on
+  it for comparison (about 9.6 s against about 0.47 s for the `k.implicit` offset end to
+  end, core on).
 
   | Case | Core | Compile | Sample | Mesh | Cleanup | Total |
   | --- | --- | --- | --- | --- | --- | --- |
@@ -238,8 +243,11 @@ grid makes every sharp edge of an explicit body look rough.
 
 ## Later: offset
 
-The field offset matched `Solid.offset` within 0.17% by volume and ran about 7 to 9 times
-faster on a 4,890-triangle body, before any native work. Switching `Solid.offset` to it is
+In the spike (JS engine, print tier), the field offset matched `Solid.offset` within 0.17%
+by volume and ran about 7 to 9 times faster on a 4,890-triangle body. As shipped, measured
+by `node scripts/bench-implicit.mjs --core on` on a preview kernel: the bench's shrink body
+has 2,950 triangles, its `k.implicit` offset −2 at 0.6 mm takes about 465 CPU ms end to
+end, and `Solid.offset(-2)` on the same body takes about 9,575 CPU ms. Switching `Solid.offset` to it is
 a separate decision, because the results differ in detail: the Minkowski offset keeps
 convex edges exactly sharp on a shrink and gives true arcs, and the field gives a grid
 mesh. It also left a slightly ragged ring at one concave crease in the spike. Until then,

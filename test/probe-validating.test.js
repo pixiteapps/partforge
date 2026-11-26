@@ -174,3 +174,12 @@ test("a cycle in a k.implicit spec is skipped by the solid walk, and its JSON co
   expect(call.args).toEqual(["<unserializable>"]);
   expect(call.solids).toEqual([["root", "solid"]]);
 });
+
+test("one shared, non-cyclic container at two places records both solid paths", () => {
+  const build = (k) => {
+    const shared = { kind: "solid", solid: k.box({ size: [1, 1, 1] }) };
+    return k.implicit({ root: { kind: "union", children: [shared, { kind: "offset", d: 1, child: shared }] } });
+  };
+  const call = runValidatingProbe(partWith(build), {}, {}).calls.find((c) => c.op === "implicit");
+  expect(call.solids).toEqual([["root", "children", 0, "solid"], ["root", "children", 1, "child", "solid"]]);
+});
