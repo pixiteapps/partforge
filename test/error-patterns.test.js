@@ -104,6 +104,8 @@ const BASELINE_IDS = [
   "sweep-bad-clearance",
   "line-drift",
   "line-bend",
+  "line-bad-source",
+  "line-unswept",
 ];
 
 const entries = parsePatterns(doc);

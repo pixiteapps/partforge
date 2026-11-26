@@ -4011,7 +4011,12 @@ number, which the sweep would replace with the declared default —
 build changes along the motion, so the sweep rebuilds geometry at every step) and `motion-unswept` (a warning: a param moves one piece
 against another in some view and no sweep moves it there; the hint gives the sweep to add,
 always with `clearance: 0` —
-[motion-unswept](ERROR-PATTERNS.md#motion-unswept)).
+[motion-unswept](ERROR-PATTERNS.md#motion-unswept)). For a part's declared `lines`, lint adds
+`line-bad-source` (an error: an entry whose `on`, `line` or `views` cannot be read —
+[line-bad-source](ERROR-PATTERNS.md#line-bad-source)) and `line-unswept` (a warning: a line
+moves with a slider or number param and no sweep moves it in a view the line shows in; the
+hint gives the sweep and a `lineDrift` gate —
+[line-unswept](ERROR-PATTERNS.md#line-unswept)).
 
 ### How a sweep steps
 

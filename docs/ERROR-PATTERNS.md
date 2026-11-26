@@ -1021,6 +1021,18 @@ between the Manifold preview and the OCCT STEP export.
 - **Cause:** A declared line wraps a drum or a pulley whose diameter is too small for the line's diameter. The bend ratio is the sheave diameter divided by the line diameter (a 12 mm drum under a 1.2 mm rope is 10). The gate reads the smallest ratio at the measured pose and along every declared sweep. A line bent too tightly wears and loses strength at that drum.
 - **Fix:** Make that drum or pulley larger, or use a thinner or more flexible line (a smaller `d`, or a material whose minimum ratio is lower). The line material's `minBendRatio`, when it has one, is the value to gate against. When the gate is withheld instead (`not evaluated — line "rope" could not be read at the measured pose` or `along sweep "<name>"`), a declared line's source throws there, and its ratio is unknown even if other lines read: fix the source so every line reads at the measured pose and over the whole range of each sweep.
 
+## line-bad-source
+
+- **Symptom:** Lint errors `line "rope": derive().drive has no line "x" at the defaults` (or `derive().nope is not a line source (no lineInfo())`, `lines.rope names no source (\`on\`)`, `lines.rope.views names "ghost", which is not a key of \`views\``), on the field `lines.rope`.
+- **Cause:** A `lines` entry cannot be read. `on` must name a key of `derive`'s output whose value has a plain-data `lineInfo()` returning `{ kind: "partforge.lines", lines: { … } }` (a `capstan` from `partforge/mechanisms`), and `line` (default: the entry's own name) must be one of those lines, with a finite `length`. A `views` list names only keys of `views`. Measure and every sweep report such a line with an `error` and gate nothing on it.
+- **Fix:** Fix the name: `lines: { rope: { on: "drive" } }` for `derive: (p) => ({ drive: capstan({ … }) })`. When the source holds more than one line (an antagonistic pair), name the one with `line: "<name>"`. When the source itself throws at the defaults, fix it so it reads there.
+
+## line-unswept
+
+- **Symptom:** Lint warns `line "rope" moves with "motorAngle" in view "assembly" and no sweep reads it along that motion`. The part loads, builds and measures as before.
+- **Cause:** A declared line's points change when a slider or number param moves across its range (sampled at its min, middle and max, the others at their defaults), and no `verify.sweeps` entry moves that param in a view the line shows in. Its length is then read only at the measured pose, so a rope that goes slack or tight along the motion is never seen. A warning, never an error: verify does not withhold its verdict for it.
+- **Fix:** Declare the sweep and the gate the hint gives: `verify.sweeps: { motorAngle: { param: "motorAngle" } }` and `verify.expect._view: { lineDrift: "<=0.2" }`. Any sweep that moves the param in that view covers it (a handle, a path, a preset pair or an animation). A failing gate is then [line-drift](#line-drift).
+
 ## handle-source-unread
 
 - **Symptom:** In an assembly or print view that draws the part unposed, hovering it shows drag dots and bones floating where the posed view holds them. `handle-source-unread` warns, naming the handles, their sources and the views they show in.
