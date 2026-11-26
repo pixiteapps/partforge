@@ -102,6 +102,8 @@ const BASELINE_IDS = [
   "implicit-step-export",
   "motion-unswept",
   "sweep-bad-clearance",
+  "line-drift",
+  "line-bend",
 ];
 
 const entries = parsePatterns(doc);

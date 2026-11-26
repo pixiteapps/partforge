@@ -277,6 +277,24 @@ function sweepContacts(r) {
   return 0;
 }
 
+// The declared lines' readings along the sweep rows (oracle/lines.js `sweepLines`, one per
+// line per row that read lines).
+const lineReadings = (r) => (r.sweeps ?? []).flatMap((s) => s.lines ?? []);
+// The first reading that could not be read along its motion, and why.
+const lineUnread = (r) => lineReadings(r).find((l) => l.error != null) ?? null;
+function lineDrift(r) {
+  if (!r.lines || !r.sweeps) return null;
+  if (!r.sweeps.length) return 0;
+  if (lineUnread(r)) return null;
+  const drifts = lineReadings(r).map((l) => l.drift).filter((v) => typeof v === "number");
+  return drifts.length ? Math.max(...drifts) : null;
+}
+function lineBend(r) {
+  const ratios = [...lineReadings(r).map((l) => l.bendMin), ...(r.lines ?? []).map((l) => l.bendRatio)]
+    .filter((v) => typeof v === "number");
+  return ratios.length ? Math.min(...ratios) : null;
+}
+
 export const VIEW_METRICS = {
   bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,
     hint: "the assembled view exceeds its size limit — shrink the assembly or pick a process with a larger bed" },
@@ -305,6 +323,33 @@ export const VIEW_METRICS = {
       const row = r.sweeps?.find(sweepHit);
       return row ? firstBlocking(row)?.at ?? row.minClearance?.at ?? null : null;
     } },
+  // How much a declared line's length changes along the declared sweeps (mm): the largest
+  // `drift` over every row's readings. No line in the view, or no `sweeps` key (none
+  // declared, or a case measured without them), is a plain skip; `[]` (no declared sweep
+  // moves anything here) reads 0. A line that could not be read along a motion has no
+  // verdict, so the gate is withheld — and so it is when no row read a line at all.
+  lineDrift: { kind: "gate", extract: lineDrift,
+    withheld: (r) => {
+      if (!r.lines || !r.sweeps?.length || lineDrift(r) !== null) return null;
+      const bad = lineUnread(r);
+      return bad ? `not evaluated — line "${bad.name}" could not be read along a declared sweep${bad.at != null ? ` (at ${bad.at})` : ""}: ${bad.error}`
+        : "not evaluated — no declared sweep read a line";
+    },
+    withheldHint: (r) => (lineUnread(r)
+      ? "a declared line could not be read along a declared motion, so this gate has no verdict and verify.ok is withheld — fix the line's source so it reads at every value the sweep passes through (see `lines` in npx partforge measure)"
+      : SWEEP_WITHHELD_HINT),
+    hint: "the line's span lengths change along the motion, so a rope tensioned at one pose goes slack (or overloads) at another — move the termination onto the drum axis, keep the pulley concentric with its pivot, or tension the line at the pose where it is shortest (lengthMinAt)",
+    skipMessage: "not measured — lineDrift reads the declared lines along the declared sweeps, which verify runs on one case only (the first it measures); it needs a `lines` entry in this view and verify.sweeps",
+    pattern: "line-drift",
+    locate: () => null },
+  // The smallest bend ratio (sheave diameter over line diameter) a declared line meets: at
+  // the measured pose (`r.lines`) and along the declared sweeps (each reading's `bendMin`).
+  // Read from `r.lines` alone on a case or a quick lap without sweeps. A skip when no line
+  // wraps anything that has a ratio.
+  lineBend: { kind: "gate", extract: lineBend,
+    hint: "the line bends round a drum or pulley too small for its diameter (the ratio is sheave diameter over line diameter) — it wears and loses strength there; enlarge that drum or pulley, or use a thinner, more flexible line",
+    skipMessage: "not measured — no declared line in this view wraps a drum or pulley with a bend ratio",
+    pattern: "line-bend" },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
   bounds: boundsMetric((r) => r.aggregate.bounds,

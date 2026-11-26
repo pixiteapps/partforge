@@ -672,6 +672,16 @@ export interface ViewExpectations {
    * stopped is a warning instead).
    */
   sweepContacts?: Expectation;
+  /**
+   * The largest change in a declared line's length (mm) along the declared sweeps —
+   * usually `"<=0.2"`. A gate; withheld when a line could not be read along a motion.
+   */
+  lineDrift?: Expectation;
+  /**
+   * The smallest bend ratio (sheave diameter over line diameter) a declared line meets,
+   * at the measured pose and along the declared sweeps — e.g. `">=12"`. A gate.
+   */
+  lineBend?: Expectation;
   centerOfMass?: Expectation;
   /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
   bounds?: BoundsExpectation;
