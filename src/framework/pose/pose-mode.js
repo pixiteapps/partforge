@@ -195,6 +195,10 @@ export function aimAxes(toward, angles) {
  * and onBlocked (the pair a held drag stopped at, or null), passed through as the session's
  * collide and blockedChange; schedule (rAF), createScene, createGizmo (the aim gizmo),
  * createJointRings (the joint gizmo).
+ * @param opts.extraReadout (params, pressParams) => items: more items for every drag
+ *   readout, after the handle's own and before "Stopped at" / "Out of reach" (mount: the
+ *   declared lines' lengths). `pressParams` is `{ ...part.defaults, ...getParams() }` at
+ *   the drag's start, the same object every frame of one drag. Default: none.
  */
 export function createPoseMode(viewer, {
   part,
@@ -209,6 +213,8 @@ export function createPoseMode(viewer, {
   hold,
   collide = () => null,
   onBlocked = () => {},
+  // more drag readout items, after the handle's own: (params, pressParams) -> items[]
+  extraReadout = () => [],
   visibleHandles = () => Object.keys(part?.handles ?? {}),
   hoveredSubPart = () => null,
   schedule = (cb) => requestAnimationFrame(cb),
@@ -1192,6 +1198,7 @@ export function createPoseMode(viewer, {
     const s = shown.find((e) => e.handleId === hit.handleId);
     const grab = hit.kind === "dot" ? s?.info.points[hit.at] : null;
     if (!s || (hit.kind === "dot" && !Array.isArray(grab))) { finishPress(); return false; }
+    press.pressParams = { ...part.defaults, ...getParams() }; // extraReadout's, before any write
     if (s.generic) return startGenericDrag(s, grab);
     const grabName = hit.kind === "ring" ? "ring" : hit.kind === "jring" ? `ring:${hit.joint}` : hit.at;
     if (!session.begin(hit.handleId, grabName)) { finishPress(); return false; }
@@ -1345,7 +1352,8 @@ export function createPoseMode(viewer, {
     const source = hit.kind === "jring" ? { readout: hit.compound ? hit.compound.vars.map((v) => v.param) : hit.ring?.slots?.[hit.name]?.param }
       : hit.kind === "ring" ? { readout: handle.params?.aim?.[AIM_NAMES.indexOf(hit.name)] }
       : handle;
-    const items = readoutItems(part, { ...part.defaults, ...getParams() }, source);
+    const params = { ...part.defaults, ...getParams() };
+    const items = [...readoutItems(part, params, source), ...moreReadout(params)];
     if (blocked?.b) {
       items.push({ key: "blocked", label: "Stopped at", text: part?.parts?.[blocked.b]?.label ?? blocked.b });
     } else if (Number.isFinite(residual)) {
@@ -1362,8 +1370,20 @@ export function createPoseMode(viewer, {
     if (!s) return;
     scene?.setActive({ limb: s.info.name, grab: "tip", clamped: [] });
     const params = { ...part.defaults, ...getParams() };
-    setReadout({ handleId: s.handleId, text: readoutText(part, params, s.handle), items: readoutItems(part, params, s.handle) });
+    const more = moreReadout(params);
+    const text = [readoutText(part, params, s.handle), ...more.map((i) => `${i.key} ${i.text}`)].filter(Boolean).join(" · ");
+    setReadout({ handleId: s.handleId, text, items: [...readoutItems(part, params, s.handle), ...more] });
     viewer.requestRender?.();
+  }
+
+  // extraReadout's items for this frame of the drag (a throw or a non-array reads as none)
+  function moreReadout(params) {
+    let more;
+    try { more = extraReadout(params, press?.pressParams ?? params); } catch (err) {
+      console.error("pose mode extraReadout failed", err);
+      return [];
+    }
+    return Array.isArray(more) ? more : [];
   }
 
   // The live drag readout: the dragged handle's values, or null. Not drawn in the scene

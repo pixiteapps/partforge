@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { createLineScene, LINE_LIMIT_COLOR } from "../src/framework/line-scene.js";
 import { LINE_COLOR } from "../src/framework/lines/tube.js";
+import { lineDriftBound } from "../src/framework/lines/meshes.js";
 import { concentricCapstan, make } from "./fixtures/capstan-fixtures.js";
 
 const fakeViewer = () => {
@@ -26,6 +27,27 @@ const bent = (bendRatio, minBendRatio) => {
     return { ...info, lines: { rope: { ...info.lines.rope, bendRatio, minBendRatio } } };
   } } };
 };
+// A drive whose rope reads `length` mm long.
+const sized = (length) => {
+  const real = make(0);
+  return { drive: { lineInfo: () => {
+    const info = real.lineInfo();
+    return { ...info, lines: { rope: { ...info.lines.rope, length } } };
+  } } };
+};
+
+describe("lineDriftBound", () => {
+  const withDrift = (lineDrift) => ({ ...concentricCapstan, verify: lineDrift === undefined ? undefined : { expect: { _view: { lineDrift } } } });
+  test("a <= or < bound against a number; anything else is null", () => {
+    expect(lineDriftBound(withDrift("<=0.2"), "assembly")).toBe(0.2);
+    expect(lineDriftBound(withDrift("<0.5"), "assembly")).toBe(0.5);
+    expect(lineDriftBound(withDrift(">=1"), "assembly")).toBe(null);
+    expect(lineDriftBound(withDrift(undefined), "assembly")).toBe(null);
+    expect(lineDriftBound(withDrift("not an assertion"), "assembly")).toBe(null);
+    // a view with no lines has no bound to show
+    expect(lineDriftBound({ ...withDrift("<=0.2"), lines: { rope: { on: "drive", views: ["other"] } } }, "assembly")).toBe(null);
+  });
+});
 
 describe("createLineScene", () => {
   test("draws each line of the view", () => {
@@ -136,6 +158,34 @@ describe("createLineScene", () => {
     expect(v.requestRender).toHaveBeenCalled();
     scene.update("assembly", dAt(0));
     expect(rope(v).visible).toBe(true);
+  });
+
+  test("readout: each readable line's length, 2 dp, and its signed drift from the press", () => {
+    const v = fakeViewer();
+    const scene = createLineScene(v, concentricCapstan);
+    scene.update("assembly", sized(286.51));
+    expect(scene.readout(new Map([["rope", { length: 286.48 }]]))).toEqual([
+      { key: "line:rope", label: "rope", unit: "mm", value: 286.51, text: "286.51 (+0.03)" },
+    ]);
+    expect(scene.readout(new Map([["rope", { length: 286.6 }]]))[0].text).toBe("286.51 (-0.09)");
+    // no drift rounds to +0.00, never -0.00
+    expect(scene.readout(new Map([["rope", { length: 286.5101 }]]))[0].text).toBe("286.51 (+0.00)");
+    // unreadable now, or at the press: left out
+    expect(scene.readout(new Map([["rope", null]]))).toEqual([]);
+    scene.update("assembly", { drive: { lineInfo: () => { throw new Error("no rope"); } } });
+    expect(scene.readout(new Map([["rope", { length: 286.48 }]]))).toEqual([]);
+  });
+
+  test("dragLimits tints a line whose drift passes the bound; a null bound tints none", () => {
+    const v = fakeViewer();
+    const scene = createLineScene(v, concentricCapstan);
+    scene.update("assembly", sized(100.3));
+    scene.dragLimits(new Map([["rope", { length: 100 }]]), 0.2);
+    expect(rope(v).material.color.getHex()).toBe(LINE_LIMIT_COLOR);
+    scene.dragLimits(new Map([["rope", { length: 100.2 }]]), 0.2);
+    expect(rope(v).material.color.getHex()).toBe(LINE_COLOR);
+    scene.dragLimits(new Map([["rope", { length: 100 }]]), null);
+    expect(rope(v).material.color.getHex()).toBe(LINE_COLOR);
   });
 
   test("attaches once the sub-part meshes exist", () => {

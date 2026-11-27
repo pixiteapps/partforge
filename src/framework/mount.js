@@ -30,6 +30,7 @@ import { resolveDerived } from "./derive.js";
 import { withDeriveMemo } from "./derive-memo.js";
 import { normalizeLines } from "./lines/read.js";
 import { createLineScene } from "./line-scene.js";
+import { lineReadings, lineDriftBound } from "./lines/meshes.js";
 import { createBackendPolicy, organicExportParts } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -993,6 +994,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // guard alone, as before.
         collide: (args) => skin.validityGuard(poseCollide?.guardFor(args) ?? null),
         onBlocked: live((pair) => poseCollide?.tint(pair)),
+        // The declared lines' lengths in the drag readout (lineReadout, below); a part
+        // with no lines passes none, so its drags derive nothing more.
+        extraReadout: normalizeLines(part).length ? (p, pressParams) => lineReadout(pressParams) : undefined,
         hold: live((on) => {
           poseHold = !!on;
           // A drag is the user's own edit: it pauses playback the way a slider does,
@@ -1009,6 +1013,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           }
           liveRebuild = false;
           liveSlow = false;
+          endLineDrag(); // a cancelled drag fires no onDragEnd: its drift tints go here too
           // Back where it began (a cancel's restore, a drag returned to its start):
           // what the transient builds drew is what the host last saw built.
           if (owed.size && holdStart && Object.keys({ ...params, ...holdStart }).every((k) => Object.is(params[k], holdStart[k]))) owed.clear();
@@ -1457,6 +1462,28 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       try { d = resolveDerived(part, params); } catch { /* each line reads as unreadable */ }
       lineScene.update(view(), d);
     }
+    // While a handle drags: each line's length and its drift since the press, in the drag
+    // readout, and a line whose drift passes the part's lineDrift bound tinted. The first
+    // call of a drag (a new pressParams) reads the lines at the press, one derive; every
+    // later frame reads the scene's own readings, which the frame's write just updated.
+    // Nothing while the view's lines are not shown.
+    let linePress = null; // { pressParams, readings, bound } for the drag under way
+    function lineReadout(pressParams) {
+      if (!lineScene || lineView !== view()) return [];
+      if (linePress?.pressParams !== pressParams) {
+        let d = {};
+        try { d = resolveDerived(part, pressParams); } catch { /* each line reads as unreadable */ }
+        linePress = { pressParams, readings: lineReadings(part, view(), d), bound: lineDriftBound(part, view()) };
+      }
+      lineScene.dragLimits(linePress.readings, linePress.bound);
+      return lineScene.readout(linePress.readings);
+    }
+    // The drag is over (released or cancelled): every drift tint goes.
+    function endLineDrag() {
+      if (!linePress) return;
+      linePress = null;
+      lineScene?.dragLimits(new Map(), null);
+    }
 
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
@@ -1618,7 +1645,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         cleanup.defer(() => pc.dispose());
         cleanup.defer(poseMode.onModeChange?.(() => { if (poseMode.isLive?.()) pc.refresh(); }) ?? (() => {}));
       }
-      cleanup.defer(poseMode.onDragEnd?.((e) => { lastDragEnd = e; }) ?? (() => {}));
+      cleanup.defer(poseMode.onDragEnd?.((e) => { lastDragEnd = e; endLineDrag(); }) ?? (() => {}));
     }
 
     // Pose drag (skin/skin-drag.js): a slider input that moves only the k.implicit

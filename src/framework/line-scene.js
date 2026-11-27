@@ -13,13 +13,17 @@ import { lineMeshes } from "./lines/meshes.js";
 export const LINE_LIMIT_COLOR = 0xe5484d;
 
 /**
- * `{ update(view, d), readings(), setLimit(name, on), hide(), dispose() }` for `part`'s lines in
+ * `{ update(view, d), readings(), readout, dragLimits, setLimit(name, on), hide(), dispose() }` for `part`'s lines in
  * `viewer`. `update` re-meshes every line of `view` from derive's output `d` (the old
  * geometry disposed), hides the lines not in the view or not readable, and asks for a
  * render. `readings()` maps each line of the last view drawn to its reading, or null when
  * it could not be read. A line is tinted LINE_LIMIT_COLOR while its bend is past the
  * rope's limit OR setLimit holds it on (a setLimit before the line's first update is kept
  * and applied when it is built). `hide()` hides every line until the next update.
+ * While posing: `readout(pressReadings)` is one drag readout item per line readable now and
+ * at the press (`pressReadings`, name -> reading or null), and `dragLimits(pressReadings,
+ * bound)` tints through setLimit each line whose length has moved by more than `bound` mm
+ * since the press (none for a null bound).
  */
 export function createLineScene(viewer, part) {
   const group = new THREE.Group();
@@ -137,5 +141,34 @@ export function createLineScene(viewer, part) {
     if (attached) viewer.requestRender?.();
   }
 
-  return { update, readings: () => new Map(current), setLimit, hide, dispose };
+  // Each line of the last update readable now and in `pressReadings` (name -> reading or
+  // null, at the drag's press), with its drift: now less at the press.
+  function drifts(pressReadings) {
+    const out = [];
+    for (const [name, r] of current) {
+      const at = pressReadings?.get(name);
+      if (!r || !Number.isFinite(r.length) || !Number.isFinite(at?.length)) continue;
+      out.push({ name, length: r.length, drift: r.length - at.length });
+    }
+    return out;
+  }
+
+  // A drag readout item per line: its length now, and its drift since the press, 2 dp.
+  function readout(pressReadings) {
+    return drifts(pressReadings).map(({ name, length, drift }) => {
+      const d = drift.toFixed(2);
+      const signed = Number(d) === 0 ? "+0.00" : drift > 0 ? `+${d}` : d;
+      return { key: `line:${name}`, label: name, unit: "mm", value: length, text: `${length.toFixed(2)} (${signed})` };
+    });
+  }
+
+  // The drift tint: a line whose |drift| since the press passes `bound` is held tinted, every
+  // other line of the scene let go (all of them for a null bound).
+  function dragLimits(pressReadings, bound) {
+    const past = new Set();
+    if (bound != null) for (const { name, drift } of drifts(pressReadings)) if (Math.abs(drift) > bound) past.add(name);
+    for (const name of recs.keys()) setLimit(name, past.has(name));
+  }
+
+  return { update, readings: () => new Map(current), readout, dragLimits, setLimit, hide, dispose };
 }

@@ -98,6 +98,7 @@ vi.mock("../src/framework/viewer.js", () => ({
       flipCutaway: vi.fn(),
       resetCutaway: vi.fn(),
       isWorldPointVisible: vi.fn(() => true),
+      projectPoint: () => ({ x: 0, y: 0, visible: true }), // the release chip places itself by it
       registerCutawayMaterial: vi.fn(() => vi.fn()),
       // Opacity overrides: an animation's fade writes them, and handing a view
       // back must clear them (see the view-switch test at the end of the file).
@@ -155,6 +156,21 @@ vi.mock("../src/framework/line-scene.js", async (importOriginal) => {
     }),
   };
 });
+// Pose mode, real behind a spy: the options mount hands it, and its onDragEnd listeners.
+const poseModes = vi.hoisted(() => []);
+vi.mock("../src/framework/pose/pose-mode.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    createPoseMode: vi.fn((viewer, opts) => {
+      const mode = real.createPoseMode(viewer, opts);
+      const ends = new Set();
+      const rec = { opts, ends };
+      poseModes.push(rec);
+      return { ...mode, onDragEnd: (cb) => { ends.add(cb); const off = mode.onDragEnd(cb); return () => { ends.delete(cb); off(); }; } };
+    }),
+  };
+});
 vi.mock("../src/framework/lines/meshes.js", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, lineMeshes: vi.fn(real.lineMeshes) };
@@ -164,9 +180,9 @@ import * as THREE from "three";
 import { mount } from "../src/framework/mount.js";
 import { viewSubParts } from "../src/framework/part-model.js";
 import { bootManifoldKernel, handle } from "../src/testing.js";
-import { createLineScene } from "../src/framework/line-scene.js";
+import { createLineScene, LINE_LIMIT_COLOR } from "../src/framework/line-scene.js";
 import { lineMeshes } from "../src/framework/lines/meshes.js";
-import { concentricCapstan } from "./fixtures/capstan-fixtures.js";
+import { concentricCapstan, slackCapstan } from "./fixtures/capstan-fixtures.js";
 import demo from "../src/parts/demo.js";
 
 const withBackend = (part) => ({ ...part, meta: { ...part.meta, backend: "manifold" } });
@@ -220,6 +236,7 @@ async function setup(part, view) {
 
 beforeEach(() => {
   scenes.length = 0;
+  poseModes.length = 0;
   localStorage.clear();
   sessionStorage.clear();
   document.body.innerHTML = "";
@@ -299,6 +316,68 @@ describe("mount draws a part's declared lines", () => {
     expect(rope().visible).toBe(false);
     w.onmessage({ data: { type: "meshes", meshes, ms: 5 } });
     expect(rope().visible).toBe(true);
+    runtime.dispose();
+  });
+
+  // The slack drive with a handle on the drum and the rope's drift gated under 0.2 mm.
+  const posedSlack = (extra = {}) => withBackend({
+    ...slackCapstan,
+    handles: { drum: { on: "drive", at: "drum.rim", params: ["motorAngle"], drag: "rotary" } },
+    verify: { expect: { _view: { lineDrift: "<=0.2" } } },
+    ...extra,
+  });
+
+  test("a drag's readout carries the rope's length and drift; past the bound it is tinted until the drag ends", async () => {
+    const part = posedSlack();
+    const derive = vi.fn(part.derive);
+    const { runtime, parts } = await setup({ ...part, derive }, "assembly");
+    const [{ opts, ends }] = poseModes;
+    expect(typeof opts.extraReadout).toBe("function");
+    const rope = () => parts.getObjectByName("line:rope");
+    const press = { ...part.defaults };
+    const at0 = slackCapstan.derive(press).drive.lineInfo().lines.rope.length;
+
+    // the drag's first frame: the lines at the press are read once, from one derive
+    runtime.setParams({ motorAngle: 90 });
+    derive.mockClear();
+    const items = opts.extraReadout({ ...press, motorAngle: 90 }, press);
+    expect(derive).toHaveBeenCalledTimes(1);
+    expect(derive.mock.calls[0][0]).toMatchObject({ motorAngle: 0 });
+    const at90 = slackCapstan.derive({ motorAngle: 90 }).drive.lineInfo().lines.rope.length;
+    expect(Math.abs(at90 - at0)).toBeGreaterThan(0.2);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ key: "line:rope", label: "rope", unit: "mm" });
+    expect(items[0].value).toBeCloseTo(at90, 9);
+    expect(rope().material.color.getHex()).toBe(LINE_LIMIT_COLOR);
+
+    // a later frame of the same drag derives nothing more for the press
+    runtime.setParams({ motorAngle: 1 });
+    derive.mockClear();
+    opts.extraReadout({ ...press, motorAngle: 1 }, press);
+    expect(derive).not.toHaveBeenCalled();
+    expect(rope().material.color.getHex()).not.toBe(LINE_LIMIT_COLOR);
+
+    runtime.setParams({ motorAngle: 90 });
+    opts.extraReadout({ ...press, motorAngle: 90 }, press);
+    expect(rope().material.color.getHex()).toBe(LINE_LIMIT_COLOR);
+    for (const cb of ends) cb({ handleId: "drum", generic: true, changed: ["motorAngle"], pinHeld: false, blocked: null });
+    expect(rope().material.color.getHex()).not.toBe(LINE_LIMIT_COLOR);
+    runtime.dispose();
+  });
+
+  test("with no lineDrift bound the readout shows and nothing is tinted", async () => {
+    const { runtime, parts } = await setup(posedSlack({ verify: undefined }), "assembly");
+    const [{ opts }] = poseModes;
+    runtime.setParams({ motorAngle: 90 });
+    expect(opts.extraReadout({ motorAngle: 90 }, { motorAngle: 0 })).toHaveLength(1);
+    expect(parts.getObjectByName("line:rope").material.color.getHex()).not.toBe(LINE_LIMIT_COLOR);
+    runtime.dispose();
+  });
+
+  test("a posed part with no lines passes pose mode no extraReadout", async () => {
+    const { runtime } = await setup(posedSlack({ lines: undefined }), "assembly");
+    expect(poseModes).toHaveLength(1);
+    expect(poseModes[0].opts.extraReadout).toBeUndefined();
     runtime.dispose();
   });
 
