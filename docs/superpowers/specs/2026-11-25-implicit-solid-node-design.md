@@ -358,8 +358,9 @@ at a 0.1 mm grid, far above the 1e-6 mm the tests call coincident, and 50 times 
 The density limit, 2 candidates per grid cell of area (`SHARP_DENSE_PER_CELL`), was chosen
 in 0.207, after cleanup began to merge the mesher's vertex clusters. The rule before it
 (`SHARP_DENSE_DIV` 5: dense when more than a fifth of a program's edges are candidates)
-counted those clusters' zero-area triangles as edges. With them merged, a clean box 8 cells
-wide at 0.6 mm has a share near 0.3 and was taken for dense, so it lost its corners.
+counted those clusters' zero-area triangles as edges. With them merged, a clean box n cells
+wide at 0.6 mm has a share of about 0.31 · 8 / n, so 0.31 at 8 cells (measured after the
+merge: 474 candidates in 1,020 triangles). It was taken for dense, so it lost its corners.
 Measured per program, in candidates per cell:
 
 - Boxes 3 to 12 cells wide, at 0.6 and 1.0 mm and three offsets: at most 1.26 where a box
@@ -447,8 +448,11 @@ times the stages before it. The rule is not changed for it.
 | 0.3 mm | 1716 | 2914 | 170% | 26,356 | 129 | 361,080 to 404,828 |
 | 0.6 mm (dense, skipped) | 387 | 7 | 1.7% | 0 | 0 | 82,680, unchanged |
 
-This table is 0.206's. Since 0.207 the knurl at 0.3 mm keeps 56 corners: the other 73 sat
-where fewer than three faces meet. Its current cost is in section 5's 0.207 table.
+This table is 0.206's. Since 0.207 the knurl at 0.3 mm keeps 56 corners of 129. Counted by
+how many faces meet at each point, before {1: 7, 2: 62, 3: 9, 4: 34, 5: 17} and after
+{3: 5, 4: 33, 5: 18}. So 69 of the 73 it lost sat where fewer than three faces meet, and 4
+had three faces (the 4-face and 5-face counts each moved by one). Its current cost is in
+section 5's 0.207 table.
 
 At 0.3 mm the result is sound: no open edge, no pinched vertex, no coincident pair, and no
 flip or sliver among the triangles the stage made. The mesher's own flips fall from 3,661 to
@@ -506,10 +510,14 @@ on every input, byte for byte: `test/implicit-sharpen-digest.test.js` pins 25 ca
 recorded before the change. What is left on the hand is one pass over the triangles for the angle
 test and one adjacency build per round and per pass. The vase and the knurl at 0.3 mm gained
 less: the vase's stage went from 112% to 94% of the stages before it, and the knurl's from 175% to
-161%. There most of the time is solving real creases.
+161%. There most of the time is solving real creases. These figures, and the table below, are
+from after the bookkeeping change alone, before cleanup's cluster merge, the area density rule
+and the corner solve. Section 5's 0.207 table has the final figures (vase 75%, knurl 170%).
 
 `scripts/bench-implicit.mjs`, CPU milliseconds, median of 3. "Before" is sample, mesh and cleanup
 (the hand's crease cut is not counted in it).
+
+After the bookkeeping change alone (not the final 0.207 figures):
 
 | Case | Core | Before | Stage, old | Share, old | Stage, new | Share, new |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -539,13 +547,20 @@ grid plane, joined by triangles with no area. Cleanup's first pass could merge e
 once, so most of a cluster stayed, and the first relaxation pulled its triangles open into
 pleats. Now an edge shorter than 1e-4 of the grid edge merges past that lock, and a merge that
 would leave more fold edges around it than before is refused. Fold edges on the cleanup tests'
-cases fell from 1,723 to 530. Of the 82 `k.implicit` results of the fold census, 11 still carry
-folds as a `solid` leaf (16 before): the tapered cylinder, the 25° wedge and the 40° wedge at
-0.8 mm, and the twisted box. The folds left come from two places: the mesher's own folds on a
+cases fell from 1,723 to 530. Of the 82 `k.implicit` results of the fold census (each shape at
+several tiers and grids), 11 results still carry folds as a `solid` leaf (16 before). They come
+from four shapes: the tapered cylinder, the 25° wedge and the 40° wedge at 0.8 mm, and the
+twisted box. The folds left come from two places: the mesher's own folds on a
 face that lies on a grid plane, and projection near such a face or at a feature about one cell
 thick. Fixing those needs a projection that aims a vertex toward its own face, or a mesher
-change; both are left for later. The merge made cleanup slower: up to 10% on the hand at print
-0.8 mm and 2.8% over the bench's cleanups. It also lowered the edge count that the old density
+change; both are left for later. The merge made cleanup slower. With the core on, it is up to
+10% slower on the hand at print 0.8 mm and 2.8% over the bench's cleanups. With the core off
+(the JS path), it is 1.5% to 22% slower over the seven JS cases of the two section 5
+tables: the hand at print 0.8 mm went from 1844 to 2247 ms, at preview from 643 to 762 ms
+and at 0.5 mm from 4500 to 5197 ms, the vase from 576 to 667 ms, the blob shrink from 528
+to 588 ms, and the join from 738 to 771 ms at preview and 1665 to 1690 ms at print. Most of
+it is likely the JS fold check, which runs twice on each allowed first-pass collapse (the
+core has an exact shortcut). The merge also lowered the edge count that the old density
 rule divided by, which is why the rule now counts area (section 4, step 2).
 
 **Corners solved on their faces (0.207).** Step 3's corner point is now solved on the field from
@@ -556,6 +571,17 @@ knurl at 0.3 mm goes from 129 to 56. On the hand's palm, where two of three face
 the worst vertex of the near-miss sweep went from 0.05 to 0.007 mm off the field. With the core on,
 the stage is 1% to 7% slower on the plate, the bracket and the vase. In JS the corner passes
 alone take 1.5 to 2 times as long (plate 16 to 26 ms, bracket 16 to 34 ms, vase 13 to 20 ms).
+
+Where four or more flat faces meet (a pyramid's tip), the solve's quadrant reads can land on a
+fourth face, and its step then cannot be taken. Such a candidate goes back to its start, where
+its three planes meet, and is read there on a ring of 16 directions in each plane. It is kept
+only if the move that zeroes those three faces' models is under `CONVERGED`·edge and it passes
+the same field and angle tests. Beside a curved sharp edge, two tangent planes of one face meet
+off it, so the move there is 0.005 cells or more, and the point is refused. On 36 pyramid tips
+(4 or 6 faces; leaning 25°, 35° and 50°; turned 0, 0.3 and 0.7 rad; tip heights 8 and 10.17;
+0.6 mm, preview) 2 stay cut, as in 0.206; the solve alone had left 11. At 1.0 mm none stays cut.
+No digest of `test/implicit-sharpen-digest.test.js` moved: on its 25 cases every candidate that
+goes back is refused.
 
 **Blocked corners (0.207).** The plan held an edge flip for a corner the triangle layout blocks.
 None was needed: every swept box, a cut onion box and a bent box keep all their sharp corners

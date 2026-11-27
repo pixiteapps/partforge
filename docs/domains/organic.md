@@ -229,9 +229,10 @@ shrink a solid, or to texture one.
   edge is drawn sharp. Use a grid fine enough for the rounds you care about.
 - `frame` and `at` place the solid as they place any node.
 - A solid whose mesh folds back on itself so badly that its inside cannot be told from
-  its outside (some damaged STL files, and a few rim or taper triangles of a `k.implicit`
-  result, which fold less often since 0.207 but still can) usually builds, with a warning that names a point on the fold. If the build
-  fails, it is refused with that point: repair the mesh there in a mesh tool first.
+  its outside usually builds, with a warning that names a point on the fold. Examples are
+  some damaged STL files and a few rim or taper triangles of a `k.implicit` result. If
+  the build fails, it is refused with that point: repair the mesh there in a mesh tool
+  first.
 
 A rounded join between two ordinary solids. A sharp `union` of the same two solids has
 a square corner where the boss meets the plate. The blend fills that corner:
@@ -364,11 +365,19 @@ Shapes made of smooth blends look almost unchanged, but the stage still costs ti
 between about 25° and 80° is sharp in the mesh and in the export but can still look
 smooth on screen.
 
-- A corner where three faces meet gets a point on it: a box's 8, also on a thin shell, a
-  bent box or a box with a hole cut through it. No stray corner point appears beside a
-  curved sharp edge.
-- A corner whose faces meet at less than about 25° is drawn as an edge, not a corner.
-  The mesh still passes very close to it.
+- A corner gets a point on it where three faces meet and each pair of them meets at more
+  than about 25°. In the cases measured, every such corner got its point: boxes 3 to 12
+  grid cells wide wherever the grid falls, a thin shell, a bent box and a box with a hole
+  cut through it.
+- A corner can still stay cut by a small facet. This is most likely where four or more
+  faces meet. Of 36 pyramid tips with 4 or 6 faces at a 0.6 mm grid, 2 stayed cut, up to
+  about 0.5 mm short of the tip. On a fine texture, such as a knurl, some corners where
+  three faces meet stay cut too.
+- Where two faces of a corner meet at less than about 25°, it is drawn as an edge, not a
+  corner. The mesh still passes very close to it: within 0.02 mm on the hand's palm.
+- No corner point is placed beside a curved sharp edge, such as a hole's rim, where only
+  two faces meet. A box with a hole through it, a torus cut flat and a textured gyroid
+  vase get none. Before this check they got 4, 2 and 10 stray points.
 - Small notches can remain where a sharp edge fades into a blend.
 - A smooth `union` of three or more children has real creases where a third child is
   within `k`. Those creases are drawn as straight lines.
