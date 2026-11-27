@@ -230,7 +230,7 @@ shrink a solid, or to texture one.
 - `frame` and `at` place the solid as they place any node.
 - A solid whose mesh folds back on itself so badly that its inside cannot be told from
   its outside (some damaged STL files, and a few rim or taper triangles of a `k.implicit`
-  result) usually builds, with a warning that names a point on the fold. If the build
+  result, which fold less often since 0.207 but still can) usually builds, with a warning that names a point on the fold. If the build
   fails, it is refused with that point: repair the mesh there in a mesh tool first.
 
 A rounded join between two ordinary solids. A sharp `union` of the same two solids has
@@ -346,13 +346,13 @@ cells.
   `resolution` does not rebuild the preview, and the reverse.
 
 Measured on an Apple M1 Max with `node scripts/bench-implicit.mjs --core on` (CPU
-time), the hand fixture costs about 0.25 s in the engine at its 1.5 mm preview, about
-1.0 s at 0.8 mm and about 2.3 s at 0.5 mm. Manifold's import of the mesh adds to that.
+time), the hand fixture costs about 0.28 s in the engine at its 1.5 mm preview, about
+0.9 s at 0.8 mm and about 2.2 s at 0.5 mm. Manifold's import of the mesh adds to that.
 
 A `solid` leaf costs more than a plain shape. Measured with
 `node scripts/bench-implicit.mjs --core on` (CPU time, 0.6 mm grid), the engine takes
 about 0.47 s for a plate and boss join at preview and about 0.85 s at print. On a
-preview kernel, a 2 mm inward offset of a body of 2,950 triangles takes about 0.47 s
+preview kernel, a 2 mm inward offset of a body of 2,950 triangles takes about 0.46 s
 end to end with `k.implicit`. `Solid.offset(-2)` on the same body takes about 9.3 s.
 
 **Sharp edges and corners.** The mesh keeps the field's sharp edges and corners: a box
@@ -364,10 +364,11 @@ Shapes made of smooth blends look almost unchanged, but the stage still costs ti
 between about 25° and 80° is sharp in the mesh and in the export but can still look
 smooth on screen.
 
-- Most corners are found. A corner can stay cut by a small facet, more often on a thin
-  shell or a bent shape.
-- Where a curved sharp edge meets nothing, a stray corner point can appear beside it,
-  very close to the surface.
+- A corner where three faces meet gets a point on it: a box's 8, also on a thin shell, a
+  bent box or a box with a hole cut through it. No stray corner point appears beside a
+  curved sharp edge.
+- A corner whose faces meet at less than about 25° is drawn as an edge, not a corner.
+  The mesh still passes very close to it.
 - Small notches can remain where a sharp edge fades into a blend.
 - A smooth `union` of three or more children has real creases where a third child is
   within `k`. Those creases are drawn as straight lines.
@@ -375,12 +376,15 @@ smooth on screen.
   active. Neither is a real edge in that same region.
 - A texture or formula whose creases the grid does resolve is sharpened, and that can
   more than double the part's build time. On a knurl at a 0.3 mm print grid, keeping the
-  edges took 170% of the time of the meshing before it.
-- A part with a lattice or an `abs` formula whose creases the grid resolves can cost as
-  much as the meshing before it, or more. A gyroid vase at a 1.2 mm preview grid took
-  110% to 125% with the native core.
-- On the hand and the box and cylinder solids measured, with the native core, it adds
-  about 6% to 30% to the time of the meshing before it.
+  edges took 170% of the time of the meshing before it, with the native core.
+- A part with a lattice or an `abs` formula whose creases the grid resolves can cost
+  nearly as much as the meshing before it. A gyroid vase at a 1.2 mm preview grid took
+  75% with the native core.
+- Measured with the native core, it adds about 3% to the time of the meshing before it
+  on the hand at its 1.5 mm preview, about 7% at 0.8 mm and 5% at 0.5 mm. It adds 11% on
+  the plate and boss join at preview, 7% at print, 8% on the blob shrink, and 16% on a
+  boss near a plate's edge or in a bracket's inside corner at 0.6 mm.
+- Without the native core it adds about 5% on the hand and 13% to 25% on those solids.
 
 **Thin features.** A feature thinner than two grid cells can break up or grow handles.
 The build warns (see "Errors and warnings"). Thicken the feature, or build it as its own
