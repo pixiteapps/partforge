@@ -26,8 +26,8 @@
 ## Decisions taken for this plan (controller's calls; record them in the spec in Task 5)
 
 - Tube cross-section: 12 sides, radius `d / 2` from the line's reading; open lines get flat end caps.
-- Colour: the declaration may carry `display: { color }` (a CSS colour string); default `LINE_COLOR = "#e8e2d0"` (natural UHMWPE). One CAD-style material per line (`buildCadMaterial`), the same in every render mode in 3a; realistic and cel looks for lines are a later refinement.
-- Limit tint colour `LINE_LIMIT_COLOR = "#e5484d"`. A line is past its limit when its `bendRatio < minBendRatio`, or, during a pose drag, when `|length − lengthAtPress|` exceeds the bound of the view's declared `lineDrift` expectation (`verify.expect._view.lineDrift`, parsed with `parseAssertion` from `oracle/assert-dsl.js`; only a `<=`/`<` bound counts, anything else gives no drift limit).
+- Colour: the declaration may carry `display: { color }` (a 0xRRGGBB number, as a sub-part's `display.color`); default `LINE_COLOR = 0xe8e2d0` (natural UHMWPE). One CAD-style material per line (`buildCadMaterial`), the same in every render mode in 3a; realistic and cel looks for lines are a later refinement.
+- Limit tint colour `LINE_LIMIT_COLOR = 0xe5484d`. A line is past its limit when its `bendRatio < minBendRatio`, or, during a pose drag, when `|length − lengthAtPress|` exceeds the bound of the view's declared `lineDrift` expectation (`verify.expect._view.lineDrift`, parsed with `parseAssertion` from `oracle/assert-dsl.js`; only a `<=`/`<` bound counts, anything else gives no drift limit).
 - Readout: one item per readable line in the view during any pose drag, `{ key: "line:<name>", label: <name>, unit: "mm", value: length, text: "<length 2dp> (<signed drift 2dp>)" }`, e.g. `286.51 (+0.03)`, drift against the length at the press.
 - A dev-only page `capstan-joint.html` (+ `src/app-capstan-joint.js`, `src/capstan-joint-worker.js`), not in `rollupOptions.input`, added to the lighter smoke shard in `.github/workflows/ci.yml`.
 
@@ -52,7 +52,7 @@
 - Consumes: `linesInView(part, view)`, `readLine(d, decl)` (read.js) — `readLine` returns `{ name, on, mode, d, closed, length, bendRatio, minBendRatio, points }`.
 - Produces:
   - `tubeMesh(points: number[][], { radius: number, sides?: number = 12, closed?: boolean = false }) -> { positions: Float32Array, normals: Float32Array, indices: Uint32Array }` (Z-up part coordinates, the mesh payload shape `viewer.setSubGeometry` and softrender read).
-  - `LINE_COLOR = "#e8e2d0"`, `LINE_TUBE_SIDES = 12` (exported from tube.js).
+  - `LINE_COLOR = 0xe8e2d0`, `LINE_TUBE_SIDES = 12` (exported from tube.js).
   - `lineMeshes(part, view, d) -> Array<{ name: string /* "line:<decl name>" */, line: string /* decl name */, mesh: {positions, normals, indices} | null, display: { color }, reading: object | null, error: string | null }>` in meshes.js: one entry per `linesInView` decl, in declaration order; an unreadable line has `mesh: null`, `reading: null`, `error` (the first line of the message). Never throws.
   - `normalizeLines` entries gain `display: { color } | null`.
 
@@ -62,8 +62,8 @@
   - A single distinct point (`[[1,1,1],[1,1,1]]`) and `[]` give empty arrays.
   - A closed square loop (`closed: true`, last point equal to the first, as `solveTaut` returns it) has no end caps (each edge used by two triangles, no cap-centre vertex) and no seam gap (the first and last rings coincide or are shared).
   - A quarter circle of 46 points keeps the ring orientation continuous: no ring twists more than 30° about the tangent between neighbours (parallel transport, not Frenet).
-  - `lineMeshes` on `concentricCapstan` (test/fixtures/capstan-fixtures.js) at defaults: one entry named `"line:rope"`, `display.color === LINE_COLOR`, `reading.length` equal to `measureLines`' length, mesh non-empty; with `display: { color: "#ff0000" }` on the decl the colour is passed through; with a derive whose source throws, the entry is `{ mesh: null, reading: null }` with a non-empty `error`.
-  - Lint: `lines: { rope: { on: "drive", display: "red" } }` and `display: { color: 3 }` are `line-bad-source` errors; `display: { color: "#ff0000" }` is clean.
+  - `lineMeshes` on `concentricCapstan` (test/fixtures/capstan-fixtures.js) at defaults: one entry named `"line:rope"`, `display.color === LINE_COLOR`, `reading.length` equal to `measureLines`' length, mesh non-empty; with `display: { color: 0xff0000 }` on the decl the colour is passed through; with a derive whose source throws, the entry is `{ mesh: null, reading: null }` with a non-empty `error`.
+  - Lint: `lines: { rope: { on: "drive", display: "red" } }` and `display: { color: 3 }` are `line-bad-source` errors; `display: { color: 0xff0000 }` is clean.
 - [ ] **Step 2: Run** `npx vitest run test/lines-tube.test.js test/lint-lines.test.js` — expect FAIL (module missing).
 - [ ] **Step 3: Implement** `tubeMesh` (drop consecutive points closer than 1e-9; parallel-transport frames; one ring of `sides` vertices per kept point; flat caps with their own vertices and axial normals for open lines; a closed line reuses the first ring), `lineMeshes`, the `display` passthrough and the lint check.
 - [ ] **Step 4: Run** the same tests, plus `npx vitest run test/lines-read.test.js test/worker-layering.test.js` — expect PASS.
@@ -94,7 +94,7 @@
 
 **Interfaces:**
 - Consumes: `lineMeshes` (Task 1); the viewer's overlay contract — `viewer._subMeshes` (parent the group under the first sub-mesh's `parent`, as `measure/dim3-scene.js` `ensureAttached` does), `viewer.requestRender()`, `viewer.registerCutawayMaterial(mat)`; `buildCadMaterial(display, base)` from `materials/physical.js`; `resolveDerived(part, params)` from `derive.js` (memoized inside mount's `withDeriveMemo`).
-- Produces: `createLineScene(viewer, part) -> { update(view: string, d: object): void, readings(): Map<string /* decl name */, reading | null>, setLimit(name: string, on: boolean): void, dispose(): void }`. `update` re-meshes every line of the view (one `THREE.Mesh` per line, named `line:<name>`, geometry disposed and replaced each call), hides lines not in the view or unreadable, applies `LINE_LIMIT_COLOR` to a line whose `bendRatio < minBendRatio` (and to a line `setLimit` turned on), and calls `requestRender()`. `LINE_LIMIT_COLOR = "#e5484d"` exported here.
+- Produces: `createLineScene(viewer, part) -> { update(view: string, d: object): void, readings(): Map<string /* decl name */, reading | null>, setLimit(name: string, on: boolean): void, dispose(): void }`. `update` re-meshes every line of the view (one `THREE.Mesh` per line, named `line:<name>`, geometry disposed and replaced each call), hides lines not in the view or unreadable, applies `LINE_LIMIT_COLOR` to a line whose `bendRatio < minBendRatio` (and to a line `setLimit` turned on), and calls `requestRender()`. `LINE_LIMIT_COLOR = 0xe5484d` exported here.
 - Mount: creates the scene only when `normalizeLines(part).length > 0`, and calls `lineScene.update(view(), resolveDerived(part, params).d)`:
   - at the end of `applyParamChange` (inside the existing `withDeriveMemo`, so no extra derive),
   - in `showView` after `viewer.showAssembly` (first show and every view switch),
