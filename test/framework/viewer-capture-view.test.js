@@ -226,6 +226,18 @@ test("renderMeshPayloads disposes a display-override clone material but not the 
   viewer.dispose();
 });
 
+test("renderMeshPayloads builds a payload's own `display` (a line:<name> tube is no sub-part)", () => {
+  const viewer = newViewer();
+  const sharedMaterial = viewer._subMeshes.a.material;
+  viewer.renderMeshPayloads([cubePayload("a"), { ...cubePayload("line:rope"), display: { color: 0x123456 } }], { size: 64, style: "cad" });
+  const meshes = [];
+  state.lastRenderScene.traverse((o) => { if (o.isMesh && o.geometry && !o.isLineSegments2) meshes.push(o); });
+  const rope = meshes.filter((m) => m.material !== sharedMaterial && m.material.color?.getHex() === 0x123456);
+  expect(rope).toHaveLength(1);
+  expect(state.disposedMaterials.has(rope[0].material)).toBe(true);
+  viewer.dispose();
+});
+
 // Review fix 1: the throwaway scene must carry its own ambient hemisphere + camera-relative
 // key/fill. renderOffscreen's capture lights (and the persistent hemisphere) live in the LIVE
 // scene, which is never rendered here, so without these the thumbnail comes back near-black.

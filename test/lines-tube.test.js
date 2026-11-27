@@ -121,4 +121,26 @@ describe("lineMeshes", () => {
     expect(out[0].error).toContain("boom");
     expect(out[0].error).not.toContain("more");
   });
+  it("a line with no finite diameter has no mesh and says so; its reading stands", () => {
+    for (const bad of [NaN, undefined, 0, -1]) {
+      const info = d.drive.lineInfo();
+      const drive = { lineInfo: () => ({ ...info, lines: { rope: { ...info.lines.rope, d: bad } } }) };
+      const [entry] = lineMeshes(concentricCapstan, "assembly", { drive });
+      expect(entry.mesh).toBeNull();
+      expect(entry.error).toBe('line "rope" has no diameter');
+      expect(entry.reading.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("tubeMesh with no radius", () => {
+  it("radius <= 0 (or not a number) gives an empty payload, never NaN", () => {
+    for (const radius of [0, -1, NaN, undefined]) {
+      const m = tubeMesh([[0, 0, 0], [10, 0, 0], [10, 5, 0]], { radius });
+      expect(m.positions.length).toBe(0);
+      expect(m.normals.length).toBe(0);
+      expect(m.indices.length).toBe(0);
+      expect(allFinite(m)).toBe(true);
+    }
+  });
 });

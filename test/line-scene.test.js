@@ -1,20 +1,31 @@
 // The live viewer's line scene (framework/line-scene.js): one tube mesh per declared line of the
-// view, parented with the sub-part meshes, re-meshed from derive on every update.
+// view, handed to the viewer as a display object, re-meshed from derive on every update.
 import { describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
 import { createLineScene, LINE_LIMIT_COLOR } from "../src/framework/line-scene.js";
 import { LINE_COLOR } from "../src/framework/lines/tube.js";
 import { lineDriftBound } from "../src/framework/lines/meshes.js";
+import { CEL_LAYER } from "../src/framework/cel/cel-ink.js";
 import { concentricCapstan, make } from "./fixtures/capstan-fixtures.js";
 
-const fakeViewer = () => {
+// addDisplayObject as the viewer's: parents the object and calls onLook with the mode now
+// and on each look change (`v.setLook(mode)` here).
+const fakeViewer = (mode = "cad") => {
   const parent = new THREE.Group();
-  return {
+  const looks = new Set();
+  const v = {
     parent,
-    _subMeshes: { a: { parent } },
     requestRender: vi.fn(),
     registerCutawayMaterial: vi.fn(() => vi.fn()),
+    addDisplayObject: vi.fn((object, { onLook } = {}) => {
+      parent.add(object);
+      looks.add(onLook);
+      onLook?.(mode);
+      return vi.fn(() => { looks.delete(onLook); object.removeFromParent(); });
+    }),
+    setLook: (m) => { for (const f of looks) f?.(m); },
   };
+  return v;
 };
 const dAt = (angle) => concentricCapstan.derive({ motorAngle: angle });
 const rope = (v) => v.parent.getObjectByName("line:rope");
@@ -188,15 +199,55 @@ describe("createLineScene", () => {
     expect(rope(v).material.color.getHex()).toBe(LINE_COLOR);
   });
 
-  test("attaches once the sub-part meshes exist", () => {
+  test("hands its group to the viewer as a display object at once, and takes it back on dispose", () => {
     const v = fakeViewer();
-    const subs = v._subMeshes;
-    v._subMeshes = {};
     const scene = createLineScene(v, concentricCapstan);
-    scene.update("assembly", dAt(0));
-    expect(rope(v)).toBeUndefined();
-    v._subMeshes = subs;
+    expect(v.addDisplayObject).toHaveBeenCalledTimes(1);
+    expect(v.parent.getObjectByName("lines")).toBeTruthy();
     scene.update("assembly", dAt(0));
     expect(rope(v).visible).toBe(true);
+    expect(rope(v).geometry.boundingBox).toBeTruthy(); // the viewer's framing bounds read it
+    const remove = v.addDisplayObject.mock.results[0].value;
+    scene.dispose();
+    expect(remove).toHaveBeenCalled();
+  });
+
+  test("cel: a band material on CEL_LAYER, back to CAD on leaving; cutaway-registered, tint followed", () => {
+    const v = fakeViewer();
+    const scene = createLineScene(v, concentricCapstan);
+    scene.update("assembly", dAt(0));
+    const cad = rope(v).material;
+    expect(cad.isMeshStandardMaterial).toBe(true);
+    expect(rope(v).layers.isEnabled(CEL_LAYER)).toBe(false);
+    v.setLook("cel");
+    const cel = rope(v).material;
+    expect(cel.userData.pfCel).toBe(true);
+    expect(rope(v).layers.isEnabled(CEL_LAYER)).toBe(true);
+    expect(v.registerCutawayMaterial).toHaveBeenCalledWith(cel);
+    // a tint is a new band material; the old one is let go
+    const celUnregister = v.registerCutawayMaterial.mock.results.at(-1).value;
+    const celDispose = vi.spyOn(cel, "dispose");
+    scene.setLimit("rope", true);
+    expect(rope(v).material).not.toBe(cel);
+    expect(rope(v).material.userData.pfCel).toBe(true);
+    expect(celDispose).toHaveBeenCalled();
+    expect(celUnregister).toHaveBeenCalled();
+    v.setLook("cad");
+    expect(rope(v).material).toBe(cad);
+    expect(cad.color.getHex()).toBe(LINE_LIMIT_COLOR);
+    expect(rope(v).layers.isEnabled(CEL_LAYER)).toBe(false);
+    // realistic keeps the CAD material
+    v.setLook("realistic");
+    expect(rope(v).material).toBe(cad);
+    scene.dispose();
+  });
+
+  test("a line built while cel is on is drawn in cel", () => {
+    const v = fakeViewer("cel");
+    const scene = createLineScene(v, concentricCapstan);
+    scene.update("assembly", dAt(0));
+    expect(rope(v).material.userData.pfCel).toBe(true);
+    expect(rope(v).layers.isEnabled(CEL_LAYER)).toBe(true);
+    scene.dispose();
   });
 });

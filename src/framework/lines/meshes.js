@@ -51,8 +51,9 @@ export function lineMeshes(part, view, d) {
     const base = { name: `line:${decl.name}`, line: decl.name, display };
     try {
       const reading = readLine(d, decl);
-      const radius = Number.isFinite(reading.d) ? reading.d / 2 : 0;
-      const mesh = tubeMesh(reading.points, { radius, closed: reading.closed });
+      // the reading stands (its length is still read); only the tube needs a diameter
+      if (!(Number.isFinite(reading.d) && reading.d > 0)) return { ...base, mesh: null, reading, error: `line "${decl.name}" has no diameter` };
+      const mesh = tubeMesh(reading.points, { radius: reading.d / 2, closed: reading.closed });
       return { ...base, mesh, reading, error: null };
     } catch (e) {
       return { ...base, mesh: null, reading: null, error: errText(e) };

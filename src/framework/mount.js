@@ -29,6 +29,7 @@ import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 import { withDeriveMemo } from "./derive-memo.js";
 import { normalizeLines } from "./lines/read.js";
+import { lineMeshes } from "./lines/meshes.js";
 import { createLineScene } from "./line-scene.js";
 import { lineReadings, lineDriftBound } from "./lines/meshes.js";
 import { createBackendPolicy, organicExportParts } from "./backend-select.js";
@@ -2735,6 +2736,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // renderMeshPayloads' own options (including `background` and
     // `style`: "thumbnail" by default, "cad" for the agent look) pass straight
     // through from the caller.
+    function captureLinePayloads(target) {
+      let d;
+      try { d = resolveParams(part, params).d; } catch { return []; }
+      return lineMeshes(part, target, d)
+        .filter((l) => l.mesh && l.mesh.positions.length > 0)
+        .map((l) => ({ name: l.name, ...l.mesh, triangles: l.mesh.indices.length / 3, display: l.display }));
+    }
     const captureView = async (viewName, opts = {}) => {
       try {
         const target = (viewName && part.views?.[viewName]) ? viewName : resolveDefaultView(part);
@@ -2742,7 +2750,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (!subparts.length) return null;
         const meshes = await captureBuild.request({ subparts, view: target, params, backend: backendFor() });
         if (!meshes || !meshes.length) return null; // 4A resolves null on a worker build failure
-        return viewer.renderMeshPayloads(meshes, { size: 640, quality: 0.8, angle: "iso", ...opts });
+        // The view's declared lines ride along as display meshes with their own
+        // `display` (as `partforge render` draws them); a part with no lines derives
+        // nothing extra, and a line that cannot be read is left out.
+        const payloads = normalizeLines(part).length ? [...meshes, ...captureLinePayloads(target)] : meshes;
+        return viewer.renderMeshPayloads(payloads, { size: 640, quality: 0.8, angle: "iso", ...opts });
       } catch {
         return null; // best-effort: a failed thumbnail never breaks the caller
       }

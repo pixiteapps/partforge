@@ -1,12 +1,18 @@
 // A part's declared lines in the live viewer: one tube mesh per line, named `line:<name>`,
-// parented with the sub-part meshes (so the pivot, the per-view recentring and the cutaway
-// apply as they do to a sub-part) and re-meshed from derive on every update. Main-thread
-// only (three.js); the worker never loads it. A line is a display mesh like a sub-part's,
-// so it is NOT hidden from captures; it is not a sub-part either (no export, no picking).
-// It lives outside lines/, which stays pure and three-free.
+// handed to the viewer as a display object (viewer.addDisplayObject: parented with the
+// sub-part meshes, so the pivot, the per-view recentring and the cutaway apply as they do
+// to a sub-part, and counted in the framing and depth bounds) and re-meshed from derive on
+// every update. Main-thread only (three.js); the worker never loads it. A line is a display
+// mesh like a sub-part's, so it is NOT hidden from captures; it is not a sub-part either
+// (no export, no picking). It lives outside lines/, which stays pure and three-free.
+// Its look follows the viewer's: CAD's standard material in CAD and realistic (lit there by
+// the environment, like a matte plastic), and in cel a band material toned from its colour,
+// on CEL_LAYER so the ink outlines it.
 import * as THREE from "three";
 import { RENDER_STYLES } from "./renderStyles.js";
 import { buildCadMaterial } from "./materials/physical.js";
+import { buildCelMaterial } from "./cel/cel-material.js";
+import { CEL_LAYER } from "./cel/cel-ink.js";
 import { lineMeshes } from "./lines/meshes.js";
 
 /** The colour a line takes past a limit: its bend ratio under the rope's minimum, or a limit setLimit turned on. */
@@ -28,22 +34,41 @@ export const LINE_LIMIT_COLOR = 0xe5484d;
 export function createLineScene(viewer, part) {
   const group = new THREE.Group();
   group.name = "lines";
-  const recs = new Map(); // decl name -> { mesh, color, limit, bent, unregister }
+  const recs = new Map(); // decl name -> { mesh, cad, cel, celHex, color, limit, bent, unregister, unregisterCel }
   const pendingLimits = new Set(); // setLimit(name, true) for a line not built yet
   let current = new Map();
-  let attached = false;
   let disposed = false;
+  let look = "cad"; // the viewer's render mode, told through onLook
 
-  // The sub-part meshes' shared parent (partsGroup) exists only once a delivery has landed:
-  // until then the group waits, and the next update tries again.
-  function ensureAttached() {
-    if (attached) return true;
-    const parent = Object.values(viewer._subMeshes ?? {})[0]?.parent;
-    if (!parent) return false;
-    parent.add(group);
-    attached = true;
-    return true;
+  // The cel band material for the colour the line shows now, built on demand and rebuilt
+  // when the tint changes (its tones are baked from one colour).
+  function celOf(rec) {
+    const hex = shownHex(rec);
+    if (rec.cel && rec.celHex === hex) return rec.cel;
+    dropCel(rec);
+    rec.cel = buildCelMaterial({ color: hex });
+    rec.celHex = hex;
+    rec.unregisterCel = viewer.registerCutawayMaterial?.(rec.cel) ?? (() => {});
+    return rec.cel;
   }
+  function dropCel(rec) {
+    if (!rec.cel) return;
+    rec.unregisterCel();
+    rec.cel.dispose();
+    rec.cel = null;
+    rec.celHex = null;
+  }
+  function applyLook(rec) {
+    const cel = look === "cel";
+    rec.mesh.material = cel ? celOf(rec) : rec.cad;
+    if (cel) rec.mesh.layers.enable(CEL_LAYER); else rec.mesh.layers.disable(CEL_LAYER);
+  }
+  function onLook(mode) {
+    if (disposed) return;
+    look = mode;
+    for (const rec of recs.values()) applyLook(rec);
+  }
+  const removeObject = viewer.addDisplayObject?.(group, { onLook }) ?? (() => {});
 
   const base = new THREE.MeshStandardMaterial({
     color: RENDER_STYLES.cad.material.color,
@@ -54,20 +79,23 @@ export function createLineScene(viewer, part) {
   function recFor(name, display) {
     let rec = recs.get(name);
     if (rec) return rec;
-    const material = buildCadMaterial(display, base);
-    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    const cad = buildCadMaterial(display, base);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), cad);
     mesh.name = `line:${name}`;
     mesh.visible = false;
     group.add(mesh);
-    const unregister = viewer.registerCutawayMaterial?.(material) ?? (() => {});
-    rec = { mesh, color: material.color.getHex(), limit: pendingLimits.has(name), bent: false, unregister };
+    const unregister = viewer.registerCutawayMaterial?.(cad) ?? (() => {});
+    rec = { mesh, cad, cel: null, celHex: null, color: cad.color.getHex(), limit: pendingLimits.has(name), bent: false, unregister, unregisterCel: () => {} };
     pendingLimits.delete(name);
     recs.set(name, rec);
+    applyLook(rec);
     return rec;
   }
 
+  const shownHex = (rec) => (rec.limit || rec.bent ? LINE_LIMIT_COLOR : rec.color);
   function paint(rec) {
-    rec.mesh.material.color.setHex(rec.limit || rec.bent ? LINE_LIMIT_COLOR : rec.color);
+    rec.cad.color.setHex(shownHex(rec));
+    if (look === "cel") applyLook(rec); // a new tint is a new band material
   }
 
   function geometryOf(mesh) {
@@ -75,13 +103,13 @@ export function createLineScene(viewer, part) {
     g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
     g.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
     g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    g.computeBoundingBox(); // the viewer's framing and depth bounds read it
     g.computeBoundingSphere();
     return g;
   }
 
   function update(view, d) {
     if (disposed) return;
-    ensureAttached();
     const next = new Map();
     for (const entry of lineMeshes(part, view, d)) {
       const rec = recFor(entry.line, entry.display);
@@ -129,16 +157,18 @@ export function createLineScene(viewer, part) {
     disposed = true;
     for (const rec of recs.values()) {
       rec.unregister();
+      dropCel(rec);
       rec.mesh.geometry.dispose();
-      rec.mesh.material.dispose();
+      rec.cad.dispose();
     }
     recs.clear();
     pendingLimits.clear();
     current = new Map();
     base.dispose();
+    removeObject();
     group.removeFromParent();
     group.clear();
-    if (attached) viewer.requestRender?.();
+    viewer.requestRender?.();
   }
 
   // Each line of the last update readable now and in `pressReadings` (name -> reading or

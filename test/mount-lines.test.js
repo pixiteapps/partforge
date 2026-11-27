@@ -70,6 +70,8 @@ vi.mock("../src/framework/viewer.js", () => ({
       invalidateFrames: vi.fn(),
       orbitBy: vi.fn(),
       _subMeshes: {},
+      displayObjects: [],
+      addDisplayObject: vi.fn((o) => { v.displayObjects.push(o); return vi.fn(); }),
       flashPoint: vi.fn(),
       holdFlashPoint: vi.fn(() => true),
       releaseFlashPoints: vi.fn(),
@@ -225,9 +227,9 @@ async function setup(part, view) {
   const createWorker = (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null });
   const runtime = mount(part, { createWorker, elements: makeElements() });
   const v = fakeViewers.at(-1);
-  // The scene attaches under the sub-part meshes' parent, as it does under partsGroup.
+  // The scene hands its group over as a display object; parent it, as the viewer does under partsGroup.
   const parts = new THREE.Group();
-  v._subMeshes.any = { parent: parts };
+  for (const o of v.displayObjects) parts.add(o);
   const w = workers.manifold;
   w.onmessage({ data: { type: "ready" } });
   w.onmessage({ data: { type: "meshes", meshes, ms: 5 } });
