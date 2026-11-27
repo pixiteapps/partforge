@@ -753,8 +753,8 @@ export default {
 At the defaults the hook's box is `[-20, 0, 0]` to `[20, 29, 70]` (the ball's front is at
 y = 5 + 18 + 6). `verify` passes: the solid is watertight and has the two holes. Above
 z = 30 the blended body is still exactly the plate, so the holes cut a plain flat plate.
-On an Apple M1 Max the part builds in about 0.6 s at its 0.75 mm preview and about
-1.2 s at its 0.5 mm print grid.
+On an Apple M1 Max the part builds in about 0.5 s at its 0.75 mm preview and about
+1.1 s at its 0.5 mm print grid.
 
 The points to copy:
 
