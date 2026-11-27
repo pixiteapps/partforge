@@ -367,8 +367,7 @@ describe("sharpenMesh, hard cases", () => {
   // Plain boxes 3 to 12 cells wide, placed three ways against the grid. Every one gets all 8
   // corners. Four used to miss one ("0.6 8 1", "0.6 9 1", "1 3 1", "1 4 1": the mesher's bevel
   // joined a face vertex straight to a crease point there). Since cleanup merges the vertex
-  // clusters on a face that lies on a grid plane (0.207), that join is gone and none is parked.
-  const ONE_CORNER_CUT = new Set();
+  // clusters on a face that lies on a grid plane (0.207), that join is gone.
   const OFFSETS = [[0, 0, 0], [0.37, 0.11, 0.73], [0.5, 0.5, 0.5]];
   for (const edge of GRIDS) {
     test(`sweep: boxes 3 to 12 cells wide get all 8 corners, wherever the grid falls (grid ${edge})`, () => {
@@ -378,8 +377,30 @@ describe("sharpenMesh, hard cases", () => {
         expectSound(r);
         const cs = cornerVerts(r.mesh).map((v) => vert(r.mesh, v));
         for (const p of cs) expect(Math.min(...truth.map((c) => dist(p, c))), name).toBeLessThanOrEqual(0.005);
-        expect(cs.length, name).toBe(ONE_CORNER_CUT.has(name) ? 7 : 8);
+        expect(cs.length, name).toBe(8);
       });
+    }, 120_000);
+  }
+
+  // Two shapes the final review of 0.206 saw find 7 of 8 corners. Both find 8 now.
+  // The cut onion box is the thin-wall shape. Its outer edges and corners are rounded (an onion
+  // offsets the box outward by a distance), so its 8 sharp corners are on the inner box: the 4 at
+  // the bottom and the 4 where the cut meets the inner box's upright edges.
+  // The bent box is a 10 x 10 x 40 box bent around z at radius 30. Its 8 corners are the box's
+  // corners carried by the bend.
+  const square = (h, zs) => zs.flatMap((z) => [[-h, -h, z], [h, -h, z], [-h, h, z], [h, h, z]]);
+  const bent = ([x, y, z], R) => { const rho = R - x, a = z / R; return [R - rho * Math.cos(a), y, rho * Math.sin(a)]; };
+  for (const edge of GRIDS) for (const tier of ["preview", "print"]) {
+    test(`cut onion box: all 8 inner corners (grid ${edge}, ${tier})`, () => {
+      const shell = { kind: "onion", t: 0.8, child: { kind: "box", size: [30, 30, 30] } };
+      const r = run({ kind: "intersect", children: [shell, { kind: "halfspace", normal: "z", offset: 5 }] }, edge, tier);
+      expectSound(r);
+      expectCorners(r.mesh, square(14.2, [-14.2, 5]));
+    }, 120_000);
+    test(`bent box: all 8 corners (grid ${edge}, ${tier})`, () => {
+      const r = run({ kind: "bend", radius: 30, child: { kind: "box", size: [10, 10, 40] } }, edge, tier);
+      expectSound(r);
+      expectCorners(r.mesh, square(5, [-20, 20]).map((c) => bent(c, 30)));
     }, 120_000);
   }
 
