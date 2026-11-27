@@ -338,6 +338,16 @@ describe("the sharpen stage runs on the core", () => {
   const OFFSETS = [[0, 0, 0], [0.37, 0.11, 0.73], [0.5, 0.5, 0.5]];
   const sweep = (edge, n, o) => { const h = (n * edge) / 2; return box([2 * h, 2 * h, 2 * h], OFFSETS[o].map((x) => x * edge)); };
   const cube = (edge, n) => { const h = (n * edge) / 2; return box([2 * h, 2 * h, 2 * h]); };
+  // A pyramid's tip (implicit-sharpen.test.js's "pyramid"): n faces leaning `lean` degrees from
+  // upright, turned `rot` radians, through (0, 0, H). Its corner candidates go back to their start.
+  const pyramid = (n, lean, rot, H) => {
+    const s = Math.sin(((90 - lean) * Math.PI) / 180), c = Math.cos(((90 - lean) * Math.PI) / 180), sides = [];
+    for (let i = 0; i < n; i++) {
+      const a = rot + (2 * Math.PI * i) / n;
+      sides.push({ kind: "halfspace", normal: [s * Math.cos(a), s * Math.sin(a), c], offset: H * c });
+    }
+    return { root: { kind: "intersect", children: [{ kind: "box", size: [40, 40, 40] }, { kind: "halfspace", normal: [0, 0, -1], offset: 0 }, ...sides] } };
+  };
   // [name, spec maker, edge, tier, sharp points expected]
   const CASES = [
     ...[[0.6, "preview"], [0.3, "print"]].flatMap(([edge, tier]) => [
@@ -362,6 +372,9 @@ describe("the sharpen stage runs on the core", () => {
     ["knurl and a box at 0.6", () => ({ root: { kind: "union", children: [knurl(), solidLeaf(k.box({ min: [30, -10, 0], max: [50, 10, 10] }))] } }),
       0.6, "preview", true],
     ["thin wall at 1.0", thinWall, 1.0, "preview", true],
+    ["4-faced pyramid at 0.6", () => pyramid(4, 35, 0.3, 8), 0.6, "preview", true],
+    ["4-faced pyramid at 1.0", () => pyramid(4, 25, 0, 10.17), 1.0, "preview", true],
+    ["6-faced pyramid at 0.6", () => pyramid(6, 35, 0.3, 10.17), 0.6, "preview", true],
   ];
   const FIELDS = ["positions", "indices", "normals"];
   const OWNER_FIELDS = [...FIELDS, "vertOwner", "ownerHeld", "pinned", "crease", "triOwner"];

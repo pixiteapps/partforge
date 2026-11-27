@@ -200,15 +200,18 @@ with a different test for where a crease is.
    `SHARP_MAX_MOVE` cells. A kept point close to an edge end moves that end, as
    `CREASE_SNAP` does. Otherwise it splits the edge.
    - **The density rule.** Each edge belongs to the leaf program of its lower end's
-     sparse-grid leaf. A program is dense when more than a fifth of its edges are
-     candidates (`SHARP_DENSE_DIV * candidates > edges`, with `SHARP_DENSE_DIV` 5, in
-     integers) and it has more than `SHARP_DENSE_MIN` (400) candidates. None of a dense
-     program's candidates is tried. This is decided before any field read.
+     sparse-grid leaf, and each triangle's area to the program of its lowest vertex. A
+     program is dense when it has more than `SHARP_DENSE_PER_CELL` (2) candidates per grid
+     cell of its surface area (`2 · n · edge² > SHARP_DENSE_PER_CELL · area2`, where
+     `area2` is the sum of the triangles' twice-areas) and more than `SHARP_DENSE_MIN` (400)
+     candidates. None of a dense program's candidates is tried. This is decided before any
+     field read. Since 0.207 the rule counts area, not edges: a cluster of vertices a hair
+     apart adds edges but no area.
    - Why: a texture finer than the grid makes half its edges candidates, and its cleaned
      mesh is already poor. The rule bounds the stage's cost there.
-   - Why the floor: a small part is one program, and its share of crease edges grows as
-     it shrinks (a cube 4 cells wide has 0.24). A small count costs little whatever its
-     share, so a program with few candidates is always tried.
+   - Why the floor: a small part is one program, and its candidates per cell grow as it
+     shrinks (small boxes under the floor reach 2.5 per cell). A small count costs little
+     whatever its density, so a program with few candidates is always tried.
    - What it costs: a fine texture, or facets finer than the grid, stay bevelled as they
      are today. A plain edge elsewhere in the part is still sharpened when its leaves have
      a different program, for example a box away from a knurled solid. A whole-body
@@ -244,9 +247,19 @@ with a different test for where a crease is.
      try counts as `cornerNear` and the next try is taken. Two vertices at one position can
      weld when the kernel builds the solid and break it.
 3. **Corners.** An edge with an edge point at one end, whose two ends carry three distinct
-   planes between them, is a corner candidate at the point where the three meet, under
-   the same two limits. A mesher vertex gives its normal as its one plane. A pinned or
-   crease vertex gives none.
+   planes between them, is a corner candidate. It starts at the point where the three
+   planes meet. A mesher vertex gives its normal as its one plane. A pinned or crease
+   vertex gives none.
+   - Since 0.207 the point is then solved on the field. Each step reads each face's
+     gradient a little way into that face and moves to where the three faces' planes
+     meet, up to `CORNER_STEPS` (12) steps. The first read distance is the farthest seed
+     plane's source, at most `CORNER_SIDE_MAX` (0.5) cells. A point is kept if the field
+     there is within `SHARP_TOL` cells, it is within `SHARP_MAX_MOVE` cells of the edge's
+     middle, and its three gradients are pairwise more than `SHARP_ANGLE` apart. The last
+     test refuses a point beside a curved sharp edge, where only two faces meet.
+   - Before 0.207 the point was the meeting point of the seed planes. A mesher vertex's
+     normal is a rough plane, so that point could lie off the true corner (0.25 mm on the
+     hand's palm), and a rim could make a stray corner (10 on the vase at 1.2 mm).
    - Estimates within `0.05` cells of each other are one corner (`CORNER_MERGE`). The
      group keeps the best estimate: the one with the fewest mesher planes, then the one
      whose planes come from farthest away.
@@ -342,20 +355,30 @@ at a 0.1 mm grid, far above the 1e-6 mm the tests call coincident, and 50 times 
 `CORNER_MERGE`. The native core mirrors every constant as a literal, and
 `test/implicit-sharpen-native.test.js` checks that the two agree.
 
-The density rule's share, one fifth (`SHARP_DENSE_DIV` 5), was chosen from the share of
-candidate edges per leaf program, at 0.6 and 1.0 mm. Where real edges and corners are (the
-plate, bracket, cylinder, curved crease, box, cage post and `offset` −2), the share is
-0.015 to 0.122. On the knurl it is 0.314 at 0.6 mm and 0.51 at 1.0 mm. The share per single
-leaf did not separate the two: a leaf is 4 cells across, so one crease through it already
-makes 0.1 to 0.75 of its edges candidates, and knurl leaves range from 0.1 to 1.
+The density limit, 2 candidates per grid cell of area (`SHARP_DENSE_PER_CELL`), was chosen
+in 0.207, after cleanup began to merge the mesher's vertex clusters. The rule before it
+(`SHARP_DENSE_DIV` 5: dense when more than a fifth of a program's edges are candidates)
+counted those clusters' zero-area triangles as edges. With them merged, a clean box n cells
+wide at 0.6 mm has a share of about 0.31 · 8 / n, so 0.31 at 8 cells (measured after the
+merge: 474 candidates among about 1,530 edges). It was taken for dense, so it lost its corners.
+Measured per program, in candidates per cell:
 
-`SHARP_DENSE_MIN` is 400. Small parts pass the share test: cubes 3 to 6 cells wide have a
-share of 0.21 to 0.40 with 113 to 249 candidates. From 7 cells up the share is under 0.2.
-Knurled knobs have at least 619 candidates (a cylinder of radius 1 mm, 0.6 mm grid). 400
-is near the middle of 249 and 619 on a ratio scale. With it every cube of 3, 4, 4.5, 5 and
-6 cells, at 0.6 and 1.0 mm, keeps exactly 8 corners, and a 4 mm boss on a plate keeps its
-own corners and edges. A long bar 4 by 4 mm, 20 to 200 mm long, at 1.0 mm, has a share of
-0.16 to 0.18 at every length, so it is never dense.
+- Boxes 3 to 12 cells wide, at 0.6 and 1.0 mm and three offsets: at most 1.26 where a box
+  passes the floor (474 candidates, the 8-cell box at 0.6 mm). Under the floor, up to 2.5.
+- The hand, the join, the plate, the bracket, the shrink, the box, the cylinder, the curved
+  crease, the cage post, `offset` ±2, the posed gap and the spheres: at most 0.42.
+- The knurl at the print grid 0.3 mm: 1.32, not dense, so it is sharpened as before.
+- Dense: the knurl at 0.6 mm (3.24), a knurled knob of radius 6 mm (4.64) and one of
+  radius 1 mm with 619 candidates (6.74). The vase's dense programs are 2.13 to 5.54.
+- The vase's least dense program, 2.13 at 0.6 mm, sets the limit at 2. Two vase programs
+  the old rule tried are now skipped as dense: 2.31 at 1.2 mm and 2.58 at 1.0 mm. No limit
+  keeps both sets as they were.
+
+`SHARP_DENSE_MIN` is 400. Small parts reach a high density: boxes under the floor reach 2.5
+per cell. Knurled knobs have at least 619 candidates (a cylinder of radius 1 mm, 0.6 mm
+grid). 400 is near the middle of 249 and 619 on a ratio scale. With it every box 3 to 12
+cells wide, at 0.6 and 1.0 mm, keeps exactly 8 corners, and a 4 mm boss on a plate keeps
+its own corners and edges.
 
 The worst case the floor lets through is a texture with just under 400 candidates. A
 knurled cylinder of radius 0.6 mm and height 1 mm at 0.6 mm has 283: the stage takes 62 ms
@@ -397,8 +420,9 @@ sample, mesh and cleanup, wall milliseconds, median of 3 after a warm-up.
 | Box boss on a cylinder's side | 220 | 30 | 13.8% |
 | Knurled cylinder (`displace`) | 397 | 7 | 1.6% |
 
-The `SHARP_APART` guard costs about 2 to 3 points of that share: each round and corner pass
-files every vertex in its grid once.
+The `SHARP_APART` guard cost about 2 to 3 points of that share: each round and corner pass
+filed every vertex in its grid once. Since 0.207 it files only the vertices near the points it is
+asked about (see "Follow-ups (0.207)" below).
 
 **The vase on the core.** The vase test part (`vaseSpec()`, `test/implicit-cleanup.test.js`)
 at its 1.2 mm preview grid, core on, wall milliseconds, median of 3 after a warm-up
@@ -411,10 +435,11 @@ at its 1.2 mm preview grid, core on, wall milliseconds, median of 3 after a warm
 The stage costs more than everything before it here. The vase's gyroid (`abs` of a formula)
 and its `k: 0` intersect have real creases that the grid resolves, so the density rule does
 not skip them. In JS the whole build went from 1.07 s to 2.34 s. The rule is not changed for
-it.
+it. This table is 0.206's. Since 0.207 the vase at 1.2 mm gets no corner point, and one of its
+programs is skipped as dense (see the density measurements above).
 
-**A known cost: the knurl at the print grid.** At 0.3 mm the knurl's ridges are resolved. Its
-share of candidate edges falls under a fifth, so the density rule does not skip it, and it is
+**A known cost: the knurl at the print grid.** At 0.3 mm the knurl's ridges are resolved. It
+has 1.32 candidates per cell, under the limit, so the density rule does not skip it, and it is
 sharpened in full. Those points are real creases. The stage then costs about one and a half
 times the stages before it. The rule is not changed for it.
 
@@ -422,6 +447,12 @@ times the stages before it. The rule is not changed for it.
 | --- | --- | --- | --- | --- | --- | --- |
 | 0.3 mm | 1716 | 2914 | 170% | 26,356 | 129 | 361,080 to 404,828 |
 | 0.6 mm (dense, skipped) | 387 | 7 | 1.7% | 0 | 0 | 82,680, unchanged |
+
+This table is 0.206's. Since 0.207 the knurl at 0.3 mm keeps 56 corners of 129. Counted by
+how many faces meet at each point, before {1: 7, 2: 62, 3: 9, 4: 34, 5: 17} and after
+{3: 5, 4: 33, 5: 18}. So 69 of the 73 it lost sat where fewer than three faces meet, and 4
+had three faces (the 4-face and 5-face counts each moved by one). Its current cost is in
+section 5's 0.207 table.
 
 At 0.3 mm the result is sound: no open edge, no pinched vertex, no coincident pair, and no
 flip or sliver among the triangles the stage made. The mesher's own flips fall from 3,661 to
@@ -446,18 +477,115 @@ flip or sliver among the triangles the stage made. The mesher's own flips fall f
 - The plate at the print tier's cleanup, 0.3 mm grid: sound, and the 99th percentile
   error away from the blend is 0.000 mm.
 - Plain boxes 3 to 12 cells wide, in steps of half a cell, at 0.6 and 1.0 mm, each at
-  three offsets against the grid (114 cases): 110 get all 8 corners. Before the second
-  corner pass, 7 cases missed one corner. Four still do (0.6 mm: 8 and 9 cells; 1.0 mm: 3
-  and 4 cells; all at the offset 0.37, 0.11, 0.73 cells). There the mesher's bevel joins
-  a vertex of one face straight to an edge point on the crease above it, so every split
-  or move that puts a vertex on the corner leaves a triangle that cuts through the solid.
-  The corner stays cut by a small facet, and the three creases' edge points stop 0.35 to
-  1.05 cells short of it. Reaching it needs edge flips, which the stage does not do.
+  three offsets against the grid (114 cases): all 114 get exactly 8 corners since 0.207.
+  In 0.206, four missed one corner (0.6 mm: 8 and 9 cells; 1.0 mm: 3 and 4 cells; all at
+  the offset 0.37, 0.11, 0.73 cells). There the mesher's bevel joined a vertex of one face
+  straight to an edge point on the crease above it, so every split or move that put a
+  vertex on the corner left a triangle that cut through the solid. Cleanup's cluster merge
+  removed that layout, so no edge flip was needed.
+- A cut onion box (`intersect(onion(t 0.8, box 30³), z ≤ 5)`) gets its 8 sharp corners (the
+  inner box's 4 bottom corners and the 4 where the cut meets its upright edges), and a box
+  bent at radius 30 mm gets its 8, at 0.6 and 1.0 mm and both tiers. The onion's outer
+  corners are rounded by the onion, so they are not sharp.
+- Box minus a through cylinder (`k: 0`) gets exactly its 8 corners at 0.6 and 1.0 mm and
+  both tiers, and a torus cut by a plane none. The vase at 1.2 mm gets no corner point
+  (10 in 0.206, none of them on three faces), and the knurl at 0.3 mm 56 (129 in 0.206).
 - The sharpened plate, bracket and knurl each build as a valid solid with every triangle
   kept, as `k.implicit` builds one.
 
 **What this does not give.** A flat face stays at grid density, not two triangles. A
 curved face follows the grid, not the solid's own facets. Both are true today.
+
+**Follow-ups (0.207).** The stage's bookkeeping now follows its candidates. Before, a round did
+work over the whole mesh whenever any candidate existed, up to four times (two edge rounds, two
+corner passes). On the hand at a 0.8 mm print grid (347 candidates in 264,580 vertices) field
+reads were about 1% of the stage. Now the first round tests every edge's angle before it builds
+anything, and returns at once when none passes. The apart guard files only the vertices in the 27
+cells around each point its commit will ask about; a point it was not built for is answered by
+testing every vertex, with the same answer. Re-triangulation subdivides only the triangles on a
+split edge and copies the rest in blocks. The corner passes scan only the edge points' fans, and
+step 7 finds each retried edge from its own triangles, at the place a full scan would meet it. The
+commit loops keep their buffers and put back what a dropped commit moved. The output is the same
+on every input, byte for byte: `test/implicit-sharpen-digest.test.js` pins 25 cases (JS and core)
+recorded before the change. What is left on the hand is one pass over the triangles for the angle
+test and one adjacency build per round and per pass. The vase and the knurl at 0.3 mm gained
+less: the vase's stage went from 112% to 94% of the stages before it, and the knurl's from 175% to
+161%. There most of the time is solving real creases. These figures, and the table below, are
+from after the bookkeeping change alone, before cleanup's cluster merge, the area density rule
+and the corner solve. Section 5's 0.207 table has the final figures (vase 75%, knurl 170%).
+
+`scripts/bench-implicit.mjs`, CPU milliseconds, median of 3. "Before" is sample, mesh and cleanup
+(the hand's crease cut is not counted in it).
+
+After the bookkeeping change alone (not the final 0.207 figures):
+
+| Case | Core | Before | Stage, old | Share, old | Stage, new | Share, new |
+| --- | --- | --- | --- | --- | --- | --- |
+| Hand, print 0.8 mm | on | 648 | 235 | 36.7% | 46 | 7.1% |
+| Hand, preview 1.5 mm | on | 211 | 13 | 6.3% | 5 | 2.4% |
+| Hand, print 0.5 mm | on | 1548 | 383 | 24.8% | 102 | 6.6% |
+| Boss near a plate's edge, 0.6 mm | on | 391 | 69 | 17.6% | 60 | 15.3% |
+| Boss in an L bracket's corner, 0.6 mm | on | 358 | 60 | 16.8% | 54 | 15.1% |
+| Two blended spheres, 0.6 mm | on | 31 | 0 | 0% | 0 | 0% |
+| Vase, preview 1.2 mm | on | 145 | 167 | 112% | 136 | 94% |
+| Knurl, preview 0.6 mm (dense) | on | 411 | 7 | 1.8% | 6 | 1.5% |
+| Knurl, print 0.3 mm | on | 1787 | 3097 | 175% | 2885 | 161% |
+| Hand, print 0.8 mm | off | 2927 | 813 | 28.0% | 148 | 5.1% |
+| Hand, preview 1.5 mm | off | 1097 | 180 | 16.8% | 65 | 5.9% |
+| Boss near a plate's edge, 0.6 mm | off | 1302 | 296 | 23.3% | 254 | 19.5% |
+| Boss in an L bracket's corner, 0.6 mm | off | 1197 | 311 | 25.4% | 248 | 20.7% |
+| Vase, preview 1.2 mm | off | 950 | 1486 | 158% | 1295 | 136% |
+| Knurl, print 0.3 mm | off | 5951 | 12551 | 211% | 11581 | 195% |
+
+Each share is against the "Before" of its own runs. The column shows the new runs'; the old runs'
+differ by a few percent. Every cell is CPU time. The bench rounds to a millisecond, so the
+spheres' stage reads 0 in both runs. A direct wall timing of that stage gives 0.4 ms old and
+0.1 ms new, against about 22 and 25 ms of wall time for the stages before it (1.8% and 0.5%).
+
+**Clean rims (0.207).** The mesher puts a cluster of vertices a hair apart where a face lies on a
+grid plane, joined by triangles with no area. Cleanup's first pass could merge each vertex only
+once, so most of a cluster stayed, and the first relaxation pulled its triangles open into
+pleats. Now an edge shorter than 1e-4 of the grid edge merges past that lock, and a merge that
+would leave more fold edges around it than before is refused. Fold edges on the cleanup tests'
+cases fell from 1,723 to 530. Of the 82 `k.implicit` results of the fold census (each shape at
+several tiers and grids), 11 results still carry folds as a `solid` leaf (16 before). They come
+from four shapes: the tapered cylinder, the 25° wedge and the 40° wedge at 0.8 mm, and the
+twisted box. The folds left come from two places: the mesher's own folds on a
+face that lies on a grid plane, and projection near such a face or at a feature about one cell
+thick. Fixing those needs a projection that aims a vertex toward its own face, or a mesher
+change; both are left for later. The merge made cleanup slower. With the core on, it is up to
+10% slower on the hand at print 0.8 mm and 2.8% over the bench's cleanups. With the core off
+(the JS path), it is 1.5% to 22% slower over the seven JS cases of the two section 5
+tables: the hand at print 0.8 mm went from 1844 to 2247 ms, at preview from 643 to 762 ms
+and at 0.5 mm from 4500 to 5197 ms, the vase from 576 to 667 ms, the blob shrink from 528
+to 588 ms, and the join from 738 to 771 ms at preview and 1665 to 1690 ms at print. Most of
+it is likely the JS fold check, which runs twice on each allowed first-pass collapse (the
+core has an exact shortcut). The merge also lowered the edge count that the old density
+rule divided by, which is why the rule now counts area (section 4, step 2).
+
+**Corners solved on their faces (0.207).** Step 3's corner point is now solved on the field from
+its three faces and kept only if the three are pairwise past the sharp angle. Box minus a through
+cylinder gets exactly its 8 corners, a cut torus none, the vase loses its 10 stray points and the
+knurl at 0.3 mm goes from 129 to 56. On the hand's palm, where two of three faces are 24.7° apart
+(under the 25° angle), no corner is made; the nearest vertex is 0.012 mm from the true corner, and
+the worst vertex of the near-miss sweep went from 0.05 to 0.007 mm off the field. With the core on,
+the stage is 1% to 7% slower on the plate, the bracket and the vase. In JS the corner passes
+alone take 1.5 to 2 times as long (plate 16 to 26 ms, bracket 16 to 34 ms, vase 13 to 20 ms).
+
+Where four or more flat faces meet (a pyramid's tip), the solve's quadrant reads can land on a
+fourth face, and its step then cannot be taken. Such a candidate goes back to its start, where
+its three planes meet, and is read there on a ring of 16 directions in each plane. It is kept
+only if the move that zeroes those three faces' models is under `CONVERGED`·edge and it passes
+the same field and angle tests. Beside a curved sharp edge, two tangent planes of one face meet
+off it, so the move there is 0.005 cells or more, and the point is refused. On 36 pyramid tips
+(4 or 6 faces; leaning 25°, 35° and 50°; turned 0, 0.3 and 0.7 rad; tip heights 8 and 10.17;
+0.6 mm, preview) 2 stay cut, as in 0.206; the solve alone had left 11. At 1.0 mm none stays cut.
+No digest of `test/implicit-sharpen-digest.test.js` moved: on its 25 cases every candidate that
+goes back is refused.
+
+**Blocked corners (0.207).** The plan held an edge flip for a corner the triangle layout blocks.
+None was needed: every swept box, a cut onion box and a bent box keep all their sharp corners
+after the cluster merge, so no flip was built.
 
 ### 5. Cost
 
@@ -517,8 +645,8 @@ curved face follows the grid, not the solid's own facets. Both are true today.
 (CPU ms, the development desktop, an Apple M1 Max; each cell the median of 3 runs). The
 script now times the stage alone, as its own column, on both paths: the core session's
 `sharpen` call, or `sharpenMesh` in JS. `Seam` is the crease cut and untangle on the owner
-path. "Before" is sample, mesh, cleanup and seam. This table is the current one. The table
-above is from before the stage.
+path. "Before" is sample, mesh, cleanup and seam. This table is 0.206's; the 0.207 table
+below is the current one. The table above is from before the stage.
 
 | Case | Core | Compile | Sample | Mesh | Cleanup | Seam | Sharpen | Detail | Total | Sharpen / before | Triangles |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -542,6 +670,53 @@ above is from before the stage.
   takes 30% of the meshing before it on the core and places 225 edge points and 1 corner.
 - In the same three runs the blob shrink's `k.implicit` offset −2, end to end, took 464 to
   475 ms, and `Solid.offset(-2)` on the same body 9.2 to 9.3 s.
+
+**0.207 (current).** Measured on 2026-11-26 with `node scripts/bench-implicit.mjs --core both`
+at 0.207 (the sharpen stage's local bookkeeping, cleanup's cluster merge, the area density
+rule and the corner solve). CPU ms, the same Apple M1 Max, each cell the median of 3 runs.
+The columns are those of the 0.206 table above.
+
+| Case | Core | Compile | Sample | Mesh | Cleanup | Seam | Sharpen | Detail | Total | Sharpen / before | Triangles |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Hand, preview tier, 1.5 mm | off | 4 | 225 | 203 | 762 | 214 | 65 | 238 | 1703 | 4.6% | 75,410 |
+| Hand, print tier, 0.8 mm | off | 4 | 623 | 422 | 2247 | 685 | 198 | 1579 | 5759 | 5.0% | 537,518 |
+| Hand, print tier, 0.5 mm | off | 3 | 1653 | 1063 | 5197 | 1326 | 372 | 5012 | 14580 | 4.0% | 1,430,878 |
+| Vase, preview tier, 1.2 mm | off | 1 | 296 | 50 | 667 | 0 | 1078 | 298 | 2385 | 106% | 146,814 |
+| Plate and boss join, preview tier | off | 20 | 494 | 52 | 771 | 0 | 331 | 0 | 1662 | 25% | 48,908 |
+| Plate and boss join, print tier | off | 13 | 521 | 62 | 1690 | 0 | 334 | 0 | 2608 | 15% | 147,794 |
+| Blob shrink, preview tier | off | 26 | 330 | 16 | 588 | 0 | 121 | 0 | 1121 | 13% | 23,464 |
+| Boss near a plate's edge, 0.6 mm | off | 8 | 506 | 60 | 701 | 0 | 272 | 0 | 1542 | 21% | 48,804 |
+| Boss in an L bracket's corner, 0.6 mm | off | 15 | 433 | 65 | 734 | 0 | 245 | 0 | 1485 | 20% | 61,142 |
+| Knurl, preview 0.6 mm (dense) | off | 8 | 261 | 22 | 1119 | 0 | 29 | 0 | 1434 | 2.1% | 82,702 |
+| Knurl, print 0.3 mm | off | 5 | 1226 | 138 | 4908 | 0 | 12577 | 0 | 18901 | 201% | 404,742 |
+| Two blended spheres, 0.6 mm | off | 0 | 13 | 11 | 112 | 0 | 0 | 0 | 136 | 0% | 13,568 |
+| Hand, preview tier, 1.5 mm | on | 3 | 70 | 22 | 125 | 14 | 6 | 35 | 275 | 2.6% | 75,410 |
+| Hand, print tier, 0.8 mm | on | 6 | 203 | 91 | 382 | 82 | 50 | 103 | 918 | 6.6% | 537,518 |
+| Hand, print tier, 0.5 mm | on | 24 | 526 | 238 | 870 | 186 | 94 | 219 | 2160 | 5.2% | 1,430,878 |
+| Vase, preview tier, 1.2 mm | on | 2 | 68 | 6 | 80 | 0 | 115 | 28 | 300 | 75% | 146,814 |
+| Plate and boss join, preview tier | on | 7 | 183 | 7 | 223 | 0 | 46 | 0 | 467 | 11% | 48,908 |
+| Plate and boss join, print tier | on | 8 | 196 | 7 | 571 | 0 | 54 | 0 | 841 | 7.0% | 147,794 |
+| Blob shrink, preview tier | on | 10 | 142 | 4 | 206 | 0 | 27 | 0 | 390 | 7.7% | 23,464 |
+| Boss near a plate's edge, 0.6 mm | on | 3 | 179 | 7 | 216 | 0 | 63 | 0 | 477 | 16% | 48,804 |
+| Boss in an L bracket's corner, 0.6 mm | on | 2 | 139 | 8 | 219 | 0 | 58 | 0 | 426 | 16% | 61,142 |
+| Knurl, preview 0.6 mm (dense) | on | 2 | 104 | 5 | 322 | 0 | 6 | 0 | 441 | 1.4% | 82,702 |
+| Knurl, print 0.3 mm | on | 17 | 382 | 26 | 1406 | 0 | 3080 | 0 | 4904 | 170% | 404,742 |
+| Two blended spheres, 0.6 mm | on | 0 | 7 | 2 | 24 | 0 | 0 | 0 | 35 | 0% | 13,568 |
+
+- Against 0.206, with the core on: the sharpen stage on the hand at its print grid fell from
+  30% to 6.6% of the meshing before it (218 to 50 ms), at preview from 6% to 2.6%, and at
+  0.5 mm from 22% to 5.2%. The vase fell from 110% to 75%; one of its programs is now
+  skipped as dense. The join fell from 12% to 11% at preview and from 10% to 7% at print.
+- Cleanup is a little slower than in 0.206 on the hand (347 to 382 ms at print 0.8 mm,
+  116 to 125 ms at preview), from the cluster merge's fold check. End to end the hand at
+  print 0.8 mm went from 1028 to 918 ms with the core on.
+- The knurl at 0.3 mm is still the costly case: its creases are real and are sharpened.
+- With the core off, the stage's run-to-run swing is wide: on the hand at print 0.8 mm the
+  three runs read 198, 211 and 126 ms, and on the join at preview 333, 331 and 239 ms.
+- The blob shrink's `k.implicit` offset −2, end to end, took 451 to 464 ms, and
+  `Solid.offset(-2)` on the same body 9.3 to 9.5 s. The hand fixture end to end, after a
+  warm-up, took 415 ms with the core on and 2193 ms with it off; cold, in a fresh process,
+  750 to 779 ms.
 
 ## Agent-facing surface
 
