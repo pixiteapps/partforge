@@ -3,7 +3,7 @@
 // at an inflection.
 
 /** The default colour a drawn line takes. */
-export const LINE_COLOR = "#e8e2d0";
+export const LINE_COLOR = 0xe8e2d0;
 /** Vertices per ring. */
 export const LINE_TUBE_SIDES = 12;
 

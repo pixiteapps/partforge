@@ -50,12 +50,6 @@ export function renderAngle(name) {
 }
 
 
-// A line's display colour is a CSS string; the material resolver reads a 0xRRGGBB integer.
-const cssDisplay = (display) => {
-  const m = /^#([0-9a-f]{6})$/i.exec(display?.color ?? "");
-  return m ? { color: parseInt(m[1], 16) } : {};
-};
-
 // Render canonical-angle PNGs of one view of a part, in memory, through the
 // styled CPU renderer (framework/softrender) — the same look the viewer's
 // offscreen captures have (`style`: "cad" for the agent's renders, "thumbnail"
@@ -97,7 +91,7 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
   if (normalizeLines(part).length) {
     const { d } = resolveParams(part, params);
     for (const l of lineMeshes(part, view, d)) {
-      if (l.mesh) subparts.push({ name: l.name, mesh: { ...l.mesh, edges: new Float32Array(0) }, display: cssDisplay(l.display), opacity: 1 });
+      if (l.mesh) subparts.push({ name: l.name, mesh: { ...l.mesh, edges: new Float32Array(0) }, display: l.display, opacity: 1 });
     }
   }
   return views.map((angle) => {

@@ -15,7 +15,7 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel(); });
 
 const OPTS = { views: ["front"], size: [160, 120], supersample: 1 };
-const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const rgb = (n) => [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 // Pixels of the rope's hue: LINE_COLOR is warm (red above blue) where the part, the
 // background and the shadow are blue-grey, and shading only scales its brightness.
 const warm = (png) => {

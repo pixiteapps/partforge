@@ -15,7 +15,7 @@ export function lineMeshes(part, view, d) {
   let decls;
   try { decls = linesInView(part, view); } catch { return []; }
   return decls.map((decl) => {
-    const display = { color: typeof decl.display?.color === "string" ? decl.display.color : LINE_COLOR };
+    const display = { color: Number.isInteger(decl.display?.color) ? decl.display.color : LINE_COLOR };
     const base = { name: `line:${decl.name}`, line: decl.name, display };
     try {
       const reading = readLine(d, decl);

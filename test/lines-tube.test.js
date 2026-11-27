@@ -110,9 +110,9 @@ describe("lineMeshes", () => {
     expect(out[0].mesh.indices.length).toBeGreaterThan(0);
   });
   it("passes a display colour through", () => {
-    const part = { ...concentricCapstan, lines: { rope: { on: "drive", display: { color: "#ff0000" } } } };
-    expect(normalizeLines(part)[0].display).toEqual({ color: "#ff0000" });
-    expect(lineMeshes(part, "assembly", d)[0].display.color).toBe("#ff0000");
+    const part = { ...concentricCapstan, lines: { rope: { on: "drive", display: { color: 0xff0000 } } } };
+    expect(normalizeLines(part)[0].display).toEqual({ color: 0xff0000 });
+    expect(lineMeshes(part, "assembly", d)[0].display.color).toBe(0xff0000);
   });
   it("an unreadable line is an error entry", () => {
     const out = lineMeshes(concentricCapstan, "assembly", { drive: { lineInfo() { throw new Error("boom\nmore"); } } });
