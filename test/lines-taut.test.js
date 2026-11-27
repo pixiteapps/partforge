@@ -140,10 +140,15 @@ describe("rope materials", () => {
   });
 });
 
+// line-scene.js is the one main-thread module in the folder: the live viewer's tubes, built
+// with three (never loaded by the worker graph, test/worker-layering.test.js). It may import
+// three; it still imports no domain and no node:.
+const MAIN_THREAD = new Set(["line-scene.js"]);
 it("the lines folder is core: it imports no domain, no three, no node:", () => {
   const dir = fileURLToPath(new URL("../src/framework/lines/", import.meta.url));
   for (const name of readdirSync(dir).filter((n) => n.endsWith(".js"))) {
     for (const spec of importsOf(readFileSync(dir + name, "utf8"))) {
+      if (MAIN_THREAD.has(name) && spec === "three") continue;
       expect(spec.startsWith("."), `${name} imports ${spec}`).toBe(true);
       expect(spec.includes("domains/"), `${name} imports ${spec}`).toBe(false);
     }

@@ -28,6 +28,8 @@ import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 import { withDeriveMemo } from "./derive-memo.js";
+import { normalizeLines } from "./lines/read.js";
+import { createLineScene } from "./lines/line-scene.js";
 import { createBackendPolicy, organicExportParts } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -1440,6 +1442,22 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       cleanup.defer(() => pickClient.detach());
     }
 
+    // Declared lines (a rope, a cable) drawn as tubes beside the sub-parts, re-meshed on the
+    // main thread from derive alone: a line never rebuilds a sub-part. Only a part with a
+    // `lines` block gets the scene; any other pays nothing. `lineView` is the view the scene
+    // last drew in, so showView updates it on a view switch (and the first show) only — a
+    // param change updates it once, at the end of applyParamChange, from that change's own
+    // memoized derive.
+    const lineScene = normalizeLines(part).length ? createLineScene(viewer, part) : null;
+    let lineView = null;
+    if (lineScene) cleanup.defer(() => lineScene.dispose());
+    function updateLines() {
+      if (!lineScene) return;
+      let d = {};
+      try { d = resolveDerived(part, params); } catch { /* each line reads as unreadable */ }
+      lineScene.update(view(), d);
+    }
+
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
     let partialView = null;        // the view whose first build is shown in batches (showPartial)
@@ -1721,6 +1739,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (frame && partialCameraKept) { frame = false; framedView = view(); cameraRestored = true; }
       }
       viewer.showAssembly(needed, { frame });
+      // The first show and every view switch draw the view's lines (with a sub-part on
+      // screen, so the scene can attach beside it); a param change draws them itself.
+      if (lineScene && needed.length && lineView !== view()) {
+        lineView = view();
+        updateLines();
+      }
       if (frame) {
         framedView = view();
         // Not on the first show: a restored camera wins over any refit.
@@ -2426,6 +2450,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         cageDrag = null;
       }
       paramsBefore = { ...params };
+      // The lines follow the pose from this change's derive (memoized: updateRelevance
+      // above derived the same params).
+      updateLines();
     }
 
     // Write `values` into the params as a panel edit does (no commit), the panel showing them.

@@ -114,6 +114,7 @@ jobs:
               screw.html
               mixed-smoke.html
               propeller.html
+              capstan-joint.html
           - shard: b
             pages: >-
               import-demo.html
