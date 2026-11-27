@@ -29,7 +29,7 @@ import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 import { withDeriveMemo } from "./derive-memo.js";
 import { normalizeLines } from "./lines/read.js";
-import { createLineScene } from "./lines/line-scene.js";
+import { createLineScene } from "./line-scene.js";
 import { createBackendPolicy, organicExportParts } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -1894,6 +1894,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         ui.setExportEnabled(false);
       } else {
         viewer.hideAssembly();
+        // The lines go with the sub-parts (a view switch waiting for its builds must not
+        // show the last view's rope); the next showView draws the view's lines again.
+        if (lineScene) { lineScene.hide(); lineView = null; }
         ui.setExportEnabled(false);
       }
     }
@@ -2451,8 +2454,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       }
       paramsBefore = { ...params };
       // The lines follow the pose from this change's derive (memoized: updateRelevance
-      // above derived the same params).
-      updateLines();
+      // above derived the same params). Only while the view's lines are shown: hidden, or
+      // not shown yet, the next showView draws them.
+      if (lineView === view()) updateLines();
     }
 
     // Write `values` into the params as a panel edit does (no commit), the panel showing them.

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Mount's half of drawing declared lines (lines/line-scene.js): a part with a `lines` block
+// Mount's half of drawing declared lines (framework/line-scene.js): a part with a `lines` block
 // gets a line scene, updated from the change's own (memoized) derive, so a param change
 // costs no extra derive; a part with none gets no scene and never reaches lineMeshes. The
 // viewer is faked (mount-cage-drag.test.js's fake); the meshes are real (handle(...)).
@@ -143,7 +143,7 @@ vi.mock("../src/framework/pick-request/index.js", async () => ({
 
 // The line scene, real behind a spy: its update is counted.
 const scenes = vi.hoisted(() => []);
-vi.mock("../src/framework/lines/line-scene.js", async (importOriginal) => {
+vi.mock("../src/framework/line-scene.js", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -160,9 +160,11 @@ vi.mock("../src/framework/lines/meshes.js", async (importOriginal) => {
   return { ...real, lineMeshes: vi.fn(real.lineMeshes) };
 });
 
+import * as THREE from "three";
 import { mount } from "../src/framework/mount.js";
+import { viewSubParts } from "../src/framework/part-model.js";
 import { bootManifoldKernel, handle } from "../src/testing.js";
-import { createLineScene } from "../src/framework/lines/line-scene.js";
+import { createLineScene } from "../src/framework/line-scene.js";
 import { lineMeshes } from "../src/framework/lines/meshes.js";
 import { concentricCapstan } from "./fixtures/capstan-fixtures.js";
 import demo from "../src/parts/demo.js";
@@ -174,7 +176,7 @@ let k;
 beforeAll(async () => { k = await bootManifoldKernel({ quality: "preview" }); }, 120_000);
 const gen = async (part, view, params) => {
   const post = vi.fn();
-  const subparts = Object.keys(part.parts);
+  const subparts = viewSubParts(part, view, params);
   await handle(k, part, { type: "generate", subparts, view, params }, post);
   const msgs = post.mock.calls.map(([m]) => m);
   const err = msgs.find((m) => m.type === "error");
@@ -206,10 +208,14 @@ async function setup(part, view) {
   const workers = {};
   const createWorker = (name) => (workers[name] = { postMessage: vi.fn(), terminate: vi.fn(), onmessage: null });
   const runtime = mount(part, { createWorker, elements: makeElements() });
+  const v = fakeViewers.at(-1);
+  // The scene attaches under the sub-part meshes' parent, as it does under partsGroup.
+  const parts = new THREE.Group();
+  v._subMeshes.any = { parent: parts };
   const w = workers.manifold;
   w.onmessage({ data: { type: "ready" } });
   w.onmessage({ data: { type: "meshes", meshes, ms: 5 } });
-  return { runtime, v: fakeViewers.at(-1) };
+  return { runtime, v, w, parts };
 }
 
 beforeEach(() => {
@@ -259,6 +265,41 @@ describe("mount draws a part's declared lines", () => {
     const without = await deriveCountForChange({ ...capstanPart(), lines: undefined });
     expect(withLines).toBeGreaterThan(0);
     expect(withLines).toBe(without);
+  });
+
+  test("a view switch waiting for its builds hides the last view's rope; the new view's first show brings it back", async () => {
+    // "other" shows a spare block as well, so switching to it must wait for that build.
+    const part = withBackend({
+      ...concentricCapstan,
+      parts: {
+        ...concentricCapstan.parts,
+        spare: { label: "Spare", build: (k) => k.box({ min: [0, 50, 0], max: [5, 55, 5] }), views: ["other"] },
+      },
+      views: { assembly: { label: "Assembly" }, other: { label: "Other" } },
+    });
+    const { runtime, w, parts } = await setup(part, "assembly");
+    const rope = () => parts.getObjectByName("line:rope");
+    expect(rope().visible).toBe(true);
+
+    runtime.setView("other");
+    expect(runtime.getView()).toBe("other");
+    expect(rope().visible).toBe(false);
+    // a param change while the view waits draws nothing either
+    runtime.setParams({ motorAngle: 20 });
+    expect(rope().visible).toBe(false);
+
+    vi.useRealTimers();
+    const meshes = await gen(part, "other", { ...part.defaults, motorAngle: 20 });
+    vi.useFakeTimers();
+    // The switch's job (at motorAngle 0) answers stale, since the edit outdated it; the
+    // re-kicked job at 20 answers fresh.
+    vi.advanceTimersByTime(1000);
+    w.onmessage({ data: { type: "meshes", meshes, ms: 5 } });
+    vi.advanceTimersByTime(1000);
+    expect(rope().visible).toBe(false);
+    w.onmessage({ data: { type: "meshes", meshes, ms: 5 } });
+    expect(rope().visible).toBe(true);
+    runtime.dispose();
   });
 
   test("a part with no lines creates no line scene and never reaches lineMeshes", async () => {

@@ -3,26 +3,29 @@
 // apply as they do to a sub-part) and re-meshed from derive on every update. Main-thread
 // only (three.js); the worker never loads it. A line is a display mesh like a sub-part's,
 // so it is NOT hidden from captures; it is not a sub-part either (no export, no picking).
+// It lives outside lines/, which stays pure and three-free.
 import * as THREE from "three";
-import { RENDER_STYLES } from "../renderStyles.js";
-import { buildCadMaterial } from "../materials/physical.js";
-import { lineMeshes } from "./meshes.js";
+import { RENDER_STYLES } from "./renderStyles.js";
+import { buildCadMaterial } from "./materials/physical.js";
+import { lineMeshes } from "./lines/meshes.js";
 
 /** The colour a line takes past a limit: its bend ratio under the rope's minimum, or a limit setLimit turned on. */
 export const LINE_LIMIT_COLOR = 0xe5484d;
 
 /**
- * `{ update(view, d), readings(), setLimit(name, on), dispose() }` for `part`'s lines in
+ * `{ update(view, d), readings(), setLimit(name, on), hide(), dispose() }` for `part`'s lines in
  * `viewer`. `update` re-meshes every line of `view` from derive's output `d` (the old
  * geometry disposed), hides the lines not in the view or not readable, and asks for a
  * render. `readings()` maps each line of the last view drawn to its reading, or null when
  * it could not be read. A line is tinted LINE_LIMIT_COLOR while its bend is past the
- * rope's limit OR setLimit holds it on.
+ * rope's limit OR setLimit holds it on (a setLimit before the line's first update is kept
+ * and applied when it is built). `hide()` hides every line until the next update.
  */
 export function createLineScene(viewer, part) {
   const group = new THREE.Group();
   group.name = "lines";
   const recs = new Map(); // decl name -> { mesh, color, limit, bent, unregister }
+  const pendingLimits = new Set(); // setLimit(name, true) for a line not built yet
   let current = new Map();
   let attached = false;
   let disposed = false;
@@ -53,7 +56,8 @@ export function createLineScene(viewer, part) {
     mesh.visible = false;
     group.add(mesh);
     const unregister = viewer.registerCutawayMaterial?.(material) ?? (() => {});
-    rec = { mesh, color: material.color.getHex(), limit: false, bent: false, unregister };
+    rec = { mesh, color: material.color.getHex(), limit: pendingLimits.has(name), bent: false, unregister };
+    pendingLimits.delete(name);
     recs.set(name, rec);
     return rec;
   }
@@ -92,11 +96,28 @@ export function createLineScene(viewer, part) {
   }
 
   function setLimit(name, on) {
+    if (disposed) return;
     const rec = recs.get(name);
-    if (!rec || disposed || rec.limit === !!on) return;
+    if (!rec) {
+      if (on) pendingLimits.add(name); else pendingLimits.delete(name);
+      return;
+    }
+    if (rec.limit === !!on) return;
     rec.limit = !!on;
     paint(rec);
     viewer.requestRender?.();
+  }
+
+  // Every line hidden (the view on screen is waiting for its sub-parts); the next update
+  // shows the view's lines again.
+  function hide() {
+    if (disposed) return;
+    let changed = false;
+    for (const rec of recs.values()) {
+      if (rec.mesh.visible) changed = true;
+      rec.mesh.visible = false;
+    }
+    if (changed) viewer.requestRender?.();
   }
 
   function dispose() {
@@ -108,6 +129,7 @@ export function createLineScene(viewer, part) {
       rec.mesh.material.dispose();
     }
     recs.clear();
+    pendingLimits.clear();
     current = new Map();
     base.dispose();
     group.removeFromParent();
@@ -115,5 +137,5 @@ export function createLineScene(viewer, part) {
     if (attached) viewer.requestRender?.();
   }
 
-  return { update, readings: () => new Map(current), setLimit, dispose };
+  return { update, readings: () => new Map(current), setLimit, hide, dispose };
 }

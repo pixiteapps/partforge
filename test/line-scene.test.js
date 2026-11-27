@@ -1,8 +1,8 @@
-// The live viewer's line scene (lines/line-scene.js): one tube mesh per declared line of the
+// The live viewer's line scene (framework/line-scene.js): one tube mesh per declared line of the
 // view, parented with the sub-part meshes, re-meshed from derive on every update.
 import { describe, expect, test, vi } from "vitest";
 import * as THREE from "three";
-import { createLineScene, LINE_LIMIT_COLOR } from "../src/framework/lines/line-scene.js";
+import { createLineScene, LINE_LIMIT_COLOR } from "../src/framework/line-scene.js";
 import { LINE_COLOR } from "../src/framework/lines/tube.js";
 import { concentricCapstan, make } from "./fixtures/capstan-fixtures.js";
 
@@ -109,6 +109,33 @@ describe("createLineScene", () => {
     expect(rope(v).material.color.getHex()).toBe(LINE_LIMIT_COLOR);
     scene.update("assembly", bent(10, 8));
     expect(rope(v).material.color.getHex()).toBe(LINE_COLOR);
+  });
+
+  test("a setLimit before the line's first update tints it when it is built", () => {
+    const v = fakeViewer();
+    const scene = createLineScene(v, concentricCapstan);
+    scene.setLimit("rope", true);
+    scene.update("assembly", bent(10, 8));
+    expect(rope(v).material.color.getHex()).toBe(LINE_LIMIT_COLOR);
+    // turned off again before the build: not tinted
+    const v2 = fakeViewer();
+    const third = createLineScene(v2, concentricCapstan);
+    third.setLimit("rope", true);
+    third.setLimit("rope", false);
+    third.update("assembly", bent(10, 8));
+    expect(rope(v2).material.color.getHex()).toBe(LINE_COLOR);
+  });
+
+  test("hide hides every line until the next update", () => {
+    const v = fakeViewer();
+    const scene = createLineScene(v, concentricCapstan);
+    scene.update("assembly", dAt(0));
+    v.requestRender.mockClear();
+    scene.hide();
+    expect(rope(v).visible).toBe(false);
+    expect(v.requestRender).toHaveBeenCalled();
+    scene.update("assembly", dAt(0));
+    expect(rope(v).visible).toBe(true);
   });
 
   test("attaches once the sub-part meshes exist", () => {
