@@ -93,8 +93,17 @@
 //    triangle 0 with weights 0. The attributes are added after quantize(), like
 //    the lines, so quantize() leaves them as written. A mesh without `ties`
 //    writes exactly what version 6 wrote.
+//  - a mesh with `line` (a declared line's tube, lines/meshes.js's lineMeshes;
+//    version 8) is a node like a sub-part's, named by the mesh's own name
+//    (`line:<decl name>`), whose extras carry partforgeLine (the declared name)
+//    and partforgeDisplay ({ color }, the mesh's own `display`) in place of
+//    partforgeSubPart. Its material is cadAppearance of that display. It has no
+//    edges, no ties and never an animation channel: a line's changing shape is
+//    not a rigid pose, so it holds the opening pose and a reader with the part
+//    re-solves it. A file with no line writes what version 7 wrote, the version
+//    digit apart.
 // Not encoded: textures, patterns. (Feature edges since version 2, shared
-// vertices since version 3, ties since version 7.)
+// vertices since version 3, ties since version 7, lines since version 8.)
 //
 // Runs in Node, a page and a Web Worker: no three.js, no DOM, no Blob
 // (test/gltf-layering.test.js). Deterministic: the same input writes the same
@@ -112,8 +121,9 @@ import { invertRigid, isRigid, mulMat4 } from "../geometry/pose.js";
 // 2: feature edges as a LINES primitive; 3: sharing the surface's vertices;
 // 4: animation channels + partforgeAnimation extras; 5: same format, but a forge
 // whose tracked param reaches build() only through derive now bakes its animation;
-// 6: partforgeParams extra — the params the meshes sit at; 7: a cage body's ties
-export const PREVIEW_ENCODER_VERSION = 7;
+// 6: partforgeParams extra — the params the meshes sit at; 7: a cage body's ties;
+// 8: a declared line's tube as a partforgeLine node
+export const PREVIEW_ENCODER_VERSION = 8;
 
 // −90° about X as [x, y, z, w]: model (x, y, z) → glTF (x, z, −y), the viewer's pivot.
 const Z_UP_TO_Y_UP = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
@@ -335,6 +345,10 @@ function checkMesh(m, seen) {
     }
     if (m.edges.length % 6 !== 0) throw new Error(`encodePreviewGlb: "${m.name}" edges are not whole segments`);
   }
+  if (m.line != null) {
+    if (typeof m.line !== "string" || !m.line) throw new TypeError(`encodePreviewGlb: "${m.name}" line must be a non-empty string`);
+    if ((m.edges?.length ?? 0) > 0 || m.ties != null) throw new Error(`encodePreviewGlb: line "${m.name}" may carry no edges or ties`);
+  }
   if (m.ties != null) checkTies(m);
   if (indexed) {
     const vertexCount = m.positions.length / 3;
@@ -437,7 +451,7 @@ function checkAnimation(animation, meshes, drawn) {
   for (let i = 1; i < samples.length; i++) {
     if (!(samples[i].t > samples[i - 1].t)) throw new Error("encodePreviewGlb: animation sample times must increase");
   }
-  const present = new Set(meshes.map((m) => m.name));
+  const present = new Set(meshes.filter((m) => m.line == null).map((m) => m.name)); // a line is never animated
   const sampled = new Set();
   for (const s of samples) for (const name of Object.keys(s.poses ?? {})) sampled.add(name);
   for (const name of [...sampled, ...Object.keys(base)]) {
@@ -584,7 +598,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
     if (m.indices?.length) {
       prim.setIndices(doc.createAccessor().setType("SCALAR").setArray(new Uint32Array(m.indices)).setBuffer(buffer));
     }
-    const display = part?.parts?.[m.name]?.display;
+    const display = m.line ? m.display : part?.parts?.[m.name]?.display;
     const look = cadAppearance(display);
     prim.setMaterial(doc.createMaterial(m.name)
       .setBaseColorFactor(baseColorFactor(look.color, look.opacity))
@@ -604,7 +618,7 @@ export async function encodePreviewGlb({ meshes, part = null, view = null, param
     const node = doc.createNode(m.name)
       .setMesh(mesh)
       .setExtras({
-        partforgeSubPart: m.name,
+        ...(m.line ? { partforgeLine: m.line } : { partforgeSubPart: m.name }),
         ...(extras ? { partforgeDisplay: extras } : {}),
         ...(tieExtras ? { partforgeTies: tieExtras } : {}),
       });

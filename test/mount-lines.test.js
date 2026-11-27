@@ -184,6 +184,8 @@ import { viewSubParts } from "../src/framework/part-model.js";
 import { bootManifoldKernel, handle } from "../src/testing.js";
 import { createLineScene, LINE_LIMIT_COLOR } from "../src/framework/line-scene.js";
 import { lineMeshes } from "../src/framework/lines/meshes.js";
+import { decodePreviewGlb } from "../src/framework/gltf/decode-preview.js";
+import { resolveDerived } from "../src/framework/derive.js";
 import { concentricCapstan, slackCapstan } from "./fixtures/capstan-fixtures.js";
 import demo from "../src/parts/demo.js";
 
@@ -380,6 +382,19 @@ describe("mount draws a part's declared lines", () => {
     const { runtime } = await setup(posedSlack({ lines: undefined }), "assembly");
     expect(poseModes).toHaveLength(1);
     expect(poseModes[0].opts.extraReadout).toBeUndefined();
+    runtime.dispose();
+  });
+
+  test("exportPreview writes the view's rope as a line node at the file's params", async () => {
+    const part = capstanPart();
+    const { runtime } = await setup(part, "assembly");
+    const glb = await runtime.exportPreview();
+    const decoded = await decodePreviewGlb(glb);
+    expect(decoded.meshes.map((m) => m.name)).not.toContain("line:rope");
+    expect(decoded.lines.map((l) => l.name)).toEqual(["line:rope"]);
+    const [want] = lineMeshes(part, "assembly", resolveDerived(part, { ...part.defaults, ...decoded.params }));
+    expect(decoded.lines[0].mesh.positions.length).toBeGreaterThan(0);
+    expect(decoded.lines[0].display).toEqual(want.display);
     runtime.dispose();
   });
 

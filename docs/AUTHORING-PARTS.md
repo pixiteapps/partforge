@@ -4366,6 +4366,12 @@ shadow); in cel it has cel's band shading and an ink outline. It is never export
 STEP, 3MF and the kit do not hold it. It cannot be picked: hover, measure and select see the
 piece behind it.
 
+The cached preview carries it too. `runtime.exportPreview()` writes each line of the view at
+the file's params. `mountPreview` without the part shows that tube as it is. With `part`, it
+solves the rope again from `derive` at the preview's params. The rope then follows each
+drag and each frame of the baked animation, as in the editor, with the same drag readout
+and tints.
+
 A line with no `views` is drawn in every view, at `derive`'s frame: the frame where `derive`
 places the pieces, normally the assembly. If another view lays the pieces out differently
 (a print layout, an exploded view), give the line `views`, or the rope floats where the

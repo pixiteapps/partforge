@@ -41,6 +41,15 @@ export interface PreviewMesh {
    * cage's points are not stored (a reader runs the part's cage code at `partforgeParams`).
    */
   ties?: { key: string; level: number; tri: Uint32Array; w: Float32Array; pose?: ArrayLike<number> | null } | null;
+  /**
+   * A declared line's tube rather than a sub-part (encoder version 8): the line's name in the
+   * part's `lines` block, with `name` then `line:<that name>`. Written as a node whose extras carry
+   * `partforgeLine` and this mesh's own `display` (not `part.parts[name].display`); it may have no
+   * `edges` or `ties` and no animation channel. A reader decodes it into `lines`, never as a sub-part.
+   */
+  line?: string | null;
+  /** A line's look (`{ color }`, 0xRRGGBB), read only with `line`. */
+  display?: { color?: number } | null;
 }
 
 export interface EncodePreviewInput {
@@ -69,7 +78,7 @@ export interface EncodePreviewInput {
   animation?: PreviewAnimationInput | null;
 }
 
-/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras; 6: partforgeParams; 7: a cage body's ties). */
+/** Bumped whenever the encoder writes different bytes for the same input (2: feature edges; 3: edges as indices into the surface's vertices; 4: animation channels + partforgeAnimation extras; 6: partforgeParams; 7: a cage body's ties; 8: a declared line's tube). */
 export const PREVIEW_ENCODER_VERSION: number;
 
 /** Encode one view's posed meshes as a welded, quantized, meshopt-compressed GLB (Y-up, millimetres). Deterministic. */

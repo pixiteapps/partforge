@@ -136,6 +136,13 @@
 // the body cannot draw stops the handle (the drag guard), and the release leaves the last
 // pose drawn: a preview has no exact build. An older file keeps those handles hidden.
 //
+// A declared line's tube (encoder version 8, lines phase 3b) is drawn through the line
+// scene (line-scene.js), never as a sub-part: without `part`, the still tube the file
+// carries; with `part` and a line in the file's view, re-solved from derive at the
+// preview's params — at once, on every write, and on every frame of the followed
+// animation (the player's onApply) — with the drag readout and drift tint mount.js gives
+// it. A part attach that fails leaves the file's tube.
+//
 // The decoder loads on demand (it carries the
 // GLTFLoader and meshopt), so a bundle that never mounts a preview never ships it.
 // Hence `ready`. Every handle method is safe before it resolves.
@@ -163,6 +170,15 @@ import { createPoseCollide } from "./pose/pose-collide.js";
 import { createFeatureHighlight } from "./selection/feature-highlight.js";
 import { normalizeCollisions } from "./collide/declaration.js";
 import { viewAnimations, evaluate } from "./animation.js";
+import { resolveDerived } from "./derive.js";
+import { createLineScene } from "./line-scene.js";
+import { linesInView } from "./lines/read.js";
+import { lineReadings, lineDriftBound } from "./lines/meshes.js";
+
+// Whether `part` declares a line `view` shows (a bad declaration shows none).
+function showsLines(part, view) {
+  try { return linesInView(part, view).length > 0; } catch { return false; }
+}
 
 // A value the option does not know is a host bug: say so at the call rather
 // than quietly showing the default.
@@ -256,7 +272,7 @@ function createTurntable(viewer, container, degPerSec, onChange) {
 // meshes, its params the preview's own and every write re-posing by matrix. Pushes its
 // teardown onto `cleanups`, pose mode's detach FIRST so it runs LAST (they pop LIFO),
 // and every effect is a no-op once `isDisposed()`. Fills `preview` as it decides.
-function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip, chrome, drawn, cleanups, isDisposed, cueBlocked, onDragEnd, preview, player, turntable, reducedMotion }) {
+function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip, chrome, drawn, cleanups, isDisposed, cueBlocked, onDragEnd, preview, player, turntable, reducedMotion, lineScene = null }) {
   const drawnNames = decoded.meshes.map((m) => m.name).filter((n) => Object.hasOwn(part.parts, n));
   const params = { ...(part.defaults ?? {}), ...(decoded.params ?? {}) };
   const fileParams = Object.freeze({ ...params });
@@ -292,11 +308,41 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   };
   const atPlayer = (t) => ({ ...params, ...evaluate(anim, t).values });
   const getParams = () => (following() ? atPlayer(player.state().t) : params);
+
+  // The view's lines (`lineScene`, given only when the part declares one here): re-solved
+  // from derive at every params the meshes are drawn at — now (the file's tube gives way
+  // to the part's own solve), each write, and each frame of the followed animation. A
+  // derive that throws leaves each line unreadable (hidden), as in the editor.
+  const relines = (p) => {
+    if (!lineScene) return;
+    let d = {};
+    try { d = resolveDerived(part, p); } catch { /* each line reads as unreadable */ }
+    lineScene.update(view, d);
+  };
+  // A drag's line readout and drift tint, as mount.js's lineReadout: the lines at the
+  // press read once, then every frame reads the scene's own readings.
+  let linePress = null;
+  const lineReadout = (pressParams) => {
+    if (linePress?.pressParams !== pressParams) {
+      let d = {};
+      try { d = resolveDerived(part, pressParams); } catch { /* each line reads as unreadable */ }
+      linePress = { pressParams, readings: lineReadings(part, view, d), bound: lineDriftBound(part, view) };
+    }
+    lineScene.dragLimits(linePress.readings, linePress.bound);
+    return lineScene.readout(linePress.readings);
+  };
+  const endLineDrag = () => {
+    if (!linePress) return;
+    linePress = null;
+    lineScene?.dragLimits(new Map(), null);
+  };
+
   let holding = false; // the pause hold() makes writes its own params
   // A press: a turning model stops; a playing animation pauses where it is, its params
   // written, so the placer's next apply finds every matrix where the player left it.
+  // A release (or a cancel, which fires no onDragEnd) lets the drift tints go.
   const hold = live((on) => {
-    if (!on) return;
+    if (!on) { endLineDrag(); return; }
     turntable?.stop();
     if (!following()) return;
     const { t } = player.state();
@@ -312,6 +358,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     withDeriveMemo(() => {
       placer.apply(viewer, params);
       cages.show(viewer, params);
+      relines(params);
     });
     viewer.requestRender();
   });
@@ -350,6 +397,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     visibleHandles: () => preview.visible?.shown ?? [],
     hoveredSubPart,
     cueBlocked,
+    extraReadout: lineScene ? (p, pressParams) => lineReadout(pressParams) : undefined,
   });
   cleanups.push(() => poseMode.detach());
   // A pause from the button (or the end of a one-time animation) writes the player's
@@ -363,7 +411,7 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
   viewer.domElement.addEventListener("pointermove", onMove);
   cleanups.push(() => viewer.domElement.removeEventListener("pointermove", onMove));
   // A drag's cage plans go with it; the pose it left stays drawn.
-  cleanups.push(poseMode.onDragEnd((e) => { cages.endDrag(); lastDragEnd = e; onDragEnd(e); }));
+  cleanups.push(poseMode.onDragEnd((e) => { cages.endDrag(); endLineDrag(); lastDragEnd = e; onDragEnd(e); }));
   let readout = null;
   if (chrome) {
     const controls = attachPoseControls(viewer, poseMode, { viewbar: toolbar }, { tooltip });
@@ -412,6 +460,13 @@ function attachPosing({ viewer, part, view, decoded, container, toolbar, tooltip
     viewer.requestRender();
   };
   drawn.then(() => idle(slice), () => {});
+
+  // The lines take the part's solve only now, with nothing left to throw: an attach that
+  // fails above leaves the file's tube, and no frame hook. The opening params are the
+  // followed animation's t = 0 (exportPreview's openingParams), so the first solve matches
+  // the pose the player drew before this hook existed.
+  relines(params);
+  if (lineScene && anim) cleanups.push(player.onApply((t) => { if (!isDisposed()) relines(atPlayer(t)); }));
 
   Object.assign(preview, {
     params, fileParams, placer, cages, poseMode, poseCollide,
@@ -570,6 +625,17 @@ export function mountPreview(container, options = {}) {
     cleanups.push(viewer.onEnvironmentChange(relay(envListeners)));
     cleanups.push(viewer.onContextLost(relay(lostListeners)));
     for (const m of decoded.meshes) viewer.setSubGeometry(m.name, m);
+    // The file's lines (encoder version 8) as the still tubes it carries, drawn before the
+    // framing so they count in it; with `part`, attachPosing re-solves them from derive.
+    // A part that shows this view but declares no line in it wins over the file: no tube.
+    const partView = !!part && Object.hasOwn(part.views ?? {}, view);
+    const partLines = partView && showsLines(part, view);
+    let lineScene = null;
+    if ((decoded.lines?.length && !partView) || partLines) {
+      const own = lineScene = createLineScene(viewer, part ?? {});
+      cleanups.push(() => own.dispose());
+      own.draw(decoded.lines ?? []);
+    }
     viewer.showAssembly(decoded.meshes.map((m) => m.name), { frame: true });
     // The opening framing restart() returns to: the file's default view
     // direction at the fill distance, before any carried camera.
@@ -651,7 +717,7 @@ export function mountPreview(container, options = {}) {
             onDragEnd: relay(dragEndListeners),
             // the resting cue waits out a playing animation
             cueBlocked: () => (player ? motionState() === "playing" : false),
-            player, turntable, reducedMotion,
+            player, turntable, reducedMotion, lineScene: partLines ? lineScene : null,
           });
           if (!poseEnabled) posing.poseMode.setEnabled(false);
         } catch (error) {

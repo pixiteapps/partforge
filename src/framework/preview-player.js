@@ -153,10 +153,14 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
     }
   }
 
+  const appliers = new Set(); // onApply's: told the t of every pose drawn
   function apply(t) {
     const seconds = t * duration;
     for (const [name, track] of Object.entries(tracks)) viewer.setSubPose(name, mulMat4(sampleTrack(track, seconds), restInverse[name]));
     for (const [name, keys] of Object.entries(opacity)) if (keys?.length) viewer.setSubPartOpacity(name, sampleOpacity(keys, t));
+    for (const cb of [...appliers]) {
+      try { cb(t); } catch (error) { console.warn("partforge: preview animation listener failed", error); }
+    }
   }
 
   // A snapshot from play(): an intro cue tweens and gates playback until it lands.
@@ -245,10 +249,18 @@ export function createPreviewPlayer(viewer, animation, { reducedMotion = false }
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
+    // cb(t) after every pose the player draws (its first frame, each tick, a replay or
+    // restart): what moves with the animation but is no track — a line — follows it.
+    onApply(cb) {
+      if (disposed) return () => {};
+      appliers.add(cb);
+      return () => appliers.delete(cb);
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       listeners.clear();
+      appliers.clear();
       if (offFrame) { offFrame(); offOrbit(); offFrame = offOrbit = null; }
       if (held) { held = false; viewer.holdGround(false, "preview"); } // primed or played
     },

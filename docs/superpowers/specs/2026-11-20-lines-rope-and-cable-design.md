@@ -329,6 +329,27 @@ come: 3b (the cached preview) and 3c (skew-axis taut solve, `lineContacts`). Dev
 - The tube uses the CAD material in every render mode. Realistic and cel looks for lines
   come later.
 
+Phase 3b as built (0.210.0): the cached preview carries each line. `exportPreview` writes
+the view's lines at the file's params (`openingParams`) as `line:<name>` nodes, encoder
+version 8. `mountPreview` draws the file's tube without the part and re-solves it with the
+part. Deviations and details:
+
+- A line's node has the extra `partforgeLine` in place of `partforgeSubPart`, and the
+  decoder returns it in a new `lines` list, never in `meshes`. So the preview's synthetic
+  part, the placer, the cages and `previewHandles` never see a line. A reader older than
+  0.210.0 sees it as a sub-part named `line:<name>` and draws the still tube.
+- The encoder refuses a line with edges or ties, and an animation that names a line.
+- The preview re-solves every line at once from the part's own `derive` (the file's tube
+  gives way), on each write, and on each frame of the followed animation. It hears the
+  frames through a new player hook, `onApply(cb)`. Only taut lines exist so far, so no
+  budget applies yet; slack lines (phase 4) bring the `bench:pose` budget.
+- A drag in the preview shows the editor's line readout and drift tint.
+- Framing: the file's tubes are drawn before `showAssembly`, so the opening framing counts
+  them as display objects. Fill framing (`frameFill`) still reads only the sub-parts'
+  vertices.
+- `captureView`'s line payloads now carry `edges: []`, so thumbnails draw no outline at the
+  tube's end caps (the gap 3a parked).
+
 Phase 1 is useful by itself: it answers the capstan joint's design questions at one
 pose and, through a probe sampled by the part, over a range.
 

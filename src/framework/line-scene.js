@@ -19,10 +19,11 @@ import { lineMeshes } from "./lines/meshes.js";
 export const LINE_LIMIT_COLOR = 0xe5484d;
 
 /**
- * `{ update(view, d), readings(), readout, dragLimits, setLimit(name, on), hide(), dispose() }` for `part`'s lines in
+ * `{ update(view, d), draw(entries), readings(), readout, dragLimits, setLimit(name, on), hide(), dispose() }` for `part`'s lines in
  * `viewer`. `update` re-meshes every line of `view` from derive's output `d` (the old
  * geometry disposed), hides the lines not in the view or not readable, and asks for a
- * render. `readings()` maps each line of the last view drawn to its reading, or null when
+ * render. `draw` does the same from ready-made lineMeshes-shaped entries (a cached
+ * preview's still tubes; `part` is then never read). `readings()` maps each line of the last view drawn to its reading, or null when
  * it could not be read. A line is tinted LINE_LIMIT_COLOR while its bend is past the
  * rope's limit OR setLimit holds it on (a setLimit before the line's first update is kept
  * and applied when it is built). `hide()` hides every line until the next update.
@@ -101,8 +102,9 @@ export function createLineScene(viewer, part) {
   function geometryOf(mesh) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-    g.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
-    g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    if (mesh.indices?.length) g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    if (mesh.normals?.length) g.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    else g.computeVertexNormals();
     g.computeBoundingBox(); // the viewer's framing and depth bounds read it
     g.computeBoundingSphere();
     return g;
@@ -110,17 +112,26 @@ export function createLineScene(viewer, part) {
 
   function update(view, d) {
     if (disposed) return;
+    draw(lineMeshes(part, view, d));
+  }
+
+  // lineMeshes-shaped entries ({ line, mesh, display, reading? }) drawn as given: update's
+  // own path, and a cached preview's still tubes (decodePreviewGlb's `lines`).
+  function draw(entries) {
+    if (disposed) return;
     const next = new Map();
-    for (const entry of lineMeshes(part, view, d)) {
+    for (const entry of entries) {
       const rec = recFor(entry.line, entry.display);
+      // a later colour (the part's, after a file's) replaces the one the line was built with
+      if (Number.isInteger(entry.display?.color)) rec.color = entry.display.color;
       rec.mesh.geometry.dispose();
       const drawable = entry.mesh && entry.mesh.positions.length > 0;
       rec.mesh.geometry = drawable ? geometryOf(entry.mesh) : new THREE.BufferGeometry();
       rec.mesh.visible = !!drawable;
-      const r = entry.reading;
+      const r = entry.reading ?? null;
       rec.bent = r != null && r.bendRatio != null && r.minBendRatio != null && r.bendRatio < r.minBendRatio;
       paint(rec);
-      next.set(entry.line, entry.reading);
+      next.set(entry.line, r);
     }
     for (const [name, rec] of recs) if (!next.has(name)) rec.mesh.visible = false;
     current = next;
@@ -200,5 +211,5 @@ export function createLineScene(viewer, part) {
     for (const name of recs.keys()) setLimit(name, past.has(name));
   }
 
-  return { update, readings: () => new Map(current), readout, dragLimits, setLimit, hide, dispose };
+  return { update, draw, readings: () => new Map(current), readout, dragLimits, setLimit, hide, dispose };
 }

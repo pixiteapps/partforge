@@ -2736,13 +2736,16 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // renderMeshPayloads' own options (including `background` and
     // `style`: "thumbnail" by default, "cad" for the agent look) pass straight
     // through from the caller.
-    function captureLinePayloads(target) {
+    // The view's readable lines at `at` as display-mesh payloads, with no feature
+    // edges (an empty array, never undefined, which would derive them by angle).
+    function linePayloads(target, at) {
       let d;
-      try { d = resolveParams(part, params).d; } catch { return []; }
+      try { d = resolveParams(part, at).d; } catch { return []; }
       return lineMeshes(part, target, d)
         .filter((l) => l.mesh && l.mesh.positions.length > 0)
-        .map((l) => ({ name: l.name, ...l.mesh, triangles: l.mesh.indices.length / 3, display: l.display }));
+        .map((l) => ({ name: l.name, line: l.line, ...l.mesh, triangles: l.mesh.indices.length / 3, edges: new Float32Array(0), display: l.display }));
     }
+    const captureLinePayloads = (target) => linePayloads(target, params);
     const captureView = async (viewName, opts = {}) => {
       try {
         const target = (viewName && part.views?.[viewName]) ? viewName : resolveDefaultView(part);
@@ -2851,8 +2854,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       const animation = samplePreviewAnimation(part, current, params, {
         buildReads: (name) => (cache.hasStamp(name) ? cache.readsOf(name) : null),
       });
+      const opening = openingParams(part, current, params, animation?.anim ?? null);
+      // The view's lines ride along at the file's params (encoder version 8), re-solved
+      // there rather than read off the live scene: a baked animation opens at its t = 0.
+      const lines = normalizeLines(part).length ? linePayloads(current, opening) : [];
       const { encodePreviewGlb } = await import("./gltf/encode-preview.js");
-      return encodePreviewGlb({ meshes, part, view: current, params: openingParams(part, current, params, animation?.anim ?? null), ...(animation ? { animation } : {}) });
+      return encodePreviewGlb({ meshes: [...meshes, ...lines], part, view: current, params: opening, ...(animation ? { animation } : {}) });
     }
 
     return makeHandle({
