@@ -84,7 +84,7 @@ no value of it is dead, and each drawer's handle swept and gated; `drawer-box.ht
 worked example of the capstan section of `docs/domains/mechanisms.md` - a motor drum and an
 output pulley placed by one `capstan` in `derive`, the rope declared in `lines`, a
 `motorAngle` sweep gated by `lineDrift` and `sweepContacts`, a rotary handle on the drum,
-the rope report in a `rope` probe; no demo page), and `material-swatches.js` (not a reference part: the dev-only
+the rope report in a `rope` probe; the dev-only `capstan-joint.html`, not in `rollupOptions.input`), and `material-swatches.js` (not a reference part: the dev-only
 contact sheet of material presets behind `materials.html`), and `offset-demo.js`
 (not a reference part either: the dev-only `Solid.offset` skin/cage viewer behind
 `offset-demo.html`).
@@ -810,8 +810,21 @@ the installed package, so let the publish finish before bumping the dep there.
   largest drift; withheld when a line cannot be read along a sweep, and on a quick lap) and
   `lineBend` (the smallest bend ratio; withheld when any line cannot be read). Lint:
   `line-bad-source` (an error) and `line-unswept` (a warning only - an unswept line never
-  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3 (drawing the line, `lineContacts`)
-  is still to come.
+  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3a (0.209.0) draws a readable line as a tube:
+  `tube.js` (`tubeMesh`, `LINE_COLOR`, `LINE_TUBE_SIDES` 12) and `meshes.js` (`lineMeshes`,
+  `lineReadings`, `lineDriftBound`; it imports the import-free `oracle/assert-dsl.js` for the
+  `lineDrift` bound) are pure and three-free. A line's `display: { color }` is a 0xRRGGBB
+  integer, like a sub-part's (lint `line-bad-source`). The live scene is `src/framework/line-scene.js`
+  (main thread, three.js, so NOT under `lines/`; `LINE_LIMIT_COLOR`): mount re-meshes every line
+  on each param change (slider, pose drag, animation) from the derive it already resolves, hides
+  them while a view waits for its builds, shows them in captures and clips them with the cutaway.
+  The material is the CAD one in every render mode. `src/testing/render.js` draws them in
+  `partforge render` (they count toward framing and the contact shadow). A pose drag adds
+  one readout item per line (length and drift since the press); a line is tinted when its bend
+  ratio is under its minimum, or during a drag when its drift passes the view's `lineDrift`
+  bound; the tints clear when the drag ends or the hold is released. Still to come: 3b (the
+  cached preview: tube in the GLB, re-solve while posing) and 3c (skew-axis taut solve,
+  `lineContacts`).
 - **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
   outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
   `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics

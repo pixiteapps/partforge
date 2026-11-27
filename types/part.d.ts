@@ -1114,4 +1114,10 @@ export interface AnglesHandle extends HandleCommon {
 }
 
 /** One entry of a part's `lines` block. */
-export interface LineDecl { on: string; line?: string; views?: string[] }
+export interface LineDecl {
+  on: string;
+  line?: string;
+  views?: string[];
+  /** How the line is drawn. `color` is a 0xRRGGBB integer, like a sub-part's `display.color`. */
+  display?: { color?: number };
+}

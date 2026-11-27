@@ -263,7 +263,7 @@ Each phase is one PR with its own version bump.
 | 0 | Reference forges for rope and cable hardware | no framework code |
 | 1 | `lines/` core (elements, taut closed form, report), `capstan()` in mechanisms, report through a probe, `src/parts/capstan-joint.js`, guide section, types, tests | `lines/`, `domains/mechanisms/`, docs, `types/mechanisms.d.ts` |
 | 2 | `lines` block, `measure().lines`, sweep rows' `lines`, `lineDrift` and `lineBend` gates, lint `line-unswept`, CLI line | `oracle/measure.js`, `oracle/sweep.js`, `verify-metrics.js`, `lint/`, `bin/cli.js`; re-record `test/verify-golden.test.js` |
-| 3 | Tube mesh, viewer drawing, pose-frame re-mesh, captures; live readout and limit tint; cached-preview support (tube in the GLB, re-solve while posing); skew-axis taut solve; `lineContacts` | `lines/tube.js`, `viewer.js`, `mount.js`, `pose/drag-readout.js`, `gltf/encode-preview.js`, `mount-preview.js`, `preview-pose.js`, `collide/world.js` |
+| 3 (split 3a/3b/3c) | Tube mesh, viewer drawing, pose-frame re-mesh, captures; live readout and limit tint; cached-preview support (tube in the GLB, re-solve while posing); skew-axis taut solve; `lineContacts` | `lines/tube.js`, `viewer.js`, `mount.js`, `pose/drag-readout.js`, `gltf/encode-preview.js`, `mount-preview.js`, `preview-pose.js`, `collide/world.js` |
 | 4 | `partforge/wiring`: `harness`, fixed segments, planar `slack.js`, the three crossing helpers, its lint rules, `src/parts/cable-arm.js` | `domains/wiring/`, `lines/slack.js`, registry, `package.json` exports |
 | 5 | Out-of-plane slack, bundles, cut list in the kit | `lines/slack.js`, `export/kit/` |
 
@@ -309,6 +309,25 @@ from section 4:
   quick lap can pass `lineBend` that the full verify, reading the bend along the sweeps too,
   fails when the line bends tighter somewhere else along the motion; the full lap is the
   verdict to trust for a line whose bend changes with the motion.
+
+Phase 3a as built (0.209.0): a readable line is drawn as a tube. `lines/tube.js` (`tubeMesh`,
+`LINE_COLOR`, `LINE_TUBE_SIDES` 12) and `lines/meshes.js` (`lineMeshes`, `lineReadings`,
+`lineDriftBound`) are pure. The live viewer draws it (`line-scene.js`), mount re-meshes it on
+every param change, `partforge render` draws it, and a pose drag shows each line's length and
+drift in the readout and tints a line past its limit. Dev page `capstan-joint.html`. Still to
+come: 3b (the cached preview) and 3c (skew-axis taut solve, `lineContacts`). Deviations:
+
+- A line's `display: { color }` is a 0xRRGGBB integer, the same as a sub-part's
+  `display.color`, not a CSS string. Lint `line-bad-source` requires an integer 0..0xffffff.
+- The scene is `src/framework/line-scene.js`, not under `lines/`. `lines/` stays pure and
+  three-free, so the three.js code lives beside the viewer's other scenes.
+- `lines/meshes.js` imports the import-free `oracle/assert-dsl.js` to read the view's
+  `lineDrift` bound. It is the one `lines/` file that reaches into `oracle/`.
+- `lineReadings` is new: it gives the length and bend ratio of each readable line from one
+  derive, for the readout and the tint.
+- The tints clear when a drag ends and also when the hold is released (`hold(false)`).
+- The tube uses the CAD material in every render mode. Realistic and cel looks for lines
+  come later.
 
 Phase 1 is useful by itself: it answers the capstan joint's design questions at one
 pose and, through a probe sampled by the part, over a range.

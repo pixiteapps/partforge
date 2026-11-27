@@ -242,7 +242,7 @@ pulley set off its pivot or a termination off the drum's axis. The sweep row's `
 reading names where the extremes are (`lengthMinAt`, `lengthMaxAt`): tension the rope at the
 shortest. `lineBend` gates the bend ratio against a rope maker's minimum. Lint warns
 `line-unswept` for a rope that moves with a param no sweep covers. The full reference is
-`docs/AUTHORING-PARTS.md`, "Lines". Nothing draws the rope yet.
+`docs/AUTHORING-PARTS.md`, "Lines". The viewer and `partforge render` draw the rope as a tube; give the entry `display: { color }` to colour it. See "Lines" in the guide.
 
 ## `rack({ pinion, direction, name? })`
 
