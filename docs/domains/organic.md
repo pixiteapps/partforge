@@ -367,7 +367,7 @@ smooth on screen.
 
 - A corner gets a point on it where three faces meet and each pair of them meets at more
   than about 25°. In the cases measured, every such corner got its point: boxes 3 to 12
-  grid cells wide wherever the grid falls, a thin shell, a bent box and a box with a hole
+  grid cells wide at three grid offsets, a thin shell, a bent box and a box with a hole
   cut through it.
 - A corner can still stay cut by a small facet. This is most likely where four or more
   faces meet. Of 36 pyramid tips with 4 or 6 faces at a 0.6 mm grid, 2 stayed cut, up to
@@ -377,7 +377,7 @@ smooth on screen.
   corner. The mesh still passes very close to it: within 0.02 mm on the hand's palm.
 - No corner point is placed beside a curved sharp edge, such as a hole's rim, where only
   two faces meet. A box with a hole through it, a torus cut flat and a textured gyroid
-  vase get none. Before this check they got 4, 2 and 10 stray points.
+  vase get none.
 - Small notches can remain where a sharp edge fades into a blend.
 - A smooth `union` of three or more children has real creases where a third child is
   within `k`. Those creases are drawn as straight lines.

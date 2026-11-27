@@ -360,7 +360,7 @@ in 0.207, after cleanup began to merge the mesher's vertex clusters. The rule be
 (`SHARP_DENSE_DIV` 5: dense when more than a fifth of a program's edges are candidates)
 counted those clusters' zero-area triangles as edges. With them merged, a clean box n cells
 wide at 0.6 mm has a share of about 0.31 · 8 / n, so 0.31 at 8 cells (measured after the
-merge: 474 candidates in 1,020 triangles). It was taken for dense, so it lost its corners.
+merge: 474 candidates among about 1,530 edges). It was taken for dense, so it lost its corners.
 Measured per program, in candidates per cell:
 
 - Boxes 3 to 12 cells wide, at 0.6 and 1.0 mm and three offsets: at most 1.26 where a box
