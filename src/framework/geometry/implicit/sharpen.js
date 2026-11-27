@@ -38,10 +38,12 @@
 //      point where the three meet, if their determinant is at least SHARP_CORNER_DET and the point
 //      is within SHARP_MAX_MOVE·edge of the edge's middle. The point is then solved on the field
 //      (sharpen-corners.js solveCorners): each step reads each face's gradient a little way into
-//      that face and moves to where the three faces' planes meet. It is kept if the three
-//      gradients at the final point differ pairwise by more than the angle (a point beside a
-//      curved sharp edge, where two faces meet, is refused), it is within SHARP_TOL·edge of the
-//      zero set and within SHARP_MAX_MOVE·edge of the edge's middle. Candidates within
+//      that face and moves to where the three faces' planes meet. A candidate whose step cannot
+//      be taken (where four or more faces meet) goes back to its start, and stands there only
+//      if the faces read round it meet at it. It is kept if the three gradients at the final
+//      point differ pairwise by more than the angle (a point beside a curved sharp edge, where
+//      two faces meet, is refused), it is within SHARP_TOL·edge of the zero set and within
+//      SHARP_MAX_MOVE·edge of the edge's middle. Candidates within
 //      CORNER_MERGE·edge of each other are one corner, at the best one's point. Then, in order: an end within CORNER_MERGE·edge of it is moved onto it; else the
 //      edge is split there (at an earlier corner vertex there, which must be next to the edge:
 //      else the candidate is refused, so no two vertices share a position); else its nearer

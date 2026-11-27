@@ -31,7 +31,6 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
     const n = unit([N0[3 * v], N0[3 * v + 1], N0[3 * v + 2]]);
     return n ? [{ n, d: n[0] * P0[3 * v] + n[1] * P0[3 * v + 1] + n[2] * P0[3 * v + 2], v }] : [];
   };
-  const cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
   const adj = adjacency(T, nv1);
   let cand = [];
   // A candidate on edge (lo, hi) from the planes `ordered`, when exactly three are distinct.
@@ -58,7 +57,7 @@ export function cornerPass(store, { P, N, T, VL, P0, N0, sharp, planeN, noPlane,
       reach = Math.max(reach, d);
     }
     const h = reach < SIDE * edge ? SIDE * edge : reach > CORNER_SIDE_MAX * edge ? CORNER_SIDE_MAX * edge : reach;
-    cand.push({ a: lo, b: hi, m, p, u: [n0, n1, n2], h, n: null, rough, clear, leaf: VL[lo], ev: lo, ok: true, from: 0 });
+    cand.push({ a: lo, b: hi, m, p, u: [n0, n1, n2], h, n: null, rough, clear, leaf: VL[lo], ev: lo, ok: true, from: 0, seed: { p: p.slice(), u: [n0, n1, n2], h } });
   };
   // Only a triangle with an edge point can hold a candidate edge: the edge points' fans, in index order.
   const near = new Set();
@@ -145,25 +144,40 @@ export const CORNER_STEPS = 12, CORNER_SIDE_MAX = 0.5;
 // other two normals, each with a sign). The face is the quadrant whose mean value is nearest zero
 // (the first on a tie): the others lie off the surface, in front of or behind another plane. Each
 // point is SIDE_PTS reads, as an edge side is (readSides). With `withCentre`, the field at the
-// point itself too (else `f` is NaN). A face with no quadrant to read is null.
+// point itself too (else `f` is NaN). A face with no quadrant to read is null. With `ring`, each
+// face is read instead at CORNER_RING points evenly round the point in its plane, from the
+// unit direction of the next normal: where four or more faces meet, a face can be narrower than
+// its quadrants, and one of these then lies on it.
 const QUADRANTS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
-function readCorners(store, cand, edge, withCentre) {
-  const per = SIDE_PTS, c0 = withCentre ? 1 : 0, PTS = c0 + 12 * per, e = DIFF * edge;
+const cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+// The ring's directions, cos and sin of k·22.5°, from three literals.
+export const RING_C1 = 0.9238795325112867, RING_S1 = 0.3826834323650898, RING_R2 = 0.7071067811865476;
+const C1 = RING_C1, S1 = RING_S1, R2 = RING_R2;
+const RING = [[1, 0], [C1, S1], [R2, R2], [S1, C1], [0, 1], [-S1, C1], [-R2, R2], [-C1, S1],
+  [-1, 0], [-C1, -S1], [-R2, -R2], [-S1, -C1], [0, -1], [S1, -C1], [R2, -R2], [C1, -S1]];
+export const CORNER_RING = RING.length;
+function readCorners(store, cand, edge, withCentre, ring = false) {
+  const nd = ring ? CORNER_RING : 4;
+  const per = SIDE_PTS, c0 = withCentre ? 1 : 0, PTS = c0 + 3 * nd * per, e = DIFF * edge;
   const pts = new Float64Array(3 * PTS * cand.length), lf = [], zero = [0, 0, 0];
   cand.forEach((c, q) => {
-    // The quadrants' directions, face by face; null where the other two normals' parts in its
-    // plane are zero or sum to zero.
+    // The directions, face by face; null where the other two normals' parts in its plane are
+    // zero or sum to zero (on the ring: where the next normal's part is zero).
     c.W = [0, 1, 2].map((i) => {
       const ni = c.u[i], nj = c.u[(i + 1) % 3], nk = c.u[(i + 2) % 3], dj = dot(ni, nj), dk = dot(ni, nk);
       const a = unit([nj[0] - dj * ni[0], nj[1] - dj * ni[1], nj[2] - dj * ni[2]]);
+      if (ring) {
+        const b = a ? cr(ni, a) : null;
+        return RING.map(([ca, sb]) => (b ? [ca * a[0] + sb * b[0], ca * a[1] + sb * b[1], ca * a[2] + sb * b[2]] : null));
+      }
       const b = unit([nk[0] - dk * ni[0], nk[1] - dk * ni[1], nk[2] - dk * ni[2]]);
       return QUADRANTS.map(([sa, sb]) => (a && b ? unit([sa * a[0] + sb * b[0], sa * a[1] + sb * b[1], sa * a[2] + sb * b[2]]) : null));
     });
     const [x, y, z] = c.p, o = 3 * PTS * q;
     if (withCentre) { pts[o] = x; pts[o + 1] = y; pts[o + 2] = z; }
-    for (let i = 0; i < 3; i++) for (let s = 0; s < 4; s++) {
+    for (let i = 0; i < 3; i++) for (let s = 0; s < nd; s++) {
       const w = c.W[i][s] ?? zero, sx = x + c.h * w[0], sy = y + c.h * w[1], sz = z + c.h * w[2];
-      pts.set([sx + e, sy, sz, sx - e, sy, sz, sx, sy + e, sz, sx, sy - e, sz, sx, sy, sz + e, sx, sy, sz - e], o + 3 * (c0 + per * (4 * i + s)));
+      pts.set([sx + e, sy, sz, sx - e, sy, sz, sx, sy + e, sz, sx, sy - e, sz, sx, sy, sz + e, sx, sy, sz - e], o + 3 * (c0 + per * (nd * i + s)));
     }
     for (let k = 0; k < PTS; k++) lf.push(c.leaf);
   });
@@ -171,9 +185,9 @@ function readCorners(store, cand, edge, withCentre) {
   return cand.map((c, q) => {
     const o = PTS * q, face = (i) => {
       let best = null;
-      for (let s = 0; s < 4; s++) {
+      for (let s = 0; s < nd; s++) {
         if (!c.W[i][s]) continue;
-        const b = o + c0 + per * (4 * i + s), f0 = d[b], f1 = d[b + 1], f2 = d[b + 2], f3 = d[b + 3], f4 = d[b + 4], f5 = d[b + 5];
+        const b = o + c0 + per * (nd * i + s), f0 = d[b], f1 = d[b + 1], f2 = d[b + 2], f3 = d[b + 3], f4 = d[b + 4], f5 = d[b + 5];
         const f = (f0 + f1 + f2 + f3 + f4 + f5) / 6;
         if (!Number.isFinite(f) || (best && !(Math.abs(f) < Math.abs(best.f)))) continue;
         best = { f, g: [(f0 - f1) / (2 * e), (f2 - f3) / (2 * e), (f4 - f5) / (2 * e)], w: c.W[i][s] };
@@ -184,25 +198,40 @@ function readCorners(store, cand, edge, withCentre) {
   });
 }
 
+// The move that zeroes the three faces' linear models (Cramer's rule), or null when it cannot be
+// found: a face not read, the three gradients' determinant under SHARP_CORNER_DET of their
+// lengths' product, or a move that is not finite.
+function cornerDelta(c, r) {
+  const [A, B, C] = r.S;
+  if (!A || !B || !C) return null;
+  const rA = -A.f + c.h * dot(A.g, A.w), rB = -B.f + c.h * dot(B.g, B.w), rC = -C.f + c.h * dot(C.g, C.w);
+  const a = A.g, b = B.g, n = C.g;
+  const D = det3(a, b, n), scale = hypot3(a[0], a[1], a[2]) * hypot3(b[0], b[1], b[2]) * hypot3(n[0], n[1], n[2]);
+  if (!(Math.abs(D) >= SHARP_CORNER_DET * scale)) return null;
+  const dx = [
+    det3([rA, a[1], a[2]], [rB, b[1], b[2]], [rC, n[1], n[2]]) / D,
+    det3([a[0], rA, a[2]], [b[0], rB, b[2]], [n[0], rC, n[2]]) / D,
+    det3([a[0], a[1], rA], [b[0], b[1], rB], [n[0], n[1], rC]) / D,
+  ];
+  return Number.isFinite(hypot3(dx[0], dx[1], dx[2])) ? dx : null;
+}
+
+// Whether a candidate back at its start is the corner of the faces read there: the move that
+// zeroes their models is under CONVERGED·edge, as a converged solve's last step is.
+function atStart(c, r, edge) {
+  const dx = cornerDelta(c, r);
+  return dx !== null && hypot3(dx[0], dx[1], dx[2]) <= CONVERGED * edge;
+}
+
 // One corner step: the three faces' linear models zero (Cramer's rule), as the edge round's
 // newtonStep does for two faces and a plane. False when it cannot be taken: a face not read, or
 // the three gradients' determinant under SHARP_CORNER_DET of their lengths' product. The read
 // distance halves after each step, down to SIDE·edge; the point has converged on a step under
 // CONVERGED·edge read at that floor.
 function cornerStep(c, r, edge) {
-  const [A, B, C] = r.S;
-  if (!A || !B || !C) return false;
-  const rA = -A.f + c.h * dot(A.g, A.w), rB = -B.f + c.h * dot(B.g, B.w), rC = -C.f + c.h * dot(C.g, C.w);
-  const a = A.g, b = B.g, n = C.g;
-  const D = det3(a, b, n), scale = hypot3(a[0], a[1], a[2]) * hypot3(b[0], b[1], b[2]) * hypot3(n[0], n[1], n[2]);
-  if (!(Math.abs(D) >= SHARP_CORNER_DET * scale)) return false;
-  const dx = [
-    det3([rA, a[1], a[2]], [rB, b[1], b[2]], [rC, n[1], n[2]]) / D,
-    det3([a[0], rA, a[2]], [b[0], rB, b[2]], [n[0], rC, n[2]]) / D,
-    det3([a[0], a[1], rA], [b[0], b[1], rB], [n[0], n[1], rC]) / D,
-  ];
-  const len = hypot3(dx[0], dx[1], dx[2]);
-  if (!Number.isFinite(len)) return false;
+  const dx = cornerDelta(c, r);
+  if (!dx) return false;
+  const [a, b, n] = [r.S[0].g, r.S[1].g, r.S[2].g], len = hypot3(dx[0], dx[1], dx[2]);
   const floor = SIDE * edge, done = c.h <= floor && len <= CONVERGED * edge, sc = len > STEP_CAP * edge ? (STEP_CAP * edge) / len : 1;
   if (!done) for (let k = 0; k < 3; k++) c.p[k] += dx[k] * sc;
   const uA = unit(a), uB = unit(b), uC = unit(n);
@@ -216,14 +245,19 @@ function cornerStep(c, r, edge) {
 // each step is one read of every live candidate. A candidate is evaluated with its first end's
 // leaf program, or its other end's when the first gives a non-finite value at its start. One
 // whose step converges is judged on that read; the rest are judged on one more read after
-// CORNER_STEPS. A candidate is kept (its point and, for its normal, the unit sum of its three
+// CORNER_STEPS. One whose step cannot be taken goes back to its start (point, planes and read
+// distance) and is judged on a ring read there (readCorners). Where four or more flat faces meet
+// (a pyramid's tip), a quadrant read can land on a fourth face, and the three planes the
+// candidate started from already meet at the tip. Such a candidate must also be the corner of
+// the faces read there (atStart): beside a curved sharp edge, two tangent planes of one face
+// meet off it. A candidate is kept (its point and, for its normal, the unit sum of its three
 // face gradients) if the field at the point is within `tol` of zero, the point is within
 // SHARP_MAX_MOVE·edge of its edge's middle, and the three faces' gradients read there differ
 // pairwise by more than the angle. The last test refuses a point beside a curved sharp edge,
 // where only two faces meet. Sets `c.ok` false on the rest.
 function solveCorners(store, cand, VL, edge, st, tol) {
   let live = cand.slice();
-  const judged = [], reads = [];
+  const judged = [], reads = [], back = [];
   for (let it = 0; it < CORNER_STEPS && live.length; it++) {
     const rs = readCorners(store, live, edge, it === 0);
     if (it === 0) {
@@ -237,7 +271,7 @@ function solveCorners(store, cand, VL, edge, st, tol) {
     }
     live = live.filter((c, q) => {
       const s = cornerStep(c, rs[q], edge);
-      if (!s) { c.ok = false; st.cornerUnsolved++; return false; }
+      if (!s) { back.push(c); return false; }
       if (s === "done") { judged.push(c); reads.push(rs[q]); return false; }
       return true;
     });
@@ -245,6 +279,11 @@ function solveCorners(store, cand, VL, edge, st, tol) {
   if (live.length) {
     const rs = readCorners(store, live, edge, true);
     live.forEach((c, q) => { judged.push(c); reads.push(rs[q]); });
+  }
+  if (back.length) {
+    for (const c of back) { c.p = c.seed.p.slice(); c.u = c.seed.u; c.h = c.seed.h; c.back = true; }
+    const rs = readCorners(store, back, edge, true, true);
+    back.forEach((c, q) => { judged.push(c); reads.push(rs[q]); });
   }
   // The point itself, for those judged on a read without it.
   const need = judged.filter((c, q) => !Number.isFinite(reads[q].f));
@@ -256,7 +295,7 @@ function solveCorners(store, cand, VL, edge, st, tol) {
   judged.forEach((c, q) => {
     const r = reads[q], [uA, uB, uC] = r.S.map((s) => (s ? unit(s.g) : null));
     const dm = hypot3(c.p[0] - c.m[0], c.p[1] - c.m[1], c.p[2] - c.m[2]);
-    if (!uA || !uB || !uC || !Number.isFinite(r.f)) { c.ok = false; st.cornerUnsolved++; }
+    if (!uA || !uB || !uC || !Number.isFinite(r.f) || (c.back && !atStart(c, r, edge))) { c.ok = false; st.cornerUnsolved++; }
     else if (!(dm <= SHARP_MAX_MOVE * edge)) { c.ok = false; st.cornerFar++; }
     else if (!(Math.abs(r.f) <= tol)) { c.ok = false; st.cornerOffField++; }
     else if (!(dot(uA, uB) < SHARP_ANGLE_COS && dot(uB, uC) < SHARP_ANGLE_COS && dot(uA, uC) < SHARP_ANGLE_COS)) { c.ok = false; st.cornerNotSharp++; }

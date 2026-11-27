@@ -24,6 +24,9 @@ import { handSpec, vaseSpec } from "../test/fixtures/implicit-trees.js";
 const arg = process.argv.indexOf("--core");
 const coreMode = arg >= 0 ? process.argv[arg + 1] : "both";
 if (!["on", "off", "both"].includes(coreMode)) { console.error("usage: bench-implicit.mjs [--core on|off|both]"); process.exit(2); }
+// `--only a,b` runs only the named cases (below).
+const only = process.argv.indexOf("--only"), names = only >= 0 ? process.argv[only + 1] : null;
+if (only >= 0 && (!names || names.startsWith("--"))) { console.error("usage: bench-implicit.mjs [--only name,name]: name at least one case"); process.exit(2); }
 
 // A true cold run: a fresh process that boots the kernel and times its first k.implicit.
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -72,9 +75,7 @@ const cases = [["hand preview", handSpec(), 1.5, new Map(), PREVIEW_CLEANUP], ["
   ["plate-edge", solidPlate, 0.6, new Map(), PREVIEW_CLEANUP], ["bracket-corner", solidBracket, 0.6, new Map(), PREVIEW_CLEANUP],
   ["knurl preview", knurl, 0.6, new Map(), PREVIEW_CLEANUP], ["knurl print 0.3", knurl, 0.3, new Map(), CLEANUP],
   ["spheres", spheres, 0.6, new Map(), PREVIEW_CLEANUP]];
-// `--only a,b` runs only the named cases.
-const only = process.argv.indexOf("--only");
-const picked = only >= 0 ? cases.filter(([name]) => process.argv[only + 1].split(",").includes(name)) : cases;
+const picked = only >= 0 ? cases.filter(([name]) => names.split(",").includes(name)) : cases;
 
 for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);

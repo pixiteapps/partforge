@@ -385,7 +385,8 @@ describe("sharpenMesh, hard cases", () => {
   // Two shapes the final review of 0.206 saw find 7 of 8 corners. Both find 8 now.
   // The cut onion box is the thin-wall shape. Its outer edges and corners are rounded (an onion
   // offsets the box outward by a distance), so its 8 sharp corners are on the inner box: the 4 at
-  // the bottom and the 4 where the cut meets the inner box's upright edges.
+  // the bottom and the 4 where the cut meets the inner box's upright edges. The cut keeps z ≤ 5,
+  // so the inner box's top (z = 14.2) is gone, and those 4 sit at z = 5.
   // The bent box is a 10 x 10 x 40 box bent around z at radius 30. Its 8 corners are the box's
   // corners carried by the bend.
   const square = (h, zs) => zs.flatMap((z) => [[-h, -h, z], [h, -h, z], [-h, h, z], [h, h, z]]);
@@ -407,7 +408,7 @@ describe("sharpenMesh, hard cases", () => {
   // A corner point is solved on its three faces, and kept only where three faces meet. A curved
   // sharp edge (a hole's rim, a cut torus's rims) has two faces: two tangent planes of one of them
   // and a plane of the other meet beside the rim, which used to make a stray corner point there
-  // (box minus cylinder 12 at 1.0 mm, cut torus 2 at 1.0 mm print).
+  // (box minus cylinder 4 at 1.0 mm, 12 corner points in all; cut torus 2 at 1.0 mm print).
   for (const edge of GRIDS) {
     test(`hole: a box minus a through cylinder has its 8 box corners and none on the rims (grid ${edge})`, () => {
       const root = { kind: "subtract", k: 0, children: [{ kind: "box", size: [30, 20, 10] }, { kind: "cylinder", h: 30, r: 4 }] };
@@ -426,14 +427,55 @@ describe("sharpenMesh, hard cases", () => {
     }
   }
 
+  // A pyramid's tip, where 4 or 6 flat faces meet: a box cut by a floor and n faces leaning
+  // `lean` degrees from upright, turned `rot` radians about z, through a tip at (0, 0, H). With
+  // more than three faces at a point, the three-face solve often cannot take a step. The
+  // candidate's start point then stands if the faces read round it meet there and pass the same
+  // field and angle tests. Of these 36 tips, 2 lie more than 0.01 mm from every vertex, the same
+  // 2 as before the corner solve was added (it had made 11 of them).
+  const pyramid = (n, lean, rot, H) => {
+    const s = Math.sin(((90 - lean) * Math.PI) / 180), c = Math.cos(((90 - lean) * Math.PI) / 180), sides = [];
+    for (let i = 0; i < n; i++) {
+      const a = rot + (2 * Math.PI * i) / n;
+      sides.push({ kind: "halfspace", normal: [s * Math.cos(a), s * Math.sin(a), c], offset: H * c });
+    }
+    return { kind: "intersect", children: [{ kind: "box", size: [40, 40, 40] }, { kind: "halfspace", normal: [0, 0, -1], offset: 0 }, ...sides] };
+  };
+  const tipGap = (mesh, H) => {
+    let best = Infinity;
+    for (let v = 0; v < mesh.positions.length / 3; v++) best = Math.min(best, dist(vert(mesh, v), [0, 0, H]));
+    return best;
+  };
+  test("pyramid: of 36 tips where 4 or 6 faces meet, no more than 2 are missed (grid 0.6)", () => {
+    const missed = [];
+    for (const n of [4, 6]) for (const lean of [25, 35, 50]) for (const rot of [0, 0.3, 0.7]) for (const H of [8, 10.17]) {
+      const r = run(pyramid(n, lean, rot, H), 0.6);
+      expectSound(r);
+      const gap = tipGap(r.mesh, H);
+      if (gap > 0.01) missed.push(`${n} faces, lean ${lean}, rot ${rot}, H ${H}: ${gap.toFixed(3)} mm`);
+    }
+    expect(missed.length, missed.join("; ")).toBeLessThanOrEqual(2);
+  }, 240_000);
+  for (const edge of GRIDS) {
+    test(`pyramid: a 4-faced tip leaning 35° and turned 0.3 rad gets a vertex on its tip (grid ${edge})`, () => {
+      for (const H of [8, 10.17]) {
+        const r = run(pyramid(4, 35, 0.3, H), edge);
+        expectSound(r);
+        expect(tipGap(r.mesh, H), `H ${H}`).toBeLessThanOrEqual(0.005);
+      }
+    }, 120_000);
+  }
+
   // The vase (test/implicit-cleanup.test.js's tier case, 1.2 mm): every corner point it keeps
   // has three faces of the field within 0.05 cells of it. Four used to sit 0.017 to 0.139 mm
-  // beside a curved crease, where only two faces meet.
+  // beside a curved crease, where only two faces meet. It keeps none now, so the count is pinned
+  // too: a new corner point here must be looked at, not passed by the loop.
   test("vase: every corner point has three faces of the field around it (grid 1.2)", () => {
     const vase = vaseSpec(), compiled = compileImplicit(vase.spec, { images: vase.images }), edge = 1.2;
     const store = evaluateLeaves(planLeaves(compiled, edge));
     const mesh = sharpenMesh(store, cleanupMesh(store, meshStore(store), { ...PREVIEW_CLEANUP, decimateFrac: 0 }));
     const field = (x, y, z) => evalReference(compiled, x, y, z);
+    expect(cornerVerts(mesh).length, "corner points").toBe(0);
     for (const v of cornerVerts(mesh)) {
       const p = vert(mesh, v);
       expect(faceNormals(field, p, 0.05 * edge, SHARP_ANGLE_COS).length, `corner at ${p.map((x) => x.toFixed(3))}`).toBeGreaterThanOrEqual(3);

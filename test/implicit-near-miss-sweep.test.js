@@ -44,7 +44,7 @@ describe("near-miss sweep: spreads × finger blends × moved root, gap 0.2 at th
       // Skin detail (creases) only carves inward, so it never lifts the field above zero.
       // The limit is 0.05 mm, a quarter of the gap: a vertex floating midway across it reads
       // 0.1 mm. The sharpen stage keeps every point it places within a hair of the field here
-      // (worst 0.0071 mm over the sweep since a corner point is solved on its faces, 0.207).
+      // (worst 0.0071 mm over the sweep, with each corner point solved on its faces).
       let highest = -Infinity;
       for (let i = 0; i < mesh.positions.length; i += 3) highest = Math.max(highest, evalReference(compiled, mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]));
       expect(highest, "the field at the vertex farthest off the surface (mm)").toBeLessThan(0.05);
@@ -55,10 +55,10 @@ describe("near-miss sweep: spreads × finger blends × moved root, gap 0.2 at th
 // At fingerBlend 2, spread −3.4718, moved, three creases of the palm (a smooth union of four
 // children: where a third child is within k its field has a crease) meet on the surface at
 // (5.8486, −31.3302, 13.1309), where the box, hypothenar and wrist children tie. Their faces meet
-// at 24.7°, 26.8° and 45.9°. Two of the three faces are under the sharpen stage's 25° sharp
-// angle, so this is not a corner and the stage places no corner point there. Its creases are
-// sharp, so an edge point lies on them, at the corner. (The stage used to put a corner point
-// 0.25 mm along a crease from here, 0.05 mm off the field.)
+// at 24.7°, 26.8° and 45.9°. One crease is 24.7°, under the sharpen stage's 25° sharp angle, so
+// this is not a corner and the stage places no corner point there. The test checks that some
+// vertex lies within 0.02 mm of the point. (The stage used to put a corner point 0.25 mm along a
+// crease from here, 0.05 mm off the field.)
 test("near-miss corner: a vertex lies on the palm's near-corner, and no corner point is placed by it", () => {
   const spec = movedRoot(handSpec({ spread: -3.4718, fingerBlend: 2, contactGap: GAP }));
   const { store, cleaned } = jsStages(spec, EDGE, { tier: "preview" });
