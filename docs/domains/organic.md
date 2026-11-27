@@ -34,8 +34,8 @@ The domain has two reference parts. `src/parts/organic-hand.js` is a posable han
 with `k.implicit`: five digits on frame chains, a `contact` root, attachments and crease
 detail (its builders are also the fixture in `test/fixtures/implicit-trees.js`).
 `src/parts/organic-whale.js` is a whale built from one subdivision cage. The worked
-example in "Worked example: a two-toe paw" is complete and tested, and so is the whale
-in "Worked example: a whale".
+examples in "Worked example: a two-toe paw" and "Worked example: a wall hook" are
+complete and tested, and so is the whale in "Worked example: a whale".
 
 ## When to use it, and when not
 
@@ -243,6 +243,22 @@ const boss = k.cylinder({ r: 4, h: 12 }).at([0, 0, 4]);
 const rounded = k.implicit({ preview: 1, root: { kind: "union", k: 4, children: [{ kind: "solid", solid: plate }, { kind: "solid", solid: boss }] } });
 rounded.volume() > plate.union(boss).volume();   // true
 ```
+
+**A boss on a curved wall.** Where a boss meets a tube, the seam is a curve in 3D, not a
+straight line or a circle. The blend needs no edge to select. It fills the joint all the
+way round and leaves the boss's top where it was:
+
+```js
+const pipe = k.cylinder({ r: 12, h: 40, center: true }).rotateY(90);
+const stem = k.cylinder({ r: 4, h: 18 });
+const sprouted = k.implicit({ preview: 1, root: { kind: "union", k: 3, children: [{ kind: "solid", solid: pipe }, { kind: "solid", solid: stem }] } });
+sprouted.volume() > pipe.union(stem).volume();   // true
+sprouted.boundingBox().max[2];   // 18
+```
+
+A mesh `fillet` can also round this seam, from a point that lies on it
+(`edges: { near: [4, 0, 12] }` here). The blend needs no such point. For a complete part, with
+holes cut after meshing, see "Worked example: a wall hook".
 
 **Offsets and shells of any solid.** An `offset` over a `solid` leaf moves its surface
 by `d`: out for `d > 0`, in for `d < 0`. To make a skin, cut the inward offset from the
@@ -614,6 +630,8 @@ other reference part, `src/parts/organic-whale.js`, also lints clean and passes 
 - **No exact STEP.** Pin `meta.backend: "manifold"`. A STEP export writes an organic
   sub-part as a tessellated (mesh) solid; export STL or 3MF for printing.
 - **Build flats and holes after meshing**, with ordinary booleans on the returned solid.
+  Keep them more than `k` from a blended joint, because the blend fills in around the
+  joint. See "Worked example: a wall hook".
 
 ## Worked example: a two-toe paw
 
@@ -683,6 +701,76 @@ The points to copy:
 - **Frames carry the pose.** The toes are authored once, along +Y of their frames; the
   params only change the frames' rotate steps.
 - **`meta.backend: "manifold"`** pins the part to the backend that can build it.
+
+## Worked example: a wall hook
+
+A flat plate with a round arm that curves up and ends in a ball. The plate stands in the
+XZ plane with its back on the wall (y = 0). Both pieces are ordinary solids. One `union`
+with a blend joins them as `solid` leaves, so the arm grows out of the plate with a
+smooth fillet all round. The screw holes are cut after `k.implicit`, with ordinary
+booleans, high on the plate and far from the joint.
+
+```js
+// The plate and the arm are ordinary solids; the blend joins them.
+const hookSpec = (k, p) => {
+  const plate = k.box({ min: [-20, 0, 0], max: [20, 5, 70] });
+  // A quarter of a torus in the YZ plane: it leaves the plate along +Y and turns up.
+  const arc = k.torus({ rMajor: p.reach, rMinor: 5 }).rotateY(90)
+    .intersect(k.box({ min: [-10, 0, -p.reach - 10], max: [10, p.reach + 10, 0] }));
+  const arm = arc.union(k.sphere(6).at([0, p.reach, 0])).at([0, 5, 15 + p.reach]);
+  return {
+    root: { kind: "union", k: p.blend, children: [{ kind: "solid", solid: plate }, { kind: "solid", solid: arm }] },
+    resolution: 0.5,
+    preview: 0.75,
+  };
+};
+
+// A screw hole along +Y, countersunk into the front face (y = 5).
+const countersunk = (k, z) => k.cylinder({ r: 2, h: 7 })
+  .union(k.cylinder({ r1: 2, r2: 5.5, h: 3.5 }).at([0, 0, 3]))
+  .rotateX(-90).at([0, -1, z]);
+
+export default {
+  meta: { title: "Wall hook", units: "mm", backend: "manifold" },
+  parameters: [{ id: "shape", title: "Shape", advanced: [
+    { key: "reach", label: "Reach", unit: "mm", min: 12, max: 20, step: 1 },
+    { key: "blend", label: "Blend", unit: "mm", min: 0, max: 6, step: 0.5 },
+  ] }],
+  defaults: { reach: 18, blend: 4 },
+  parts: {
+    hook: {
+      label: "Hook",
+      views: ["hook"],
+      // Holes after meshing, with ordinary booleans, far from the blended joint.
+      build: (k, p) => k.implicit(hookSpec(k, p)).cut(countersunk(k, 48)).cut(countersunk(k, 62)),
+    },
+  },
+  views: { hook: { label: "Hook" } },
+  verify: { expect: { hook: { watertight: true, holes: 2 } } },
+};
+```
+
+At the defaults the hook's box is `[-20, 0, 0]` to `[20, 29, 70]` (the ball's front is at
+y = 5 + 18 + 6). `verify` passes: the solid is watertight and has the two holes. Above
+z = 30 the blended body is still exactly the plate, so the holes cut a plain flat plate.
+On an Apple M1 Max the part builds in about 0.6 s at its 0.75 mm preview and about
+1.2 s at its 0.5 mm print grid.
+
+The points to copy:
+
+- **Build each piece as an ordinary solid.** The plate is a `k.box`; the arm is a torus
+  cut to a quarter, with a sphere on its end. Use the ordinary ops for each piece, not
+  implicit primitives.
+- **Blend only the joint.** One `union` with `k` over the two `solid` leaves. `k` sets
+  the size of the fillet where the arm meets the plate.
+- **Holes and flats after meshing, more than `k` from the joint.** The blend fills in
+  around the joint, so a hole there would cut into the fillet. Cut them from the solid
+  that `k.implicit` returns, with ordinary booleans. Then they are not remeshed at the
+  grid.
+- **Pick `resolution` and `preview` for the smallest round you care about.** Here that
+  is the 4 mm blend: a 0.75 mm preview grid and a 0.5 mm print grid.
+- **The plate keeps crisp edges.** The sharp edges and corners of a `solid` leaf are kept,
+  so only the joint is rounded.
 
 ## Jointed bodies
 

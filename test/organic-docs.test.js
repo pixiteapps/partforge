@@ -49,10 +49,14 @@ const evalValue = (text) => new Function(`return (${text});`)();
 /**
  * One runnable block → a script. A statement at column 0 ending in `;` with a `// value`
  * becomes a check; one with no comment takes its value from the `//` lines right after it.
- * The worked example's `export default` becomes `const part =`, so later blocks can use it.
+ * A worked example's `export default` becomes a `const` named in `PART_NAMES`, in order (the
+ * paw is `part`), so later blocks and the tests can use it.
  */
+const PART_NAMES = ["part", "hookPart"];
+let partsSeen = 0;
 function toScript(block) {
-  const lines = block.replace(/^export default /m, "const part = ").split("\n").filter((l) => !/^import /.test(l));
+  const named = block.replace(/^export default /m, () => `const ${PART_NAMES[partsSeen++]} = `);
+  const lines = named.split("\n").filter((l) => !/^import /.test(l));
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -81,14 +85,14 @@ beforeAll(async () => {
     expect(plain(run()), src).toEqual(evalValue(text));
     checked.push(src);
   };
-  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, whaleCage, cageHand, poseDigits };`;
+  const body = `${fences("js").map(toScript).join("\n")}\nreturn { part, pawSpec, hookPart, hookSpec, countersunk, whaleCage, cageHand, poseDigits };`;
   scope = new Function("k", "limb", "implicitDistance", "check", ...Object.keys(organic), body)(k, limb, implicitDistance, check, ...Object.values(organic));
   scope.checked = checked;
 });
 
 test("every runnable example in the guide returns the value it shows", () => {
   expect(fences("js").length).toBeGreaterThanOrEqual(7);
-  expect(scope.checked.length).toBe(70);   // every shown value; a parse change that drops one fails here
+  expect(scope.checked.length).toBe(72);   // every shown value; a parse change that drops one fails here
 });
 
 test("the import line names exactly the partforge/organic exports", () => {
@@ -246,6 +250,55 @@ test("the worked example builds, measures and verifies as the guide says", () =>
   expect(solid.boundingBox().min[2]).toBeCloseTo(-3.6, 1);
   expect(verify(k, part).ok).toBe(true);
   expect(lintPart(part).errors).toEqual([]);
+});
+
+test("the wall hook builds, verifies and lints as the guide says", () => {
+  const { hookPart: part, hookSpec, countersunk } = scope;
+  const text = section("Worked example: a wall hook").replace(/\s+/g, " ");
+  const p = part.defaults;
+  // Its sizes: a 40 × 70 × 5 plate, a 10 mm arm, one blended union of two solid leaves.
+  const spec = hookSpec(k, p);
+  expect(spec.root.kind).toBe("union");
+  expect(spec.root.k).toBe(4);
+  expect(spec.root.children.map((c) => c.kind)).toEqual(["solid", "solid"]);
+  expect(spec.root.children[0].solid.boundingBox().size.map((v) => Math.round(v * 1e6) / 1e6)).toEqual([40, 5, 70]);
+  expect(text).toContain("a 0.75 mm preview grid and a 0.5 mm print grid");
+  expect([spec.preview, spec.resolution]).toEqual([0.75, 0.5]);
+  expect(text).toContain("the 4 mm blend");
+
+  // The box, and verify (watertight, two holes); lint is clean.
+  const solid = part.parts.hook.build(k, p);
+  const box = solid.boundingBox();
+  const [, lo, hi] = /box is `([^`]+)` to `([^`]+)`/.exec(text);
+  expect(box.min.map((v) => Math.round(v) + 0)).toEqual(JSON.parse(lo));
+  expect(box.max.map((v) => Math.round(v) + 0)).toEqual(JSON.parse(hi));
+  expect(box.max[1]).toBeCloseTo(5 + p.reach + 6, 1);
+  expect(verify(k, part).ok).toBe(true);
+  expect(lintPart(part).errors).toEqual([]);
+  expect(lintPart(part).warnings).toEqual([]);
+
+  // "Above z = 30 the blended body is still exactly the plate": the blend stops far below the
+  // holes, and the holes clear the joint by more than k (the arm's top meets the plate at z = 20).
+  expect(text).toContain("Above z = 30 the blended body is still exactly the plate");
+  const above = k.implicit(spec).intersect(k.box({ min: [-25, -1, 30], max: [25, 5.5, 75] }));
+  expect(above.volume()).toBeCloseTo(40 * 5 * 40, 3);
+  for (const z of [48, 62]) {
+    const hole = countersunk(k, z).boundingBox();
+    expect(hole.max[1]).toBeGreaterThan(5);   // the countersink opens on the front face
+    expect(hole.min[2] - (15 + 5)).toBeGreaterThan(spec.root.k);
+  }
+  // At every reach the ball stays below the lower hole.
+  const reach = part.parameters[0].advanced.find((c) => c.key === "reach");
+  expect(15 + reach.max + 6).toBeLessThan(countersunk(k, 48).boundingBox().min[2]);
+});
+
+test("the curved-wall boss's fillet claim is the code's", () => {
+  const text = section("Solids in a tree", "###");
+  const near = JSON.parse(/`edges: \{ near: ([^}]+) \}`/.exec(text)[1]);
+  // The block's own solids (built again: the beforeAll scope's handles may be freed by now).
+  const sharp = k.cylinder({ r: 12, h: 40, center: true }).rotateY(90).union(k.cylinder({ r: 4, h: 18 }));
+  expect(section("Solids in a tree", "###")).toContain("const pipe = k.cylinder({ r: 12, h: 40, center: true }).rotateY(90);\nconst stem = k.cylinder({ r: 4, h: 18 });");
+  expect(sharp.fillet({ r: 2, edges: { near } }).volume()).toBeGreaterThan(sharp.volume());
 });
 
 test("the guide is indexed by the core guide and points at its neighbours", () => {
