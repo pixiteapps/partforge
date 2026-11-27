@@ -14,7 +14,8 @@ export function normalizeLines(part) {
     if (!isObj(e) || typeof e.on !== "string" || !e.on) continue;
     const line = typeof e.line === "string" && e.line ? e.line : name;
     const views = Array.isArray(e.views) ? e.views.filter((v) => typeof v === "string") : null;
-    out.push({ name, on: e.on, line, views });
+    const display = isObj(e.display) && typeof e.display.color === "string" ? { color: e.display.color } : null;
+    out.push({ name, on: e.on, line, views, display });
   }
   return out;
 }
