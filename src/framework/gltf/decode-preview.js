@@ -53,6 +53,12 @@
 // child of its node (quantize() moves it there), so a mesh's sub-part is found
 // by walking up to the nearest node carrying partforgeSubPart.
 //
+// A declared line's tube (encoder version 8, a node with partforgeLine) is never a
+// sub-part: it comes back in `lines`, not `meshes`, as { name: "line:<decl>", line,
+// mesh: { positions, normals, indices }, display: { color? } } in the model frame at
+// the opening pose — lineMeshes's entry shape, so line-scene.js draws either.
+// `lines` is empty for a file without them (every version 1–7 file).
+//
 // Rejects on anything that is not a decodable GLB; the callers (mount's
 // `preview`, mountPreview) decide what a failure means for them.
 import { Matrix3, Matrix4, Quaternion, Vector3 } from "three";
@@ -247,6 +253,7 @@ export async function decodePreviewGlb(bytes) {
   const gltf = await loader.parseAsync(data, "");
   gltf.scene.updateMatrixWorld(true);
   const meshes = [];
+  const lines = [];
   const edgesByNode = new Map(); // node object → model-frame segment arrays
   const meshByNode = new Map(); // node object → its surface payload
   const toModel = new Matrix4();
@@ -272,7 +279,23 @@ export async function decodePreviewGlb(bytes) {
     const indices = geometry.index ? Uint32Array.from(geometry.index.array) : null;
     const count = surfaceVertexCount(position, geometry.index);
     const node = nodeObjectOf(obj);
-    const { partforgeDisplay } = node.userData;
+    const { partforgeDisplay, partforgeLine } = node.userData;
+    if (typeof partforgeLine === "string" && partforgeLine) {
+      // A declared line's tube (version 8): never a sub-part, so it goes to `lines`.
+      const color = partforgeDisplay?.color;
+      lines.push({
+        name: `line:${partforgeLine}`,
+        line: partforgeLine,
+        mesh: {
+          positions: readVec3(position, toModel, false, count),
+          normals: normal ? readVec3(normal, normalMatrix, true, count) : null,
+          indices,
+        },
+        display: Number.isInteger(color) ? { color } : {},
+      });
+      geometry.dispose();
+      return;
+    }
     const payload = {
       name: subPartNameOf(node),
       positions: readVec3(position, toModel, false, count),
@@ -302,6 +325,7 @@ export async function decodePreviewGlb(bytes) {
     view: typeof extras.partforgeView === "string" ? extras.partforgeView : null,
     meta: metaOf(extras),
     meshes,
+    lines,
     animation: await readAnimation(gltf),
     params: paramsOf(extras),
   };

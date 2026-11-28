@@ -390,6 +390,8 @@ test("captureView() draws the view's declared lines after the sub-parts, each wi
   expect(rope.display).toEqual({ color: LINE_COLOR });
   expect(rope.positions.length).toBeGreaterThan(0);
   expect(rope.indices.length).toBe(rope.triangles * 3);
+  // no feature edges: an empty array, never undefined (which derives them by angle)
+  expect(rope.edges).toEqual(new Float32Array(0));
   // a view the line is not declared in captures no rope
   const detail = runtime.captureView("detail");
   resolveCaptureBuild(workers, ["body"]);

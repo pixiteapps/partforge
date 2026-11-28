@@ -3,6 +3,7 @@ import "@fontsource-variable/geist-mono";
 import robotArm from "./parts/robot-arm.js";
 import hand from "./parts/hand.js";
 import cageHand from "./parts/cage-hand.js";
+import capstanJoint from "./parts/capstan-joint.js";
 import { mount, mountPreview } from "./index.js";
 
 // Dev/CI-only app for Pose mode on a cached preview (mountPreview's `part` option). It
@@ -10,13 +11,14 @@ import { mount, mountPreview } from "./index.js";
 // view with runtime.exportPreview(), disposes the editor, and mounts the file into #app
 // with the part module — so every drag below runs with no kernel and no worker.
 // `?part=hand` swaps the robot arm for the hand, `?part=cage-hand` for the cage hand (whose
-// file carries its ties, so a fingertip drag re-poses the body with no kernel). Hooks for scripts/check-pose.mjs:
+// file carries its ties, so a fingertip drag re-poses the body with no kernel), `?part=capstan-joint`
+// for the capstan (its rope rides in the file and is re-solved as the drum turns). Hooks for scripts/check-pose.mjs:
 // window.__pfPart (the part, for its defaults), window.__pfPreview (the preview handle),
 // window.__pfWorkersAfterPreview (Worker constructions after the preview mount — must
 // stay 0) and window.__pfDragEnds (every pose.onDragEnd payload).
 const asked = new URLSearchParams(location.search).get("part");
-const which = asked === "hand" || asked === "cage-hand" ? asked : "robot-arm";
-const part = which === "hand" ? hand : which === "cage-hand" ? cageHand : robotArm;
+const which = ["hand", "cage-hand", "capstan-joint"].includes(asked) ? asked : "robot-arm";
+const part = which === "hand" ? hand : which === "cage-hand" ? cageHand : which === "capstan-joint" ? capstanJoint : robotArm;
 window.__pfPart = part;
 window.__pfDragEnds = [];
 
@@ -25,7 +27,9 @@ const createWorker = (name) => (which === "hand"
   ? new Worker(new URL("./hand-worker.js", import.meta.url), { type: "module", name })
   : which === "cage-hand"
     ? new Worker(new URL("./cage-hand-worker.js", import.meta.url), { type: "module", name })
-    : new Worker(new URL("./robot-arm-worker.js", import.meta.url), { type: "module", name }));
+    : which === "capstan-joint"
+      ? new Worker(new URL("./capstan-joint-worker.js", import.meta.url), { type: "module", name })
+      : new Worker(new URL("./robot-arm-worker.js", import.meta.url), { type: "module", name }));
 
 async function start() {
   const editorEl = document.getElementById("editor");

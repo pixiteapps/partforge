@@ -375,7 +375,9 @@ the installed package, so let the publish finish before bumping the dep there.
   them would get their own vertex array back. Empty or absent `edges` writes none
   and decodes to an EMPTY array, never undefined, which would make the viewer
   derive lines by angle. Materials from `cadAppearance`, the sub-part's `display`
-  block in node extras). Since version 7 a k.subdiv body's `ties` ride along: two
+  block in node extras). Since version 8 a declared line's tube is a `line:<name>` node
+  with extras `partforgeLine` (and its own `partforgeDisplay`), decoded into `lines`, never a
+  sub-part, and never animated. Since version 7 a k.subdiv body's `ties` ride along: two
   application attributes (`_PARTFORGE_TIE_TRI`, two u16 halves of the limit triangle;
   `_PARTFORGE_TIE_W`, two normalized u16 weights) in the file's own vertex order, mapped
   after weld + reorder and added after quantize like the lines, plus the node extra
@@ -822,9 +824,13 @@ the installed package, so let the publish finish before bumping the dep there.
   `partforge render` (they count toward framing and the contact shadow). A pose drag adds
   one readout item per line (length and drift since the press); a line is tinted when its bend
   ratio is under its minimum, or during a drag when its drift passes the view's `lineDrift`
-  bound; the tints clear when the drag ends or the hold is released. Still to come: 3b (the
-  cached preview: tube in the GLB, re-solve while posing) and 3c (skew-axis taut solve,
-  `lineContacts`).
+  bound; the tints clear when the drag ends or the hold is released. Phase 3b (0.212.0) puts
+  the tube in the cached preview: `exportPreview` writes each line at the file's params as a
+  `line:<name>` node (encoder version 8, extras `partforgeLine`), the decoder returns it in
+  `lines`, never as a sub-part, and `mountPreview` draws the file's still tube without the part
+  and, with it, re-solves every line from derive at its params on each write and each frame of
+  the baked animation (the player's `onApply`), with the drag readout and tints. Still to come:
+  3c (skew-axis taut solve, `lineContacts`).
 - **`src/framework/solve/`** + **`src/framework/pose/`** - inverse kinematics
   outside the domain (spec `docs/superpowers/specs/2026-10-30-inverse-kinematics-design.md`).
   `solve/dls.js` is the pure damped-least-squares core, shared by the kinematics

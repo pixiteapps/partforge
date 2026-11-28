@@ -24,8 +24,8 @@ const fixture = (name) => new Uint8Array(readFileSync(fileURLToPath(new NodeURL(
 // The GLB's JSON chunk, parsed.
 const jsonOf = (glb) => JSON.parse(new TextDecoder().decode(glb.subarray(20, 20 + new DataView(glb.buffer, glb.byteOffset).getUint32(12, true))));
 
-test("PREVIEW_ENCODER_VERSION is 7 (a cage body's ties ride in the file)", () => {
-  expect(PREVIEW_ENCODER_VERSION).toBe(7);
+test("PREVIEW_ENCODER_VERSION is 7 or later (a cage body's ties ride in the file)", () => {
+  expect(PREVIEW_ENCODER_VERSION).toBeGreaterThanOrEqual(7);
 });
 
 describe("a file with no ties", () => {
@@ -34,12 +34,12 @@ describe("a file with no ties", () => {
       const v6 = fixture(name);
       const v7 = await encodePreviewGlb(inputs[kind]());
       expect(jsonOf(v6).extras.partforgeEncoder).toBe(6);
-      expect(jsonOf(v7).extras.partforgeEncoder).toBe(7);
+      expect(jsonOf(v7).extras.partforgeEncoder).toBe(PREVIEW_ENCODER_VERSION);
       const text = new TextDecoder("latin1");
       const at = text.decode(v6).indexOf('"partforgeEncoder":6');
       expect(at).toBeGreaterThan(0);
       const expected = v6.slice();
-      expected[at + '"partforgeEncoder":'.length] = "7".charCodeAt(0);
+      expected[at + '"partforgeEncoder":'.length] = String(PREVIEW_ENCODER_VERSION).charCodeAt(0);
       expect(v7.byteLength).toBe(v6.byteLength);
       expect(Buffer.compare(Buffer.from(v7), Buffer.from(expected))).toBe(0);
     });
