@@ -5,6 +5,9 @@ import { ORIENTATIONS, cameraOrbitProblem, cameraPoseForView, cameraCueLabel } f
 import { buildView } from "../framework/oracle/build.js";
 import { renderStyled } from "../framework/softrender/index.js";
 import { getRenderStyle } from "../framework/renderStyles.js";
+import { normalizeLines } from "../framework/lines/read.js";
+import { lineMeshes } from "../framework/lines/meshes.js";
+import { resolveParams } from "../framework/part-model.js";
 import { loadMeshFieldBuilder } from "../framework/geometry/implicit/mesh-field-loader.js";
 
 // Canonical view directions in MODEL space (Z-up). `dir` is the direction from
@@ -83,6 +86,14 @@ export async function renderViewImages(kernel, part, view = Object.keys(part.vie
   const subparts = buildView(kernel, part, view, params) // meshes are JS-owned: safe after cleanup
     .map((b) => ({ name: b.name, mesh: b.mesh, display: part.parts?.[b.name]?.display, opacity: opacityOf(b.name) }));
   kernel.cleanup?.();
+  // A declared rope is drawn as a tube after the sub-parts: a display mesh, no feature
+  // edges, never exported. A part with no `lines` block derives nothing extra.
+  if (normalizeLines(part).length) {
+    const { d } = resolveParams(part, params);
+    for (const l of lineMeshes(part, view, d)) {
+      if (l.mesh) subparts.push({ name: l.name, mesh: { ...l.mesh, edges: new Float32Array(0) }, display: l.display, opacity: 1 });
+    }
+  }
   return views.map((angle) => {
     const img = renderStyled(subparts, { view: angle, style, size, supersample, edges });
     const png = new PNG({ width: img.width, height: img.height });

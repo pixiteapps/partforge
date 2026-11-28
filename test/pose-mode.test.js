@@ -1055,6 +1055,27 @@ describe("generic handles: rotary and touch", () => {
     expect(ends).toHaveLength(2);
   });
 
+  it("extraReadout's items follow the handle's own, and it gets the params at the press", () => {
+    const item = { key: "line:rope", label: "rope", unit: "mm", value: 1, text: "1.00 (+0.00)" };
+    const calls = [];
+    const t = setup(gear, { extraReadout: (params, pressParams) => { calls.push([{ ...params }, pressParams]); return [{ ...item }]; } });
+    const c = t.screenOf([0, 0, 80]);
+    const s = rim(t);
+    const r = Math.hypot(s.x - c.x, s.y - c.y);
+    t.fire("pointermove", s.x, s.y);
+    t.fire("pointerdown", s.x, s.y);
+    for (let a = 10; a <= 40; a += 10) t.fire("pointermove", c.x + r * Math.cos(rad(a)), c.y - r * Math.sin(rad(a)));
+    const items = t.readouts.filter(Boolean).at(-1).items;
+    expect(items.map((i) => i.key)).toEqual(["driveAngle", "line:rope"]);
+    expect(items.at(-1)).toEqual(item);
+    expect(calls.length).toBeGreaterThan(1);
+    // the press's params, the same object every frame of the drag; the live params move
+    for (const [, pp] of calls) expect(pp).toBe(calls[0][1]);
+    expect(calls[0][1]).toEqual({ ...gear.defaults, driveAngle: 0 });
+    expect(calls.at(-1)[0].driveAngle).toBeGreaterThan(20);
+    t.fire("pointerup", c.x + r * Math.cos(rad(40)), c.y - r * Math.sin(rad(40)));
+  });
+
   it("a click pins it as \"<handle>:<at>\"; a touch within 24 px drags it with no hover first", () => {
     const t = setup(gear);
     const s = rim(t);
@@ -1126,6 +1147,15 @@ describe("a drag stopped at contact", () => {
     for (const a of t.scene.calls.setActive.filter((x) => x?.target)) expect(a.missed).toBe(false);
     t.fire("pointerup", s.x, s.y - 338);
     expect(t.readouts.at(-1)).toBeNull();
+  });
+
+  it("extraReadout's items sit after the handle's own and before 'Stopped at'", () => {
+    const item = { key: "line:rope", label: "rope", unit: "mm", value: 1, text: "1.00 (+0.00)" };
+    const t = setup(hand, { collide: passGuard(() => ({ a: "a", b: "palm" })), extraReadout: () => [{ ...item }] });
+    t.mode.setEnabled(true);
+    farDrag(t);
+    const items = t.readouts.at(-1).items;
+    expect(items.map((i) => i.key)).toEqual([...hand.handles.a.params, "line:rope", "blocked"]);
   });
 
   it("a guarded drag that is out of reach with nothing blocked still reads 'Out of reach'", () => {

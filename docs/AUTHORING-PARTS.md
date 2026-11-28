@@ -4352,7 +4352,28 @@ or whose `views: []` shows it in no view —
 moves with a slider or number param and no sweep moves it in a view the line shows in; the
 hint gives the sweep and a `lineDrift` gate —
 [line-unswept](ERROR-PATTERNS.md#line-unswept)). An unswept line is only a warning: it never
-withholds `verify.ok`. Lines are not drawn yet.
+withholds `verify.ok`.
+
+**Drawing.** A readable line is drawn as a tube: 12 sides, the rope's diameter. Set its colour
+with `display: { color: 0xc8a96e }` on the entry (a 0xRRGGBB integer, the same as a sub-part's
+`display.color`; the default is a pale rope colour). The tube is redrawn on every param change:
+a slider, a pose drag or a playing animation. It follows the live params at once, so it can
+move before the pieces that must rebuild catch up. It hides while a view waits for its builds.
+It shows in captures, in `runtime.captureView` thumbnails and in `partforge render`, and the
+framing counts it. The cutaway clips it, with no cap on the cut. In CAD and realistic it has
+CAD's plain material (realistic lights it like a matte plastic, and it casts no contact
+shadow); in cel it has cel's band shading and an ink outline. It is never exported: the STL,
+STEP, 3MF and the kit do not hold it. It cannot be picked: hover, measure and select see the
+piece behind it.
+
+A line with no `views` is drawn in every view, at `derive`'s frame: the frame where `derive`
+places the pieces, normally the assembly. If another view lays the pieces out differently
+(a print layout, an exploded view), give the line `views`, or the rope floats where the
+pieces are not.
+During a pose drag the readout adds one item for each line, such as `rope 286.51 (+0.03)`: the
+length, and how far it moved since the press. A line shows in a red tint when its bend ratio is
+under its minimum, or, during a drag, when its drift passes the view's `lineDrift` bound. The
+tint clears when the drag ends.
 
 ## Probes: measuring geometry into the report
 

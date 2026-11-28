@@ -28,6 +28,10 @@ import { createGeometryService } from "./geometry-service.js";
 import { viewSubParts, resolveParams } from "./part-model.js";
 import { resolveDerived } from "./derive.js";
 import { withDeriveMemo } from "./derive-memo.js";
+import { normalizeLines } from "./lines/read.js";
+import { lineMeshes } from "./lines/meshes.js";
+import { createLineScene } from "./line-scene.js";
+import { lineReadings, lineDriftBound } from "./lines/meshes.js";
 import { createBackendPolicy, organicExportParts } from "./backend-select.js";
 import { createDebugOverlay } from "./debug-overlay.js";
 import { createRegenLoop } from "./regen-loop.js";
@@ -991,6 +995,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         // guard alone, as before.
         collide: (args) => skin.validityGuard(poseCollide?.guardFor(args) ?? null),
         onBlocked: live((pair) => poseCollide?.tint(pair)),
+        // The declared lines' lengths in the drag readout (lineReadout, below); a part
+        // with no lines passes none, so its drags derive nothing more.
+        extraReadout: normalizeLines(part).length ? (p, pressParams) => lineReadout(pressParams) : undefined,
         hold: live((on) => {
           poseHold = !!on;
           // A drag is the user's own edit: it pauses playback the way a slider does,
@@ -1007,6 +1014,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
           }
           liveRebuild = false;
           liveSlow = false;
+          endLineDrag(); // a cancelled drag fires no onDragEnd: its drift tints go here too
           // Back where it began (a cancel's restore, a drag returned to its start):
           // what the transient builds drew is what the host last saw built.
           if (owed.size && holdStart && Object.keys({ ...params, ...holdStart }).every((k) => Object.is(params[k], holdStart[k]))) owed.clear();
@@ -1440,6 +1448,44 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
       cleanup.defer(() => pickClient.detach());
     }
 
+    // Declared lines (a rope, a cable) drawn as tubes beside the sub-parts, re-meshed on the
+    // main thread from derive alone: a line never rebuilds a sub-part. Only a part with a
+    // `lines` block gets the scene; any other pays nothing. `lineView` is the view the scene
+    // last drew in, so showView updates it on a view switch (and the first show) only — a
+    // param change updates it once, at the end of applyParamChange, from that change's own
+    // memoized derive.
+    const lineScene = normalizeLines(part).length ? createLineScene(viewer, part) : null;
+    let lineView = null;
+    if (lineScene) cleanup.defer(() => lineScene.dispose());
+    function updateLines() {
+      if (!lineScene) return;
+      let d = {};
+      try { d = resolveDerived(part, params); } catch { /* each line reads as unreadable */ }
+      lineScene.update(view(), d);
+    }
+    // While a handle drags: each line's length and its drift since the press, in the drag
+    // readout, and a line whose drift passes the part's lineDrift bound tinted. The first
+    // call of a drag (a new pressParams) reads the lines at the press, one derive; every
+    // later frame reads the scene's own readings, which the frame's write just updated.
+    // Nothing while the view's lines are not shown.
+    let linePress = null; // { pressParams, readings, bound } for the drag under way
+    function lineReadout(pressParams) {
+      if (!lineScene || lineView !== view()) return [];
+      if (linePress?.pressParams !== pressParams) {
+        let d = {};
+        try { d = resolveDerived(part, pressParams); } catch { /* each line reads as unreadable */ }
+        linePress = { pressParams, readings: lineReadings(part, view(), d), bound: lineDriftBound(part, view()) };
+      }
+      lineScene.dragLimits(linePress.readings, linePress.bound);
+      return lineScene.readout(linePress.readings);
+    }
+    // The drag is over (released or cancelled): every drift tint goes.
+    function endLineDrag() {
+      if (!linePress) return;
+      linePress = null;
+      lineScene?.dragLimits(new Map(), null);
+    }
+
     let framedView = null; // the view the camera was last framed to (null until first show)
     let cameraRestored = false; // saved camera applied once, on the first frame after load
     let partialView = null;        // the view whose first build is shown in batches (showPartial)
@@ -1600,7 +1646,7 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         cleanup.defer(() => pc.dispose());
         cleanup.defer(poseMode.onModeChange?.(() => { if (poseMode.isLive?.()) pc.refresh(); }) ?? (() => {}));
       }
-      cleanup.defer(poseMode.onDragEnd?.((e) => { lastDragEnd = e; }) ?? (() => {}));
+      cleanup.defer(poseMode.onDragEnd?.((e) => { lastDragEnd = e; endLineDrag(); }) ?? (() => {}));
     }
 
     // Pose drag (skin/skin-drag.js): a slider input that moves only the k.implicit
@@ -1721,6 +1767,12 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (frame && partialCameraKept) { frame = false; framedView = view(); cameraRestored = true; }
       }
       viewer.showAssembly(needed, { frame });
+      // The first show and every view switch draw the view's lines (with a sub-part on
+      // screen, so the scene can attach beside it); a param change draws them itself.
+      if (lineScene && needed.length && lineView !== view()) {
+        lineView = view();
+        updateLines();
+      }
       if (frame) {
         framedView = view();
         // Not on the first show: a restored camera wins over any refit.
@@ -1870,6 +1922,9 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         ui.setExportEnabled(false);
       } else {
         viewer.hideAssembly();
+        // The lines go with the sub-parts (a view switch waiting for its builds must not
+        // show the last view's rope); the next showView draws the view's lines again.
+        if (lineScene) { lineScene.hide(); lineView = null; }
         ui.setExportEnabled(false);
       }
     }
@@ -2426,6 +2481,10 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         cageDrag = null;
       }
       paramsBefore = { ...params };
+      // The lines follow the pose from this change's derive (memoized: updateRelevance
+      // above derived the same params). Only while the view's lines are shown: hidden, or
+      // not shown yet, the next showView draws them.
+      if (lineView === view()) updateLines();
     }
 
     // Write `values` into the params as a panel edit does (no commit), the panel showing them.
@@ -2677,6 +2736,13 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
     // renderMeshPayloads' own options (including `background` and
     // `style`: "thumbnail" by default, "cad" for the agent look) pass straight
     // through from the caller.
+    function captureLinePayloads(target) {
+      let d;
+      try { d = resolveParams(part, params).d; } catch { return []; }
+      return lineMeshes(part, target, d)
+        .filter((l) => l.mesh && l.mesh.positions.length > 0)
+        .map((l) => ({ name: l.name, ...l.mesh, triangles: l.mesh.indices.length / 3, display: l.display }));
+    }
     const captureView = async (viewName, opts = {}) => {
       try {
         const target = (viewName && part.views?.[viewName]) ? viewName : resolveDefaultView(part);
@@ -2684,7 +2750,11 @@ export function mount(part, { createWorker, elements = {}, onBuild, onPick, pick
         if (!subparts.length) return null;
         const meshes = await captureBuild.request({ subparts, view: target, params, backend: backendFor() });
         if (!meshes || !meshes.length) return null; // 4A resolves null on a worker build failure
-        return viewer.renderMeshPayloads(meshes, { size: 640, quality: 0.8, angle: "iso", ...opts });
+        // The view's declared lines ride along as display meshes with their own
+        // `display` (as `partforge render` draws them); a part with no lines derives
+        // nothing extra, and a line that cannot be read is left out.
+        const payloads = normalizeLines(part).length ? [...meshes, ...captureLinePayloads(target)] : meshes;
+        return viewer.renderMeshPayloads(payloads, { size: 640, quality: 0.8, angle: "iso", ...opts });
       } catch {
         return null; // best-effort: a failed thumbnail never breaks the caller
       }

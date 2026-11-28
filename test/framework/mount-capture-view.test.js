@@ -369,3 +369,31 @@ test("a disposed mount's late capture reply neither settles the next mount's cap
   await expect(retry).resolves.toBe("data:image/jpeg;base64,FAKE-after-the-edit");
   runtime.dispose();
 });
+
+// A part with a declared line: the capture's payloads gain the view's rope tube after the
+// sub-parts, named line:<name> and carrying its own `display`, as `partforge render` draws it.
+test("captureView() draws the view's declared lines after the sub-parts, each with its own display", async () => {
+  const { make } = await import("../fixtures/capstan-fixtures.js");
+  const { LINE_COLOR } = await import("../../src/framework/lines/tube.js");
+  const els = makeElements();
+  const { workers, createWorker } = makeWorkers();
+  const part = { ...makePart(), derive: () => ({ drive: make(0) }), lines: { rope: { on: "drive", views: ["assembly"] } } };
+  const runtime = mount(part, { createWorker, elements: els });
+  finishFirstBuild(workers, ["body", "bracket"]);
+  await runtime.ready;
+  const promise = runtime.captureView("assembly");
+  resolveCaptureBuild(workers, ["body", "bracket"]);
+  await promise;
+  const [payloads] = fakeViewers[0].renderMeshPayloads.mock.calls[0];
+  expect(payloads.map((m) => m.name)).toEqual(["body", "bracket", "line:rope"]);
+  const rope = payloads[2];
+  expect(rope.display).toEqual({ color: LINE_COLOR });
+  expect(rope.positions.length).toBeGreaterThan(0);
+  expect(rope.indices.length).toBe(rope.triangles * 3);
+  // a view the line is not declared in captures no rope
+  const detail = runtime.captureView("detail");
+  resolveCaptureBuild(workers, ["body"]);
+  await detail;
+  expect(fakeViewers[0].renderMeshPayloads.mock.calls[1][0].map((m) => m.name)).toEqual(["body"]);
+  runtime.dispose();
+});

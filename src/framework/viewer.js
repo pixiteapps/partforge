@@ -656,11 +656,46 @@ export function createViewer(container, part, {
   // and visible — while hidden it can keep segments from an older, larger part
   // and inflate these bounds. A subpart's initial placeholder BufferGeometry
   // has no boundingBox computed (only buildGeometry computes one), so skip it.
+  // --- display objects (addDisplayObject) ------------------------------------
+  // Meshes drawn beside the sub-parts that are not sub-parts (a declared line's
+  // tube): parented in partsGroup, so the pivot, the per-view recentring and the
+  // cutaway apply to them; their visible meshes count in the bounds and the
+  // vertex fit below (framing, captures, cutaway, near/far); and `onLook(mode)`
+  // runs on every look change (live or a capture's borrow) so the object can
+  // swap its own materials. Never pickable: the picker reads sub-part meshes.
+  const displayObjects = new Map(); // object -> { onLook }
+  function lookDisplayObjects() {
+    for (const { onLook } of displayObjects.values()) {
+      try { onLook?.(renderMode); } catch (e) { console.warn("partforge: display object look failed", e); }
+    }
+  }
+  function addDisplayObject(object, { onLook } = {}) {
+    if (disposed || !object) return () => {};
+    partsGroup.add(object);
+    displayObjects.set(object, { onLook });
+    try { onLook?.(renderMode); } catch (e) { console.warn("partforge: display object look failed", e); }
+    requestRender();
+    return () => {
+      if (!displayObjects.delete(object)) return;
+      object.removeFromParent();
+      requestRender();
+    };
+  }
+  // The visible meshes getVisibleWorldBounds and visibleWorldPositions read: the
+  // sub-parts', then every display object's (a hidden ancestor hides its meshes).
+  function visibleDisplayMeshes() {
+    const out = [];
+    for (const object of displayObjects.keys()) {
+      object.traverseVisible((o) => { if (o.isMesh && o.geometry?.attributes?.position) out.push(o); });
+    }
+    return out;
+  }
+
   const _worldBounds = new THREE.Box3();
   const _meshBounds = new THREE.Box3();
   function getVisibleWorldBounds() {
     _worldBounds.makeEmpty();
-    for (const mesh of Object.values(subMesh)) {
+    for (const mesh of [...Object.values(subMesh), ...visibleDisplayMeshes()]) {
       if (!mesh.visible || !mesh.geometry?.boundingBox) continue;
       mesh.updateWorldMatrix(true, false);
       _meshBounds.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
@@ -673,7 +708,7 @@ export function createViewer(container, part, {
   // the canonical captures fit their framing to (getVisibleWorldBounds' meshes).
   const _worldVertex = new THREE.Vector3();
   function visibleWorldPositions() {
-    const meshes = Object.values(subMesh).filter((m) => m.visible && m.geometry?.attributes?.position);
+    const meshes = [...Object.values(subMesh).filter((m) => m.visible && m.geometry?.attributes?.position), ...visibleDisplayMeshes()];
     const out = new Float32Array(meshes.reduce((n, m) => n + m.geometry.attributes.position.count * 3, 0));
     let o = 0;
     for (const mesh of meshes) {
@@ -1297,6 +1332,7 @@ export function createViewer(container, part, {
       renderer.toneMappingExposure = rig.exposure;
       if (reground) placeGround({ force: !live });
       if (live) applyPixelRatio("realistic");
+      lookDisplayObjects();
       // Hides the lines on every sub-part now that renderMode reads realistic.
       refreshFeatureLines();
       // A capture's borrowed look (live: false) is put back at once: the
@@ -1337,6 +1373,7 @@ export function createViewer(container, part, {
     attempt(() => { grid.visible = cadGrid; });
     for (const n of names) attempt(() => { if (baseMats[n] !== cadMats[n]) rebaseSubMaterial(n, cadMats[n]); else applySubOpacity(n); });
     attempt(() => cutaway.setTheme(currentTheme, hatchInkForMode())); // the hatch and clipped lines back in the theme's colour
+    attempt(lookDisplayObjects);
     if (live) attempt(() => applyPixelRatio("cad"));
     if (contactShadow) attempt(rebuildLiveShadow);
     attempt(refreshFeatureLines);
@@ -1367,6 +1404,7 @@ export function createViewer(container, part, {
       grid.visible = false;
       syncLineLook();
       setSubMaterials(celFor);
+      lookDisplayObjects();
       // The cutaway re-derives its clipped line clones and its hatch ink from
       // the look now in effect, so neither depends on the order above.
       cutaway.setTheme(currentTheme, hatchInkForMode());
@@ -3491,7 +3529,8 @@ export function createViewer(container, part, {
   // background unless `background` says otherwise; `null` = no background, the
   // renderer's clear colour). `payloads` is the worker's [{name, positions, normals,
   // indices, …}] array — placement is already baked into shared-frame coords, so
-  // meshes are NOT recentred.
+  // meshes are NOT recentred. A payload may carry its own `display` block, which
+  // its material is built from instead of the sub-part named `name`'s.
   function renderMeshPayloads(payloads, { angle = "iso", size = 640, quality = 0.8, background, style = "thumbnail" } = {}) {
     if (disposed) return null; // same guard as captureCurrent/captureCanonicalViews — never touch a torn-down renderer
     const st = getRenderStyle(style);
@@ -3507,7 +3546,9 @@ export function createViewer(container, part, {
     const built = [];
     for (const payload of payloads) {
       const geo = buildGeometry(payload); // shared-frame coords, NOT recentred
-      const mesh = new THREE.Mesh(geo, materialFor(payload.name));
+      // A payload's own `display` (a declared line's tube: a `line:` name is no
+      // sub-part's) wins over the sub-part's.
+      const mesh = new THREE.Mesh(geo, payload.display ? buildCadMaterial(payload.display, material) : materialFor(payload.name));
       tmpPivot.add(mesh);
       built.push(mesh);
     }
@@ -4121,6 +4162,7 @@ export function createViewer(container, part, {
     // viewer's life: a projection swap re-targets it, never replaces it.
     orbitControls: controls,
     _subMeshes: subMesh,
+    addDisplayObject,
     __subMesh: (n) => subMesh[n],   // test hooks (cf. attachAnimationControls' __viewer)
     __subLines: (n) => subLines[n],
     // Test hook (scripts/check-pose.mjs): the realistic floor as placed — the

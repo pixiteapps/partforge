@@ -16,7 +16,7 @@ const POINT_EPS = 1e-6;
 // Where along each continuous control's range a param is sampled (fractions of the range).
 const SAMPLES = [0, 0.5, 1];
 
-const BLOCK_SHAPE = "Declare each line as `lines: { rope: { on: \"drive\" } }`: `on` names a key of `derive`'s output whose value has `lineInfo()` (a `capstan` from `partforge/mechanisms`), `line` picks one of its lines (default: the entry's own name), and `views` (optional) lists the views it shows in.";
+const BLOCK_SHAPE = "Declare each line as `lines: { rope: { on: \"drive\" } }`: `on` names a key of `derive`'s output whose value has `lineInfo()` (a `capstan` from `partforge/mechanisms`), `line` picks one of its lines (default: the entry's own name), `views` (optional) lists the views it shows in, and `display: { color: 0xRRGGBB }` (optional) sets its colour.";
 
 const show = (v) => (typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v) ?? String(v));
 
@@ -62,6 +62,10 @@ function badSource({ part, d, deriveError }) {
             `Every name in a line's \`views\` must be a key of \`views\` (${Object.keys(views).map((x) => JSON.stringify(x)).join(", ") || "none declared"}); fix the spelling or remove it.`, path));
         }
       }
+    }
+    if (e.display !== undefined && (!isPlainObject(e.display) || (e.display.color !== undefined && !(Number.isInteger(e.display.color) && e.display.color >= 0 && e.display.color <= 0xffffff)))) {
+      out.push(err("line-bad-source", `lines.${name}.display is not \`{ color: 0xRRGGBB }\``,
+        "`display` (optional) is an object whose `color` is an integer from 0 to 0xffffff, e.g. `display: { color: 0xff0000 }`; leave it out for the default rope colour.", path));
     }
     // a derive that throws is derive-throws' to report: d is then {} and every source reads as missing
     if (deriveError) continue;

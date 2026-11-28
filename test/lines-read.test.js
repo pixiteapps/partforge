@@ -6,12 +6,12 @@ const source = (lines) => ({ lineInfo: () => ({ kind: "partforge.lines", lines }
 
 describe("normalizeLines", () => {
   it("defaults line to the key and views to null", () => {
-    expect(normalizeLines({ lines: { rope: { on: "drive" } } })).toEqual([{ name: "rope", on: "drive", line: "rope", views: null }]);
+    expect(normalizeLines({ lines: { rope: { on: "drive" } } })).toEqual([{ name: "rope", on: "drive", line: "rope", views: null, display: null }]);
   });
   it("keeps declaration order and explicit line/views", () => {
     const r = normalizeLines({ lines: { a: { on: "x", line: "b", views: ["assembly"] }, c: { on: "y" } } });
     expect(r.map((e) => e.name)).toEqual(["a", "c"]);
-    expect(r[0]).toEqual({ name: "a", on: "x", line: "b", views: ["assembly"] });
+    expect(r[0]).toEqual({ name: "a", on: "x", line: "b", views: ["assembly"], display: null });
   });
   it("drops malformed entries and tolerates no block", () => {
     expect(normalizeLines({ lines: { a: 3, b: null, c: {}, d: { on: "x" } } }).map((e) => e.name)).toEqual(["d"]);

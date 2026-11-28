@@ -92,6 +92,18 @@ test("an empty views list is a line-bad-source error: the line shows in no view"
   expect(f[0].message).toBe("lines.rope.views is empty, so the line is shown in no view");
 });
 
+test("display must be an object with a 0xRRGGBB colour", () => {
+  const rules = (display) => lineFindings(swept({ ...concentricCapstan, lines: { rope: { on: "drive", display } } })).map((x) => x.rule);
+  expect(rules("red")).toEqual(["line-bad-source"]);
+  expect(rules({ color: "red" })).toEqual(["line-bad-source"]);
+  expect(rules({ color: "#ff0000" })).toEqual(["line-bad-source"]);
+  expect(rules({ color: 1.5 })).toEqual(["line-bad-source"]);
+  expect(rules({ color: -1 })).toEqual(["line-bad-source"]);
+  expect(rules({ color: 0x1000000 })).toEqual(["line-bad-source"]);
+  expect(rules({ color: 3 })).toEqual([]);
+  expect(rules({ color: 0xff0000 })).toEqual([]);
+});
+
 test("a part with no lines block yields nothing", () => {
   const { lines: _l, ...noLines } = concentricCapstan;
   expect(lineFindings(noLines)).toEqual([]);
