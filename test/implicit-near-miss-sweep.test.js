@@ -14,9 +14,10 @@
 import { describe, test, expect } from "vitest";
 import { compileImplicit, meshImplicit } from "../src/framework/geometry/implicit/index.js";
 import { evalReference } from "../src/framework/geometry/implicit/reference.js";
-import { SHARP_TOL } from "../src/framework/geometry/implicit/sharpen.js";
 import { edgeCheck } from "./helpers/mesh-topology.js";
 import { gapHolds, bisectorCrossings } from "./helpers/seam-quality.js";
+import { sharpenMesh } from "../src/framework/geometry/implicit/sharpen.js";
+import { jsStages } from "./helpers/implicit-stages.js";
 import { movedRoot } from "./fixtures/implicit-seam-cases.js";
 import { handSpec, HAND_POSES } from "./fixtures/implicit-trees.js";
 
@@ -41,15 +42,33 @@ describe("near-miss sweep: spreads × finger blends × moved root, gap 0.2 at th
       // No vertex left floating in the gap: a share step accepted as transit on the last
       // projection pass would leave one in air (the field there is the distance to the skin).
       // Skin detail (creases) only carves inward, so it never lifts the field above zero.
-      // The limit is the sharpen stage's own (sharpen.js): it keeps a corner point within
-      // SHARP_TOL cells of the field, 0.075 mm here. The palm is a smooth union of four
-      // children, and where a third child is within k its field has a crease. At fingerBlend 2,
-      // spread −3.4718, moved, three such creases meet on the palm. The stage's corner point
-      // there is 0.25 mm from where they meet and 0.0504 mm off the field. The limit is still
-      // under half the gap (0.1 mm), the field at a vertex floating midway across it.
+      // The limit is 0.05 mm, a quarter of the gap: a vertex floating midway across it reads
+      // 0.1 mm. The sharpen stage keeps every point it places within a hair of the field here
+      // (worst 0.0071 mm over the sweep, with each corner point solved on its faces).
       let highest = -Infinity;
       for (let i = 0; i < mesh.positions.length; i += 3) highest = Math.max(highest, evalReference(compiled, mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]));
-      expect(highest, "the field at the vertex farthest off the surface (mm)").toBeLessThan(SHARP_TOL * EDGE);
+      expect(highest, "the field at the vertex farthest off the surface (mm)").toBeLessThan(0.05);
     }, 120_000);
   }
 });
+
+// At fingerBlend 2, spread −3.4718, moved, three creases of the palm (a smooth union of four
+// children: where a third child is within k its field has a crease) meet on the surface at
+// (5.8486, −31.3302, 13.1309), where the box, hypothenar and wrist children tie. Their faces meet
+// at 24.7°, 26.8° and 45.9°. One crease is 24.7°, under the sharpen stage's 25° sharp angle, so
+// this is not a corner and the stage places no corner point there. The test checks that some
+// vertex lies within 0.02 mm of the point. (The stage used to put a corner point 0.25 mm along a
+// crease from here, 0.05 mm off the field.)
+test("near-miss corner: a vertex lies on the palm's near-corner, and no corner point is placed by it", () => {
+  const spec = movedRoot(handSpec({ spread: -3.4718, fingerBlend: 2, contactGap: GAP }));
+  const { store, cleaned } = jsStages(spec, EDGE, { tier: "preview" });
+  const mesh = sharpenMesh(store, cleaned), at = [5.8486, -31.3302, 13.1309];
+  let nearest = Infinity, nearestCorner = Infinity;
+  for (let v = 0; v < mesh.positions.length / 3; v++) {
+    const d = Math.hypot(mesh.positions[3 * v] - at[0], mesh.positions[3 * v + 1] - at[1], mesh.positions[3 * v + 2] - at[2]);
+    nearest = Math.min(nearest, d);
+    if (mesh.sharp[v] === 2) nearestCorner = Math.min(nearestCorner, d);
+  }
+  expect(nearest, "mm from the nearest vertex").toBeLessThanOrEqual(0.02);
+  expect(nearestCorner, "mm from the nearest corner point").toBeGreaterThan(0.5);
+}, 120_000);

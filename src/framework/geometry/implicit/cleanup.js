@@ -31,6 +31,19 @@
 // after the last relaxation; pinned vertices (exactly on a gap face) are neither projected nor
 // relaxed, and take their normals from a zero-step projection at the end. The three fields are carried through every
 // compaction and returned. A mesh without them is cleaned exactly as before.
+//
+// Cleanup avoids making fold edges: two triangles across an edge whose unit normals' dot is below
+// -0.5 (an inward-facing pleat). A planar face that lies on a grid plane puts samples a hair
+// from zero, and the mesher leaves clusters of vertices within about 1e-7 · edge of each other
+// there, joined by triangles with no area. Two rules in the first collapse pass keep those from
+// folding. An edge shorter than TINY_EDGE · edge merges even when an end has merged already this
+// pass, and leaves its ends free to merge again, so a cluster merges whole (each vertex merging
+// once per pass left most of each cluster, and relaxation then pulled it apart into a pleat).
+// And a collapse is refused when it leaves more fold edges around the edge than there were.
+// Fold tests compare d · d with |A|² |B|² / 4 (products, no square root), so the core
+// reproduces them bit for bit. Relaxation and projection moves are left as they were: at a
+// feature about one cell thick, projection can still land both sides on one face (a fold), and
+// refusing the move would leave the vertex off the surface, which is worse.
 import { projectVertices } from "./project.js";
 
 export const CLEANUP = Object.freeze({ collapseFrac: 0.2, relaxPasses: 2, relaxWeight: 0.5, maxMoveCells: 0.5 });
@@ -62,6 +75,8 @@ export const guardCos2 = (deg) => {
 
 // The decimation probe tests every PROBE_STRIDE-th triangle's edges (see collapse).
 const PROBE_STRIDE = 32;
+// In the first collapse pass an edge shorter than this (× edge) merges whatever merged before it.
+export const TINY_EDGE = 1e-4;
 
 function triNormal(P, a, b, c, out) {
   const ux = P[3 * b] - P[3 * a], uy = P[3 * b + 1] - P[3 * a + 1], uz = P[3 * b + 2] - P[3 * a + 2];
@@ -79,6 +94,14 @@ function sharpness(P, a, b, c) {
 }
 const triSharpness = (P, i, j, k) => Math.max(Math.max(sharpness(P, i, j, k), sharpness(P, j, k, i)), sharpness(P, k, i, j));
 
+// Whether two triangles with normals A and B (any length) fold: their unit normals' dot is below
+// -0.5. A normal of zero length folds with nothing.
+function folded(A, i, B, j) {
+  const d = A[i] * B[j] + A[i + 1] * B[j + 1] + A[i + 2] * B[j + 2];
+  return d < 0 && 4 * (d * d) > (A[i] * A[i] + A[i + 1] * A[i + 1] + A[i + 2] * A[i + 2]) * (B[j] * B[j] + B[j + 1] * B[j + 1] + B[j + 2] * B[j + 2]);
+}
+const holds = (T, t, v) => T[3 * t] === v || T[3 * t + 1] === v || T[3 * t + 2] === v;
+
 // One collapse pass. `dec` (a decimation pass) adds the decimation guards: never
 // both endpoints of ring size 3 (with the link condition that is exactly a
 // tetrahedron — a tiny closed component — which would fold into a zero-volume
@@ -87,7 +110,9 @@ const triSharpness = (P, i, j, k) => Math.max(Math.max(sharpness(P, i, j, k), sh
 // no surviving triangle's normal turns by more) and the spread guard (`dec.scos2`,
 // cos² of decimateMaxSpread). A cos² <= 0 turns its guard off. `own` (an owner mesh:
 // { vertOwner, ownerHeld, pinned }) keeps different owners and pinned vertices apart.
-function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
+// The first pass (no `dec`) also refuses a collapse that leaves more fold edges around the
+// edge than there were, and lets an edge shorter than `tinyLen` merge past the per-pass lock.
+function collapse(P, T, vertLeaf, minLen, dec = null, own = null, tinyLen = 0) {
   const cos2 = dec ? dec.cos2 : -1, ncos2 = dec ? dec.ncos2 : -1, scos2 = dec ? dec.scos2 : -1, fan = [];
   const nv = P.length / 3, nt = T.length / 3;
   const vt = Array.from({ length: nv }, () => []);
@@ -95,7 +120,7 @@ function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
   const alive = new Uint8Array(nt).fill(1), locked = new Uint8Array(nv);
   const apart = own === null ? null : (a, b) => own.pinned[a] || own.pinned[b] || own.vertOwner[a] !== own.vertOwner[b];
   let collapsed = 0;
-  const min2 = minLen * minLen, n0 = [0, 0, 0], n1 = [0, 0, 0];
+  const min2 = minLen * minLen, tiny2 = tinyLen * tinyLen, n0 = [0, 0, 0], n1 = [0, 0, 0], fa = [0, 0, 0], fb = [0, 0, 0];
   const ring = (v) => {
     const s = new Set();
     for (const t of vt[v]) if (alive[t]) for (let c = 0; c < 3; c++) if (T[3 * t + c] !== v) s.add(T[3 * t + c]);
@@ -104,6 +129,49 @@ function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
   const short = (a, b) => {
     const dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
     return dx * dx + dy * dy + dz * dz < min2;
+  };
+  // The triangle across edge (p, q) of triangle t: the first live triangle on q's list other than t
+  // that runs q to p. With `b` given (b merged into a), b reads as a, and a triangle holding both
+  // is gone; when q is a, b's list is read after a's.
+  const across = (t, p, q, a = -1, b = -1) => {
+    for (let side = 0; side < 2; side++) {
+      const list = side === 0 ? vt[q] : q === a ? vt[b] : null;
+      if (list === null) break;
+      for (const w of list) {
+        if (w === t || !alive[w] || (b >= 0 && holds(T, w, a) && holds(T, w, b))) continue;
+        for (let e = 0; e < 3; e++) {
+          let r = T[3 * w + e], u = T[3 * w + (e + 1) % 3];
+          if (r === b) r = a;
+          if (u === b) u = a;
+          if (r === q && u === p) return w;
+        }
+      }
+    }
+    return -1;
+  };
+  // Fold edges around edge (a, b): over every edge of every live triangle at a or b, the pairs
+  // that fold, each pair once. `merged`: as if b had merged into a at the midpoint (mx, my, mz),
+  // the two triangles on the edge gone. Reads only; P is restored.
+  const foldsAround = (a, b, merged) => {
+    const save = merged ? [P[3 * a], P[3 * a + 1], P[3 * a + 2], P[3 * b], P[3 * b + 1], P[3 * b + 2]] : null;
+    if (merged) { P[3 * a] = P[3 * b] = mx; P[3 * a + 1] = P[3 * b + 1] = my; P[3 * a + 2] = P[3 * b + 2] = mz; }
+    const near = (w) => holds(T, w, a) || holds(T, w, b);
+    let n = 0;
+    for (let side = 0; side < 2; side++) for (const t of vt[side === 0 ? a : b]) {
+      if (!alive[t] || (side === 1 && holds(T, t, a))) continue;   // b's triangles holding a are on a's list
+      if (merged && holds(T, t, a) && holds(T, t, b)) continue;
+      for (let c = 0; c < 3; c++) {
+        let p = T[3 * t + c], q = T[3 * t + (c + 1) % 3];
+        if (merged) { if (p === b) p = a; if (q === b) q = a; }
+        const u = merged ? across(t, p, q, a, b) : across(t, p, q);
+        if (u < 0 || (near(u) && u < t)) continue;
+        triNormal(P, T[3 * t], T[3 * t + 1], T[3 * t + 2], fa);
+        triNormal(P, T[3 * u], T[3 * u + 1], T[3 * u + 2], fb);
+        if (folded(fa, 0, fb, 0)) n++;
+      }
+    }
+    if (merged) { P[3 * a] = save[0]; P[3 * a + 1] = save[1]; P[3 * a + 2] = save[2]; P[3 * b] = save[3]; P[3 * b + 1] = save[4]; P[3 * b + 2] = save[5]; }
+    return n;
   };
   // May edge (a, b) collapse to its midpoint? Sets mx, my, mz. Reads only; P is restored.
   let mx = 0, my = 0, mz = 0;
@@ -150,6 +218,8 @@ function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
       for (const v of [a, b]) for (const tt of vt[v]) if (alive[tt]) before = Math.max(before, triSharpness(P, T[3 * tt], T[3 * tt + 1], T[3 * tt + 2]));
       if (after > before) ok = false;
     }
+    // The first pass: no more fold edges around the edge after the collapse than before.
+    if (ok && !dec && foldsAround(a, b, true) > foldsAround(a, b, false)) ok = false;
     return ok;
   };
   // The probe (a decimation pass given `minAccept`): test every edge of every
@@ -171,7 +241,11 @@ function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
     if (!alive[t]) continue;
     for (let c = 0; c < 3; c++) {
       const a = T[3 * t + c], b = T[3 * t + ((c + 1) % 3)];
-      if (locked[a] || locked[b] || (apart !== null && apart(a, b))) continue;
+      if (apart !== null && apart(a, b)) continue;
+      // A tiny edge (a cluster of vertices a hair apart) merges past the lock and leaves its ends free.
+      const dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
+      const tiny = dx * dx + dy * dy + dz * dz < tiny2;
+      if (!tiny && (locked[a] || locked[b])) continue;
       if (!short(a, b) || !allowed(a, b)) continue;
       P[3 * a] = mx; P[3 * a + 1] = my; P[3 * a + 2] = mz;
       if (own !== null && own.ownerHeld[b]) own.ownerHeld[a] = 1;
@@ -183,7 +257,7 @@ function collapse(P, T, vertLeaf, minLen, dec = null, own = null) {
         for (let q = 0; q < 3; q++) if (T[3 * tt + q] === b) T[3 * tt + q] = a;
         vt[a].push(tt);
       }
-      locked[a] = locked[b] = 1;
+      if (!tiny) locked[a] = locked[b] = 1;
       collapsed++;
       break;   // triangle t is gone; move on
     }
@@ -229,7 +303,7 @@ export function relax(P, T, N, weight, maxMove) {
 export function cleanupMesh(store, mesh, opts = CLEANUP) {
   const edge = store.edge;
   const own0 = mesh.vertOwner ? { vertOwner: Int32Array.from(mesh.vertOwner), ownerHeld: Uint8Array.from(mesh.ownerHeld), pinned: Uint8Array.from(mesh.pinned) } : null;
-  let m = collapse(Float64Array.from(mesh.positions), Uint32Array.from(mesh.indices), mesh.vertLeaf, opts.collapseFrac * edge, null, own0);
+  let m = collapse(Float64Array.from(mesh.positions), Uint32Array.from(mesh.indices), mesh.vertLeaf, opts.collapseFrac * edge, null, own0, TINY_EDGE * edge);
   if ((opts.decimateFrac ?? 0) > 0) {
     const dec = { cos2: guardCos2(opts.decimateMinAngle ?? 0), ncos2: guardCos2(opts.decimateMaxTurn ?? 0), scos2: guardCos2(opts.decimateMaxSpread ?? 0), minAccept: opts.decimateMinAccept ?? 0 };
     const passes = opts.decimatePasses ?? 0, minGain = opts.decimateMinGain ?? 0;

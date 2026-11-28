@@ -378,10 +378,27 @@ int mesh(ipe::Session& s) {
 //     over b's incident triangles in incidence order, break after a collapse, and
 //     first-use compaction. The incident lists are CSR (filled in triangle order,
 //     corner order, as the JS pushes them). The JS also appends b's renamed
-//     triangles to vt[a]; that list is never read again — a and b are locked by
-//     the same collapse, and only an unlocked vertex's list is read (ring and the
-//     flip test of an edge whose ends are both unlocked) — so the CSR omits the
-//     append. test/core-structures.test.js holds the lists to the JS.
+//     triangles to vt[a]. In a decimation pass that list is never read again — a
+//     and b are locked by the same collapse, and only an unlocked vertex's list is
+//     read (ring and the flip test of an edge whose ends are both unlocked) — so
+//     the CSR omits the append there. The first pass reads it: a tiny edge
+//     (shorter than tinyLen) merges past the lock and leaves a unlocked, and the
+//     fold count reads the list of any vertex next to the edge, locked or not. So
+//     the first pass keeps each vertex's appended triangles in `extra`, read after
+//     its CSR run (IncList), exactly the JS's vt[a] order.
+//     test/core-structures.test.js holds the lists to the JS.
+//   - the first pass's fold count (cleanup.js's foldsAround and across): the live
+//     triangles of a's list then b's (b's holding a skipped), each edge's
+//     neighbour the first live triangle on the far end's list (then b's, when
+//     the far end is a and b reads as a) that runs back along it, each pair
+//     counted once (skipped when the neighbour is near the edge and comes first),
+//     folded when d < 0 and 4 * (d * d) > |A|^2 * |B|^2, sums left to right. It
+//     refuses when the count with b merged into a at the midpoint is above the
+//     count now. It runs after the other tests; each only refuses. It first tries
+//     an exact shortcut the JS does not need: when no pair of surviving triangles'
+//     new normals folds and no surviving triangle folds with its neighbour across
+//     its one edge away from the merged vertex, the count after is 0, so nothing
+//     is refused and neither count is taken.
 //   - decimation (the preview tier): further whole passes of the same collapse,
 //     each over the previous pass's compacted mesh (so each rebuilds its incident
 //     lists and clears `locked`, as the JS's fresh call does), stopping after a
@@ -506,11 +523,30 @@ bool sharpnessCannotBeNaN(const std::vector<double>& P) {
   return true;
 }
 
+// cleanup.js's TINY_EDGE: in the first collapse pass an edge shorter than this (x edge)
+// merges past the per-pass lock and leaves its ends free.
+constexpr double TINY_EDGE = 1e-4;
+
+// cleanup.js's folded: unit normals' dot below -0.5, through products.
+inline bool foldedPair(const double* A, const double* B) {
+  const double d = A[0] * B[0] + A[1] * B[1] + A[2] * B[2];
+  return d < 0 && 4 * (d * d) > (A[0] * A[0] + A[1] * A[1] + A[2] * A[2]) * (B[0] * B[0] + B[1] * B[1] + B[2] * B[2]);
+}
+
+// A vertex's incident triangles: its CSR run, then the triangles appended to it (the first pass).
+struct IncList {
+  const uint32_t* a; size_t na;
+  const uint32_t* b; size_t nb;
+  size_t size() const { return na + nb; }
+  uint32_t operator[](size_t i) const { return i < na ? a[i] : b[i - na]; }
+};
+
 // One collapse pass. `dec` (a decimation pass) adds cleanup.js's decimation
 // guards: not both endpoints of ring size 3 (a tetrahedron), the corner guard
 // (cos2 > 0), the normal-turn guard (ncos2 > 0) and the spread guard (scos2 > 0).
-// Returns the collapses made.
-size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double ncos2, double scos2, double minAccept) {
+// The first pass (no `dec`) refuses a collapse that adds fold edges around the edge
+// and lets an edge shorter than tinyLen merge past the lock. Returns the collapses made.
+size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double ncos2, double scos2, double minAccept, double tinyLen = 0) {
   std::vector<double>& P = s.positions;
   std::vector<uint32_t>& T = s.indices;
   std::vector<int32_t>& VL = s.vertLeaf;
@@ -531,6 +567,13 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     for (size_t t = 0; t < nt; t++) for (int c = 0; c < 3; c++) inc[fill[T[3 * t + c]]++] = (uint32_t)t;
   }
   std::vector<uint8_t> alive(nt, 1), locked(nv, 0);
+  // The first pass's appended triangles per vertex (cleanup.js's vt[a].push), read after the CSR run.
+  std::vector<std::vector<uint32_t>> extra(dec ? 0 : nv);
+  auto incOf = [&](uint32_t v) -> IncList {
+    const std::vector<uint32_t>* x = extra.empty() ? nullptr : &extra[v];
+    return IncList{inc.data() + off[v], (size_t)(off[v + 1] - off[v]), x ? x->data() : nullptr, x ? x->size() : 0};
+  };
+  const double tiny2 = tinyLen * tinyLen;
   std::vector<uint32_t> markA(nv, 0), markB(nv, 0);   // ring membership, stamped per test
   uint32_t stamp = 0;
   const double min2 = minLen * minLen;
@@ -567,6 +610,50 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     const double dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
     return dx * dx + dy * dy + dz * dz < min2;
   };
+  auto holds = [&](uint32_t t, uint32_t v) { return T[3 * t] == v || T[3 * t + 1] == v || T[3 * t + 2] == v; };
+  // cleanup.js's across: the triangle across edge (p, q) of t, or -1. `merged`: b reads as a,
+  // a triangle holding both is gone, and when q is a, b's list is read after a's.
+  auto across = [&](uint32_t t, uint32_t p, uint32_t q, bool merged, uint32_t a, uint32_t b) -> int64_t {
+    for (int side = 0; side < 2; side++) {
+      if (side == 1 && !(merged && q == a)) break;
+      const IncList L = incOf(side == 0 ? q : b);
+      for (size_t i = 0; i < L.size(); i++) {
+        const uint32_t w = L[i];
+        if (w == t || !alive[w] || (merged && holds(w, a) && holds(w, b))) continue;
+        for (int e = 0; e < 3; e++) {
+          uint32_t r = T[3 * w + e], u = T[3 * w + (e + 1) % 3];
+          if (merged) { if (r == b) r = a; if (u == b) u = a; }
+          if (r == q && u == p) return w;
+        }
+      }
+    }
+    return -1;
+  };
+  // cleanup.js's foldsAround: the fold edges around edge (a, b), each pair once; `merged`: as if
+  // b had merged into a at `mid`.
+  auto foldsAround = [&](uint32_t a, uint32_t b, bool merged) -> int {
+    auto at = [&](uint32_t v) -> const double* { return merged && (v == a || v == b) ? mid : &P[3 * (size_t)v]; };
+    int n = 0;
+    for (int side = 0; side < 2; side++) {
+      const IncList L = incOf(side == 0 ? a : b);
+      for (size_t i = 0; i < L.size(); i++) {
+        const uint32_t t = L[i];
+        if (!alive[t] || (side == 1 && holds(t, a))) continue;
+        if (merged && holds(t, a) && holds(t, b)) continue;
+        for (int c = 0; c < 3; c++) {
+          uint32_t p = T[3 * t + c], q = T[3 * t + (c + 1) % 3];
+          if (merged) { if (p == b) p = a; if (q == b) q = a; }
+          const int64_t u = across(t, p, q, merged, a, b);
+          if (u < 0 || ((holds((uint32_t)u, a) || holds((uint32_t)u, b)) && (uint32_t)u < t)) continue;
+          double fa[3], fb[3];
+          triNormal(at, T[3 * t], T[3 * t + 1], T[3 * t + 2], fa);
+          triNormal(at, T[3 * u], T[3 * u + 1], T[3 * u + 2], fb);
+          if (foldedPair(fa, fb)) n++;
+        }
+      }
+    }
+    return n;
+  };
   // cleanup.js's allowed: may edge (a, b) collapse to its midpoint (left in `mid`)?
   // The JS's tests in a cheaper order (each only refuses; see the top comment).
   auto allowed = [&](uint32_t a, uint32_t b) -> bool {
@@ -580,8 +667,9 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     bool haveBefore = false;
     for (int side = 0; side < 2; side++) {
       const uint32_t v = side == 0 ? a : b;
-      for (uint32_t q = off[v]; q < off[v + 1]; q++) {
-        const uint32_t tt = inc[q];
+      const IncList L = incOf(v);
+      for (size_t q = 0; q < L.size(); q++) {
+        const uint32_t tt = L[q];
         if (!alive[tt]) continue;
         const uint32_t i = T[3 * tt], j = T[3 * tt + 1], k = T[3 * tt + 2];
         if ((i == a || j == a || k == a) && (i == b || j == b || k == b)) continue;
@@ -647,8 +735,9 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     // |ring(a) ∩ ring(b)|: mark ring(a), then count ring(b)'s distinct members marked.
     stamp++;
     int sizeA = 0, sizeB = 0;   // |ring(a)|, |ring(b)| (distinct members)
-    for (uint32_t q = off[a]; q < off[a + 1]; q++) {
-      const uint32_t tt = inc[q];
+    const IncList LA = incOf(a), LB = incOf(b);
+    for (size_t q = 0; q < LA.size(); q++) {
+      const uint32_t tt = LA[q];
       if (!alive[tt]) continue;
       for (int k = 0; k < 3; k++) {
         const uint32_t w = T[3 * tt + k];
@@ -656,8 +745,8 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
       }
     }
     int common = 0;
-    for (uint32_t q = off[b]; q < off[b + 1]; q++) {
-      const uint32_t tt = inc[q];
+    for (size_t q = 0; q < LB.size(); q++) {
+      const uint32_t tt = LB[q];
       if (!alive[tt]) continue;
       for (int k = 0; k < 3; k++) {
         const uint32_t w = T[3 * tt + k];
@@ -668,7 +757,32 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
       }
     }
     if (dec && sizeA == 3 && sizeB == 3) return false;   // a tetrahedron: it would fold into a pillow
-    return common == 2;
+    if (common != 2) return false;
+    if (dec) return true;
+    // The first pass: no more fold edges around the edge after the collapse than before. An exact
+    // shortcut first: with no fold after, the count after is 0 and cannot be above the count
+    // before. Every pair across a spoke (an edge at the merged vertex) is two surviving triangles,
+    // so testing every pair of their new normals (the walk's `fan`) covers them; each surviving
+    // triangle has one other edge, whose neighbour is read as foldsAround reads it.
+    bool foldAfter = false;
+    for (size_t f = 0; f < fanT.size() && !foldAfter; f++)
+      for (size_t g = f + 1; g < fanT.size(); g++) if (foldedPair(&fan[3 * f], &fan[3 * g])) { foldAfter = true; break; }
+    for (size_t f = 0; f < fanT.size() && !foldAfter; f++) {
+      const uint32_t t = fanT[f];
+      for (int c = 0; c < 3; c++) {
+        uint32_t p = T[3 * t + c], q = T[3 * t + (c + 1) % 3];
+        if (p == b) p = a;
+        if (q == b) q = a;
+        if (p == a || q == a) continue;
+        const int64_t u = across(t, p, q, true, a, b);
+        if (u < 0) continue;
+        auto at = [&](uint32_t v) -> const double* { return v == a || v == b ? mid : &P[3 * (size_t)v]; };
+        double fu[3];
+        triNormal(at, T[3 * u], T[3 * u + 1], T[3 * u + 2], fu);
+        if (foldedPair(&fan[3 * f], fu)) foldAfter = true;
+      }
+    }
+    return !foldAfter || foldsAround(a, b, true) <= foldsAround(a, b, false);
   };
   // cleanup.js's probe (see there): every edge of every PROBE_STRIDE-th triangle,
   // nothing collapsed; too few allowed and the pass is skipped, mesh untouched.
@@ -687,7 +801,11 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
     if (!alive[t]) continue;
     for (int c = 0; c < 3; c++) {
       const uint32_t a = T[3 * t + c], b = T[3 * t + (c + 1) % 3];
-      if (locked[a] || locked[b] || apart(a, b)) continue;
+      if (apart(a, b)) continue;
+      // cleanup.js's tiny edge: merges past the lock and leaves its ends free.
+      const double dx = P[3 * a] - P[3 * b], dy = P[3 * a + 1] - P[3 * b + 1], dz = P[3 * a + 2] - P[3 * b + 2];
+      const bool tiny = dx * dx + dy * dy + dz * dz < tiny2;
+      if (!tiny && (locked[a] || locked[b])) continue;
       if (!isShort(a, b)) continue;
       if (!allowed(a, b)) continue;
       // Every triangle holding a or b is on one of their lists: forget what was cached.
@@ -697,15 +815,17 @@ size_t collapse(ipe::Session& s, double minLen, bool dec, double cos2, double nc
       }
       P[3 * a] = mid[0]; P[3 * a + 1] = mid[1]; P[3 * a + 2] = mid[2];
       if (own && VH[b]) VH[a] = 1;
-      for (uint32_t q = off[b]; q < off[b + 1]; q++) {
-        const uint32_t tt = inc[q];
+      const IncList LB = incOf(b);
+      for (size_t q = 0; q < LB.size(); q++) {
+        const uint32_t tt = LB[q];
         if (!alive[tt]) continue;
         uint32_t* tri = &T[3 * (size_t)tt];
         if (tri[0] == a || tri[1] == a || tri[2] == a) { alive[tt] = 0; continue; }
         for (int k = 0; k < 3; k++) if (tri[k] == b) tri[k] = a;
-        // (the JS appends tt to vt[a] here; never read again, see above)
+        // The JS appends tt to vt[a]; the first pass keeps it (a decimation pass never reads it).
+        if (!extra.empty()) extra[a].push_back(tt);
       }
-      locked[a] = locked[b] = 1;
+      if (!tiny) locked[a] = locked[b] = 1;
       collapsed++;
       break;   // triangle t is gone; move on
     }
@@ -1075,7 +1195,7 @@ int cleanup(ipe::Session& s, double collapseFrac, int relaxPasses, double relaxW
   if (!s.meshed) return 1;
   clear_sharp(s);
   const double edge = s.edge;
-  collapse(s, collapseFrac * edge, false, -1, -1, -1, 0);
+  collapse(s, collapseFrac * edge, false, -1, -1, -1, 0, TINY_EDGE * edge);
   if (decimateFrac > 0) {
     for (int pass = 0; pass < decimatePasses; pass++) {
       const double before = (double)(s.indices.size() / 3);
