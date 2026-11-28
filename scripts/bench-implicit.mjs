@@ -1,5 +1,5 @@
 // scripts/bench-implicit.mjs — times each engine stage on the reference fixtures.
-// Usage: node scripts/bench-implicit.mjs [--core on|off|both]   (Node 24; default both)
+// Usage: node scripts/bench-implicit.mjs [--core on|off|both] [--only name,name]   (Node 24; default both, every case)
 // Times are CPU milliseconds.
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,9 @@ import { handSpec, vaseSpec } from "../test/fixtures/implicit-trees.js";
 const arg = process.argv.indexOf("--core");
 const coreMode = arg >= 0 ? process.argv[arg + 1] : "both";
 if (!["on", "off", "both"].includes(coreMode)) { console.error("usage: bench-implicit.mjs [--core on|off|both]"); process.exit(2); }
+// `--only a,b` runs only the named cases (below).
+const only = process.argv.indexOf("--only"), names = only >= 0 ? process.argv[only + 1] : null;
+if (only >= 0 && (!names || names.startsWith("--"))) { console.error("usage: bench-implicit.mjs [--only name,name]: name at least one case"); process.exit(2); }
 
 // A true cold run: a fresh process that boots the kernel and times its first k.implicit.
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -52,10 +55,27 @@ const solidJoin = { root: { kind: "union", k: 8, children: [
 ] } };
 const solidShrink = { root: { kind: "offset", d: -2, child: solidLeaf(sk.sphere(16)
   .union(sk.box({ min: [-8, -8, -22], max: [8, 8, 0] })).union(sk.cylinder({ r: 6, h: 44 }).rotateY(90).at([-22, 0, 4]))) } };
+// The sharpen stage's cases (test/implicit-sharpen.test.js): the boss near a plate's edge, the boss
+// in an L bracket's inside corner, the knurl at both tiers, and two blended spheres (no sharp edge).
+const solidPlate = { root: { kind: "union", k: 8, children: [
+  solidLeaf(sk.box({ min: [-30, -20, 0], max: [30, 20, 6] })), solidLeaf(sk.cylinder({ r: 8, h: 26 }).at([20, 0, 4])),
+] } };
+const solidBracket = { root: { kind: "union", k: 6, children: [
+  solidLeaf(sk.box({ min: [-30, -20, 0], max: [30, 20, 6] }).union(sk.box({ min: [-30, -20, 0], max: [-24, 20, 30] }))),
+  solidLeaf(sk.cylinder({ r: 5, h: 20 }).at([-14, 0, 4])),
+] } };
+const KNURL = "vec2 z = normalize(p.xy); for (int i = 0; i < 4; i++) { z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y); } "
+  + "float c = cos(p.z * 1.3); float s = sin(p.z * 1.3); return max(z.x * c - z.y * s, z.x * c + z.y * s);";
+const knurl = { root: { kind: "displace", amount: 0.7, child: solidLeaf(sk.cylinder({ r: 12, h: 30 })), by: { expr: KNURL } } };
+const spheres = { root: { kind: "union", k: 6, children: [{ kind: "sphere", r: 10, at: [-6, 0, 0] }, { kind: "sphere", r: 10, at: [6, 0, 0] }] } };
 const cases = [["hand preview", handSpec(), 1.5, new Map(), PREVIEW_CLEANUP], ["hand print", handSpec(), 0.8, new Map(), CLEANUP],
   ["hand 0.5 mm", handSpec(), 0.5, new Map(), CLEANUP], ["vase preview", vase, 1.2, images, PREVIEW_CLEANUP],
   ["join preview", solidJoin, 0.6, new Map(), PREVIEW_CLEANUP], ["join print", solidJoin, 0.6, new Map(), CLEANUP],
-  ["shrink preview", solidShrink, 0.6, new Map(), PREVIEW_CLEANUP]];
+  ["shrink preview", solidShrink, 0.6, new Map(), PREVIEW_CLEANUP],
+  ["plate-edge", solidPlate, 0.6, new Map(), PREVIEW_CLEANUP], ["bracket-corner", solidBracket, 0.6, new Map(), PREVIEW_CLEANUP],
+  ["knurl preview", knurl, 0.6, new Map(), PREVIEW_CLEANUP], ["knurl print 0.3", knurl, 0.3, new Map(), CLEANUP],
+  ["spheres", spheres, 0.6, new Map(), PREVIEW_CLEANUP]];
+const picked = only >= 0 ? cases.filter(([name]) => names.split(",").includes(name)) : cases;
 
 for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   console.log(`\ncore ${on ? "on" : "off"}`);
@@ -66,7 +86,7 @@ for (const on of coreMode === "both" ? [false, true] : [coreMode === "on"]) {
   // path: the owner mesher, and `seam` (the crease cut before sharpen, untangle after it).
   // Other cases have no seam stage.
   console.log("case            compile  sample  mesh  cleanup  seam  sharpen  detail  total   tris     samples  programs");
-  for (const [name, spec, edge, imgs, cleanupOpts] of cases) {
+  for (const [name, spec, edge, imgs, cleanupOpts] of picked) {
     for (let warm = 0; warm < 2; warm++) {
       const [c, tc] = time(() => compileImplicit(spec, { images: imgs }));
       // sample = planLeaves + evaluation; with the core on, every later stage runs on one

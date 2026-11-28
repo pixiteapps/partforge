@@ -812,7 +812,7 @@ the installed package, so let the publish finish before bumping the dep there.
   largest drift; withheld when a line cannot be read along a sweep, and on a quick lap) and
   `lineBend` (the smallest bend ratio; withheld when any line cannot be read). Lint:
   `line-bad-source` (an error) and `line-unswept` (a warning only - an unswept line never
-  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3a (0.209.0) draws a readable line as a tube:
+  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3a (0.211.0) draws a readable line as a tube:
   `tube.js` (`tubeMesh`, `LINE_COLOR`, `LINE_TUBE_SIDES` 12) and `meshes.js` (`lineMeshes`,
   `lineReadings`, `lineDriftBound`; it imports the import-free `oracle/assert-dsl.js` for the
   `lineDrift` bound) are pure and three-free. A line's `display: { color }` is a 0xRRGGBB
@@ -824,7 +824,7 @@ the installed package, so let the publish finish before bumping the dep there.
   `partforge render` (they count toward framing and the contact shadow). A pose drag adds
   one readout item per line (length and drift since the press); a line is tinted when its bend
   ratio is under its minimum, or during a drag when its drift passes the view's `lineDrift`
-  bound; the tints clear when the drag ends or the hold is released. Phase 3b (0.210.0) puts
+  bound; the tints clear when the drag ends or the hold is released. Phase 3b (0.212.0) puts
   the tube in the cached preview: `exportPreview` writes each line at the file's params as a
   `line:<name>` node (encoder version 8, extras `partforgeLine`), the decoder returns it in
   `lines`, never as a sub-part, and `mountPreview` draws the file's still tube without the part

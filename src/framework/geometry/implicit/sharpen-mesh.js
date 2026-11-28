@@ -73,6 +73,27 @@ export function subdivide(T, t, splitOf, ekey, out) {
   else { put(A, sAB, sCA); put(sAB, B, C); put(sAB, C, sCA); }
 }
 
+// T split at splitOf's points, as subdivide over every triangle in order gives it: the triangles in
+// `cut` (those on a split edge, in any order, repeats allowed) are subdivided and every other one is
+// copied as it is, since a triangle on no split edge subdivides to itself. A new Uint32Array.
+export function retriangulate(T, cut, splitOf, ekey) {
+  const tris = Uint32Array.from(new Set(cut)).sort(), pieces = [], ends = [];
+  for (const t of tris) { subdivide(T, t, splitOf, ekey, pieces); ends.push(pieces.length); }
+  const out = new Uint32Array(T.length - 3 * tris.length + pieces.length);
+  let o = 0, from = 0, p = 0;
+  const copy = (a, b) => {
+    if (ArrayBuffer.isView(T)) out.set(T.subarray(a, b), o); else for (let j = a; j < b; j++) out[o + j - a] = T[j];
+    o += b - a;
+  };
+  tris.forEach((t, i) => {
+    copy(3 * from, 3 * t);
+    for (; p < ends[i]; p++) out[o++] = pieces[p];
+    from = t + 1;
+  });
+  copy(3 * from, T.length);
+  return out;
+}
+
 // "flip" (a triangle against the sum of its corners' normals), "sliver" (an altitude under
 // MIN_ALTITUDE) or null, over the triangles `tris` of T become when split at `splitOf`.
 export function checkTris(T, tris, splitOf, ekey, P, N) {
@@ -133,41 +154,68 @@ export function fieldFlips(store, S, tris, { VL0, T, ekey, edge }, memo = null) 
 
 // The SHARP_APART guard's index: the first `nv` vertices of P in a hash grid of cells
 // 2·SHARP_APART·edge wide (so a point within SHARP_APART·edge of a vertex is in one of the 27
-// cells around it), built once. `over(Q)` gives one commit's view: Q is that commit's live
-// positions, `add(v)` files a vertex it placed or moved, and `has(p, skip)` says whether any vertex
-// other than `skip` lies within SHARP_APART·edge of p at its position in Q. A question of whether
-// one exists, so no order decides it.
-export function apartIndex(P, nv, edge) {
+// cells around it), built once. `asks` are the points a commit will ask about; only the 27 cells
+// around each are filed, as the only cells a question about them reads. `over(Q)` gives one
+// commit's view: Q is that commit's live positions, `add(v)` files a vertex it placed or moved, and
+// `has(p, skip)` says whether any vertex other than `skip` lies within SHARP_APART·edge of p at its
+// position in Q. A question of whether one exists, so no order decides it. A point not in `asks`
+// is answered by testing every vertex: one whose cell is not among the 27 is at least
+// 2·SHARP_APART·edge from p, or was moved and filed again by `add`, so the answer is the same.
+export function apartIndex(P, nv, edge, asks) {
   const ap = SHARP_APART * edge, size = 2 * ap, A2 = ap * ap, base = new Map();
   const cell = (x) => Math.floor(x / size);
   // A cell index that is not a safe integer (a non-finite or absurd position) is never filed and never near.
   const finite = (x, y, z) => Number.isSafeInteger(cell(x)) && Number.isSafeInteger(cell(y)) && Number.isSafeInteger(cell(z));
+  const key = (i, j, k) => `${i},${j},${k}`;
   const file = (cells, Q, v) => {
     const x = Q[3 * v], y = Q[3 * v + 1], z = Q[3 * v + 2];
     if (!finite(x, y, z)) return;
-    const k = `${cell(x)},${cell(y)},${cell(z)}`, l = cells.get(k);
+    const k = key(cell(x), cell(y), cell(z)), l = cells.get(k);
     if (l) l.push(v); else cells.set(k, [v]);
   };
-  for (let v = 0; v < nv; v++) file(base, P, v);
+  // The asked cells, the 27 around each, and their x indices (a first test that refuses most vertices).
+  const asked = new Set(), want = new Set(), wantX = new Set();
+  for (const p of asks) {
+    if (!finite(p[0], p[1], p[2])) continue;
+    const ix = cell(p[0]), iy = cell(p[1]), iz = cell(p[2]);
+    asked.add(key(ix, iy, iz));
+    for (let i = -1; i <= 1; i++) {
+      wantX.add(ix + i);
+      for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) want.add(key(ix + i, iy + j, iz + k));
+    }
+  }
+  // The x test is a table over the asked x range when that is not too wide.
+  let x0 = Infinity, x1 = -Infinity;
+  for (const ix of wantX) { if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; }
+  const table = want.size && x1 - x0 < 1 << 22 ? new Uint8Array(x1 - x0 + 1) : null;
+  if (table) for (const ix of wantX) table[ix - x0] = 1;
+  const inX = table ? (ix) => ix >= x0 && ix <= x1 && table[ix - x0] === 1 : (ix) => wantX.has(ix);
+  if (want.size) for (let v = 0; v < nv; v++) {
+    if (!inX(cell(P[3 * v]))) continue;
+    const x = P[3 * v], y = P[3 * v + 1], z = P[3 * v + 2];
+    if (finite(x, y, z) && want.has(key(cell(x), cell(y), cell(z)))) file(base, P, v);
+  }
   return (Q) => {
-    const over = new Map();
+    const over = new Map(), placed = [];
+    const near = (v, x, y, z) => { const a = Q[3 * v] - x, b = Q[3 * v + 1] - y, c = Q[3 * v + 2] - z; return a * a + b * b + c * c < A2; };
     const has = (p, skip) => {
       const x = p[0], y = p[1], z = p[2];
       if (!finite(x, y, z)) return false;
       const ix = cell(x), iy = cell(y), iz = cell(z);
+      if (!asked.has(key(ix, iy, iz))) {
+        for (let v = 0; v < nv; v++) if (v !== skip && near(v, x, y, z)) return true;
+        for (const v of placed) if (v !== skip && near(v, x, y, z)) return true;
+        return false;
+      }
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
-        const key = `${ix + i},${iy + j},${iz + k}`;
+        const kk = key(ix + i, iy + j, iz + k);
         for (const cells of [base, over]) {
-          const l = cells.get(key);
-          if (l) for (const v of l) {
-            if (v === skip) continue;
-            const a = Q[3 * v] - x, b = Q[3 * v + 1] - y, c = Q[3 * v + 2] - z;
-            if (a * a + b * b + c * c < A2) return true;
-          }
+          const l = cells.get(kk);
+          if (l) for (const v of l) if (v !== skip && near(v, x, y, z)) return true;
         }
       }
       return false;
     };
-    return { add: (v) => file(over, Q, v), has };
+    return { add: (v) => { placed.push(v); file(over, Q, v); }, has };
   };
 }
