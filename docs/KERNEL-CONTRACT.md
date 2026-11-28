@@ -1052,6 +1052,15 @@ in `kernel.js` define the current surface; only breaking changes bump the versio
   `cut` per CadQuery/replicad rather than OpenSCAD's `difference`), so LLM priors
   transfer. Renames are breaking changes with no offsetting benefit — don't.
 
+**Additive within v4** (partforge 0.207): `implicit` meshes place sharp edges and corners
+better and have fewer folded triangles. A corner point now lies where its three faces meet,
+and a point beside a curved sharp edge is no longer taken for a corner. Cleanup merges the
+mesher's tiny clusters of vertices, so fewer rim triangles fold back on themselves, and a
+`k.implicit` result used as a `solid` leaf gives the folded warning less often. The sharpen
+stage costs less on large meshes. The meshes of existing implicit parts change again, with
+different bytes. There is no option and no switch. No contract bump: the 0.179 precedent, a
+change inside a mesh-native op.
+
 **Additive within v4** (partforge 0.206): `implicit` meshes keep the field's sharp edges
 and corners. A new mesher stage puts a vertex on each one, on every tree and both tiers, in
 JS and in the native core with the same bytes. Before it, every sharp edge was bevelled by

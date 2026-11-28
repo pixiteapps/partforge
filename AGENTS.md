@@ -810,7 +810,7 @@ the installed package, so let the publish finish before bumping the dep there.
   largest drift; withheld when a line cannot be read along a sweep, and on a quick lap) and
   `lineBend` (the smallest bend ratio; withheld when any line cannot be read). Lint:
   `line-bad-source` (an error) and `line-unswept` (a warning only - an unswept line never
-  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3a (0.209.0) draws a readable line as a tube:
+  withholds `verify.ok`), in `lint/rules-lines.js`. Phase 3a (0.211.0) draws a readable line as a tube:
   `tube.js` (`tubeMesh`, `LINE_COLOR`, `LINE_TUBE_SIDES` 12) and `meshes.js` (`lineMeshes`,
   `lineReadings`, `lineDriftBound`; it imports the import-free `oracle/assert-dsl.js` for the
   `lineDrift` bound) are pure and three-free. A line's `display: { color }` is a 0xRRGGBB
