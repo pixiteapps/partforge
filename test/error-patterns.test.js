@@ -105,6 +105,10 @@ const BASELINE_IDS = [
   "implicit-solid-open",
   "motion-unswept",
   "sweep-bad-clearance",
+  "line-drift",
+  "line-bend",
+  "line-bad-source",
+  "line-unswept",
 ];
 
 const entries = parsePatterns(doc);

@@ -644,7 +644,10 @@ export interface SweepRow {
   contacts: SweepContact[];
   /** A param sweep only: the contact-free interval around the param's current value. */
   freeRange: [number, number] | null;
-  /** Wall time in ms. Not deterministic: never compare or hash it. */
+  /**
+   * Wall time in ms of the contact pass alone: the line pass (`lines`) is never counted.
+   * Not deterministic: never compare or hash it.
+   */
   ms: number;
   /** The step cap forced steps longer than the travel bound. */
   capped?: true;
@@ -654,6 +657,50 @@ export interface SweepRow {
   error?: string;
   /** How many contacts the row left off past its cap (32), allowed and unread ones first. */
   contactsOmitted?: number;
+  /**
+   * Each declared line of the view read along the motion (derive only), present only when
+   * the view declares a line and the entry ran (a timed-out or unreadable row included).
+   */
+  lines?: SweepLineReading[];
+  /** `true` exactly when `lines` is present. */
+  linesSampled?: true;
+}
+
+/**
+ * One declared line along a sweep's motion (src/framework/oracle/lines.js `sweepLines`). The
+ * `…At` values are motion values (the param's own value, or t for a path or an animation).
+ */
+export type SweepLineReading =
+  | {
+      name: string;
+      /** mm, the shortest and longest the line reads along the motion. */
+      lengthMin: number;
+      lengthMinAt: number;
+      lengthMax: number;
+      lengthMaxAt: number;
+      /** mm: lengthMax − lengthMin, the line's range over the motion. */
+      drift: number;
+      /** The smallest bend ratio read, `null` when the line reports none. */
+      bendMin: number | null;
+      bendMinAt: number | null;
+      /** How many readings it took: 33 even ones (one derive each, shared by every line) plus the extremes' refinement. */
+      samples: number;
+    }
+  /**
+   * The line could not be read along the motion: the thrown message, or `"timeout"` when the
+   * line pass's own budget (2000 ms per measure() call) ran out first; `at` is the motion
+   * value being read.
+   */
+  | { name: string; error: string; at: number | null };
+
+/**
+ * A declared sweep that moves no piece in the view, read for the view's lines alone
+ * (`MeasureReport.lineSweeps`): a line can change through derive alone.
+ */
+export interface LineSweepRow {
+  name: string;
+  lines: SweepLineReading[];
+  linesSampled: true;
 }
 
 export interface SweepContact {
@@ -722,6 +769,11 @@ export interface MeasureReport {
    * absent when the part declares none.
    */
   handles?: HandleFacts[];
+  /** Declared lines read at the measured pose; present only when the view declares one. */
+  lines?: Array<
+    | { name: string; on: string; mode: string; length: number; bendRatio: number | null; minBendRatio: number | null }
+    | { name: string; on: string; error: string }
+  >;
   /**
    * Which of `handles` a kernel-free cached preview of this view would let a visitor
    * drag (`mountPreview({ part })`), and why each other one is hidden. Present only
@@ -734,6 +786,12 @@ export interface MeasureReport {
    * folded into `ok` (`sweepContacts` gates it).
    */
   sweeps?: SweepRow[];
+  /**
+   * The declared sweeps that move no piece in this view (so have no `sweeps` row), each read
+   * for the view's declared lines; `lineDrift` and `lineBend` read them with the rows. Present
+   * only when the view declares a line and such a sweep exists.
+   */
+  lineSweeps?: LineSweepRow[];
   /**
    * For each posed limb the part's `derive` returns (a limb with a parent is skipped), by
    * name: each joint's posed position, its bone's length, and the body's cross-section size

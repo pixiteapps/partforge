@@ -19,6 +19,7 @@
 import { PROCESSES } from "./process/registry.js";
 import { DOMAINS } from "./domains/registry.js";
 import { sweepContactBlocks } from "./collide/pairs.js";
+import { lineErrorWhy } from "./lines/read.js";
 
 // `bounds` is written the way measure() reports it — `bounds: { min: [x,y,z], max:
 // [x,y,z] }` — so a reader who copies the shape of a measurement gets a legal
@@ -277,6 +278,44 @@ function sweepContacts(r) {
   return 0;
 }
 
+// The declared lines' readings along the declared sweeps (oracle/lines.js `sweepLines`, one
+// per line per row that read lines), each with the row it came from: the contact rows
+// (`r.sweeps`) and the line-only rows of sweeps that move no piece in the view
+// (`r.lineSweeps`, which sweepContacts never reads).
+const lineRows = (r) => [...(r.sweeps ?? []), ...(r.lineSweeps ?? [])];
+const lineReadings = (r) => lineRows(r).flatMap((s) => (s.lines ?? []).map((reading) => ({ reading, row: s })));
+// The first line reading that could not be read along its motion, with its row.
+const sweepLineUnread = (r) => lineReadings(r).find(({ reading }) => reading.error != null) ?? null;
+// The first declared line that could not be read at the measured pose.
+const poseLineUnread = (r) => (r.lines ?? []).find((l) => l.error != null) ?? null;
+// A line error without readLine's own `line "<name>": ` prefix, which the message names already.
+const lineWhy = lineErrorWhy;
+// Words an unread line: where it failed and why.
+function unreadText(r, { pose = false } = {}) {
+  const atPose = pose ? poseLineUnread(r) : null;
+  if (atPose) return `line "${atPose.name}" could not be read at the measured pose: ${lineWhy(atPose)}`;
+  const hit = sweepLineUnread(r);
+  if (!hit) return null;
+  const { reading, row } = hit;
+  const where = `sweep "${row.name}"${row.view ? ` in view "${row.view}"` : ""}`;
+  return `line "${reading.name}" could not be read along ${where}${reading.at != null ? ` (at ${reading.at})` : ""}: ${lineWhy(reading)}`;
+}
+const LINE_UNREAD_HINT = "a declared line could not be read, so this gate has no verdict and verify.ok is withheld — fix the line's source so it reads at the measured pose and at every value the sweep passes through (see `lines` in npx partforge measure)";
+function lineDrift(r) {
+  if (!r.lines || !r.sweeps) return null;
+  if (!lineRows(r).length) return 0;
+  if (sweepLineUnread(r)) return null;
+  const drifts = lineReadings(r).map(({ reading }) => reading.drift).filter((v) => typeof v === "number");
+  return drifts.length ? Math.max(...drifts) : null;
+}
+function lineBend(r) {
+  // any unread line withholds it, whatever the other lines read: its ratio is unknown
+  if (poseLineUnread(r) || sweepLineUnread(r)) return null;
+  const ratios = [...lineReadings(r).map(({ reading }) => reading.bendMin), ...(r.lines ?? []).map((l) => l.bendRatio)]
+    .filter((v) => typeof v === "number");
+  return ratios.length ? Math.min(...ratios) : null;
+}
+
 export const VIEW_METRICS = {
   bbox: { kind: "gate", form: "vector", extract: (r) => r.aggregate.bbox,
     hint: "the assembled view exceeds its size limit — shrink the assembly or pick a process with a larger bed" },
@@ -305,6 +344,37 @@ export const VIEW_METRICS = {
       const row = r.sweeps?.find(sweepHit);
       return row ? firstBlocking(row)?.at ?? row.minClearance?.at ?? null : null;
     } },
+  // How much a declared line's length changes along the declared sweeps (mm): the largest
+  // `drift` over every row's readings, a sweep that moves no piece in this view included
+  // (measure's `lineSweeps`: a line changes through derive alone). No line in the view, or
+  // no `sweeps` key (none declared, or a case measured without them), is a plain skip; it
+  // reads 0 only when no declared sweep runs in this view at all (`sweeps: []` and no
+  // `lineSweeps`: every sweep's `views` leaves the view out, or it drives a goal handle). A
+  // line that could not be read along a motion (an error, or "timeout" when the line pass's
+  // budget ran out) has no verdict, so the gate is withheld — and so it is when no row read
+  // a line at all.
+  lineDrift: { kind: "gate", extract: lineDrift,
+    withheld: (r) => {
+      if (!r.lines || !r.sweeps || !lineRows(r).length || lineDrift(r) !== null) return null;
+      const bad = unreadText(r);
+      return bad ? `not evaluated — ${bad}` : "not evaluated — no declared sweep read a line";
+    },
+    withheldHint: (r) => (sweepLineUnread(r) ? LINE_UNREAD_HINT : SWEEP_WITHHELD_HINT),
+    hint: "the line's span lengths change along the motion, so a rope tensioned at one pose goes slack (or overloads) at another — move the termination onto the drum axis, keep the pulley concentric with its pivot, or tension the line at the pose where it is shortest (lengthMinAt)",
+    skipMessage: "not measured — lineDrift reads the declared lines along the declared sweeps, which verify runs on one case only (the first it measures); it needs a `lines` entry in this view and verify.sweeps",
+    pattern: "line-drift",
+    locate: () => null },
+  // The smallest bend ratio (sheave diameter over line diameter) a declared line meets: at
+  // the measured pose (`r.lines`) and along the declared sweeps (each reading's `bendMin`).
+  // Read from `r.lines` alone on a case or a quick lap without sweeps. Withheld when any
+  // declared line could not be read (at the pose or along a sweep), whatever the others
+  // read; a skip when no line wraps anything that has a ratio.
+  lineBend: { kind: "gate", extract: lineBend,
+    withheld: (r) => { const bad = unreadText(r, { pose: true }); return bad ? `not evaluated — ${bad}` : null; },
+    withheldHint: LINE_UNREAD_HINT,
+    hint: "the line bends round a drum or pulley too small for its diameter (the ratio is sheave diameter over line diameter) — it wears and loses strength there; enlarge that drum or pulley, or use a thinner, more flexible line",
+    skipMessage: "not measured — no declared line in this view wraps a drum or pulley with a bend ratio",
+    pattern: "line-bend" },
   centerOfMass: { kind: "gate", form: "vector", extract: (r) => r.aggregate.centerOfMass,
     hint: "the assembly's center of mass is outside the expected region — a sub-part is mis-placed or mis-scaled" },
   bounds: boundsMetric((r) => r.aggregate.bounds,

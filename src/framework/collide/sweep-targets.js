@@ -194,8 +194,10 @@ export function readSweep(part, name, spec, full, declClear = normalizeCollision
  * leave the view out, an animation another view declares, and one that moves nothing here
  * give no entry; a sample that cannot be resolved keeps `skip: "unreadable"`. `r` is the
  * declaration already read by readSweep, for a caller that reads it once for every view.
+ * `keepStill` keeps an entry that moves nothing here as `{ …, still: true }` instead of
+ * dropping it: a line changes through derive alone, so the line pass reads it (sweep.js).
  */
-export function sweepsInView(part, view, name, spec, full, declClear, r = readSweep(part, name, spec, full, declClear)) {
+export function sweepsInView(part, view, name, spec, full, declClear, r = readSweep(part, name, spec, full, declClear), { keepStill = false } = {}) {
   if (r.goal) return [];
   const out = [];
   for (const s of r.entries) {
@@ -206,7 +208,10 @@ export function sweepsInView(part, view, name, spec, full, declClear, r = readSw
     try {
       scan = scanMotion(part, view, motionOf(part, view, full, s), extraSamples(s));
     } catch (e) { out.push({ ...s, skip: "unreadable", why: `cannot be stepped (${e?.message || e})` }); continue; }
-    if (!scan.moving.length && !scan.rebuild.length) continue; // nothing moves in this view
+    if (!scan.moving.length && !scan.rebuild.length) { // nothing moves in this view
+      if (keepStill) out.push({ ...s, still: true });
+      continue;
+    }
     out.push({ ...s, moving: scan.moving, rebuild: scan.rebuild });
   }
   return out;

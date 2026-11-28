@@ -2,6 +2,7 @@
 // function so a test can hold its wording. A row's `ms` is never printed.
 import { pairKey, sweepContactBlocks } from "../src/framework/collide/pairs.js";
 import { TOUCH_TOL_MM } from "../src/framework/collide/depth.js";
+import { lineErrorWhy } from "../src/framework/lines/read.js";
 
 const fmtV = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 const mm = (d) => `${d.toFixed(2)}mm`;
@@ -11,9 +12,20 @@ const moreText = (n) => (n > 0 ? ` (+${n} more)` : "");
  * Clear with its tightest pair, then (a sweep that may touch or press in) its first allowed
  * rub deeper than TOUCH_TOL_MM, with its depth; or a contact with where it starts, its pair
  * (and, on a sweep that may touch, how deep it presses), the param driving it and (a param
- * sweep) the contact-free range; or why it stopped short.
+ * sweep) the contact-free range; or why it stopped short. Then each declared line's drift
+ * along the motion (`, rope drift 0.03mm`, or `, rope unreadable`).
  */
 export function sweepText(s) {
+  const lines = (s.lines ?? []).map((l) => (l.error ? `, ${l.name} unreadable` : `, ${l.name} drift ${mm(l.drift)}`));
+  return rowText(s) + lines.join("");
+}
+
+/** A sweep that moves no piece in the view, read for its lines alone (measure's `lineSweeps`). */
+export function lineSweepText(s) {
+  return sweepText({ ...s, skipped: "moves no piece" });
+}
+
+function rowText(s) {
   if (s.skipped) return `${s.name} skipped (${s.skipped})`;
   const capped = s.capped ? " (capped)" : "";
   // contacts the row's cap left off (oracle/sweep.js capContacts) are more of them too
@@ -34,4 +46,13 @@ export function sweepText(s) {
   const more = moreText(blocking.length - 1 + omitted);
   const deep = touching && c.depth != null ? ` (${mm(c.depth)} deep)` : "";
   return `${s.name} CONTACT at ${fmtV(c.from)} ${pairKey(c.a, c.b)}${deep}${c.unresolved ? " (unresolved)" : ""} driven by ${c.driver ?? "?"}${free}${more}${capped}`;
+}
+
+/** One declared line's reading: `rope 212.40mm, bend 10.0 (min 8)`, or why it could not be read. */
+export function lineText(l) {
+  if (l.error) return `${l.name} unreadable: ${lineErrorWhy(l)}`;
+  const bend = l.bendRatio != null
+    ? `, bend ${l.bendRatio.toFixed(1)}${l.minBendRatio != null ? ` (min ${l.minBendRatio})` : ""}`
+    : "";
+  return `${l.name} ${mm(l.length)}${bend}`;
 }

@@ -158,6 +158,15 @@ describe("capstan: plain data", () => {
     expect(roundTrip(info)).toEqual(info);
     expect(roundTrip(make(90).report())).toEqual(make(90).report());
   });
+  it("lineInfo carries the exact length and the bend ratio", () => {
+    const c = make(90, { rope: { minBendRatio: 5 } });
+    const { rope } = c.lineInfo().lines;
+    const rep = c.report();
+    expect(Math.abs(rope.length - rep.length)).toBeLessThan(1e-3);
+    expect(rope.bendRatio).toBeCloseTo(Math.min(rep.bend.drum, rep.bend.pulley), 3);
+    expect(rope.minBendRatio).toBe(5);
+    expect(make(0).lineInfo().lines.rope.minBendRatio).toBeNull();
+  });
   it("the two halves meet at one point on the drum", () => {
     // no jump where half 1's last point and half 2's first were joined
     const pts = make(137).lineInfo().lines.rope.points;

@@ -672,6 +672,16 @@ export interface ViewExpectations {
    * stopped is a warning instead).
    */
   sweepContacts?: Expectation;
+  /**
+   * The largest change in a declared line's length (mm) along the declared sweeps —
+   * usually `"<=0.2"`. A gate; withheld when a line could not be read along a motion.
+   */
+  lineDrift?: Expectation;
+  /**
+   * The smallest bend ratio (sheave diameter over line diameter) a declared line meets,
+   * at the measured pose and along the declared sweeps — e.g. `">=12"`. A gate.
+   */
+  lineBend?: Expectation;
   centerOfMass?: Expectation;
   /** The axis-aligned corners: `{ min: ">=[x,y,z]", max: "<=[x,y,z]" }`, as `measure` reports `bounds`. */
   bounds?: BoundsExpectation;
@@ -959,6 +969,12 @@ export interface PartDefinition<P = ResolvedParams, D = Derived> {
    */
   handles?: Record<string, Handle>;
   /**
+   * Flexible lines (ropes) to report: each names a key of `derive`'s output (`on`) that is a
+   * line source (a `capstan` from `partforge/mechanisms`), and which of its lines (`line`,
+   * default the entry's own name). `measure` reads each one's length and bend ratio.
+   */
+  lines?: Record<string, LineDecl>;
+  /**
    * Collision rules: how close counts as touching (`clearance`, mm), which sub-part pairs
    * may touch (`allow`, entries `"a×b"` naming two sub-parts), and whether Pose mode keeps
    * pieces solid (`pose`, default true).
@@ -1096,3 +1112,6 @@ export interface AnglesHandle extends HandleCommon {
    */
   joints?: Record<string, HandleJoint>;
 }
+
+/** One entry of a part's `lines` block. */
+export interface LineDecl { on: string; line?: string; views?: string[] }

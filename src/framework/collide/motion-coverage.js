@@ -163,7 +163,7 @@ function relativeMotion(vs, sample) {
 }
 
 /** The keys a continuous control (slider, number) sets, or null when the schema cannot be read. */
-function continuousKeys(part) {
+export function continuousKeys(part) {
   try {
     return new Set(controlNodes(desugar(part?.parameters)).filter((c) => CONTINUOUS.has(c.type)).map((c) => c.key));
   } catch {

@@ -4011,7 +4011,8 @@ number, which the sweep would replace with the declared default —
 build changes along the motion, so the sweep rebuilds geometry at every step) and `motion-unswept` (a warning: a param moves one piece
 against another in some view and no sweep moves it there; the hint gives the sweep to add,
 always with `clearance: 0` —
-[motion-unswept](ERROR-PATTERNS.md#motion-unswept)).
+[motion-unswept](ERROR-PATTERNS.md#motion-unswept)). The lint rules for declared `lines`
+are in [Lines](#lines-ropes-read-along-a-motion).
 
 ### How a sweep steps
 
@@ -4287,6 +4288,71 @@ would pass. Whether the detent's arm survives the bend is `verify.flex`'s check,
 sweep's. Depth is read as the distance to the other piece's surface, so it is at most about
 half the thinner wall: keep a detent's allowance well under half the thinnest moving wall,
 and keep the `travel` sweep's allowance tight.
+
+## Lines: ropes read along a motion
+
+A rope drive works only if the rope keeps its length as the joint turns: a rope that grows
+goes slack, and one that shrinks pulls itself tight. A top-level `lines` block names the
+ropes so measure reads them at the pose and along every declared sweep. Each entry names a
+key of `derive`'s output that is a line source (anything with a plain-data `lineInfo()`,
+today a `capstan` from `partforge/mechanisms`, [docs/domains/mechanisms.md](domains/mechanisms.md)):
+
+```js
+derive: (p) => ({ drive: capstan({ rope: { d: 1.2, material: "uhmwpe" }, … , drive: { member: "drum", angle: p.motorAngle } }) }),
+lines: { rope: { on: "drive" } },      // line: "<name>" picks one of the source's lines (default: the entry's name)
+verify: {
+  sweeps: { drive: { param: "motorAngle" } },
+  expect: { _view: { lineDrift: "<=0.2", sweepContacts: 0 } },
+},
+```
+
+`views: [...]` limits an entry to those views; without it the line is read in every view.
+The reference part is `src/parts/capstan-joint.js`.
+
+**At the pose.** `measure().lines` has one entry per line in the view: `{ name, on, mode,
+length, bendRatio, minBendRatio }` (mm; the bend ratio is the smallest drum diameter over
+the rope diameter), or `{ name, on, error }` when the source cannot be read. The CLI prints
+`lines: rope 286.51mm, bend 10.0`.
+
+**Along a sweep.** Each sweep row gains `lines`, one reading per line: `{ name, lengthMin,
+lengthMinAt, lengthMax, lengthMaxAt, drift, bendMin, bendMinAt, samples }`, where `drift` is
+`lengthMax − lengthMin` over the motion and each `…At` is the swept value where it happens;
+or `{ name, error, at }` at the first value where the source throws. The row says
+`linesSampled: true`: a line is read at 33 even samples (each interior extreme then refined),
+not proved between them. Readings call `derive` only, never the kernel: one `derive` per even
+sample serves every line in the view. They have their own time budget, 2000 ms per measure
+(`LINE_SWEEP_BUDGET_MS`), apart from the sweeps' deadline, so a sweep the deadline stops (or
+whose contact pass throws) still gets its lines, but never past the deadline plus 1000 ms
+(`LINE_GRACE_MS`), so an inspect report still finishes in time; a reading the budget stops is
+`{ name, error: "timeout", at }`. A row's `ms` leaves the line pass out. The CLI adds them to the sweep's
+line: `sweeps: drive clear (min 1.00mm drum×pulley), rope drift 0.03mm`.
+
+A sweep that moves no piece in the view has no sweep row (there is nothing to collide), but a
+rope can still change length through `derive` alone — a pulley centre that moves in `derive`
+while the wheels' placements stay fixed. Such a sweep is still read for the view's lines, in
+`measure().lineSweeps` (`{ name, lines, linesSampled }` each, present only when there is one;
+the CLI prints `line sweeps: drive skipped (moves no piece), rope drift 20.17mm`). The line
+gates read it with the rows; `sweepContacts` never does.
+
+Two view gates read them:
+
+- **`lineDrift`**: the largest `drift` over the declared sweeps, mm. `"<=0.2"` is the capstan
+  gate ([line-drift](ERROR-PATTERNS.md#line-drift)). A skip with no line in the view or no
+  declared sweep; 0 when no declared sweep runs in the view at all (each one's `views` leaves
+  it out); withheld when a line could not be read along a sweep (its budget ran out included),
+  and on a quick lap (which never sweeps).
+- **`lineBend`**: the smallest bend ratio, at the pose and along the sweeps. Gate it against
+  the rope maker's minimum (`lineBend: ">=12"`, [line-bend](ERROR-PATTERNS.md#line-bend)).
+  Withheld when any declared line could not be read. A quick lap (no sweeps) reads it at the
+  pose alone, so a bend that tightens elsewhere along the motion fails only the full verify.
+
+Lint adds `line-bad-source` (an error: an entry whose `on`, `line` or `views` cannot be read,
+or whose `views: []` shows it in no view —
+[line-bad-source](ERROR-PATTERNS.md#line-bad-source)) and `line-unswept` (a warning: a line
+moves with a slider or number param and no sweep moves it in a view the line shows in; the
+hint gives the sweep and a `lineDrift` gate —
+[line-unswept](ERROR-PATTERNS.md#line-unswept)). An unswept line is only a warning: it never
+withholds `verify.ok`. Lines are not drawn yet.
 
 ## Probes: measuring geometry into the report
 

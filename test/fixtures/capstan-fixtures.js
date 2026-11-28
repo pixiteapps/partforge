@@ -1,0 +1,55 @@
+// A rope drive for the lines tests: a drum and a pulley placed by one `capstan` in derive,
+// the rope declared as a line on it.
+import { capstan } from "../../src/framework/domains/mechanisms/index.js";
+
+export const make = (angle) => capstan({
+  rope: { d: 1.2 },
+  input: { name: "drum", radius: 6, center: [0, 0, 0], turns: 3 },
+  output: { name: "pulley", radius: 30, center: [40, 0, 0] },
+  drive: { member: "drum", angle },
+});
+
+export const concentricCapstan = {
+  meta: { title: "Capstan", units: "mm" },
+  parameters: [{ id: "m", title: "Motor", description: "The drive.", controls: [
+    { key: "motorAngle", label: "Motor", unit: "°", min: -200, max: 200, step: 1, description: "Drum angle." },
+  ] }],
+  defaults: { motorAngle: 0 },
+  derive: (p) => ({ drive: make(p.motorAngle) }),
+  parts: {
+    drum: { label: "Drum", build: (k) => k.box({ min: [-6, -6, 0], max: [6, 6, 10] }),
+      views: { assembly: (s, p, d) => d.drive.place("drum", s) } },
+    pulley: { label: "Pulley", build: (k) => k.box({ min: [-30, -30, 0], max: [30, 30, 10] }),
+      views: { assembly: (s, p, d) => d.drive.place("pulley", s) } },
+  },
+  views: { assembly: { label: "Assembly" } },
+  lines: { rope: { on: "drive" } },
+};
+export default concentricCapstan;
+
+// The pulley on a 2 mm eccentric: its centre circles with the motor, so the rope's length
+// changes along a motorAngle sweep (a slack drive the line gates should see).
+export const ECCENTRIC_MM = 2;
+export const makeSlack = (angle) => capstan({
+  rope: { d: 1.2 },
+  input: { name: "drum", radius: 6, center: [0, 0, 0], turns: 3 },
+  output: { name: "pulley", radius: 30, center: [40 + ECCENTRIC_MM * Math.cos((angle * Math.PI) / 180), ECCENTRIC_MM * Math.sin((angle * Math.PI) / 180), 0] },
+  drive: { member: "drum", angle },
+});
+
+export const slackCapstan = {
+  ...concentricCapstan,
+  meta: { title: "Slack capstan", units: "mm" },
+  derive: (p) => ({ drive: makeSlack(p.motorAngle) }),
+};
+
+// The slack drive with its wheels placed fixed (no `d.drive.place`): a motorAngle sweep
+// moves no piece in the view, yet the rope's length still changes through derive.
+export const staticSlackCapstan = {
+  ...slackCapstan,
+  meta: { title: "Static slack capstan", units: "mm" },
+  parts: {
+    drum: { label: "Drum", build: (k) => k.box({ min: [-6, -6, 0], max: [6, 6, 10] }), views: { assembly: (s) => s } },
+    pulley: { label: "Pulley", build: (k) => k.box({ min: [-30, -30, 0], max: [30, 30, 10] }).translate([40, 0, 0]), views: { assembly: (s) => s } },
+  },
+};

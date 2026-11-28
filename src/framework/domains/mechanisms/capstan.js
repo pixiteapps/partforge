@@ -166,7 +166,8 @@ export function capstan(def) {
     /** The rope's centreline at this pose, plain JSON: one open line, output to drum to output. */
     lineInfo() {
       const pts = [...halves[0].points, ...halves[1].points.slice(1)].map((q) => json3(q.map(r3)));
-      return { kind: "partforge.lines", lines: { rope: { mode: "taut", d: rope.d, closed: false, points: pts } } };
+      const bendRatio = Math.min(2 * input.radius, 2 * output.radius) / rope.d;
+      return { kind: "partforge.lines", lines: { rope: { mode: "taut", d: rope.d, closed: false, length, bendRatio, minBendRatio: rope.minBendRatio ?? null, points: pts } } };
     },
     /** What the rope is doing at this pose, plain JSON (a probe can return it unchanged). */
     report,

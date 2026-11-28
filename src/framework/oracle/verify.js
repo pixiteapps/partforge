@@ -1,6 +1,7 @@
 import { parseAssertion, evaluateAssertion } from "./assert-dsl.js";
 import { measure as defaultMeasure } from "./measure.js";
 import { runSweeps, normalizeSweeps } from "./sweep.js";
+import { LINE_GRACE_MS, lineBudget } from "./lines.js";
 import { relativePlacements, samePlacements } from "../collide/sweep-targets.js";
 import { REPORT_SHARE_MS } from "./changes.js";
 import { pairKey, CONTACT_EPS } from "./gaps.js";
@@ -324,6 +325,9 @@ function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
   };
   for (const s of entriesIn(view)) if (!s.skip && reported.has(s.name)) remember(s.name, placementsOf(view, s));
   const out = [];
+  // one line-pass budget for every other view's rows (oracle/lines.js LINE_SWEEP_BUDGET_MS),
+  // ending where measure's does, at the deadline plus LINE_GRACE_MS
+  const lines = lineBudget({ now: Date.now, end: deadline + LINE_GRACE_MS });
   for (const other of Object.keys(part.views ?? {})) {
     if (other === view) continue;
     const run = [], at = new Map();
@@ -337,7 +341,7 @@ function sweepsElsewhere(kernel, part, view, params, ownRows, deadline) {
     if (!run.length) continue;
     let rows;
     try {
-      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, entries: run });
+      rows = runSweeps(kernel, part, other, params, { deadline, now: Date.now, entries: run, lineBudget: lines });
     } catch {
       continue;
     }
@@ -681,7 +685,7 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
   // `deadline` (the caller's, e.g. the CLI's longer budget, else verify's own) reaches that
   // one measure, and then the sweeps run in other views (sweepsElsewhere).
   const seedSweeps = !seedAdmitted && seed?.result?.view === view && Array.isArray(seed.result.sweeps)
-    ? { params: full(seed.params), rows: seed.result.sweeps } : null;
+    ? { params: full(seed.params), rows: seed.result.sweeps, lineSweeps: seed.result.lineSweeps } : null;
   const sameParams = (a, b) => {
     const ka = Object.keys(a), kb = Object.keys(b);
     return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && JSON.stringify(a[k]) === JSON.stringify(b[k]));
@@ -700,7 +704,10 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     const measured = measureFn(kernel, part, view, params,
       { minWall: needMinWall, probes: false, overhang: overhangAngle, bedContact: armsBedPass, printBboxes: needPrintBboxes, flex, sweeps,
         ...(sweeps ? { deadline: sweepDeadline } : {}) });
-    const result = graft ? { ...measured, sweeps: graft } : measured;
+    // a grafted seed's line-only readings (measure's `lineSweeps`) come with its rows
+    const result = graft
+      ? { ...measured, sweeps: graft, ...(seedSweeps.lineSweeps ? { lineSweeps: seedSweeps.lineSweeps } : {}) }
+      : measured;
     entries.push({ params: fp, result });
     return result;
   };
@@ -737,9 +744,11 @@ export function verify(kernel, part, { process, view, measureFn = defaultMeasure
     if (!facts) return { name, params, checks: notMeasured(name) };
     let checks = evaluateCase(facts, { profile, expect, subPartNames, exportableNames, overhang: overhangAngle, bedContact: bedContactFloor, footprint: footprintFloor, accept, flex, rootFillet, strain: strainLimit, flexTilt });
     // A quick lap never sweeps (jobs.js): a declared sweep gate it could not read is
-    // withheld, as its min-wall gate is, never a skip that lets ok stand.
+    // withheld, as its min-wall gate is, never a skip that lets ok stand. lineDrift reads
+    // the sweep rows too, when the view has a line (with none it skips, as on a full run);
+    // lineBend reads the measured pose's lines, so it is still evaluated.
     if (quick && !facts.sweeps && part.verify?.sweeps) {
-      checks = checks.map((c) => (c.metric === "sweepContacts" && c.status === "skip"
+      checks = checks.map((c) => ((c.metric === "sweepContacts" || (c.metric === "lineDrift" && facts.lines)) && c.status === "skip"
         ? { ...c, unevaluated: true, message: "not measured (quick check)", hint: "sweeps do not run on a quick lap — re-run this check without `quick` to evaluate the declared sweeps" }
         : c));
     }
