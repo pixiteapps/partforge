@@ -1,7 +1,7 @@
 export default {
   id: "mechanisms",
   title: "Mechanisms",
-  when: "gears, gear trains, pulleys and belts, racks, cranks and sliders; parts that move together",
+  when: "gears, gear trains, pulleys and belts, capstan rope drives, racks, cranks and sliders; parts that move together",
   subpath: "partforge/mechanisms",
   guide: "docs/domains/mechanisms.md",
   referenceParts: ["src/parts/gearbox.js", "src/parts/drawer-box.js"],

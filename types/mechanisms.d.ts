@@ -1,4 +1,4 @@
-// partforge/mechanisms — gear trains, belts, racks and crank-sliders: the motion of parts
+// partforge/mechanisms — gear trains, belts, capstan rope drives, racks and crank-sliders: the motion of parts
 // that move together, computed in derive. Each helper is a point source for handles and
 // places its members' solids. Worker-safe: plain maths, no geometry built.
 
@@ -104,3 +104,105 @@ export function crankSlider(def: {
   rod: number;
   slideDirection: Point3;
 }): CrankSlider;
+
+/** A line source's plain-JSON description (the `lineInfo()` contract): each line's centreline. */
+export interface MechanismLines {
+  kind: "partforge.lines";
+  lines: Record<string, {
+    /** "taut": pulled tight (a rope, a belt). */
+    mode: "taut";
+    /** The line's diameter, mm. */
+    d: number;
+    /** A loop (a belt) when true. */
+    closed: boolean;
+    /** The centreline, part coordinates; arcs are sampled. */
+    points: Point3[];
+  }>;
+}
+
+export interface Rope {
+  /** Diameter, mm. */
+  d: number;
+  /** A preset ("uhmwpe"): supplies `mu` and an upper-bound `EA`. An unknown name throws. */
+  material?: string;
+  /** Friction coefficient against the drum. Wins over the preset. */
+  mu?: number;
+  /** Axial stiffness, N (force per unit strain). Wins over the preset. */
+  EA?: number;
+  /** The least drum diameter / rope diameter the rope allows; the report judges against it. */
+  minBendRatio?: number;
+}
+
+export interface CapstanHalf {
+  length: number;
+  /** The free span between the members, mm. */
+  span: number;
+  /** The span's angle off the plane across the axis, degrees. */
+  fleet: number;
+  /** True when this side has no rope left on a member (the angle is past the travel). */
+  runOff: boolean;
+  /** Keyed by member name: degrees of rope on it (and turns, on the drum). */
+  [member: string]: { wrap: number; turns?: number } | number | boolean;
+}
+
+export interface CapstanReport {
+  /** Input turns per output turn. */
+  ratio: number;
+  /** True for an open (uncrossed) rope: both members turn the same way. */
+  turnsTogether: boolean;
+  angles: Record<string, number>;
+  /** The rope's length at this pose and at drive angle 0, and the difference, mm. */
+  length: number;
+  restLength: number;
+  drift: number;
+  halves: [CapstanHalf, CapstanHalf];
+  /** Drum diameter / rope diameter per member; `required` and `ok` when the rope gives `minBendRatio`. */
+  bend: Record<string, number | boolean>;
+  /** The drum length the rope covers over the whole travel, at the lead, mm. The same at every pose. */
+  drumWidth: number;
+  /** Per member: the angles between which no side runs out of rope; `inside` for this pose. */
+  travel: Record<string, [number, number] | boolean>;
+  /** Only with `fixed: false`: what the whole wrap on the drum holds, e^(mu · wrap). The same at every angle. */
+  holding?: { needs: "rope.mu" } | { mu: number; wrap: number; ratio: number };
+  /** Only when the rope's EA is known. `upperBound` when it came from a preset. */
+  stiffness?: { rope: [number, number]; joint: number; unit: string; upperBound: boolean };
+  /** EA · drift / restLength, N. */
+  tensionChange?: number;
+  /** Only with `pretension`: the drift has taken the pretension to zero. */
+  slack?: boolean;
+}
+
+export interface Capstan {
+  /** Input turns per output turn: the pitch radii's ratio. */
+  ratio: number;
+  angleOf(name: string): number;
+  /** `<member>.center`, `<member>.rim`; an axis per member; one line between them. */
+  handleInfo(): MechanismPoints;
+  /** The rope's centreline at this pose, under the name "rope". */
+  lineInfo(): MechanismLines;
+  /** What the rope is doing at this pose; a probe can return it unchanged. */
+  report(): CapstanReport;
+  place<T extends Placeable<T>>(name: string, solid: T): T;
+}
+
+/**
+ * A rope drive: the rope is terminated on the output at both ends and wound round the
+ * input drum in between. Radii are groove radii; the rope's centreline runs d / 2 outside.
+ * A pulley whose centre sits along the axis from the drum's leans both spans.
+ * Throws when the axes are not parallel, when the members' rope circles overlap across the
+ * axis, or when a member is named after a report field.
+ */
+export function capstan(def: {
+  rope: Rope;
+  /** `turns` (default 3): whole turns on the drum beyond what the tangents leave. `lead` (default `rope.d`): helix advance per turn. */
+  input: { name: string; radius: number; center: Point3; axis?: Point3; turns?: number; lead?: number };
+  /** `wrap` (default 90): degrees of rope on the output past each tangent point at drive angle 0. */
+  output: { name: string; radius: number; center: Point3; axis?: Point3; wrap?: number };
+  drive: { member: string; angle: number };
+  /** Default true: the spans cross and the members turn opposite ways. */
+  cross?: boolean;
+  /** Default true: the rope is pinned to the drum. False: friction alone, and the report adds `holding`. */
+  fixed?: boolean;
+  /** N. With the rope's EA, the report adds `slack`. */
+  pretension?: number;
+}): Capstan;
